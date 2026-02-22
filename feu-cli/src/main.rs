@@ -1,5 +1,5 @@
-use feu_core::afficage;
+use feu_core::Feu;
 
 fn main() {
-    afficage::affiche();
+    let _feu = Feu::new();
 }
