@@ -8,9 +8,11 @@
 //! du crate. Toute interaction avec Feu passe par [`Feu`] — cette
 //! centralisation est un invariant de sécurité fondamental du protocole.
 
+mod cryptographe;
 mod erreur;
 mod intendant;
 
+use cryptographe::Cryptographe;
 use intendant::Intendant;
 
 pub use erreur::ErreurFeu;
@@ -18,6 +20,7 @@ pub use erreur::ResultFeu;
 
 pub struct Feu {
     intendant: Intendant,
+    cryptographe: Cryptographe,
 }
 
 impl Feu {
@@ -25,6 +28,7 @@ impl Feu {
     pub fn new() -> Self {
         Feu {
             intendant: Intendant::new(),
+            cryptographe: Cryptographe::new(),
         }
     }
 }

@@ -5,8 +5,9 @@
 //! écriture, configuration et gestion des foyers.
 //!
 //! Ce type est interne à `feu-core` — il n'est jamais exposé directement
-//! à l'extérieur du crate. Il remonte vers [`FeuError`] de manière
-//! transparente via le mécanisme de conversion automatique `#[from]`.
+//! à l'extérieur du crate. Il remonte vers [`ErreurFeu`] via une
+//! conversion explicite en message textuel, préservant ainsi
+//! l'encapsulation des détails d'implémentation.
 
 use thiserror::Error;
 
