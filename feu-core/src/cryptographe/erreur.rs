@@ -11,10 +11,13 @@
 
 use thiserror::Error;
 
-pub(crate) type _ResultCryptographe<T> = Result<T, ErreurCryptographe>;
+pub(crate) type ResultCryptographe<T> = Result<T, ErreurCryptographe>;
 
 #[derive(Error, Debug)]
 pub(crate) enum ErreurCryptographe {
     #[error("Le cryptographe est en galère : {0}")]
-    _Interne(String),
+    Interne(String),
+
+    #[error("Le cryptographe est en galère avec bip39 : {0}")]
+    Generation(#[from] bip39::Error),
 }
