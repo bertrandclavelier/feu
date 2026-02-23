@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 feu-core = { path = "../feu-core" }
 rpassword = "7"
+rustyline = "17"
