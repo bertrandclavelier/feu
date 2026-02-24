@@ -20,18 +20,19 @@
 //! CLI étant simple par nature, les points de défaillance sont peu nombreux
 //! et connus — chacun se traite efficacement au cas par cas.
 
+mod commandes;
+use colored::Colorize;
 use feu_core::Feu;
 use feu_core::InterfaceFeuCore;
 use rpassword::read_password;
+use rustyline::DefaultEditor;
+use rustyline::error::ReadlineError;
 use std::io;
 use std::io::BufRead;
 use std::process;
 
-use rustyline::DefaultEditor;
-use rustyline::error::ReadlineError;
-
-/// Interface CLI de Feu.
-pub(crate) struct InterfaceCli {
+/// Canal d'entrée/sortie de Feu en mode CLI.
+pub(super) struct InterfaceCli {
     /// Niveau de verbosité de l'affichage.
     mode_affichage: ModeAffichage,
 }
@@ -40,6 +41,11 @@ enum ModeAffichage {
     Minimal,
     Normal,
     Maximal,
+}
+
+enum SuiteCommandes {
+    Continuer,
+    Quitter,
 }
 
 impl InterfaceCli {
@@ -59,8 +65,9 @@ impl InterfaceCli {
     /// se termine avec le code de sortie `1` et un message sur stderr. Les erreurs
     /// de saisie en cours de session sont signalées sur stderr et n'interrompent
     /// pas la boucle.
-    pub(crate) fn lancer() {
+    pub(super) fn lancer() {
         println!(
+            "{}",
             r#"
          ███████╗███████╗██╗   ██╗
          ██╔════╝██╔════╝██║   ██║
@@ -69,12 +76,13 @@ impl InterfaceCli {
          ██║     ███████╗╚██████╔╝
          ╚═╝     ╚══════╝ ╚═════╝
 "#
+            .truecolor(255, 90, 31)
         );
 
         let interface_cli = Self {
             mode_affichage: ModeAffichage::Normal,
         };
-        let _feu = Feu::new(interface_cli);
+        let feu = Feu::new(interface_cli);
 
         let mut rustyline = match DefaultEditor::new() {
             Ok(valeur) => valeur,
@@ -84,8 +92,10 @@ impl InterfaceCli {
             }
         };
 
+        let invite = format!("{} ", "›".truecolor(255, 90, 31).bold());
+
         loop {
-            match rustyline.readline("> ") {
+            match rustyline.readline(&invite) {
                 Ok(ligne) => {
                     let ligne = ligne.trim().to_string();
 
@@ -100,14 +110,11 @@ impl InterfaceCli {
 
                     let mut parties = ligne.splitn(2, ' ');
                     let commande = parties.next().unwrap_or("");
-                    let _argument = parties.next().unwrap_or("").trim();
+                    let arguments = parties.next().unwrap_or("").trim();
 
-                    match commande {
-                        "quitter" => break,
-                        _ => {
-                            println!("Commande inconnue.");
-                            continue;
-                        }
+                    match commandes::traite_commande(&feu, commande, arguments) {
+                        SuiteCommandes::Continuer => continue,
+                        SuiteCommandes::Quitter => break,
                     }
                 }
 

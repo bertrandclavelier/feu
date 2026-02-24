@@ -77,4 +77,13 @@ impl<I: InterfaceFeuCore> Feu<I> {
             cryptographe: Cryptographe::new(),
         }
     }
+
+    /// Méthode qui affiche le numéro de version de 'feu-core'
+    pub fn affiche_version(&self) {
+        self.interface_feu_core.afficher_min(&format!(
+            "{} version {}",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
 }
