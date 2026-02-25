@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 thiserror = "2"
 bip39 = { version = "2", features = ["rand", "french"] }
+zeroize = { version = "1", features = ["zeroize_derive"] }

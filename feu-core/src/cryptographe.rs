@@ -14,13 +14,21 @@
 //! données en clair — cette centralisation est un invariant de sécurité
 //! fondamental du protocole.
 
+use trousseau::Trousseau;
+
+mod trousseau;
+
 pub(crate) mod erreur;
 
-pub(crate) struct Cryptographe {}
+pub(crate) struct Cryptographe {
+    trousseau: Trousseau,
+}
 
 impl Cryptographe {
     /// Crée le cryptographe de [`Feu`]
     pub(crate) fn new() -> Self {
-        Cryptographe {}
+        Cryptographe {
+            trousseau: Trousseau::new(),
+        }
     }
 }

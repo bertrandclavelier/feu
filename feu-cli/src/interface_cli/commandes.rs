@@ -41,5 +41,6 @@ pub(super) fn traite_commande(
 fn liste_commande() {
     println!("Commandes disponibles :");
     println!("{:<12} | liste les commandes disponibles", "liste");
+    println!("{:<12} | quitter Feu", "quitter");
     println!("{:<12} | affiche la version de `Feu`", "version");
 }
