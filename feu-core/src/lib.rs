@@ -86,4 +86,19 @@ impl<I: InterfaceFeuCore> Feu<I> {
             env!("CARGO_PKG_VERSION")
         ));
     }
+
+    /// Méthode qui initialise un nœud Feu à partir de zéro
+    pub fn initialise_noeud_vierge(&mut self) {
+        // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
+        if let Err(e) = self
+            .cryptographe
+            .initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)
+        {
+            self.interface_feu_core.afficher_erreur(&format!(
+                "Feu ›› Le cryptographe a eu des soucis pour générer les clés à 
+            mettre dans son trousseau : {}",
+                e
+            ));
+        }
+    }
 }

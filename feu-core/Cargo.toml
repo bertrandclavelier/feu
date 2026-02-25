@@ -4,6 +4,11 @@ version = "0.0.1"
 edition = "2024"
 
 [dependencies]
-thiserror = "2"
 bip39 = { version = "2", features = ["rand", "french"] }
+ed25519-dalek = "2"
+hkdf = "0"
+sha2 = "0"
+slip10_ed25519 = "0"
+thiserror = "2"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }

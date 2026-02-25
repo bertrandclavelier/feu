@@ -82,7 +82,7 @@ impl InterfaceCli {
         let interface_cli = Self {
             mode_affichage: ModeAffichage::Normal,
         };
-        let feu = Feu::new(interface_cli);
+        let mut feu = Feu::new(interface_cli);
 
         let mut rustyline = match DefaultEditor::new() {
             Ok(valeur) => valeur,
@@ -112,7 +112,7 @@ impl InterfaceCli {
                     let commande = parties.next().unwrap_or("");
                     let arguments = parties.next().unwrap_or("").trim();
 
-                    match commandes::traite_commande(&feu, commande, arguments) {
+                    match commandes::traite_commande(&mut feu, commande, arguments) {
                         SuiteCommandes::Continuer => continue,
                         SuiteCommandes::Quitter => break,
                     }
