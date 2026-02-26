@@ -4,9 +4,10 @@ version = "0.0.1"
 edition = "2024"
 
 [dependencies]
-bip39 = { version = "2", features = ["rand", "french"] }
-ed25519-dalek = "2"
+bip39 = { version = "2", features = ["rand", "french", "zeroize"] }
+ed25519-dalek = { version = "2", features = ["zeroize"] }
 hkdf = "0"
+secrecy = "0"
 sha2 = "0"
 slip10_ed25519 = "0"
 thiserror = "2"

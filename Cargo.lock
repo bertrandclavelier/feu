@@ -25,6 +25,7 @@ dependencies = [
  "rand_core",
  "serde",
  "unicode-normalization",
+ "zeroize",
 ]
 
 [[package]]
@@ -229,6 +230,7 @@ dependencies = [
  "bip39",
  "ed25519-dalek",
  "hkdf",
+ "secrecy",
  "sha2",
  "slip10_ed25519",
  "thiserror",
@@ -496,6 +498,15 @@ dependencies = [
  "unicode-width",
  "utf8parse",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "secrecy"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
+dependencies = [
+ "zeroize",
 ]
 
 [[package]]

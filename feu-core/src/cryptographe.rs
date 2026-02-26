@@ -8,18 +8,33 @@
 //! des clés nœud et foyer, ainsi que la génération des clés symétrique,
 //! de signature (Ed25519) et de chiffrement (X25519) par foyer.
 //! Il maintient en mémoire le trousseau — l'unique endroit où les clés
-//! privées et la clé symétrique existent en clair. Le trousseau est
-//! intégralement effacé à la fermeture du foyer.
+//! privées et la clé symétrique existent en clair.
+//!
+//! # Cycle de vie des secrets
+//!
+//! Les données sensibles transitant dans ce module (`Mnemonic`, `seed_bytes`)
+//! sont encapsulées dans [`SecretBox`] dès leur création. L'accès au contenu
+//! est explicitement contraint à [`expose_secret()`], rendant toute
+//! manipulation visible à la lecture du code.
+//!
+//! Des blocs de scope `{ }` limitent la durée de vie de chaque secret au
+//! strict nécessaire — la destruction du [`SecretBox`] déclenche la
+//! zéroïsation automatique de la mémoire.
+//!
+//! Rien n'est écrit sur le disque depuis ce module — c'est le rôle de
+//! l'intendant.
+//!
+//! # Invariant de sécurité
 //!
 //! Aucun autre composant de Feu n'accède directement aux clés ou aux
-//! données en clair — cette centralisation est un invariant de sécurité
-//! fondamental du protocole.
+//! données en clair. Cette centralisation est un invariant fondamental
+//! du protocole.
 
 use super::InterfaceFeuCore;
 use bip39::{Language, Mnemonic};
 use erreur::ResultCryptographe;
+use secrecy::{ExposeSecret, SecretBox};
 use trousseau::Trousseau;
-use zeroize::Zeroize;
 
 mod trousseau;
 
@@ -52,33 +67,40 @@ impl Cryptographe {
         &mut self,
         interface: &impl InterfaceFeuCore,
     ) -> ResultCryptographe<()> {
-        let mnemonic = Mnemonic::generate_in(Language::French, 12)?;
+        // Bloc encadrant la porté de seed_bytes
+        {
+            let seed_bytes: SecretBox<[u8; 64]>;
 
-        interface.afficher_min(
-            "Cryptographe ›› ATTENTION ! La seed ci-après ne sera affichée qu'une
+            // Bloc encadrant la portée de mnemonic
+            {
+                let mnemonic =
+                    SecretBox::new(Box::new(Mnemonic::generate_in(Language::French, 12)?));
+
+                interface.afficher_min(
+                    "Cryptographe ›› ATTENTION ! La seed ci-après ne sera affichée qu'une
         seule fois avant d'être détruite. Elle doit impérativement être notée et mise en sécurité.",
-        );
-        for (i, mot) in mnemonic.words().enumerate() {
-            interface.afficher_min(&format!("{i:<2}- {mot}"));
-        }
+                );
+                for (i, mot) in mnemonic.expose_secret().words().enumerate() {
+                    interface.afficher_min(&format!("{i:<2}- {mot}"));
+                }
 
-        let mut seed_bytes: [u8; 64] = mnemonic.to_seed(""); // passphrase vide
+                seed_bytes = SecretBox::new(Box::new(mnemonic.expose_secret().to_seed(""))); // passphrase vide
+            }
 
-        // ajoute la paire de clé noeud au trousseau à partir de la seed
-        self.trousseau.ajouter_paire_noeud(&seed_bytes);
-        interface.afficher(
-            "Cryptographe ›› La paire de clés signature du nœud Feu a été générée et mise
+            // ajoute la paire de clé noeud au trousseau à partir de la seed
+            self.trousseau.ajouter_paire_noeud(&seed_bytes);
+            interface.afficher(
+                "Cryptographe ›› La paire de clés signature du nœud Feu a été générée et mise
             dans mon trousseau.",
-        );
+            );
 
-        // ajoute le trousseau du premier foyer à partir de la seed
-        self.trousseau.ajouter_trousseau_foyer(&seed_bytes, 1)?;
-        interface.afficher(
-            "Cryptographe ›› Toutes les clés nécessaires au fonctionnement d'un premier foyer
+            // ajoute le trousseau du premier foyer à partir de la seed
+            self.trousseau.ajouter_trousseau_foyer(&seed_bytes, 1)?;
+            interface.afficher(
+                "Cryptographe ›› Toutes les clés nécessaires au fonctionnement d'un premier foyer
             ont été générées et mises dans mon trousseau..",
-        );
-
-        seed_bytes.zeroize();
+            );
+        }
         Ok(())
     }
 }
