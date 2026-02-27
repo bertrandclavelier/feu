@@ -22,7 +22,9 @@ pub(super) fn traite_commande(
 ) -> SuiteCommandes {
     match commande {
         "initialise" => {
-            feu.initialise_noeud_vierge();
+            if let Err(e) = feu.initialise_noeud_vierge() {
+                eprintln!("Erreur d'initialisation du nœud : {}", e)
+            }
             SuiteCommandes::Continuer
         }
         "liste" => {

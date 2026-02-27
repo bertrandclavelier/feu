@@ -70,30 +70,28 @@ pub struct Feu<I: InterfaceFeuCore> {
     interface_feu_core: I,
 
     /// Gardien des données locales — fichiers, foyers, configuration.
-    intendant: Intendant,
+    /// `None` tant que le nœud n'a pas été initialisé.
+    intendant: Option<Intendant>,
 
     /// Gardien de la sécurité cryptographique — clés, chiffrement, seed.
-    cryptographe: Cryptographe,
+    /// `None` tant que le nœud n'a pas été initialisé.
+    cryptographe: Option<Cryptographe>,
 }
 
 impl<I: InterfaceFeuCore> Feu<I> {
     /// Crée une instance de [`Feu`] prête à l'emploi.
     ///
-    /// Initialise l'intendant et le cryptographe avec leur état par défaut.
+    /// L'intendant et le cryptographe ne sont pas encore actifs à ce stade —
+    /// ils sont initialisés lors d'un appel ultérieur à
+    /// [`initialise_noeud_vierge`](Self::initialise_noeud_vierge).
     /// L'interface fournie sera utilisée pour toutes les interactions
     /// utilisateur ultérieures.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si l'intendant ne peut pas être initialisé —
-    /// notamment si la variable d'environnement `HOME` est absente ou si
-    /// le dossier `~/.feu` ne peut pas être créé.
-    pub fn new(interface_feu_core: I) -> ResultFeu<Self> {
-        Ok(Self {
+    pub fn new(interface_feu_core: I) -> Self {
+        Self {
             interface_feu_core,
-            intendant: Intendant::new()?,
-            cryptographe: Cryptographe::new(),
-        })
+            intendant: None,
+            cryptographe: None,
+        }
     }
 
     /// Affiche la version de `feu-core` via l'interface.
@@ -117,29 +115,27 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// 2. Génère les clés cryptographiques du nœud via le cryptographe.
     /// 3. Enregistre les clés dans l'arborescence *(non encore implémenté)*.
     ///
-    /// En cas d'échec à l'une des étapes, l'erreur est signalée via
-    /// l'interface et l'initialisation est abandonnée sans paniquer.
-    pub fn initialise_noeud_vierge(&mut self) {
-        match self.intendant.cree_premiere_arborescence() {
-            Err(e) => {
-                self.interface_feu_core.afficher_erreur(&format!(
-                    "Feu ›› L'intendant a eu des soucis pour créer la première arborescence : {}",
-                    e
-                ));
-            }
-            Ok(_) => {
-                // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
-                if let Err(e) = self
-                    .cryptographe
-                    .initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)
-                {
-                    self.interface_feu_core.afficher_erreur(&format!(
-                        "Feu ›› Le cryptographe a eu des soucis pour générer \
-                        les clés à mettre dans son trousseau : {}",
-                        e
-                    ));
-                }
-            }
-        }
+    /// # Erreurs
+    ///
+    /// Retourne une [`ErreurFeu`] à la première étape qui échoue.
+    /// L'intendant et le cryptographe ne sont stockés dans `self` que si
+    /// toutes les étapes réussissent.
+    pub fn initialise_noeud_vierge(&mut self) -> ResultFeu<()> {
+        // Création de l'intendant
+        let intendant = Intendant::new()?;
+
+        // Création du cryptographe
+        let mut cryptographe = Cryptographe::new();
+
+        intendant.cree_premiere_arborescence()?;
+
+        // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
+        cryptographe.initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)?;
+
+        // Toutes les étapes ont réussi : on les intègre à la structure.
+        self.intendant = Some(intendant);
+        self.cryptographe = Some(cryptographe);
+
+        Ok(())
     }
 }

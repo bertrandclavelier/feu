@@ -10,10 +10,12 @@
 //! sécurité et de cohérence du protocole.
 
 mod carnet;
+mod feu_toml;
 pub(crate) mod erreur;
 
 use carnet::Carnet;
 use erreur::{ErreurIntendant, ResultIntendant};
+use feu_toml::FeuToml;
 
 /// Gardien des données locales du nœud Feu.
 ///
@@ -21,6 +23,7 @@ use erreur::{ErreurIntendant, ResultIntendant};
 /// Aucun autre composant n'accède directement au disque.
 pub(crate) struct Intendant {
     carnet: Carnet,
+    feu_toml: FeuToml,
 }
 
 impl Intendant {
@@ -28,11 +31,12 @@ impl Intendant {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le registre ne peut pas être initialisé —
+    /// Retourne une erreur si le carnet ne peut pas être initialisé —
     /// notamment si la variable d'environnement `HOME` est absente.
     pub(crate) fn new() -> ResultIntendant<Self> {
         Ok(Intendant {
             carnet: Carnet::new()?,
+            feu_toml: FeuToml::new(),
         })
     }
 

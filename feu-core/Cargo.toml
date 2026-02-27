@@ -5,12 +5,15 @@ edition = "2024"
 
 [dependencies]
 bip39 = { version = "2", features = ["rand", "french", "zeroize"] }
+chrono = { version = "0.4", features = ["serde"] }
 data-encoding = { version = "2", features = ["alloc"] }
 ed25519-dalek = { version = "2", features = ["zeroize"] }
 hkdf = "0"
 secrecy = "0"
+serde = {version = "1", features = ["derive"]}
 sha3 = "0"
 slip10_ed25519 = "0"
 thiserror = "2"
+toml = "1"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
