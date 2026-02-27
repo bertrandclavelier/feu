@@ -7,6 +7,14 @@
 //! Aucun composant interne n'est accessible directement depuis l'extérieur
 //! du crate. Toute interaction avec Feu passe par [`Feu`] — cette
 //! centralisation est un invariant de sécurité fondamental du protocole.
+//!
+//! # Plateformes supportées
+//!
+//! Linux et macOS uniquement. Le protocole repose sur des primitives
+//! Unix — système de fichiers, variables d'environnement, permissions —
+//! qui n'ont pas d'équivalent direct sous Windows.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+compile_error!("feu-core only supports Linux and macOS.");
 
 mod cryptographe;
 mod erreur;
@@ -69,16 +77,29 @@ pub struct Feu<I: InterfaceFeuCore> {
 }
 
 impl<I: InterfaceFeuCore> Feu<I> {
-    /// Crée l'instance de [`Feu`] avec tout son personnel
-    pub fn new(interface_feu_core: I) -> Self {
-        Feu {
+    /// Crée une instance de [`Feu`] prête à l'emploi.
+    ///
+    /// Initialise l'intendant et le cryptographe avec leur état par défaut.
+    /// L'interface fournie sera utilisée pour toutes les interactions
+    /// utilisateur ultérieures.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si l'intendant ne peut pas être initialisé —
+    /// notamment si la variable d'environnement `HOME` est absente ou si
+    /// le dossier `~/.feu` ne peut pas être créé.
+    pub fn new(interface_feu_core: I) -> ResultFeu<Self> {
+        Ok(Self {
             interface_feu_core,
-            intendant: Intendant::new(),
+            intendant: Intendant::new()?,
             cryptographe: Cryptographe::new(),
-        }
+        })
     }
 
-    /// Méthode qui affiche le numéro de version de 'feu-core'
+    /// Affiche la version de `feu-core` via l'interface.
+    ///
+    /// Le message est émis au niveau `afficher_min` — il est donc visible
+    /// dans tous les modes de verbosité.
     pub fn affiche_version(&self) {
         self.interface_feu_core.afficher_min(&format!(
             "{} version {}",
@@ -87,18 +108,38 @@ impl<I: InterfaceFeuCore> Feu<I> {
         ));
     }
 
-    /// Méthode qui initialise un nœud Feu à partir de zéro
+    /// Initialise un nœud Feu vierge.
+    ///
+    /// Enchaîne trois étapes séquentielles, chacune conditionnée au
+    /// succès de la précédente :
+    ///
+    /// 1. Crée l'arborescence `~/.feu` et ses sous-dossiers via l'intendant.
+    /// 2. Génère les clés cryptographiques du nœud via le cryptographe.
+    /// 3. Enregistre les clés dans l'arborescence *(non encore implémenté)*.
+    ///
+    /// En cas d'échec à l'une des étapes, l'erreur est signalée via
+    /// l'interface et l'initialisation est abandonnée sans paniquer.
     pub fn initialise_noeud_vierge(&mut self) {
-        // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
-        if let Err(e) = self
-            .cryptographe
-            .initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)
-        {
-            self.interface_feu_core.afficher_erreur(&format!(
-                "Feu ›› Le cryptographe a eu des soucis pour générer les clés à 
-            mettre dans son trousseau : {}",
-                e
-            ));
+        match self.intendant.cree_premiere_arborescence() {
+            Err(e) => {
+                self.interface_feu_core.afficher_erreur(&format!(
+                    "Feu ›› L'intendant a eu des soucis pour créer la première arborescence : {}",
+                    e
+                ));
+            }
+            Ok(_) => {
+                // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
+                if let Err(e) = self
+                    .cryptographe
+                    .initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)
+                {
+                    self.interface_feu_core.afficher_erreur(&format!(
+                        "Feu ›› Le cryptographe a eu des soucis pour générer \
+                        les clés à mettre dans son trousseau : {}",
+                        e
+                    ));
+                }
+            }
         }
     }
 }

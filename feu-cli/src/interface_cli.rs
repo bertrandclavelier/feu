@@ -61,10 +61,10 @@ impl InterfaceCli {
     ///
     /// # Erreurs
     ///
-    /// L'échec d'initialisation de [`rustyline`] est irrécupérable — le programme
-    /// se termine avec le code de sortie `1` et un message sur stderr. Les erreurs
-    /// de saisie en cours de session sont signalées sur stderr et n'interrompent
-    /// pas la boucle.
+    /// L'échec d'initialisation de [`Feu`] ou de [`rustyline`] est irrécupérable —
+    /// le programme se termine avec le code de sortie `1` et un message sur stderr.
+    /// Les erreurs de saisie en cours de session sont signalées sur stderr et
+    /// n'interrompent pas la boucle.
     pub(super) fn lancer() {
         println!(
             "{}",
@@ -82,7 +82,13 @@ impl InterfaceCli {
         let interface_cli = Self {
             mode_affichage: ModeAffichage::Normal,
         };
-        let mut feu = Feu::new(interface_cli);
+        let mut feu = match Feu::new(interface_cli) {
+            Ok(valeur) => valeur,
+            Err(e) => {
+                eprintln!("Erreur d'initialisation de feu-core : {e}");
+                process::exit(1);
+            }
+        };
 
         let mut rustyline = match DefaultEditor::new() {
             Ok(valeur) => valeur,
