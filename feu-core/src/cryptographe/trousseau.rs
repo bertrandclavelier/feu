@@ -61,10 +61,11 @@
 //! - [`MotDePasse`] — secret textuel dans `SecretBox<String>`
 
 use super::erreur::ResultCryptographe;
+use data_encoding::BASE32;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
-use sha2::Sha256;
+use sha3::{Digest, Sha3_256};
 use slip10_ed25519::derive_ed25519_private_key;
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -72,6 +73,8 @@ const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE: &str = "feu-foyer-symetrique"
 const CHAINE_A_SIGNER_POUR_PAIRE_SIGNATURE: &str = "feu-foyer-paire-signature";
 const CHAINE_A_SIGNER_POUR_PAIRE_CHIFFREMENT: &str = "feu-foyer-paire-chiffrement";
 const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu-foyer-classeur";
+
+struct AdresseOnion(String);
 
 struct CleSymetrique(SecretBox<[u8; 32]>);
 
@@ -95,6 +98,57 @@ struct TrousseauFoyer {
     paire_signature: PaireClesSignature,
     paire_chiffrement: PaireClesChiffrement,
     cles_chiffrement_classeurs: Vec<CleSymetrique>,
+}
+
+impl TrousseauFoyer {
+    /// Dérive l'adresse `.onion` Tor v3 du foyer depuis sa clé publique de signature.
+    ///
+    /// Implémente le standard Tor v3 (rend-spec-v3) :
+    ///
+    /// ```text
+    /// CHECKSUM = SHA3-256(b".onion checksum" || PUBKEY || [0x03])[..2]
+    /// ADRESSE  = BASE32(PUBKEY || CHECKSUM || [0x03]).to_lowercase() + ".onion"
+    /// ```
+    ///
+    /// # Étapes
+    ///
+    /// 1. **Buffer checksum (48 octets)** — concatène le préfixe Tor fixe
+    ///    `b".onion checksum"` (15 octets), la clé publique Ed25519 (32 octets)
+    ///    et l'octet de version `0x03` (1 octet).
+    ///
+    /// 2. **Checksum (2 octets)** — SHA3-256 du buffer ; seuls les 2 premiers
+    ///    octets sont conservés. Ce checksum permet de détecter les fautes de
+    ///    frappe dans l'adresse.
+    ///
+    /// 3. **Buffer final (35 octets)** — concatène la clé publique (32 octets),
+    ///    le checksum (2 octets) et l'octet de version `0x03` (1 octet).
+    ///
+    /// 4. **Encodage** — BASE32 du buffer final, mis en minuscules, suivi
+    ///    du suffixe `.onion`. Produit une adresse de 62 caractères
+    ///    (56 caractères base32 + 6 pour `.onion`).
+    ///
+    /// SHA3-256 est utilisé ici en cohérence avec le reste du protocole Feu,
+    /// qui retient SHA3-256 comme unique primitive de hashage.
+    fn derive_adresse_onion(&self) -> AdresseOnion {
+        // 1. Buffer checksum (48 octets)
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b".onion checksum");
+        buf.extend_from_slice(self.paire_signature.publique.as_bytes());
+        buf.push(0x03);
+
+        // 2. Checksum (2 octets)
+        let hash = Sha3_256::digest(&buf);
+        let checksum = &hash[..2];
+
+        // 3. Buffer final (35 octets)
+        let mut data = Vec::new();
+        data.extend_from_slice(self.paire_signature.publique.as_bytes());
+        data.extend_from_slice(checksum);
+        data.push(0x03);
+
+        // 4. Encodage
+        AdresseOnion(format!("{}.onion", BASE32.encode(&data).to_lowercase()))
+    }
 }
 
 pub(super) struct Trousseau {
@@ -144,7 +198,7 @@ impl Trousseau {
     /// Dérive et enregistre dans le trousseau l'ensemble des clés d'un foyer.
     ///
     /// À partir de `seed_bytes` et de `index_foyer`, dérive via SLIP-0010
-    /// une clé mère (`m/index_foyer'`), puis en tire par signature + HKDF-SHA256 :
+    /// une clé mère (`m/index_foyer'`), puis en tire par signature + HKDF-SHA3-256 :
     ///
     /// - une clé symétrique de chiffrement du foyer
     /// - une paire de clés Ed25519 de signature
@@ -243,7 +297,7 @@ impl Trousseau {
 
     /// Dérive 32 octets de matière clé à partir d'une signature Ed25519.
     ///
-    /// Signe `label` avec `cle_privee`, soumet la signature à HKDF-SHA256
+    /// Signe `label` avec `cle_privee`, soumet la signature à HKDF-SHA3-256
     /// et retourne les 32 octets résultants. La signature intermédiaire
     /// est zéroïsée immédiatement après l'étape d'extraction.
     fn genere_cle_brute_from_signature(
@@ -251,7 +305,7 @@ impl Trousseau {
         texte: &str,
     ) -> ResultCryptographe<SecretBox<[u8; 32]>> {
         let mut sig = SecretBox::new(Box::new(cle_privee.sign(texte.as_bytes()).to_bytes()));
-        let hkdf = Hkdf::<Sha256>::new(None, sig.expose_secret_mut());
+        let hkdf = Hkdf::<Sha3_256>::new(None, sig.expose_secret_mut());
 
         let mut cle_brute = SecretBox::new(Box::new([0u8; 32]));
         hkdf.expand(b"", cle_brute.expose_secret_mut())?;
