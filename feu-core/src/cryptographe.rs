@@ -63,11 +63,22 @@ impl Cryptographe {
     ///
     /// La seed est zéroïsée avant le retour. Rien n'est écrit sur le disque —
     /// c'est le rôle de l'intendant.
+    ///
+    /// # Retour
+    ///
+    /// L'adresse `.onion` du premier foyer, dérivée de sa clé publique de signature.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la génération du mnémonique BIP39 échoue ou si
+    /// la dérivation des clés du premier foyer échoue.
     pub(crate) fn initialise_noeud_from_nouvelle_seed(
         &mut self,
         interface: &impl InterfaceFeuCore,
-    ) -> ResultCryptographe<()> {
-        // Bloc encadrant la porté de seed_bytes
+    ) -> ResultCryptographe<String> {
+        let onion: String;
+
+        // Bloc encadrant la portée de seed_bytes
         {
             let seed_bytes: SecretBox<[u8; 64]>;
 
@@ -87,20 +98,47 @@ impl Cryptographe {
                 seed_bytes = SecretBox::new(Box::new(mnemonic.expose_secret().to_seed(""))); // passphrase vide
             }
 
-            // ajoute la paire de clé noeud au trousseau à partir de la seed
+            // Ajoute la paire de clés du nœud au trousseau à partir de la seed
             self.trousseau.ajouter_paire_noeud(&seed_bytes);
             interface.afficher(
                 "Cryptographe ›› La paire de clés signature du nœud Feu a été générée et mise
             dans mon trousseau.",
             );
 
-            // ajoute le trousseau du premier foyer à partir de la seed
-            self.trousseau.ajouter_trousseau_foyer(&seed_bytes, 1)?;
+            // Ajoute le trousseau du premier foyer et retourne son adresse .onion
+            onion = self.trousseau.ajouter_trousseau_foyer(&seed_bytes, 1)?;
             interface.afficher(
                 "Cryptographe ›› Toutes les clés nécessaires au fonctionnement d'un premier foyer
-            ont été générées et mises dans mon trousseau..",
+            ont été générées et mises dans mon trousseau.",
             );
         }
-        Ok(())
+        Ok(onion)
+    }
+
+    /// Demande un nouveau mot de passe à l'utilisateur et le stocke dans le trousseau.
+    ///
+    /// Sollicite deux saisies successives via `interface`. Si elles diffèrent,
+    /// l'utilisateur est invité à recommencer — la boucle se répète jusqu'à
+    /// ce que les deux entrées correspondent.
+    ///
+    /// Le mot de passe est encapsulé dans [`SecretBox`] dès réception et
+    /// remplace tout mot de passe précédemment défini (l'ancien est zéroïsé
+    /// automatiquement au remplacement).
+    pub(super) fn nouveau_mdp(&mut self, interface: &impl InterfaceFeuCore) {
+        loop {
+            let mdp = SecretBox::new(Box::new(interface.demander_mdp("Entrez un nouveau mot de passe :")));
+            let mdp2 = SecretBox::new(Box::new(interface.demander_mdp("Entrez de nouveau le mot de passe :")));
+
+            match mdp.expose_secret() == mdp2.expose_secret() {
+                true => {
+                    self.trousseau.definit_mdp(mdp);
+                    break;
+                }
+                false => {
+                    interface.afficher_min("Les deux entrées sont différentes. Recommencez...");
+                }
+            }
+        }
+        
     }
 }

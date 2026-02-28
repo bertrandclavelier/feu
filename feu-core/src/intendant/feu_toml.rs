@@ -22,8 +22,8 @@
 /// pour permettre la détection et la migration des anciens formats.
 const FORMAT_VERSION: u32 = 1;
 
-use serde::{Deserialize, Serialize};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 
 /// Métadonnées du fichier `feu.toml` — section `[meta]`.
 #[derive(Deserialize, Serialize)]
@@ -75,20 +75,6 @@ struct Foyer {
     onion: String,
 }
 
-impl Foyer {
-    /// Crée un foyer à partir de son index de dérivation et de son adresse `.onion`.
-    ///
-    /// La liste des index révoqués est vide à la création.
-    pub(super) fn new(index_courant: u32, onion: String) -> Self {
-        Self {
-            cree_le: Utc::now().to_rfc3339(),
-            index_courant,
-            index_revoques: Vec::new(),
-            onion,
-        }
-    }
-}
-
 /// Miroir en mémoire de `feu.toml`.
 ///
 /// Agrège les trois sections du fichier : `[meta]`, `[feu]` et `[[foyer]]`.
@@ -116,8 +102,19 @@ impl FeuToml {
         }
     }
 
-    /// Ajoute un foyer à la liste.
-    pub(super) fn ajouter_foyer(&mut self, foyer: Foyer) {
-        self.foyers.push(foyer);
+    /// Enregistre un nouveau foyer dans la liste.
+    ///
+    /// Attribue au foyer l'index de dérivation courant (`prochain_index`),
+    /// enregistre l'adresse `.onion` fournie par le cryptographe et horodate
+    /// la création en UTC au format RFC 3339. L'index est incrémenté après
+    /// l'ajout pour préparer le prochain foyer.
+    pub(super) fn ajouter_nouveau_foyer(&mut self, onion: String) {
+        self.foyers.push(Foyer {
+            cree_le: Utc::now().to_rfc3339(),
+            index_courant: self.feu.prochain_index,
+            index_revoques: Vec::new(),
+            onion,
+        });
+        self.feu.prochain_index += 1;
     }
 }

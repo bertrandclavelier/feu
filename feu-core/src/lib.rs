@@ -108,12 +108,14 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
     /// Initialise un nœud Feu vierge.
     ///
-    /// Enchaîne trois étapes séquentielles, chacune conditionnée au
+    /// Enchaîne cinq étapes séquentielles, chacune conditionnée au
     /// succès de la précédente :
     ///
-    /// 1. Crée l'arborescence `~/.feu` et ses sous-dossiers via l'intendant.
-    /// 2. Génère les clés cryptographiques du nœud via le cryptographe.
-    /// 3. Enregistre les clés dans l'arborescence *(non encore implémenté)*.
+    /// 1. Crée l'arborescence globale `~/.feu` et `~/.feu/.cles`.
+    /// 2. Génère les clés cryptographiques du nœud et du premier foyer.
+    /// 3. Crée l'arborescence du premier foyer `~/.feu/<onion>/.cles`.
+    /// 4. Enregistre le foyer dans `feu.toml` en mémoire.
+    /// 5. Sauvegarde les clés et `feu.toml` sur le disque *(non encore implémenté)*.
     ///
     /// # Erreurs
     ///
@@ -122,7 +124,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// toutes les étapes réussissent.
     pub fn initialise_noeud_vierge(&mut self) -> ResultFeu<()> {
         // Création de l'intendant
-        let intendant = Intendant::new()?;
+        let mut intendant = Intendant::new()?;
 
         // Création du cryptographe
         let mut cryptographe = Cryptographe::new();
@@ -130,7 +132,13 @@ impl<I: InterfaceFeuCore> Feu<I> {
         intendant.cree_premiere_arborescence()?;
 
         // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
-        cryptographe.initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)?;
+        let onion = cryptographe.initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)?;
+
+        // Crée l'arborescence de ce nouveau foyer
+        intendant.cree_arborescence_nouveau_foyer(&onion)?;
+
+        // Ajout du foyer dans FeuToml
+        intendant.ajoute_nouveau_foyer_dans_feu_toml(onion);
 
         // Toutes les étapes ont réussi : on les intègre à la structure.
         self.intendant = Some(intendant);

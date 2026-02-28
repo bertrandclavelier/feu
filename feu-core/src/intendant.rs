@@ -6,8 +6,18 @@
 //!
 //! Il délègue la connaissance de l'arborescence à son [`Carnet`] et
 //! orchestre les opérations sur le système de fichiers sans les exposer
-//! à l'extérieur du module. Cette centralisation est un invariant de
-//! sécurité et de cohérence du protocole.
+//! à l'extérieur du module. Il maintient en mémoire la configuration
+//! globale du nœud via [`FeuToml`] — miroir du fichier `feu.toml` sur
+//! disque, écrit en dernière étape de chaque opération structurante.
+//! Cette centralisation est un invariant de sécurité et de cohérence
+//! du protocole.
+//!
+//! # Convention de nommage
+//!
+//! Les méthodes suivent une convention de verbe pour distinguer leur domaine :
+//!
+//! - `creer_` / `ecrire_` / `sauvegarder_` — opérations sur le disque
+//! - `ajouter_` / `mettre_a_jour_` — opérations en mémoire uniquement
 
 mod carnet;
 mod feu_toml;
@@ -19,7 +29,8 @@ use feu_toml::FeuToml;
 
 /// Gardien des données locales du nœud Feu.
 ///
-/// Orchestre les opérations sur le système de fichiers via son [`Carnet`].
+/// Orchestre les opérations sur le système de fichiers via son [`Carnet`]
+/// et maintient en mémoire la configuration globale via [`FeuToml`].
 /// Aucun autre composant n'accède directement au disque.
 pub(crate) struct Intendant {
     carnet: Carnet,
@@ -39,12 +50,19 @@ impl Intendant {
             feu_toml: FeuToml::new(),
         })
     }
+}
 
-    /// Crée la première arborescence du nœud Feu sur le système de fichiers.
+// ── Opérations disque ────────────────────────────────────────────────────────
+
+impl Intendant {
+    /// Crée la structure de dossiers globale du nœud Feu sur le système de fichiers.
     ///
-    /// Crée `~/.feu` et ses sous-dossiers structurels avec les permissions
-    /// `rwx------` (0o700). Cette opération n'est valide que pour un nœud
-    /// vierge — elle échoue si l'arborescence existe déjà.
+    /// Crée `~/.feu` et `~/.feu/.cles` avec les permissions `rwx------` (0o700).
+    /// Cette opération n'est valide que pour un nœud vierge — elle échoue
+    /// si l'arborescence existe déjà.
+    ///
+    /// Les dossiers des foyers ne sont pas créés ici — chaque foyer est
+    /// ajouté individuellement après la génération de ses clés.
     ///
     /// # Erreurs
     ///
@@ -58,11 +76,41 @@ impl Intendant {
             false => {
                 self.carnet.creer_dossier(&self.carnet.donne_chemin_feu())?;
                 self.carnet.creer_dossier(&self.carnet.donne_chemin_feu().join(".cles"))?;
-                self.carnet.creer_dossier(&self.carnet.donne_chemin_feu().join("foyer1"))?;
-                self.carnet.creer_dossier(&self.carnet.donne_chemin_feu().join("foyer1/.cles"))?;
-                
+
                 Ok(())
             }
         }
     }
+
+    /// Crée l'arborescence d'un nouveau foyer sur le système de fichiers.
+    ///
+    /// Crée `~/.feu/<onion>/` et `~/.feu/<onion>/.cles/` avec les permissions
+    /// `rwx------` (0o700). Les deux dossiers sont créés en un seul appel
+    /// grâce au mode récursif de [`Carnet::creer_dossier`].
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la création échoue — permissions insuffisantes,
+    /// chemin invalide ou erreur d'entrée/sortie.
+    pub(super) fn cree_arborescence_nouveau_foyer(&self, onion: &str) -> ResultIntendant<()> {
+        self.carnet.creer_dossier(&self.carnet.donne_chemin_feu().join(onion).join(".cles"))?;
+        Ok(())
+    }
+}
+
+// ── Opérations mémoire ───────────────────────────────────────────────────────
+
+impl Intendant {
+    /// Enregistre un nouveau foyer dans la configuration `feu.toml` en mémoire.
+    ///
+    /// Délègue à [`FeuToml`] l'ajout de l'entrée foyer avec l'adresse `.onion`
+    /// fournie par le cryptographe. L'index de dérivation et l'horodatage
+    /// sont gérés par [`FeuToml`].
+    ///
+    /// Cette méthode n'écrit rien sur le disque — la persistance est assurée
+    /// en dernière étape par la sauvegarde de `feu.toml` *(non encore implémentée)*.
+    pub(super) fn ajoute_nouveau_foyer_dans_feu_toml(&mut self, onion: String) {
+        self.feu_toml.ajouter_nouveau_foyer(onion);
+    }
+
 }

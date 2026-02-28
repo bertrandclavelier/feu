@@ -58,7 +58,7 @@
 //! - [`PaireClesChiffrement`] — paire de clés X25519 ; `privee` dans
 //!   `SecretBox<StaticSecret>`
 //! - [`CleSymetrique`] — clé symétrique dans `SecretBox<[u8; 32]>`
-//! - [`MotDePasse`] — secret textuel dans `SecretBox<String>`
+//! - `mdp` — mot de passe dans `Option<SecretBox<String>>` (pas de newtype)
 
 use super::erreur::ResultCryptographe;
 use data_encoding::BASE32;
@@ -77,8 +77,6 @@ const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu-foyer-cl
 struct AdresseOnion(String);
 
 struct CleSymetrique(SecretBox<[u8; 32]>);
-
-struct MotDePasse(SecretBox<String>);
 
 struct PaireClesSignature {
     // SigningKey n'implémente pas Zeroize (contrainte d'ed25519-dalek v2) —
@@ -152,7 +150,7 @@ impl TrousseauFoyer {
 }
 
 pub(super) struct Trousseau {
-    mdp: Option<MotDePasse>,
+    mdp: Option<SecretBox<String>>,
     paire_signature_noeud: Option<PaireClesSignature>,
     cles_foyers: Vec<TrousseauFoyer>,
 }
@@ -206,11 +204,13 @@ impl Trousseau {
     /// - cinq clés symétriques pour les classeurs (`feu-foyer-classeur1` à `5`)
     ///
     /// Toutes les clés brutes intermédiaires sont zéroïsées après usage.
+    ///
+    /// Retourne l'adresse `.onion` du foyer, dérivée de sa clé publique de signature.
     pub(super) fn ajouter_trousseau_foyer(
         &mut self,
         seed_bytes: &SecretBox<[u8; 64]>,
         index_foyer: u32,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultCryptographe<String> {
         let cle_privee: SigningKey;
 
         // Bloc encadrant la portée de cle_brute
@@ -221,11 +221,11 @@ impl Trousseau {
                 &[index_foyer],
             )));
 
-            // transformation de la clé brute en clé privée de signature (seule celle-ci est nécessaire pour signer)
+            // Clé mère du foyer — sert à dériver toutes les sous-clés du foyer
             cle_privee = SigningKey::from_bytes(&cle_brute.expose_secret());
         }
 
-        //Création de la clé symetrique de foyer
+        // Clé symétrique de chiffrement du foyer
         let cle_chiffrement = CleSymetrique(Trousseau::genere_cle_brute_from_signature(
             &cle_privee,
             CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE,
@@ -285,14 +285,21 @@ impl Trousseau {
             ));
         }
 
-        // enregistrement de toutes ces clés dans un trousseau_foyer
-        self.cles_foyers.push(TrousseauFoyer {
+        // enregistrement de toutes les clés dans un TrousseauFoyer
+        let trousseau_foyer = TrousseauFoyer {
             cle_chiffrement,
             paire_signature,
             paire_chiffrement,
             cles_chiffrement_classeurs,
-        });
-        Ok(())
+        };
+
+        // Récupération de l'adresse onion
+        let onion = trousseau_foyer.derive_adresse_onion().0;
+
+        // Ajout du TrousseauFoyer dans le trousseau
+        self.cles_foyers.push(trousseau_foyer);
+
+        Ok(onion)
     }
 
     /// Dérive 32 octets de matière clé à partir d'une signature Ed25519.
@@ -311,5 +318,22 @@ impl Trousseau {
         hkdf.expand(b"", cle_brute.expose_secret_mut())?;
 
         Ok(cle_brute)
+    }
+
+    /// Efface le mot de passe du trousseau.
+    ///
+    /// Met `mdp` à `None` — la destruction du [`SecretBox<String>`] déclenche
+    /// la zéroïsation automatique de la mémoire.
+    pub(super) fn efface_mdp(&mut self) {
+        self.mdp = None;
+    }
+
+    /// Définit le mot de passe du trousseau.
+    ///
+    /// `mot` est un [`SecretBox<String>`] déjà construit par l'appelant —
+    /// la méthode se contente de le stocker. Tout mot de passe précédemment
+    /// défini est remplacé et zéroïsé au drop.
+    pub(super) fn definit_mdp(&mut self, mot: SecretBox<String>) {
+        self.mdp = Some(mot);
     }
 }
