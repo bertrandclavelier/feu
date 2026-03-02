@@ -131,8 +131,14 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         intendant.cree_premiere_arborescence()?;
 
+        // Le cryptographe demande à l'utilisateur de définir un mot de passe 'Feu'
+        cryptographe.nouveau_mdp(&self.interface_feu_core);
+
         // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
         let onion = cryptographe.initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)?;
+
+        // Le cryptographe génère le trousseau public pour l'intendant
+        cryptographe.genere_trousseau_public()?; // en cours de développement
 
         // Crée l'arborescence de ce nouveau foyer
         intendant.cree_arborescence_nouveau_foyer(&onion)?;

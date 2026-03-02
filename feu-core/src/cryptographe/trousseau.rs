@@ -66,6 +66,7 @@
 
 use super::erreur::ErreurCryptographe;
 use super::erreur::ResultCryptographe;
+use super::trousseau_public::{TrousseauFoyerPublic, TrousseauPublic};
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use argon2::Argon2;
@@ -167,6 +168,9 @@ pub(super) struct Trousseau {
     cles_foyers: Vec<TrousseauFoyer>,
 }
 
+//
+// Constructeur et initialisation du trousseau
+//
 impl Trousseau {
     /// Crée un trousseau vide.
     pub(super) fn new() -> Self {
@@ -381,7 +385,12 @@ impl Trousseau {
 
         Ok(cle_brute)
     }
+}
 
+//
+// Gestion mot de passe, clé éphémère et chiffrement
+//
+impl Trousseau {
     /// Efface le mot de passe du trousseau.
     ///
     /// Met `mdp` à `None` — la destruction du [`SecretBox<String>`] déclenche
@@ -397,6 +406,10 @@ impl Trousseau {
     /// défini est remplacé et zéroïsé au drop.
     pub(super) fn definit_mdp(&mut self, mot: SecretBox<String>) {
         self.mdp = Some(mot);
+    }
+
+    pub(super) fn efface_cle_ephemere(&mut self) {
+        self.cle_ephemere = None;
     }
 
     /// Chiffre une clé privée ou symétrique de 32 octets avec AES-256-GCM.
@@ -445,6 +458,81 @@ impl Trousseau {
 
                 Ok(resultat)
             }
+        }
+    }
+}
+
+//
+// Génération du trousseau public
+//
+impl TrousseauFoyer {
+    /// Chiffre toutes les clés du foyer et produit le [`TrousseauFoyerPublic`] persistable.
+    ///
+    /// Délègue le chiffrement AES-256-GCM de chaque clé à [`Trousseau::chiffre_cle`].
+    /// Les clés publiques sont copiées en clair.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le chiffrement d'une clé échoue — clé éphémère
+    /// absente du trousseau ou échec AES-256-GCM.
+    fn genere_trousseau_foyer_public(
+        &self,
+        trousseau: &Trousseau,
+    ) -> ResultCryptographe<TrousseauFoyerPublic> {
+        let mut trousseau_foyer_public = TrousseauFoyerPublic::new(
+            trousseau.chiffre_cle(self.cle_chiffrement.0.expose_secret())?,
+            trousseau.chiffre_cle(self.paire_signature.privee.as_bytes())?,
+            self.paire_signature.publique.to_bytes(),
+            trousseau.chiffre_cle(self.paire_chiffrement.privee.expose_secret().as_bytes())?,
+            self.paire_chiffrement.publique.to_bytes(),
+        );
+
+        for e in &self.cles_chiffrement_classeurs {
+            trousseau_foyer_public
+                .ajoute_cle_chiffrement_classeur(trousseau.chiffre_cle(e.0.expose_secret())?);
+        }
+
+        Ok(trousseau_foyer_public)
+    }
+}
+
+impl Trousseau {
+    /// Chiffre l'ensemble des secrets du trousseau et produit le [`TrousseauPublic`] persistable.
+    ///
+    /// Chiffre les clés du nœud puis délègue le chiffrement de chaque foyer à
+    /// [`TrousseauFoyer::genere_trousseau_foyer_public`]. Le sel est inclus en clair
+    /// dans le résultat — il sera nécessaire pour re-dériver la clé éphémère lors
+    /// du déchiffrement.
+    ///
+    /// # Prérequis
+    ///
+    /// La clé éphémère doit être présente dans le trousseau. Elle est produite par
+    /// [`derive_cle_ephemere`](Self::derive_cle_ephemere) et doit être effacée
+    /// par l'appelant après usage.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le sel ou la paire de signature du nœud est absente,
+    /// ou si le chiffrement d'une clé échoue.
+    pub(super) fn genere_trousseau_public(&self) -> ResultCryptographe<TrousseauPublic> {
+        match (self.sel, &self.paire_signature_noeud) {
+            (Some(valeur1), Some(valeur2)) => {
+                let mut trousseau_public = TrousseauPublic::new(
+                    valeur1,
+                    self.chiffre_cle(valeur2.privee.as_bytes())?,
+                    *valeur2.publique.as_bytes(),
+                );
+
+                for e in &self.cles_foyers {
+                    trousseau_public
+                        .ajoute_trousseau_foyer_public(e.genere_trousseau_foyer_public(&self)?);
+                }
+
+                Ok(trousseau_public)
+            }
+            (_, _) => Err(ErreurCryptographe::Interne(String::from(
+                "Problème génération du trousseau public.",
+            ))),
         }
     }
 }

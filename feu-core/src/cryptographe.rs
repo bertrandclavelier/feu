@@ -35,8 +35,10 @@ use bip39::{Language, Mnemonic};
 use erreur::ResultCryptographe;
 use secrecy::{ExposeSecret, SecretBox};
 use trousseau::Trousseau;
+use trousseau_public::TrousseauPublic;
 
 mod trousseau;
+pub(crate) mod trousseau_public;
 
 pub(crate) mod erreur;
 
@@ -76,9 +78,6 @@ impl Cryptographe {
         &mut self,
         interface: &impl InterfaceFeuCore,
     ) -> ResultCryptographe<String> {
-        // Crée le sel
-        self.trousseau.genere_sel();
-
         let onion: String;
 
         // Bloc encadrant la portée de seed_bytes
@@ -146,5 +145,40 @@ impl Cryptographe {
                 }
             }
         }
+    }
+
+    /// Produit le trousseau public chiffré à partir des clés du trousseau en mémoire.
+    ///
+    /// Enchaîne quatre opérations séquentielles :
+    ///
+    /// 1. Génère un sel aléatoire pour Argon2id.
+    /// 2. Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel.
+    /// 3. Chiffre toutes les clés du trousseau via [`Trousseau::genere_trousseau_public`].
+    /// 4. Efface le mot de passe et la clé éphémère du trousseau.
+    ///
+    /// # Prérequis
+    ///
+    /// Le mot de passe doit avoir été défini via [`nouveau_mdp`](Self::nouveau_mdp)
+    /// avant l'appel.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la dérivation de la clé éphémère ou le chiffrement
+    /// d'une clé échoue.
+    pub(super) fn genere_trousseau_public(&mut self) -> ResultCryptographe<TrousseauPublic> {
+        // Crée le sel
+        self.trousseau.genere_sel();
+
+        // Génère la clé éphémère
+        self.trousseau.derive_cle_ephemere()?;
+
+        // Génération du trousseau public
+        let resultat = self.trousseau.genere_trousseau_public()?;
+
+        // Effacement du mot de passe et de la clé éphémère du trousseau (mémoire)
+        self.trousseau.efface_mdp();
+        self.trousseau.efface_cle_ephemere();
+
+        Ok(resultat)
     }
 }
