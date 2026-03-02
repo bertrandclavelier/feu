@@ -20,8 +20,8 @@
 //! - `ajouter_` / `mettre_a_jour_` — opérations en mémoire uniquement
 
 mod carnet;
-mod feu_toml;
 pub(crate) mod erreur;
+mod feu_toml;
 
 use carnet::Carnet;
 use erreur::{ErreurIntendant, ResultIntendant};
@@ -75,7 +75,8 @@ impl Intendant {
             ))),
             false => {
                 self.carnet.creer_dossier(&self.carnet.donne_chemin_feu())?;
-                self.carnet.creer_dossier(&self.carnet.donne_chemin_feu().join(".cles"))?;
+                self.carnet
+                    .creer_dossier(&self.carnet.donne_chemin_feu().join(".cles"))?;
 
                 Ok(())
             }
@@ -93,7 +94,8 @@ impl Intendant {
     /// Retourne une erreur si la création échoue — permissions insuffisantes,
     /// chemin invalide ou erreur d'entrée/sortie.
     pub(super) fn cree_arborescence_nouveau_foyer(&self, onion: &str) -> ResultIntendant<()> {
-        self.carnet.creer_dossier(&self.carnet.donne_chemin_feu().join(onion).join(".cles"))?;
+        self.carnet
+            .creer_dossier(&self.carnet.donne_chemin_feu().join(onion).join(".cles"))?;
         Ok(())
     }
 }
@@ -112,5 +114,4 @@ impl Intendant {
     pub(super) fn ajoute_nouveau_foyer_dans_feu_toml(&mut self, onion: String) {
         self.feu_toml.ajouter_nouveau_foyer(onion);
     }
-
 }

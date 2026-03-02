@@ -59,11 +59,21 @@
 //!   `SecretBox<StaticSecret>`
 //! - [`CleSymetrique`] — clé symétrique dans `SecretBox<[u8; 32]>`
 //! - `mdp` — mot de passe dans `Option<SecretBox<String>>` (pas de newtype)
+//! - `sel` — sel Argon2id dans `Option<[u8; 16]>` (pas secret — stocké en clair sur le disque)
+//! - `cle_ephemere` — clé AES-256-GCM dérivée du mot de passe via Argon2id,
+//!   dans `Option<SecretBox<[u8; 32]>>` — présente uniquement le temps du
+//!   chiffrement des clés, effacée dès que le trousseau persistable est constitué.
 
+use super::erreur::ErreurCryptographe;
 use super::erreur::ResultCryptographe;
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Key, Nonce};
+use argon2::Argon2;
 use data_encoding::BASE32;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
+use rand::RngCore;
+use rand::rngs::OsRng;
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use sha3::{Digest, Sha3_256};
 use slip10_ed25519::derive_ed25519_private_key;
@@ -151,6 +161,8 @@ impl TrousseauFoyer {
 
 pub(super) struct Trousseau {
     mdp: Option<SecretBox<String>>,
+    cle_ephemere: Option<SecretBox<[u8; 32]>>,
+    sel: Option<[u8; 16]>,
     paire_signature_noeud: Option<PaireClesSignature>,
     cles_foyers: Vec<TrousseauFoyer>,
 }
@@ -160,8 +172,58 @@ impl Trousseau {
     pub(super) fn new() -> Self {
         Self {
             mdp: None,
+            cle_ephemere: None,
+            sel: None,
             paire_signature_noeud: None,
             cles_foyers: Vec::new(),
+        }
+    }
+
+    /// Génère un sel aléatoire de 16 octets et l'enregistre dans le trousseau.
+    ///
+    /// Utilise [`OsRng`] pour garantir une source d'aléatoire cryptographiquement
+    /// sûre. Le sel est destiné à Argon2id — il n'est pas secret et sera stocké
+    /// en clair sur le disque aux côtés des clés chiffrées.
+    ///
+    /// Cette méthode ne doit être appelée qu'une seule fois, à l'initialisation
+    /// du nœud. Le sel est ensuite réutilisé à chaque dérivation de la clé éphémère.
+    pub(super) fn genere_sel(&mut self) {
+        let mut octets = [0u8; 16];
+        OsRng.fill_bytes(&mut octets);
+        self.sel = Some(octets);
+    }
+
+    /// Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel du trousseau.
+    ///
+    /// Utilise Argon2id (RFC 9106) avec les paramètres par défaut pour produire
+    /// 32 octets de matière clé à partir du mot de passe et du sel. La clé
+    /// résultante est encapsulée dans [`SecretBox`] et stockée dans `cle_ephemere`.
+    ///
+    /// Cette clé sert uniquement à chiffrer les clés privées via [`chiffre_cle`] —
+    /// elle doit être effacée dès que le trousseau persistable est constitué.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le mot de passe ou le sel est absent du trousseau,
+    /// ou si la dérivation Argon2id échoue.
+    pub(super) fn derive_cle_ephemere(&mut self) -> ResultCryptographe<()> {
+        let argon2 = Argon2::default();
+
+        let mut buffer = SecretBox::new(Box::new([0u8; 32]));
+
+        match (&self.mdp, self.sel) {
+            (Some(valeur1), Some(valeur2)) => {
+                argon2.hash_password_into(
+                    valeur1.expose_secret().as_bytes(),
+                    &valeur2,
+                    buffer.expose_secret_mut(),
+                )?;
+                self.cle_ephemere = Some(buffer);
+                Ok(())
+            }
+            (_, _) => Err(ErreurCryptographe::Interne(String::from(
+                "Pas de mot de passe",
+            ))),
         }
     }
 
@@ -335,5 +397,54 @@ impl Trousseau {
     /// défini est remplacé et zéroïsé au drop.
     pub(super) fn definit_mdp(&mut self, mot: SecretBox<String>) {
         self.mdp = Some(mot);
+    }
+
+    /// Chiffre une clé privée ou symétrique de 32 octets avec AES-256-GCM.
+    ///
+    /// Utilise la clé éphémère du trousseau comme clé AES-256-GCM. Un nonce
+    /// aléatoire de 12 octets est généré via [`OsRng`] à chaque appel —
+    /// il garantit l'unicité du chiffrement sans être secret.
+    ///
+    /// Le cipher [`Aes256Gcm`] zéroïse son planning de clé interne à la
+    /// destruction grâce à la feature `zeroize` de la crate `aes-gcm` —
+    /// aucune copie de la clé éphémère ne subsiste après l'appel.
+    ///
+    /// Le résultat de 60 octets est structuré comme suit :
+    /// ```text
+    /// [0..12]  nonce (12 octets)
+    /// [12..60] ciphertext + auth tag (32 + 16 octets)
+    /// ```
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé éphémère est absente du trousseau
+    /// ou si le chiffrement AES-256-GCM échoue.
+    pub(super) fn chiffre_cle(&self, cle: &[u8; 32]) -> ResultCryptographe<[u8; 60]> {
+        match &self.cle_ephemere {
+            None => Err(ErreurCryptographe::Interne(String::from(
+                "Problème de chiffrement des clés.",
+            ))),
+            Some(valeur) => {
+                // Conversion de la clé éphémère brute en Key<Aes256Gcm>
+                let key = Key::<Aes256Gcm>::from_slice(valeur.expose_secret());
+
+                // Création du cipher à partir de key
+                let cipher = Aes256Gcm::new(key);
+
+                // Génération aléatoire du nonce de 12 octets
+                let mut nonce = [0u8; 12];
+                OsRng.fill_bytes(&mut nonce);
+
+                // Chiffrement de la clé
+                let cle_chiffree = cipher.encrypt(Nonce::from_slice(&nonce), cle.as_ref())?;
+
+                // Création du résultat
+                let mut resultat = [0u8; 60];
+                resultat[0..12].copy_from_slice(&nonce);
+                resultat[12..60].copy_from_slice(&cle_chiffree);
+
+                Ok(resultat)
+            }
+        }
     }
 }

@@ -82,8 +82,8 @@ impl InterfaceCli {
         let interface_cli = Self {
             mode_affichage: ModeAffichage::Normal,
         };
-        let mut feu = Feu::new(interface_cli); 
-            
+        let mut feu = Feu::new(interface_cli);
+
         let mut rustyline = match DefaultEditor::new() {
             Ok(valeur) => valeur,
             Err(e) => {

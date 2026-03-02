@@ -76,6 +76,9 @@ impl Cryptographe {
         &mut self,
         interface: &impl InterfaceFeuCore,
     ) -> ResultCryptographe<String> {
+        // Crée le sel
+        self.trousseau.genere_sel();
+
         let onion: String;
 
         // Bloc encadrant la portée de seed_bytes
@@ -126,8 +129,12 @@ impl Cryptographe {
     /// automatiquement au remplacement).
     pub(super) fn nouveau_mdp(&mut self, interface: &impl InterfaceFeuCore) {
         loop {
-            let mdp = SecretBox::new(Box::new(interface.demander_mdp("Entrez un nouveau mot de passe :")));
-            let mdp2 = SecretBox::new(Box::new(interface.demander_mdp("Entrez de nouveau le mot de passe :")));
+            let mdp = SecretBox::new(Box::new(
+                interface.demander_mdp("Entrez un nouveau mot de passe :"),
+            ));
+            let mdp2 = SecretBox::new(Box::new(
+                interface.demander_mdp("Entrez de nouveau le mot de passe :"),
+            ));
 
             match mdp.expose_secret() == mdp2.expose_secret() {
                 true => {
@@ -139,6 +146,5 @@ impl Cryptographe {
                 }
             }
         }
-        
     }
 }

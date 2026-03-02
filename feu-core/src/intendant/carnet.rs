@@ -93,6 +93,7 @@ impl Carnet {
     ///
     /// # Erreurs
     ///
+    ///
     /// Retourne une erreur si la création échoue — permissions
     /// insuffisantes, chemin invalide ou erreur d'entrée/sortie.
     pub(super) fn creer_dossier(&self, path: &Path) -> ResultIntendant<()> {
