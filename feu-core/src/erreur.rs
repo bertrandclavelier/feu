@@ -8,7 +8,7 @@
 //! [`ResultFeu<T>`] est l'alias de [`Result<T, ErreurFeu>`] utilisé dans
 //! toutes les fonctions publiques de `feu-core`.
 
-use crate::{cryptographe::erreur::ErreurCryptographe, intendant::erreur::ErreurIntendant};
+use crate::{cryptographe::erreur::ErreurCryptographe, gardien::erreur::ErreurGardien};
 use thiserror::Error;
 
 pub type ResultFeu<T> = Result<T, ErreurFeu>;
@@ -16,14 +16,14 @@ pub type ResultFeu<T> = Result<T, ErreurFeu>;
 #[derive(Error, Debug)]
 pub enum ErreurFeu {
     #[error("{0}")]
-    Intendant(String),
+    Gardien(String),
     #[error("{0}")]
     Cryptographe(String),
 }
 
-impl From<ErreurIntendant> for ErreurFeu {
-    fn from(e: ErreurIntendant) -> Self {
-        ErreurFeu::Intendant(e.to_string())
+impl From<ErreurGardien> for ErreurFeu {
+    fn from(e: ErreurGardien) -> Self {
+        ErreurFeu::Gardien(e.to_string())
     }
 }
 

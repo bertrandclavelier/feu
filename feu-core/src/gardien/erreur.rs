@@ -1,6 +1,6 @@
-//! Définit les types d'erreurs de l'intendant.
+//! Définit les types d'erreurs du gardien.
 //!
-//! [`ErreurIntendant`] couvre l'ensemble des erreurs pouvant survenir
+//! [`ErreurGardien`] couvre l'ensemble des erreurs pouvant survenir
 //! lors des opérations sur le système de fichiers local — lecture,
 //! écriture, création de dossiers — et lors de la lecture des
 //! variables d'environnement.
@@ -21,19 +21,19 @@ use std::env::VarError;
 
 use thiserror::Error;
 
-pub(crate) type ResultIntendant<T> = Result<T, ErreurIntendant>;
+pub(crate) type ResultGardien<T> = Result<T, ErreurGardien>;
 
 #[derive(Error, Debug)]
-pub(crate) enum ErreurIntendant {
+pub(crate) enum ErreurGardien {
     /// Erreur interne générique — portée directement par un message textuel.
-    #[error("L'intendant est en galère : {0}")]
+    #[error("Le gardien est en galère : {0}")]
     Interne(String),
 
     /// Erreur émise par `std::env::var()` lors de la lecture d'une variable d'environnement.
-    #[error("L'intendant est en galère avec la lecture d'une variable d'environnement : {0}")]
+    #[error("Le gardien est en galère avec la lecture d'une variable d'environnement : {0}")]
     VarError(#[from] VarError),
 
     /// Erreur d'entrée/sortie émise par les opérations sur le système de fichiers.
-    #[error("L'intendant est en galère avec une opération d'entrée/sortie : {0}")]
+    #[error("Le gardien est en galère avec une opération d'entrée/sortie : {0}")]
     IoError(#[from] std::io::Error),
 }

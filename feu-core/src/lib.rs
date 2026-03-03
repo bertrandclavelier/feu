@@ -1,7 +1,7 @@
 //! `feu-core` est le cœur du protocole Feu.
 //!
 //! Il expose une interface unique — la structure [`Feu`] — qui orchestre
-//! l'ensemble des composants internes : l'intendant, gardien des données
+//! l'ensemble des composants internes : le gardien, responsable des données
 //! locales, et le cryptographe, garant de la sécurité cryptographique.
 //!
 //! Aucun composant interne n'est accessible directement depuis l'extérieur
@@ -18,10 +18,10 @@ compile_error!("feu-core only supports Linux and macOS.");
 
 mod cryptographe;
 mod erreur;
-mod intendant;
+mod gardien;
 
 use cryptographe::Cryptographe;
-use intendant::Intendant;
+use gardien::Gardien;
 
 pub use erreur::ErreurFeu;
 pub use erreur::ResultFeu;
@@ -60,7 +60,7 @@ pub trait InterfaceFeuCore {
 
 /// Point d'entrée unique du protocole Feu.
 ///
-/// Orchestre [`Intendant`] et [`Cryptographe`] sans exposer leurs
+/// Orchestre [`Gardien`] et [`Cryptographe`] sans exposer leurs
 /// détails d'implémentation. Paramétrique sur `I: InterfaceFeuCore` —
 /// toute communication utilisateur est déléguée à l'interface injectée
 /// à la création, garantissant une séparation totale entre logique
@@ -71,7 +71,7 @@ pub struct Feu<I: InterfaceFeuCore> {
 
     /// Gardien des données locales — fichiers, foyers, configuration.
     /// `None` tant que le nœud n'a pas été initialisé.
-    intendant: Option<Intendant>,
+    gardien: Option<Gardien>,
 
     /// Gardien de la sécurité cryptographique — clés, chiffrement, seed.
     /// `None` tant que le nœud n'a pas été initialisé.
@@ -81,7 +81,7 @@ pub struct Feu<I: InterfaceFeuCore> {
 impl<I: InterfaceFeuCore> Feu<I> {
     /// Crée une instance de [`Feu`] prête à l'emploi.
     ///
-    /// L'intendant et le cryptographe ne sont pas encore actifs à ce stade —
+    /// Le gardien et le cryptographe ne sont pas encore actifs à ce stade —
     /// ils sont initialisés lors d'un appel ultérieur à
     /// [`initialise_noeud_vierge`](Self::initialise_noeud_vierge).
     /// L'interface fournie sera utilisée pour toutes les interactions
@@ -89,7 +89,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
     pub fn new(interface_feu_core: I) -> Self {
         Self {
             interface_feu_core,
-            intendant: None,
+            gardien: None,
             cryptographe: None,
         }
     }
@@ -120,16 +120,16 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// # Erreurs
     ///
     /// Retourne une [`ErreurFeu`] à la première étape qui échoue.
-    /// L'intendant et le cryptographe ne sont stockés dans `self` que si
+    /// Le gardien et le cryptographe ne sont stockés dans `self` que si
     /// toutes les étapes réussissent.
     pub fn initialise_noeud_vierge(&mut self) -> ResultFeu<()> {
-        // Création de l'intendant
-        let mut intendant = Intendant::new()?;
+        // Création du gardien
+        let mut gardien = Gardien::new()?;
 
         // Création du cryptographe
         let mut cryptographe = Cryptographe::new();
 
-        intendant.cree_premiere_arborescence()?;
+        gardien.cree_premiere_arborescence()?;
 
         // Le cryptographe demande à l'utilisateur de définir un mot de passe 'Feu'
         cryptographe.nouveau_mdp(&self.interface_feu_core);
@@ -137,17 +137,17 @@ impl<I: InterfaceFeuCore> Feu<I> {
         // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
         let onion = cryptographe.initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)?;
 
-        // Le cryptographe génère le trousseau public pour l'intendant
+        // Le cryptographe génère le trousseau public pour le gardien
         cryptographe.genere_trousseau_public()?; // en cours de développement
 
         // Crée l'arborescence de ce nouveau foyer
-        intendant.cree_arborescence_nouveau_foyer(&onion)?;
+        gardien.cree_arborescence_nouveau_foyer(&onion)?;
 
         // Ajout du foyer dans FeuToml
-        intendant.ajoute_nouveau_foyer_dans_feu_toml(onion);
+        gardien.ajoute_nouveau_foyer_dans_feu_toml(onion);
 
         // Toutes les étapes ont réussi : on les intègre à la structure.
-        self.intendant = Some(intendant);
+        self.gardien = Some(gardien);
         self.cryptographe = Some(cryptographe);
 
         Ok(())

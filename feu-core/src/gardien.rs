@@ -1,7 +1,5 @@
-//! L'intendant est le gardien des données locales de l'instance Feu.
-//!
-//! Il est l'unique point d'accès au système de fichiers pour tout ce qui
-//! concerne les données locales — configuration globale, dossiers des
+//! Le gardien est l'unique point d'accès au système de fichiers pour les
+//! données locales de l'instance Feu — configuration globale, dossiers des
 //! foyers, coffres et clés.
 //!
 //! Il délègue la connaissance de l'arborescence à son [`Carnet`] et
@@ -24,7 +22,7 @@ pub(crate) mod erreur;
 mod feu_toml;
 
 use carnet::Carnet;
-use erreur::{ErreurIntendant, ResultIntendant};
+use erreur::{ErreurGardien, ResultGardien};
 use feu_toml::FeuToml;
 
 /// Gardien des données locales du nœud Feu.
@@ -32,20 +30,20 @@ use feu_toml::FeuToml;
 /// Orchestre les opérations sur le système de fichiers via son [`Carnet`]
 /// et maintient en mémoire la configuration globale via [`FeuToml`].
 /// Aucun autre composant n'accède directement au disque.
-pub(crate) struct Intendant {
+pub(crate) struct Gardien {
     carnet: Carnet,
     feu_toml: FeuToml,
 }
 
-impl Intendant {
-    /// Crée l'intendant de [`Feu`].
+impl Gardien {
+    /// Crée le gardien de [`Feu`].
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si le carnet ne peut pas être initialisé —
     /// notamment si la variable d'environnement `HOME` est absente.
-    pub(crate) fn new() -> ResultIntendant<Self> {
-        Ok(Intendant {
+    pub(crate) fn new() -> ResultGardien<Self> {
+        Ok(Gardien {
             carnet: Carnet::new()?,
             feu_toml: FeuToml::new(),
         })
@@ -54,7 +52,7 @@ impl Intendant {
 
 // ── Opérations disque ────────────────────────────────────────────────────────
 
-impl Intendant {
+impl Gardien {
     /// Crée la structure de dossiers globale du nœud Feu sur le système de fichiers.
     ///
     /// Crée `~/.feu` et `~/.feu/.cles` avec les permissions `rwx------` (0o700).
@@ -68,9 +66,9 @@ impl Intendant {
     ///
     /// Retourne une erreur si l'arborescence existe déjà, ou si une
     /// opération de création de dossier échoue.
-    pub(super) fn cree_premiere_arborescence(&self) -> ResultIntendant<()> {
+    pub(super) fn cree_premiere_arborescence(&self) -> ResultGardien<()> {
         match self.carnet.existe() {
-            true => Err(ErreurIntendant::Interne(String::from(
+            true => Err(ErreurGardien::Interne(String::from(
                 "Une arborescence existe déjà.",
             ))),
             false => {
@@ -93,7 +91,7 @@ impl Intendant {
     ///
     /// Retourne une erreur si la création échoue — permissions insuffisantes,
     /// chemin invalide ou erreur d'entrée/sortie.
-    pub(super) fn cree_arborescence_nouveau_foyer(&self, onion: &str) -> ResultIntendant<()> {
+    pub(super) fn cree_arborescence_nouveau_foyer(&self, onion: &str) -> ResultGardien<()> {
         self.carnet
             .creer_dossier(&self.carnet.donne_chemin_feu().join(onion).join(".cles"))?;
         Ok(())
@@ -102,7 +100,7 @@ impl Intendant {
 
 // ── Opérations mémoire ───────────────────────────────────────────────────────
 
-impl Intendant {
+impl Gardien {
     /// Enregistre un nouveau foyer dans la configuration `feu.toml` en mémoire.
     ///
     /// Délègue à [`FeuToml`] l'ajout de l'entrée foyer avec l'adresse `.onion`

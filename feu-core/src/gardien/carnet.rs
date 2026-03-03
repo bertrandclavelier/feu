@@ -1,6 +1,6 @@
 //! Registre des chemins du nœud Feu.
 //!
-//! Ce module définit [`Carnet`], la mémoire cartographique de l'intendant.
+//! Ce module définit [`Carnet`], la mémoire cartographique du gardien.
 //! Il maintient le chemin racine du nœud (`~/.feu`) et la carte de tous
 //! les fichiers nécessaires au bon fonctionnement du protocole.
 //!
@@ -10,7 +10,7 @@
 //! centralisation garantit qu'aucun fichier n'est oublié lors des
 //! vérifications d'intégrité de l'arborescence.
 
-use super::erreur::ResultIntendant;
+use super::erreur::ResultGardien;
 use std::collections::HashMap;
 use std::env;
 use std::fs::DirBuilder;
@@ -51,7 +51,7 @@ enum FichierFeu {
     // Le coffre n'est pas pris en compte dans cette version
 }
 
-/// Registre cartographique de l'intendant.
+/// Registre cartographique du gardien.
 ///
 /// Maintient le chemin racine du nœud et la carte de tous les fichiers
 /// du protocole. Point d'accès unique pour toute opération sur
@@ -70,7 +70,7 @@ impl Carnet {
     ///
     /// Retourne une erreur si `HOME` est absente ou contient une valeur
     /// non Unicode.
-    pub(super) fn new() -> ResultIntendant<Self> {
+    pub(super) fn new() -> ResultGardien<Self> {
         Ok(Carnet {
             chemin_feu: CheminFeu(PathBuf::from(env::var("HOME")?).join(".feu/")),
             chemin_fichiers: HashMap::new(),
@@ -96,7 +96,7 @@ impl Carnet {
     ///
     /// Retourne une erreur si la création échoue — permissions
     /// insuffisantes, chemin invalide ou erreur d'entrée/sortie.
-    pub(super) fn creer_dossier(&self, path: &Path) -> ResultIntendant<()> {
+    pub(super) fn creer_dossier(&self, path: &Path) -> ResultGardien<()> {
         DirBuilder::new()
             .mode(0o700)
             .recursive(true)

@@ -21,8 +21,8 @@
 //! strict nécessaire — la destruction du [`SecretBox`] déclenche la
 //! zéroïsation automatique de la mémoire.
 //!
-//! Rien n'est écrit sur le disque depuis ce module — c'est le rôle de
-//! l'intendant.
+//! Rien n'est écrit sur le disque depuis ce module — c'est le rôle du
+//! gardien.
 //!
 //! # Invariant de sécurité
 //!
@@ -64,7 +64,7 @@ impl Cryptographe {
     /// - l'ensemble des clés du premier foyer (`m/1'`)
     ///
     /// La seed est zéroïsée avant le retour. Rien n'est écrit sur le disque —
-    /// c'est le rôle de l'intendant.
+    /// c'est le rôle du gardien.
     ///
     /// # Retour
     ///

@@ -3,7 +3,7 @@
 //! [`FeuToml`] est le miroir exact de la structure TOML sur disque.
 //! Il est chargé en mémoire au démarrage et maintenu à jour tout au
 //! long de la session. Chaque modification est écrite de manière
-//! atomique sur le disque par l'[`Intendant`](super::Intendant).
+//! atomique sur le disque par le [`Gardien`](super::Gardien).
 //!
 //! # Cycle de vie
 //!

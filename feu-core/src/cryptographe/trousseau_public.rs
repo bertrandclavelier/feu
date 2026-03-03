@@ -6,7 +6,7 @@
 //!
 //! Aucune donnée sensible n'est stockée en clair : seul le sel Argon2id
 //! et les clés publiques (Ed25519, X25519) apparaissent sans chiffrement.
-//! Ces structures sont destinées à être écrites sur le disque par l'intendant.
+//! Ces structures sont destinées à être écrites sur le disque par le gardien.
 
 /// Représentation persistable des clés d'un foyer Feu.
 ///
