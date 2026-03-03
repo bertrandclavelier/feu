@@ -113,6 +113,9 @@ impl Cryptographe {
                 "Cryptographe ›› Toutes les clés nécessaires au fonctionnement d'un premier foyer
             ont été générées et mises dans mon trousseau.",
             );
+
+            // Génère le sel et le met dans le trousseau
+            self.trousseau.genere_sel()?;
         }
         Ok(onion)
     }
@@ -135,40 +138,34 @@ impl Cryptographe {
                 interface.demander_mdp("Entrez de nouveau le mot de passe :"),
             ));
 
-            match mdp.expose_secret() == mdp2.expose_secret() {
-                true => {
-                    self.trousseau.definit_mdp(mdp);
-                    break;
-                }
-                false => {
-                    interface.afficher_min("Les deux entrées sont différentes. Recommencez...");
-                }
+            if mdp.expose_secret() == mdp2.expose_secret() {
+                self.trousseau.definit_mdp(mdp);
+                break;
+            } else {
+                interface.afficher_min("Les deux entrées sont différentes. Recommencez...");
             }
         }
     }
 
     /// Produit le trousseau public chiffré à partir des clés du trousseau en mémoire.
     ///
-    /// Enchaîne quatre opérations séquentielles :
+    /// Enchaîne trois opérations séquentielles :
     ///
-    /// 1. Génère un sel aléatoire pour Argon2id.
-    /// 2. Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel.
-    /// 3. Chiffre toutes les clés du trousseau via [`Trousseau::genere_trousseau_public`].
-    /// 4. Efface le mot de passe et la clé éphémère du trousseau.
+    /// 1. Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel.
+    /// 2. Chiffre toutes les clés du trousseau via [`Trousseau::genere_trousseau_public`].
+    /// 3. Efface le mot de passe et la clé éphémère du trousseau.
     ///
     /// # Prérequis
     ///
-    /// Le mot de passe doit avoir été défini via [`nouveau_mdp`](Self::nouveau_mdp)
-    /// avant l'appel.
+    /// Le mot de passe et le sel doivent être présents dans le trousseau —
+    /// définis respectivement par [`nouveau_mdp`](Self::nouveau_mdp) et
+    /// [`initialise_noeud_from_nouvelle_seed`](Self::initialise_noeud_from_nouvelle_seed).
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si la dérivation de la clé éphémère ou le chiffrement
     /// d'une clé échoue.
     pub(super) fn genere_trousseau_public(&mut self) -> ResultCryptographe<TrousseauPublic> {
-        // Crée le sel
-        self.trousseau.genere_sel();
-
         // Génère la clé éphémère
         self.trousseau.derive_cle_ephemere()?;
 

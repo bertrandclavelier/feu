@@ -14,13 +14,14 @@
 /// Chaque champ chiffré suit le format :
 /// `[nonce (12 o.) | ciphertext + tag (48 o.)]` — soit 60 octets au total.
 pub(crate) struct TrousseauFoyerPublic {
-    cle_chiffrement: [u8; 60], // chiffrée
-    cle_sig_privee: [u8; 60],  // chiffrée
-    cle_sig_pub: [u8; 32],
-    cle_chiff_privee: [u8; 60], // chiffrée
-    cle_chiff_pub: [u8; 32],
+    pub(crate) adresse_onion: String,
+    pub(crate) cle_chiffrement: [u8; 60], // chiffrée
+    pub(crate) cle_sig_privee: [u8; 60],  // chiffrée
+    pub(crate) cle_sig_pub: [u8; 32],
+    pub(crate) cle_chiff_privee: [u8; 60], // chiffrée
+    pub(crate) cle_chiff_pub: [u8; 32],
 
-    cles_chiffrement_classeurs: Vec<[u8; 60]>, // chiffrées
+    pub(crate) cles_chiffrement_classeurs: Vec<[u8; 60]>, // chiffrées
 }
 
 impl TrousseauFoyerPublic {
@@ -29,6 +30,7 @@ impl TrousseauFoyerPublic {
     /// Les clés de classeur sont ajoutées après construction via
     /// [`ajoute_cle_chiffrement_classeur`](Self::ajoute_cle_chiffrement_classeur).
     pub(crate) fn new(
+        adresse_onion: String,
         cle_chiffrement: [u8; 60],
         cle_sig_privee: [u8; 60],
         cle_sig_pub: [u8; 32],
@@ -36,6 +38,7 @@ impl TrousseauFoyerPublic {
         cle_chiff_pub: [u8; 32],
     ) -> Self {
         Self {
+            adresse_onion,
             cle_chiffrement,
             cle_sig_privee,
             cle_sig_pub,
@@ -58,12 +61,12 @@ impl TrousseauFoyerPublic {
 /// Le sel Argon2id est stocké en clair — il est nécessaire pour re-dériver
 /// la clé éphémère lors du déchiffrement des clés privées.
 pub(crate) struct TrousseauPublic {
-    sel: [u8; 16],
+    pub(crate) sel: [u8; 16],
 
-    cle_sig_privee: [u8; 60], // chiffrée
-    cle_sig_pub: [u8; 32],
+    pub(crate) cle_sig_privee: [u8; 60], // chiffrée
+    pub(crate) cle_sig_pub: [u8; 32],
 
-    cles_foyers: Vec<TrousseauFoyerPublic>,
+    pub(crate) cles_foyers: Vec<TrousseauFoyerPublic>,
 }
 
 impl TrousseauPublic {

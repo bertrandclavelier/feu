@@ -1,55 +1,35 @@
 //! Registre des chemins du nœud Feu.
 //!
 //! Ce module définit [`Carnet`], la mémoire cartographique du gardien.
-//! Il maintient le chemin racine du nœud (`~/.feu`) et la carte de tous
-//! les fichiers nécessaires au bon fonctionnement du protocole.
+//! Il maintient le chemin racine du nœud (`~/.feu`) et centralise toutes
+//! les opérations sur le système de fichiers : création de l'arborescence,
+//! écriture des clés chiffrées sur le disque.
 //!
-//! [`CheminFeu`] encapsule le chemin racine et expose les sous-chemins
-//! structurels. [`FichierFeu`] recense exhaustivement chaque fichier géré
-//! par Feu — clés du nœud, clés des foyers, configuration. Cette
-//! centralisation garantit qu'aucun fichier n'est oublié lors des
-//! vérifications d'intégrité de l'arborescence.
+//! Les noms de fichiers du protocole sont définis comme constantes publiques
+//! au niveau du module — point de vérité unique pour toute l'arborescence.
 
 use super::erreur::ResultGardien;
-use std::collections::HashMap;
+use crate::cryptographe::trousseau_public::TrousseauPublic;
 use std::env;
 use std::fs::DirBuilder;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 
+pub(super) const FEU_SEL: &str = "sel.feu";
+pub(super) const CLE_NOEUD_SIG_PRIV: &str = "feu_sig.priv";
+pub(super) const CLE_NOEUD_SIG_PUB: &str = "feu_sig.pub";
+
+// Pour chaque foyer
+// La clé symétrique de chiffrement est sous la forme : adresse_onion.cle
+pub(super) const CLE_FOYER_SIG_PRIV: &str = "sig.priv";
+pub(super) const CLE_FOYER_SIG_PUB: &str = "sig.pub";
+pub(super) const CLE_FOYER_CHIF_PRIV: &str = "chif.priv";
+pub(super) const CLE_FOYER_CHIF_PUB: &str = "chif.pub";
+
+// L'enregistrement des classeurs ne sont pas encore pris en compte dans la v0.0.1
+
 /// Chemin racine du nœud Feu — `~/.feu`.
-///
-/// Encapsule le `PathBuf` de la racine et expose les sous-chemins
-/// structurels de l'arborescence.
 struct CheminFeu(PathBuf);
-
-/// Inventaire des fichiers gérés par Feu.
-///
-/// Chaque variante identifie un fichier précis de l'arborescence.
-/// Utilisé comme clé du registre [`Carnet::chemin_fichiers`] pour
-/// associer chaque fichier à son `PathBuf` calculé.
-#[derive(Hash, Eq, PartialEq)]
-enum FichierFeu {
-    /// Fichier de configuration globale du nœud.
-    ConfigFeu,
-    /// Clé privée de signature du nœud.
-    CleNoeudSigPriv,
-    /// Clé publique de signature du nœud.
-    CleNoeudSigPub,
-
-    // Pour chaque foyer
-    /// Clé symétrique de chiffrement du foyer.
-    CleFoyerChiffSym,
-    /// Clé privée de signature du foyer.
-    CleFoyerSigPriv,
-    /// Clé publique de signature du foyer.
-    CleFoyerSigPub,
-    /// Clé privée de chiffrement asymétrique du foyer.
-    CleFoyerChiffPriv,
-    /// Clé publique de chiffrement asymétrique du foyer.
-    CleFoyerChiffPub,
-    // Le coffre n'est pas pris en compte dans cette version
-}
 
 /// Registre cartographique du gardien.
 ///
@@ -59,8 +39,6 @@ enum FichierFeu {
 pub(super) struct Carnet {
     /// Chemin racine du nœud — `~/.feu`.
     chemin_feu: CheminFeu,
-    /// Carte des fichiers du protocole — clé : identifiant, valeur : chemin absolu.
-    chemin_fichiers: HashMap<FichierFeu, PathBuf>,
 }
 
 impl Carnet {
@@ -73,12 +51,11 @@ impl Carnet {
     pub(super) fn new() -> ResultGardien<Self> {
         Ok(Carnet {
             chemin_feu: CheminFeu(PathBuf::from(env::var("HOME")?).join(".feu/")),
-            chemin_fichiers: HashMap::new(),
         })
     }
 
     /// Retourne une référence vers le chemin racine `~/.feu`.
-    pub(super) fn donne_chemin_feu(&self) -> &PathBuf {
+    pub(super) fn donne_chemin_feu(&self) -> &Path {
         &self.chemin_feu.0
     }
 
@@ -96,11 +73,91 @@ impl Carnet {
     ///
     /// Retourne une erreur si la création échoue — permissions
     /// insuffisantes, chemin invalide ou erreur d'entrée/sortie.
-    pub(super) fn creer_dossier(&self, path: &Path) -> ResultGardien<()> {
+    fn creer_dossier(path: &Path) -> ResultGardien<()> {
         DirBuilder::new()
             .mode(0o700)
             .recursive(true)
             .create(&path)?;
+        Ok(())
+    }
+
+    /// Écrit l'intégralité du trousseau public sur le disque.
+    ///
+    /// Crée l'arborescence complète du nœud puis écrit chaque fichier de clé :
+    ///
+    /// - `~/.feu/.cles/sel.feu` — sel Argon2id (en clair)
+    /// - `~/.feu/.cles/feu_sig.priv` — clé privée de signature du nœud (chiffrée)
+    /// - `~/.feu/.cles/feu_sig.pub` — clé publique de signature du nœud (en clair)
+    ///
+    /// Pour chaque foyer :
+    /// - `~/.feu/.cles/<onion>.cle` — clé symétrique d'archive (chiffrée)
+    /// - `~/.feu/<onion>/.cles/sig.priv` — clé privée de signature réseau (chiffrée)
+    /// - `~/.feu/<onion>/.cles/sig.pub` — clé publique de signature réseau (en clair)
+    /// - `~/.feu/<onion>/.cles/chif.priv` — clé privée de chiffrement réseau (chiffrée)
+    /// - `~/.feu/<onion>/.cles/chif.pub` — clé publique de chiffrement réseau (en clair)
+    ///
+    /// Tous les dossiers sont créés avec les permissions `rwx------` (0o700).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur à la première opération disque qui échoue.
+    pub(super) fn ecrire_trousseau_public(&self, tp: TrousseauPublic) -> ResultGardien<()> {
+        Self::creer_dossier(&self.donne_chemin_feu())?;
+        Self::creer_dossier(&self.donne_chemin_feu().join(".cles"))?;
+
+        // Écriture du sel
+        std::fs::write(&self.donne_chemin_feu().join(".cles").join(FEU_SEL), tp.sel)?;
+
+        // Écriture de la clé privée du nœud
+        std::fs::write(
+            &self
+                .donne_chemin_feu()
+                .join(".cles")
+                .join(CLE_NOEUD_SIG_PRIV),
+            tp.cle_sig_privee,
+        )?;
+
+        // Écriture de la clé publique du nœud
+        std::fs::write(
+            &self
+                .donne_chemin_feu()
+                .join(".cles")
+                .join(CLE_NOEUD_SIG_PUB),
+            tp.cle_sig_pub,
+        )?;
+
+        // Pour chaque foyer
+        for foyer in tp.cles_foyers {
+            let chemin_foyer = &self
+                .donne_chemin_feu()
+                .join(&foyer.adresse_onion)
+                .join(".cles/");
+
+            Self::creer_dossier(chemin_foyer)?;
+
+            // Écriture de la clé symétrique du foyer
+            std::fs::write(
+                &self
+                    .donne_chemin_feu()
+                    .join(".cles/")
+                    .join(format!("{}{}", &foyer.adresse_onion, ".cle")),
+                foyer.cle_chiffrement,
+            )?;
+
+            // Écriture de la paire de clés sig du foyer
+            std::fs::write(chemin_foyer.join(CLE_FOYER_SIG_PRIV), foyer.cle_sig_privee)?;
+            std::fs::write(chemin_foyer.join(CLE_FOYER_SIG_PUB), foyer.cle_sig_pub)?;
+
+            // Écriture de la paire de clés chif du foyer
+            std::fs::write(
+                chemin_foyer.join(CLE_FOYER_CHIF_PRIV),
+                foyer.cle_chiff_privee,
+            )?;
+            std::fs::write(chemin_foyer.join(CLE_FOYER_CHIF_PUB), foyer.cle_chiff_pub)?;
+
+            // Cette version de Feu ne prends pas encore en charge les clés des classeurs
+        }
+
         Ok(())
     }
 }

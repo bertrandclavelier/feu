@@ -108,14 +108,19 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
     /// Initialise un nœud Feu vierge.
     ///
-    /// Enchaîne cinq étapes séquentielles, chacune conditionnée au
-    /// succès de la précédente :
+    /// Enchaîne deux phases séquentielles. Tout le travail cryptographique
+    /// est achevé en mémoire avant le premier accès disque — aucune donnée
+    /// n'est écrite en cas d'erreur dans la phase mémoire.
     ///
-    /// 1. Crée l'arborescence globale `~/.feu` et `~/.feu/.cles`.
-    /// 2. Génère les clés cryptographiques du nœud et du premier foyer.
-    /// 3. Crée l'arborescence du premier foyer `~/.feu/<onion>/.cles`.
-    /// 4. Enregistre le foyer dans `feu.toml` en mémoire.
-    /// 5. Sauvegarde les clés et `feu.toml` sur le disque *(non encore implémenté)*.
+    /// **Phase mémoire — cryptographe**
+    /// 1. Collecte le mot de passe Feu.
+    /// 2. Génère la seed BIP39 et dérive les clés du nœud et du premier foyer.
+    /// 3. Dérive le sel Argon2id et chiffre les clés — produit le trousseau public.
+    ///
+    /// **Phase disque — gardien**
+    /// 4. Crée l'arborescence globale `~/.feu` et `~/.feu/.cles`.
+    /// 5. Crée l'arborescence du premier foyer `~/.feu/<onion>/.cles`.
+    /// 6. Enregistre le foyer dans `feu.toml` en mémoire *(écriture disque non encore implémentée)*.
     ///
     /// # Erreurs
     ///
@@ -123,13 +128,11 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// Le gardien et le cryptographe ne sont stockés dans `self` que si
     /// toutes les étapes réussissent.
     pub fn initialise_noeud_vierge(&mut self) -> ResultFeu<()> {
-        // Création du gardien
+        // Création du gardien et du cryptographe
         let mut gardien = Gardien::new()?;
-
-        // Création du cryptographe
         let mut cryptographe = Cryptographe::new();
 
-        gardien.cree_premiere_arborescence()?;
+        // 1- LE CRYPTOGRAPHE TRAVAILLE EN MÉMOIRE
 
         // Le cryptographe demande à l'utilisateur de définir un mot de passe 'Feu'
         cryptographe.nouveau_mdp(&self.interface_feu_core);
@@ -138,10 +141,11 @@ impl<I: InterfaceFeuCore> Feu<I> {
         let onion = cryptographe.initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)?;
 
         // Le cryptographe génère le trousseau public pour le gardien
-        cryptographe.genere_trousseau_public()?; // en cours de développement
+        let trousseau_public = cryptographe.genere_trousseau_public()?;
 
-        // Crée l'arborescence de ce nouveau foyer
-        gardien.cree_arborescence_nouveau_foyer(&onion)?;
+        // 2- LE GARDIEN TRAVAILLE SUR LE DISQUE
+
+        gardien.cree_premiere_arborescence(trousseau_public)?;
 
         // Ajout du foyer dans FeuToml
         gardien.ajoute_nouveau_foyer_dans_feu_toml(onion);

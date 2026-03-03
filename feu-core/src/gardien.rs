@@ -21,6 +21,7 @@ mod carnet;
 pub(crate) mod erreur;
 mod feu_toml;
 
+use super::cryptographe::trousseau_public::TrousseauPublic;
 use carnet::Carnet;
 use erreur::{ErreurGardien, ResultGardien};
 use feu_toml::FeuToml;
@@ -53,48 +54,31 @@ impl Gardien {
 // ── Opérations disque ────────────────────────────────────────────────────────
 
 impl Gardien {
-    /// Crée la structure de dossiers globale du nœud Feu sur le système de fichiers.
+    /// Ancre le nœud vierge sur le disque à partir du trousseau public.
     ///
-    /// Crée `~/.feu` et `~/.feu/.cles` avec les permissions `rwx------` (0o700).
-    /// Cette opération n'est valide que pour un nœud vierge — elle échoue
-    /// si l'arborescence existe déjà.
-    ///
-    /// Les dossiers des foyers ne sont pas créés ici — chaque foyer est
-    /// ajouté individuellement après la génération de ses clés.
+    /// Délègue à [`Carnet::ecrire_trousseau_public`] la création de l'arborescence
+    /// complète et l'écriture de toutes les clés chiffrées. Cette opération
+    /// n'est valide que pour un nœud vierge — elle échoue si `~/.feu` existe déjà.
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si l'arborescence existe déjà, ou si une
-    /// opération de création de dossier échoue.
-    pub(super) fn cree_premiere_arborescence(&self) -> ResultGardien<()> {
+    /// opération disque échoue.
+    pub(super) fn cree_premiere_arborescence(
+        &self,
+        trousseau_public: TrousseauPublic,
+    ) -> ResultGardien<()> {
         match self.carnet.existe() {
             true => Err(ErreurGardien::Interne(String::from(
                 "Une arborescence existe déjà.",
             ))),
             false => {
-                self.carnet.creer_dossier(&self.carnet.donne_chemin_feu())?;
-                self.carnet
-                    .creer_dossier(&self.carnet.donne_chemin_feu().join(".cles"))?;
+                // Écriture du trousseau public sur le disque
+                self.carnet.ecrire_trousseau_public(trousseau_public)?;
 
                 Ok(())
             }
         }
-    }
-
-    /// Crée l'arborescence d'un nouveau foyer sur le système de fichiers.
-    ///
-    /// Crée `~/.feu/<onion>/` et `~/.feu/<onion>/.cles/` avec les permissions
-    /// `rwx------` (0o700). Les deux dossiers sont créés en un seul appel
-    /// grâce au mode récursif de [`Carnet::creer_dossier`].
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la création échoue — permissions insuffisantes,
-    /// chemin invalide ou erreur d'entrée/sortie.
-    pub(super) fn cree_arborescence_nouveau_foyer(&self, onion: &str) -> ResultGardien<()> {
-        self.carnet
-            .creer_dossier(&self.carnet.donne_chemin_feu().join(onion).join(".cles"))?;
-        Ok(())
     }
 }
 

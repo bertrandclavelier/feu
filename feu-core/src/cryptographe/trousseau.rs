@@ -59,7 +59,8 @@
 //!   `SecretBox<StaticSecret>`
 //! - [`CleSymetrique`] — clé symétrique dans `SecretBox<[u8; 32]>`
 //! - `mdp` — mot de passe dans `Option<SecretBox<String>>` (pas de newtype)
-//! - `sel` — sel Argon2id dans `Option<[u8; 16]>` (pas secret — stocké en clair sur le disque)
+//! - `sel` — sel Argon2id dans `Option<[u8; 16]>` (pas secret — dérivé de manière déterministe
+//!   depuis la clé privée du nœud, re-dérivable depuis la seed en cas de perte du disque)
 //! - `cle_ephemere` — clé AES-256-GCM dérivée du mot de passe via Argon2id,
 //!   dans `Option<SecretBox<[u8; 32]>>` — présente uniquement le temps du
 //!   chiffrement des clés, effacée dès que le trousseau persistable est constitué.
@@ -80,12 +81,11 @@ use sha3::{Digest, Sha3_256};
 use slip10_ed25519::derive_ed25519_private_key;
 use x25519_dalek::{PublicKey, StaticSecret};
 
+const CHAINE_A_SIGNER_POUR_SEL: &str = "feu-noeud-sel";
 const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE: &str = "feu-foyer-symetrique";
 const CHAINE_A_SIGNER_POUR_PAIRE_SIGNATURE: &str = "feu-foyer-paire-signature";
 const CHAINE_A_SIGNER_POUR_PAIRE_CHIFFREMENT: &str = "feu-foyer-paire-chiffrement";
 const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu-foyer-classeur";
-
-struct AdresseOnion(String);
 
 struct CleSymetrique(SecretBox<[u8; 32]>);
 
@@ -138,7 +138,7 @@ impl TrousseauFoyer {
     ///
     /// SHA3-256 est utilisé ici en cohérence avec le reste du protocole Feu,
     /// qui retient SHA3-256 comme unique primitive de hashage.
-    fn derive_adresse_onion(&self) -> AdresseOnion {
+    fn derive_adresse_onion(&self) -> String {
         // 1. Buffer checksum (48 octets)
         let mut buf = Vec::new();
         buf.extend_from_slice(b".onion checksum");
@@ -156,7 +156,7 @@ impl TrousseauFoyer {
         data.push(0x03);
 
         // 4. Encodage
-        AdresseOnion(format!("{}.onion", BASE32.encode(&data).to_lowercase()))
+        format!("{}.onion", BASE32.encode(&data).to_lowercase())
     }
 }
 
@@ -183,18 +183,40 @@ impl Trousseau {
         }
     }
 
-    /// Génère un sel aléatoire de 16 octets et l'enregistre dans le trousseau.
+    /// Dérive le sel Argon2id depuis la clé privée du nœud et l'enregistre dans le trousseau.
     ///
-    /// Utilise [`OsRng`] pour garantir une source d'aléatoire cryptographiquement
-    /// sûre. Le sel est destiné à Argon2id — il n'est pas secret et sera stocké
-    /// en clair sur le disque aux côtés des clés chiffrées.
+    /// Signe [`CHAINE_A_SIGNER_POUR_SEL`] avec la clé privée du nœud — signature
+    /// déterministe Ed25519 (RFC 8032) — et retient les 16 premiers octets de la
+    /// signature (64 octets). Le sel n'est pas secret et sera stocké en clair sur
+    /// le disque aux côtés des clés chiffrées.
     ///
-    /// Cette méthode ne doit être appelée qu'une seule fois, à l'initialisation
-    /// du nœud. Le sel est ensuite réutilisé à chaque dérivation de la clé éphémère.
-    pub(super) fn genere_sel(&mut self) {
-        let mut octets = [0u8; 16];
-        OsRng.fill_bytes(&mut octets);
-        self.sel = Some(octets);
+    /// Cette dérivation déterministe garantit que le sel est toujours reconstituable
+    /// depuis la seed, même en cas de perte des données disque.
+    ///
+    /// # Prérequis
+    ///
+    /// La paire de signature du nœud doit être présente dans le trousseau.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la paire de signature du nœud est absente.
+    pub(super) fn genere_sel(&mut self) -> ResultCryptographe<()> {
+        match &self.paire_signature_noeud {
+            Some(valeur) => {
+                let sig = valeur
+                    .privee
+                    .sign(CHAINE_A_SIGNER_POUR_SEL.as_bytes())
+                    .to_bytes();
+
+                let mut sel = [0u8; 16];
+                sel.copy_from_slice(&sig[..16]);
+                self.sel = Some(sel);
+                Ok(())
+            }
+            None => Err(ErreurCryptographe::Interne(String::from(
+                "Problème de génération du sel.",
+            ))),
+        }
     }
 
     /// Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel du trousseau.
@@ -297,7 +319,7 @@ impl Trousseau {
             CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE,
         )?);
 
-        let cle_privee_asymetrique: SigningKey;
+        let cle_sign_priv: SigningKey;
 
         // Bloc encadrant la portée de cle_brute
         {
@@ -307,17 +329,17 @@ impl Trousseau {
                 CHAINE_A_SIGNER_POUR_PAIRE_SIGNATURE,
             )?;
 
-            cle_privee_asymetrique = SigningKey::from_bytes(&cle_brute.expose_secret());
+            cle_sign_priv = SigningKey::from_bytes(&cle_brute.expose_secret());
         }
 
-        let cle_publique = cle_privee_asymetrique.verifying_key();
+        let cle_publique = cle_sign_priv.verifying_key();
 
         let paire_signature = PaireClesSignature {
-            privee: cle_privee_asymetrique,
+            privee: cle_sign_priv,
             publique: cle_publique,
         };
 
-        let cle_privee_asymetrique: SecretBox<StaticSecret>;
+        let cle_chif_priv: SecretBox<StaticSecret>;
 
         // Bloc encadrant la portée de cle_brute
         {
@@ -326,14 +348,14 @@ impl Trousseau {
                 &cle_privee,
                 CHAINE_A_SIGNER_POUR_PAIRE_CHIFFREMENT,
             )?;
-            cle_privee_asymetrique =
+            cle_chif_priv =
                 SecretBox::new(Box::new(StaticSecret::from(*cle_brute.expose_secret())));
         }
 
-        let cle_publique = PublicKey::from(cle_privee_asymetrique.expose_secret());
+        let cle_publique = PublicKey::from(cle_chif_priv.expose_secret());
 
         let paire_chiffrement = PaireClesChiffrement {
-            privee: cle_privee_asymetrique,
+            privee: cle_chif_priv,
             publique: cle_publique,
         };
 
@@ -360,7 +382,7 @@ impl Trousseau {
         };
 
         // Récupération de l'adresse onion
-        let onion = trousseau_foyer.derive_adresse_onion().0;
+        let onion = trousseau_foyer.derive_adresse_onion();
 
         // Ajout du TrousseauFoyer dans le trousseau
         self.cles_foyers.push(trousseau_foyer);
@@ -370,7 +392,7 @@ impl Trousseau {
 
     /// Dérive 32 octets de matière clé à partir d'une signature Ed25519.
     ///
-    /// Signe `label` avec `cle_privee`, soumet la signature à HKDF-SHA3-256
+    /// Signe `texte` avec `cle_privee`, soumet la signature à HKDF-SHA3-256
     /// et retourne les 32 octets résultants. La signature intermédiaire
     /// est zéroïsée immédiatement après l'étape d'extraction.
     fn genere_cle_brute_from_signature(
@@ -480,6 +502,7 @@ impl TrousseauFoyer {
         trousseau: &Trousseau,
     ) -> ResultCryptographe<TrousseauFoyerPublic> {
         let mut trousseau_foyer_public = TrousseauFoyerPublic::new(
+            self.derive_adresse_onion(),
             trousseau.chiffre_cle(self.cle_chiffrement.0.expose_secret())?,
             trousseau.chiffre_cle(self.paire_signature.privee.as_bytes())?,
             self.paire_signature.publique.to_bytes(),
@@ -501,8 +524,8 @@ impl Trousseau {
     ///
     /// Chiffre les clés du nœud puis délègue le chiffrement de chaque foyer à
     /// [`TrousseauFoyer::genere_trousseau_foyer_public`]. Le sel est inclus en clair
-    /// dans le résultat — il sera nécessaire pour re-dériver la clé éphémère lors
-    /// du déchiffrement.
+    /// dans le résultat pour faciliter le déchiffrement en usage courant — il est
+    /// re-dérivable depuis la seed en cas de perte du disque.
     ///
     /// # Prérequis
     ///
