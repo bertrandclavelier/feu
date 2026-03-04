@@ -138,17 +138,29 @@ impl<I: InterfaceFeuCore> Feu<I> {
         cryptographe.nouveau_mdp(&self.interface_feu_core);
 
         // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
-        let onion = cryptographe.initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)?;
+        cryptographe.initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)?;
 
         // Le cryptographe génère le trousseau public pour le gardien
         let trousseau_public = cryptographe.genere_trousseau_public()?;
 
         // 2- LE GARDIEN TRAVAILLE SUR LE DISQUE
 
-        gardien.cree_premiere_arborescence(trousseau_public)?;
+        gardien.cree_premiere_arborescence(&trousseau_public)?;
 
         // Ajout du foyer dans FeuToml
-        gardien.ajoute_nouveau_foyer_dans_feu_toml(onion);
+        match trousseau_public.cles_foyers.get(0) {
+            Some(valeur) => {
+                gardien.ajout_nouveau_foyer_dans_feu_toml(valeur.adresse_onion.clone());
+            }
+            None => {
+                return Err(ErreurFeu::Gardien(String::from(
+                    "Erreur de récupération du .onion.",
+                )));
+            }
+        }
+
+        // Enregistrement de feu.toml
+        gardien.enregistrement_feu_toml()?;
 
         // Toutes les étapes ont réussi : on les intègre à la structure.
         self.gardien = Some(gardien);

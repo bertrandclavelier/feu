@@ -12,10 +12,12 @@
 //!
 //! # Convention de nommage
 //!
-//! Les méthodes suivent une convention de verbe pour distinguer leur domaine :
+//! Les méthodes suivent une convention grammaticale liée au niveau d'exécution :
 //!
-//! - `creer_` / `ecrire_` / `sauvegarder_` — opérations sur le disque
-//! - `ajouter_` / `mettre_a_jour_` — opérations en mémoire uniquement
+//! - **Nom** (`enregistrement_`, `ajout_`…) — méthode d'orchestration : prépare
+//!   et délègue à un outil de niveau inférieur.
+//! - **Verbe** (`cree_`, `ecrire_`, `ajoute_`…) — méthode d'exécution directe :
+//!   réalise elle-même l'opération sans déléguer.
 
 mod carnet;
 pub(crate) mod erreur;
@@ -43,7 +45,7 @@ impl Gardien {
     ///
     /// Retourne une erreur si le carnet ne peut pas être initialisé —
     /// notamment si la variable d'environnement `HOME` est absente.
-    pub(crate) fn new() -> ResultGardien<Self> {
+    pub(super) fn new() -> ResultGardien<Self> {
         Ok(Gardien {
             carnet: Carnet::new()?,
             feu_toml: FeuToml::new(),
@@ -66,7 +68,7 @@ impl Gardien {
     /// opération disque échoue.
     pub(super) fn cree_premiere_arborescence(
         &self,
-        trousseau_public: TrousseauPublic,
+        trousseau_public: &TrousseauPublic,
     ) -> ResultGardien<()> {
         match self.carnet.existe() {
             true => Err(ErreurGardien::Interne(String::from(
@@ -74,11 +76,29 @@ impl Gardien {
             ))),
             false => {
                 // Écriture du trousseau public sur le disque
-                self.carnet.ecrire_trousseau_public(trousseau_public)?;
+                self.carnet.ecrire_trousseau_public(&trousseau_public)?;
 
                 Ok(())
             }
         }
+    }
+
+    /// Orchestre la persistance de `feu.toml` sur le disque.
+    ///
+    /// Sérialise la configuration en mémoire via [`FeuToml::toml_en_texte`]
+    /// puis délègue l'écriture à [`Carnet::enregistre_feu_toml`].
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la sérialisation ou l'écriture échoue.
+    pub(super) fn enregistrement_feu_toml(&self) -> ResultGardien<()> {
+        // Récupération du fichier toml en texte
+        let texte = self.feu_toml.toml_en_texte()?;
+
+        // Écriture sur le disque
+        self.carnet.enregistre_feu_toml(texte)?;
+
+        Ok(())
     }
 }
 
@@ -91,9 +111,9 @@ impl Gardien {
     /// fournie par le cryptographe. L'index de dérivation et l'horodatage
     /// sont gérés par [`FeuToml`].
     ///
-    /// Cette méthode n'écrit rien sur le disque — la persistance est assurée
-    /// en dernière étape par la sauvegarde de `feu.toml` *(non encore implémentée)*.
-    pub(super) fn ajoute_nouveau_foyer_dans_feu_toml(&mut self, onion: String) {
-        self.feu_toml.ajouter_nouveau_foyer(onion);
+    /// Cette méthode n'écrit rien sur le disque — appeler ensuite
+    /// [`Gardien::enregistrement_feu_toml`] pour persister l'état.
+    pub(super) fn ajout_nouveau_foyer_dans_feu_toml(&mut self, onion: String) {
+        self.feu_toml.ajoute_nouveau_foyer_dans_feu_toml(onion);
     }
 }

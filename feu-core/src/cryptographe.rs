@@ -66,10 +66,6 @@ impl Cryptographe {
     /// La seed est zéroïsée avant le retour. Rien n'est écrit sur le disque —
     /// c'est le rôle du gardien.
     ///
-    /// # Retour
-    ///
-    /// L'adresse `.onion` du premier foyer, dérivée de sa clé publique de signature.
-    ///
     /// # Erreurs
     ///
     /// Retourne une erreur si la génération du mnémonique BIP39 échoue ou si
@@ -77,9 +73,7 @@ impl Cryptographe {
     pub(crate) fn initialise_noeud_from_nouvelle_seed(
         &mut self,
         interface: &impl InterfaceFeuCore,
-    ) -> ResultCryptographe<String> {
-        let onion: String;
-
+    ) -> ResultCryptographe<()> {
         // Bloc encadrant la portée de seed_bytes
         {
             let seed_bytes: SecretBox<[u8; 64]>;
@@ -108,7 +102,7 @@ impl Cryptographe {
             );
 
             // Ajoute le trousseau du premier foyer et retourne son adresse .onion
-            onion = self.trousseau.ajouter_trousseau_foyer(&seed_bytes, 1)?;
+            self.trousseau.ajouter_trousseau_foyer(&seed_bytes, 1)?;
             interface.afficher(
                 "Cryptographe ›› Toutes les clés nécessaires au fonctionnement d'un premier foyer
             ont été générées et mises dans mon trousseau.",
@@ -117,7 +111,7 @@ impl Cryptographe {
             // Génère le sel et le met dans le trousseau
             self.trousseau.genere_sel()?;
         }
-        Ok(onion)
+        Ok(())
     }
 
     /// Demande un nouveau mot de passe à l'utilisateur et le stocke dans le trousseau.

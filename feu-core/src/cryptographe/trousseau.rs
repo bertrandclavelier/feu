@@ -292,13 +292,11 @@ impl Trousseau {
     /// - cinq clés symétriques pour les classeurs (`feu-foyer-classeur1` à `5`)
     ///
     /// Toutes les clés brutes intermédiaires sont zéroïsées après usage.
-    ///
-    /// Retourne l'adresse `.onion` du foyer, dérivée de sa clé publique de signature.
     pub(super) fn ajouter_trousseau_foyer(
         &mut self,
         seed_bytes: &SecretBox<[u8; 64]>,
         index_foyer: u32,
-    ) -> ResultCryptographe<String> {
+    ) -> ResultCryptographe<()> {
         let cle_privee: SigningKey;
 
         // Bloc encadrant la portée de cle_brute
@@ -381,13 +379,10 @@ impl Trousseau {
             cles_chiffrement_classeurs,
         };
 
-        // Récupération de l'adresse onion
-        let onion = trousseau_foyer.derive_adresse_onion();
-
         // Ajout du TrousseauFoyer dans le trousseau
         self.cles_foyers.push(trousseau_foyer);
 
-        Ok(onion)
+        Ok(())
     }
 
     /// Dérive 32 octets de matière clé à partir d'une signature Ed25519.
@@ -430,6 +425,10 @@ impl Trousseau {
         self.mdp = Some(mot);
     }
 
+    /// Efface la clé éphémère du trousseau.
+    ///
+    /// Met `cle_ephemere` à `None` — la destruction du [`SecretBox<[u8; 32]>`] déclenche
+    /// la zéroïsation automatique de la mémoire.
     pub(super) fn efface_cle_ephemere(&mut self) {
         self.cle_ephemere = None;
     }

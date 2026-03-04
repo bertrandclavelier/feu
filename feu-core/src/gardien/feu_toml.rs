@@ -9,7 +9,7 @@
 //!
 //! ## Initialisation d'un nœud vierge
 //! [`FeuToml::new`] crée la structure initiale — sans foyer. Le premier
-//! foyer est ajouté explicitement via [`FeuToml::ajouter_foyer`] après
+//! foyer est ajouté explicitement via [`FeuToml::ajoute_nouveau_foyer_dans_feu_toml`] après
 //! la génération des clés cryptographiques.
 //!
 //! ## Ouverture d'un nœud existant
@@ -22,6 +22,7 @@
 /// pour permettre la détection et la migration des anciens formats.
 const FORMAT_VERSION: u32 = 1;
 
+use super::erreur::ResultGardien;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
@@ -92,7 +93,7 @@ impl FeuToml {
     /// Crée la structure initiale pour un nœud vierge.
     ///
     /// La liste des foyers est vide à ce stade — le premier foyer
-    /// doit être ajouté via [`ajouter_foyer`](Self::ajouter_foyer)
+    /// doit être ajouté via [`ajoute_nouveau_foyer_dans_feu_toml`](Self::ajoute_nouveau_foyer_dans_feu_toml)
     /// après la génération des clés cryptographiques.
     pub(super) fn new() -> Self {
         Self {
@@ -108,7 +109,7 @@ impl FeuToml {
     /// enregistre l'adresse `.onion` fournie par le cryptographe et horodate
     /// la création en UTC au format RFC 3339. L'index est incrémenté après
     /// l'ajout pour préparer le prochain foyer.
-    pub(super) fn ajouter_nouveau_foyer(&mut self, onion: String) {
+    pub(super) fn ajoute_nouveau_foyer_dans_feu_toml(&mut self, onion: String) {
         self.foyers.push(Foyer {
             cree_le: Utc::now().to_rfc3339(),
             index_courant: self.feu.prochain_index,
@@ -116,5 +117,14 @@ impl FeuToml {
             onion,
         });
         self.feu.prochain_index += 1;
+    }
+
+    /// Sérialise la structure en texte TOML.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la sérialisation échoue.
+    pub(super) fn toml_en_texte(&self) -> ResultGardien<String> {
+        Ok(toml::to_string(self)?)
     }
 }
