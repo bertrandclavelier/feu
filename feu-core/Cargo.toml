@@ -5,6 +5,7 @@ edition = "2024"
 license.workspace = true
 
 [dependencies]
+aead = { version = "0", features = ["stream"] }
 aes-gcm = { version = "0", features = ["std", "zeroize"] }
 argon2 = { version = "0", features = ["std"] }
 bip39 = { version = "2", features = ["rand", "french", "zeroize"] }

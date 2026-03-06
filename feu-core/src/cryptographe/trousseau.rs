@@ -49,7 +49,7 @@
 //! # État initial
 //!
 //! À l'instanciation, le trousseau est vide : `mdp` et
-//! `paire_signature_noeud` sont à `None`, `cles_foyers` est un vecteur
+//! `paire_signature_noeud` sont à `None`, `cles_foyers` est un `HashMap`
 //! vide. Les champs sont peuplés au fil du cycle de vie de la session.
 //!
 //! # Invariant
@@ -76,6 +76,7 @@
 use super::erreur::ErreurCryptographe;
 use super::erreur::ResultCryptographe;
 use super::trousseau_public::{TrousseauFoyerPublic, TrousseauPublic};
+use aead::stream::EncryptorBE32;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use argon2::Argon2;
@@ -87,6 +88,9 @@ use rand::rngs::OsRng;
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use sha3::{Digest, Sha3_256};
 use slip10_ed25519::derive_ed25519_private_key;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::Write;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 const CHAINE_A_SIGNER_POUR_SEL: &str = "feu-noeud-sel";
@@ -173,7 +177,7 @@ pub(super) struct Trousseau {
     cle_ephemere: Option<SecretBox<[u8; 32]>>,
     sel: Option<[u8; 16]>,
     paire_signature_noeud: Option<PaireClesSignature>,
-    cles_foyers: Vec<TrousseauFoyer>,
+    cles_foyers: HashMap<String, TrousseauFoyer>,
 }
 
 //
@@ -187,7 +191,7 @@ impl Trousseau {
             cle_ephemere: None,
             sel: None,
             paire_signature_noeud: None,
-            cles_foyers: Vec::new(),
+            cles_foyers: HashMap::new(),
         }
     }
 
@@ -388,7 +392,8 @@ impl Trousseau {
         };
 
         // Ajout du TrousseauFoyer dans le trousseau
-        self.cles_foyers.push(trousseau_foyer);
+        self.cles_foyers
+            .insert(trousseau_foyer.derive_adresse_onion(), trousseau_foyer);
 
         Ok(())
     }
@@ -509,7 +514,6 @@ impl TrousseauFoyer {
         trousseau: &Trousseau,
     ) -> ResultCryptographe<TrousseauFoyerPublic> {
         let mut trousseau_foyer_public = TrousseauFoyerPublic::new(
-            self.derive_adresse_onion(),
             trousseau.chiffre_cle(self.cle_chiffrement.0.expose_secret())?,
             trousseau.chiffre_cle(self.paire_signature.privee.as_bytes())?,
             self.paire_signature.publique.to_bytes(),
@@ -553,9 +557,11 @@ impl Trousseau {
                     *valeur2.publique.as_bytes(),
                 );
 
-                for e in &self.cles_foyers {
-                    trousseau_public
-                        .ajoute_trousseau_foyer_public(e.genere_trousseau_foyer_public(&self)?);
+                for (_, foyer) in &self.cles_foyers {
+                    trousseau_public.ajoute_trousseau_foyer_public(
+                        foyer.derive_adresse_onion(),
+                        foyer.genere_trousseau_foyer_public(&self)?,
+                    );
                 }
 
                 Ok(trousseau_public)
@@ -566,3 +572,24 @@ impl Trousseau {
         }
     }
 }
+
+/*
+// Partie StreamEncryptor
+impl Trousseau {
+
+    pub(super) fn cree_stream_encryptor(&self, onion, &str, fichier: File) -> ResultCryptographe<ChiffreurStream> {
+
+// Génération du nonce aléatoire
+        let mut none = [0u8; 7];
+        OsRng.fill_bytes(&mut none);
+
+        // Écriture du nonce en tête du fichier
+        fichier.write_all(&none)?;
+
+        // Création du StreamEncryptor
+        let key = Key::<Aes256Gcm>::from_slice(key_bytes);
+        Ok(())
+
+    }
+}
+*/

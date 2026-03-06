@@ -128,7 +128,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// **Phase disque — gardien**
     /// 4. Crée l'arborescence globale `~/.feu` et `~/.feu/.cles`.
     /// 5. Crée l'arborescence du premier foyer `~/.feu/<onion>/.cles`.
-    /// 6. Enregistre le foyer dans `feu.toml` en mémoire *(écriture disque non encore implémentée)*.
+    /// 6. Enregistre le foyer dans `feu.toml` et écrit sur le disque.
     ///
     /// # Erreurs
     ///
@@ -155,10 +155,10 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         gardien.cree_premiere_arborescence(&trousseau_public)?;
 
-        // Ajout du foyer dans FeuToml
-        match trousseau_public.cles_foyers.get(0) {
-            Some(valeur) => {
-                gardien.ajout_nouveau_foyer_dans_feu_toml(valeur.adresse_onion.clone());
+        // Ajout du SEUL foyer dans FeuToml (on est sûr qu'il y en a un)
+        match trousseau_public.cles_foyers.iter().next() {
+            Some((cle, _)) => {
+                gardien.ajout_nouveau_foyer_dans_feu_toml(cle.clone());
             }
             None => {
                 return Err(ErreurFeu::Gardien(String::from(
@@ -175,5 +175,17 @@ impl<I: InterfaceFeuCore> Feu<I> {
         self.cryptographe = Some(cryptographe);
 
         Ok(())
+    }
+
+    pub fn commande_fermeture_foyer(&self, onion: &str) -> ResultFeu<()> {
+        match &self.gardien {
+            Some(valeur) => {
+                // Demande au gardien d'ouvrir un fichier en écriture
+                let fichier = valeur.ouverture_fichier_ecriture(onion)?;
+
+                Ok(())
+            }
+            None => Err(ErreurFeu::Gardien(String::from("Le gardien 'est absent."))),
+        }
     }
 }

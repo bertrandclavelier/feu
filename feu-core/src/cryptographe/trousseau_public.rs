@@ -16,13 +16,14 @@
 //! et les clés publiques (Ed25519, X25519) apparaissent sans chiffrement.
 //! Ces structures sont destinées à être écrites sur le disque par le gardien.
 
+use std::collections::HashMap;
+
 /// Représentation persistable des clés d'un foyer Feu.
 ///
 /// Toutes les clés privées et symétriques sont chiffrées avec AES-256-GCM.
 /// Chaque champ chiffré suit le format :
 /// `[nonce (12 o.) | ciphertext + tag (48 o.)]` — soit 60 octets au total.
 pub(crate) struct TrousseauFoyerPublic {
-    pub(crate) adresse_onion: String,
     pub(crate) cle_chiffrement: [u8; 60], // chiffrée
     pub(crate) cle_sig_privee: [u8; 60],  // chiffrée
     pub(crate) cle_sig_pub: [u8; 32],
@@ -38,7 +39,6 @@ impl TrousseauFoyerPublic {
     /// Les clés de classeur sont ajoutées après construction via
     /// [`ajoute_cle_chiffrement_classeur`](Self::ajoute_cle_chiffrement_classeur).
     pub(crate) fn new(
-        adresse_onion: String,
         cle_chiffrement: [u8; 60],
         cle_sig_privee: [u8; 60],
         cle_sig_pub: [u8; 32],
@@ -46,7 +46,6 @@ impl TrousseauFoyerPublic {
         cle_chiff_pub: [u8; 32],
     ) -> Self {
         Self {
-            adresse_onion,
             cle_chiffrement,
             cle_sig_privee,
             cle_sig_pub,
@@ -74,7 +73,7 @@ pub(crate) struct TrousseauPublic {
     pub(crate) cle_sig_privee: [u8; 60], // chiffrée
     pub(crate) cle_sig_pub: [u8; 32],
 
-    pub(crate) cles_foyers: Vec<TrousseauFoyerPublic>,
+    pub(crate) cles_foyers: HashMap<String, TrousseauFoyerPublic>,
 }
 
 impl TrousseauPublic {
@@ -87,12 +86,16 @@ impl TrousseauPublic {
             sel,
             cle_sig_privee,
             cle_sig_pub,
-            cles_foyers: Vec::new(),
+            cles_foyers: HashMap::new(),
         }
     }
 
     /// Ajoute le trousseau public d'un foyer.
-    pub(crate) fn ajoute_trousseau_foyer_public(&mut self, trousseau: TrousseauFoyerPublic) {
-        self.cles_foyers.push(trousseau);
+    pub(crate) fn ajoute_trousseau_foyer_public(
+        &mut self,
+        onion: String,
+        trousseau: TrousseauFoyerPublic,
+    ) {
+        self.cles_foyers.insert(onion, trousseau);
     }
 }

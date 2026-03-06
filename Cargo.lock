@@ -367,6 +367,7 @@ dependencies = [
 name = "feu-core"
 version = "0.0.1"
 dependencies = [
+ "aead",
  "aes-gcm",
  "argon2",
  "bip39",

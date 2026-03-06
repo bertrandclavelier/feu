@@ -35,6 +35,7 @@ use super::cryptographe::trousseau_public::TrousseauPublic;
 use carnet::Carnet;
 use erreur::{ErreurGardien, ResultGardien};
 use feu_toml::FeuToml;
+use std::fs::File;
 
 /// Gardien des données locales du nœud Feu.
 ///
@@ -108,8 +109,11 @@ impl Gardien {
 
         Ok(())
     }
-}
 
+    pub(super) fn ouverture_fichier_ecriture(&self, onion: &str) -> ResultGardien<File> {
+        Ok(self.carnet.ouvre_fichier_ecriture(onion)?)
+    }
+}
 // ── Opérations mémoire ───────────────────────────────────────────────────────
 
 impl Gardien {

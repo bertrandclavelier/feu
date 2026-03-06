@@ -20,7 +20,10 @@ use super::erreur::ResultGardien;
 use crate::cryptographe::trousseau_public::TrousseauPublic;
 use std::env;
 use std::fs::DirBuilder;
+use std::fs::File;
+use std::fs::OpenOptions;
 use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 const FEU_TOML: &str = "feu.toml";
@@ -121,8 +124,8 @@ impl Carnet {
         )?;
 
         // Pour chaque foyer
-        for foyer in &tp.cles_foyers {
-            let chemin_foyer = &self.chemin_feu.join(&foyer.adresse_onion).join(".cles/");
+        for (onion, foyer) in &tp.cles_foyers {
+            let chemin_foyer = &self.chemin_feu.join(onion).join(".cles/");
 
             Self::creer_dossier(chemin_foyer)?;
 
@@ -131,7 +134,7 @@ impl Carnet {
                 &self
                     .chemin_feu
                     .join(".cles/")
-                    .join(format!("{}{}", &foyer.adresse_onion, ".cle")),
+                    .join(format!("{}{}", onion, ".cle")),
                 foyer.cle_chiffrement,
             )?;
 
@@ -162,5 +165,15 @@ impl Carnet {
         std::fs::write(self.chemin_feu.join(FEU_TOML), feu_toml)?;
 
         Ok(())
+    }
+
+    pub(super) fn ouvre_fichier_ecriture(&self, onion: &str) -> ResultGardien<File> {
+        let chemin = self.chemin_feu.join(onion);
+
+        Ok(OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(chemin)?)
     }
 }
