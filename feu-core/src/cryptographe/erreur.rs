@@ -35,6 +35,7 @@
 
 use aes_gcm::Error;
 use hkdf::InvalidLength;
+use std::io::Error as ErreurIO;
 use thiserror::Error;
 
 pub(crate) type ResultCryptographe<T> = Result<T, ErreurCryptographe>;
@@ -75,6 +76,13 @@ pub(crate) enum ErreurCryptographe {
     /// l'erreur est convertie en `String` via `.to_string()` — le type original est perdu.
     #[error("Le cryptographe est en galère avec AesGcm : {0}")]
     AesGcm(String),
+
+    /// Erreur d'entrée/sortie — lecture ou écriture de fichier.
+    ///
+    /// `std::io::Error` implémente `std::error::Error` — `#[from]` génère
+    /// automatiquement la conversion. Le type original est préservé dans la variante.
+    #[error("Le cryptographe est en galère avec std::io : {0}")]
+    Io(#[from] ErreurIO),
 }
 
 impl From<hkdf::InvalidLength> for ErreurCryptographe {

@@ -45,6 +45,7 @@ use secrecy::{ExposeSecret, SecretBox};
 use trousseau::Trousseau;
 use trousseau_public::TrousseauPublic;
 
+mod flux_chiffre;
 mod trousseau;
 pub(crate) mod trousseau_public;
 

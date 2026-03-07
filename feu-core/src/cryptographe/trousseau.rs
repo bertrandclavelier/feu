@@ -65,7 +65,7 @@
 //!   `ZeroizeOnDrop` (exception : `SigningKey` n'implémente pas `Zeroize`)
 //! - [`PaireClesChiffrement`] — paire de clés X25519 ; `privee` dans
 //!   `SecretBox<StaticSecret>`
-//! - [`CleSymetrique`] — clé symétrique dans `SecretBox<[u8; 32]>`
+//! - `cle_chiffrement` — clé symétrique dans `SecretBox<[u8; 32]>` (pas de newtype)
 //! - `mdp` — mot de passe dans `Option<SecretBox<String>>` (pas de newtype)
 //! - `sel` — sel Argon2id dans `Option<[u8; 16]>` (pas secret — dérivé de manière déterministe
 //!   depuis la clé privée du nœud, re-dérivable depuis la seed en cas de perte du disque)
@@ -89,8 +89,6 @@ use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use sha3::{Digest, Sha3_256};
 use slip10_ed25519::derive_ed25519_private_key;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Write;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 const CHAINE_A_SIGNER_POUR_SEL: &str = "feu-noeud-sel";
@@ -98,8 +96,6 @@ const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE: &str = "feu-foyer-symetrique"
 const CHAINE_A_SIGNER_POUR_PAIRE_SIGNATURE: &str = "feu-foyer-paire-signature";
 const CHAINE_A_SIGNER_POUR_PAIRE_CHIFFREMENT: &str = "feu-foyer-paire-chiffrement";
 const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu-foyer-classeur";
-
-struct CleSymetrique(SecretBox<[u8; 32]>);
 
 struct PaireClesSignature {
     // SigningKey n'implémente pas Zeroize (contrainte d'ed25519-dalek v2) —
@@ -115,10 +111,10 @@ struct PaireClesChiffrement {
 }
 
 struct TrousseauFoyer {
-    cle_chiffrement: CleSymetrique,
+    cle_chiffrement: SecretBox<[u8; 32]>,
     paire_signature: PaireClesSignature,
     paire_chiffrement: PaireClesChiffrement,
-    cles_chiffrement_classeurs: Vec<CleSymetrique>,
+    cles_chiffrement_classeurs: Vec<SecretBox<[u8; 32]>>,
 }
 
 impl TrousseauFoyer {
@@ -324,10 +320,10 @@ impl Trousseau {
         }
 
         // Clé symétrique de chiffrement du foyer
-        let cle_chiffrement = CleSymetrique(Trousseau::genere_cle_brute_from_signature(
+        let cle_chiffrement = Trousseau::genere_cle_brute_from_signature(
             &cle_privee,
             CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE,
-        )?);
+        )?;
 
         let cle_sign_priv: SigningKey;
 
@@ -370,17 +366,15 @@ impl Trousseau {
         };
 
         // Création des clés de chiffrement des 5 premiers classeurs
-        let mut cles_chiffrement_classeurs: Vec<CleSymetrique> = Vec::new();
+        let mut cles_chiffrement_classeurs: Vec<SecretBox<[u8; 32]>> = Vec::new();
         for i in 1..=5 {
-            cles_chiffrement_classeurs.push(CleSymetrique(
-                Trousseau::genere_cle_brute_from_signature(
-                    &cle_privee,
-                    &format!(
-                        "{}{i}",
-                        CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR
-                    ),
-                )?,
-            ));
+            cles_chiffrement_classeurs.push(Trousseau::genere_cle_brute_from_signature(
+                &cle_privee,
+                &format!(
+                    "{}{i}",
+                    CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR
+                ),
+            )?);
         }
 
         // enregistrement de toutes les clés dans un TrousseauFoyer
@@ -514,7 +508,7 @@ impl TrousseauFoyer {
         trousseau: &Trousseau,
     ) -> ResultCryptographe<TrousseauFoyerPublic> {
         let mut trousseau_foyer_public = TrousseauFoyerPublic::new(
-            trousseau.chiffre_cle(self.cle_chiffrement.0.expose_secret())?,
+            trousseau.chiffre_cle(self.cle_chiffrement.expose_secret())?,
             trousseau.chiffre_cle(self.paire_signature.privee.as_bytes())?,
             self.paire_signature.publique.to_bytes(),
             trousseau.chiffre_cle(self.paire_chiffrement.privee.expose_secret().as_bytes())?,
@@ -523,7 +517,7 @@ impl TrousseauFoyer {
 
         for e in &self.cles_chiffrement_classeurs {
             trousseau_foyer_public
-                .ajoute_cle_chiffrement_classeur(trousseau.chiffre_cle(e.0.expose_secret())?);
+                .ajoute_cle_chiffrement_classeur(trousseau.chiffre_cle(e.expose_secret())?);
         }
 
         Ok(trousseau_foyer_public)
@@ -573,23 +567,32 @@ impl Trousseau {
     }
 }
 
-/*
 // Partie StreamEncryptor
 impl Trousseau {
+    pub(super) fn cree_stream_encryptor(
+        &self,
+        onion: &str,
+    ) -> ResultCryptographe<(EncryptorBE32<Aes256Gcm>, [u8; 7])> {
+        // Génération du nonce aléatoire
+        let mut nonce = [0u8; 7];
+        OsRng.fill_bytes(&mut nonce);
 
-    pub(super) fn cree_stream_encryptor(&self, onion, &str, fichier: File) -> ResultCryptographe<ChiffreurStream> {
+        // Création encryptor
+        let encryptor;
+        match self.cles_foyers.get(onion) {
+            None => {
+                return Err(ErreurCryptographe::Interne(String::from(
+                    "Problème récupération clé privée.",
+                )));
+            }
+            Some(foyer) => {
+                // Création du StreamEncryptor
+                let key = Key::<Aes256Gcm>::from_slice(foyer.cle_chiffrement.expose_secret());
+                let cipher = Aes256Gcm::new(key);
+                encryptor = EncryptorBE32::from_aead(cipher, nonce.as_slice().into());
+            }
+        }
 
-// Génération du nonce aléatoire
-        let mut none = [0u8; 7];
-        OsRng.fill_bytes(&mut none);
-
-        // Écriture du nonce en tête du fichier
-        fichier.write_all(&none)?;
-
-        // Création du StreamEncryptor
-        let key = Key::<Aes256Gcm>::from_slice(key_bytes);
-        Ok(())
-
+        Ok((encryptor, nonce))
     }
 }
-*/
