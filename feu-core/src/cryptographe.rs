@@ -97,12 +97,12 @@ impl Cryptographe {
                 let mnemonic =
                     SecretBox::new(Box::new(Mnemonic::generate_in(Language::French, 12)?));
 
-                interface.afficher_min(
+                interface.afficher(
                     "Cryptographe ›› ATTENTION ! La seed ci-après ne sera affichée qu'une
         seule fois avant d'être détruite. Elle doit impérativement être notée et mise en sécurité.",
                 );
                 for (i, mot) in mnemonic.expose_secret().words().enumerate() {
-                    interface.afficher_min(&format!("{i:<2}- {mot}"));
+                    interface.afficher(&format!("{i:<2}- {mot}"));
                 }
 
                 seed_bytes = SecretBox::new(Box::new(mnemonic.expose_secret().to_seed(""))); // passphrase vide
@@ -150,7 +150,7 @@ impl Cryptographe {
                 self.trousseau.definit_mdp(mdp);
                 break;
             } else {
-                interface.afficher_min("Les deux entrées sont différentes. Recommencez...");
+                interface.afficher("Les deux entrées sont différentes. Recommencez...");
             }
         }
     }

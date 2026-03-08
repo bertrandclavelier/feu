@@ -37,22 +37,14 @@ pub use erreur::ResultFeu;
 /// Contrat de communication entre `feu-core` et toute interface utilisateur.
 ///
 /// Ce trait définit le canal d'échange entre le cœur du protocole et sa
-/// couche de présentation — CLI, TUI ou web. Chaque implémentation est
-/// libre de définir son niveau de verbosité : `afficher_min` garantit
-/// l'affichage de l'essentiel, `afficher` couvre le flux standard,
-/// `afficher_max` expose le détail pour les modes bavards.
-/// `afficher_erreur` signale tout échec à l'utilisateur.
+/// couche de présentation — CLI, TUI ou web. `feu-core` émet des messages
+/// via `afficher` et `afficher_erreur` sans présumer du niveau de verbosité —
+/// c'est l'interface qui décide de ce qu'elle affiche et comment.
 /// `demander` collecte une réponse interactive, `demander_mdp` collecte
 /// un mot de passe en masquant la saisie.
 pub trait InterfaceFeuCore {
-    /// Affiche un message essentiel — visible dans tous les modes.
-    fn afficher_min(&self, message: &str);
-
-    /// Affiche un message standard — visible en mode standard et max.
+    /// Affiche un message informatif.
     fn afficher(&self, message: &str);
-
-    /// Affiche un message détaillé — visible uniquement en mode max.
-    fn afficher_max(&self, message: &str);
 
     /// Affiche un message d'erreur.
     fn afficher_erreur(&self, message: &str);
@@ -103,11 +95,8 @@ impl<I: InterfaceFeuCore> Feu<I> {
     }
 
     /// Affiche la version de `feu-core` via l'interface.
-    ///
-    /// Le message est émis au niveau `afficher_min` — il est donc visible
-    /// dans tous les modes de verbosité.
     pub fn affiche_version(&self) {
-        self.interface_feu_core.afficher_min(&format!(
+        self.interface_feu_core.afficher(&format!(
             "{} version {}",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION")

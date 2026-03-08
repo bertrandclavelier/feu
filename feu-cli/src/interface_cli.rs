@@ -40,16 +40,7 @@ use std::io::BufRead;
 use std::process;
 
 /// Canal d'entrée/sortie de Feu en mode CLI.
-pub(super) struct InterfaceCli {
-    /// Niveau de verbosité de l'affichage.
-    mode_affichage: ModeAffichage,
-}
-
-enum ModeAffichage {
-    Minimal,
-    Normal,
-    Maximal,
-}
+pub(super) struct InterfaceCli {}
 
 enum SuiteCommandes {
     Continuer,
@@ -59,9 +50,8 @@ enum SuiteCommandes {
 impl InterfaceCli {
     /// Point d'entrée du REPL de Feu.
     ///
-    /// Affiche le logo et initialise l'instance [`Feu`] avec une [`InterfaceCli`]
-    /// en mode d'affichage normal, puis ouvre la boucle interactive via
-    /// [`rustyline`].
+    /// Affiche le logo et initialise l'instance [`Feu`] avec une [`InterfaceCli`],
+    /// puis ouvre la boucle interactive via [`rustyline`].
     ///
     /// Chaque itération lit une commande sur l'invite `> `, l'enregistre dans
     /// l'historique de session et la dispatche vers [`Feu`]. La boucle se termine
@@ -87,9 +77,7 @@ impl InterfaceCli {
             .truecolor(255, 90, 31)
         );
 
-        let interface_cli = Self {
-            mode_affichage: ModeAffichage::Normal,
-        };
+        let interface_cli = Self {};
         let mut feu = Feu::new(interface_cli);
 
         let mut rustyline = match DefaultEditor::new() {
@@ -140,23 +128,8 @@ impl InterfaceCli {
 }
 
 impl InterfaceFeuCore for InterfaceCli {
-    fn afficher_min(&self, message: &str) {
-        println!("{message}");
-    }
-
     fn afficher(&self, message: &str) {
-        match self.mode_affichage {
-            ModeAffichage::Normal | ModeAffichage::Maximal => {
-                println!("{message}");
-            }
-            _ => {}
-        }
-    }
-
-    fn afficher_max(&self, message: &str) {
-        if let ModeAffichage::Maximal = self.mode_affichage {
-            println!("{message}");
-        }
+        println!("{message}");
     }
 
     fn afficher_erreur(&self, message: &str) {
