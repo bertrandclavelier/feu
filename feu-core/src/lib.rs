@@ -24,15 +24,19 @@
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 compile_error!("feu-core only supports Linux and macOS.");
 
+use cryptographe::Cryptographe;
+use gardien::Gardien;
+use std::collections::HashMap;
+
+pub use erreur::ErreurFeu;
+pub use erreur::ResultFeu;
+
 mod cryptographe;
 mod erreur;
 mod gardien;
 
-use cryptographe::Cryptographe;
-use gardien::Gardien;
-
-pub use erreur::ErreurFeu;
-pub use erreur::ResultFeu;
+#[allow(dead_code)]
+const CLE_NOEUD: &str = "noeud";
 
 /// Contrat de communication entre `feu-core` et toute interface utilisateur.
 ///
@@ -58,6 +62,19 @@ pub trait InterfaceFeuCore {
     fn demander_mdp(&self, question: &str) -> String;
 }
 
+/// Catégorie d'un élément actuellement ouvert dans la session Feu.
+///
+/// Utilisé comme valeur dans [`Feu::elements_ouverts`] — la clé du
+/// `HashMap` identifie l'élément (adresse `.onion` pour un foyer,
+/// [`CLE_NOEUD`] pour le nœud), la valeur en précise la nature.
+#[allow(dead_code)]
+enum ElementsOuverts {
+    /// Le nœud Feu est allumé — gardien et cryptographe actifs en mémoire.
+    Noeud,
+    /// Un foyer est ouvert — son dossier est présent sur le disque.
+    Foyer,
+}
+
 /// Point d'entrée unique du protocole Feu.
 ///
 /// Orchestre [`Gardien`] et [`Cryptographe`] sans exposer leurs
@@ -68,6 +85,14 @@ pub trait InterfaceFeuCore {
 pub struct Feu<I: InterfaceFeuCore> {
     /// Canal de communication avec l'interface utilisateur.
     interface_feu_core: I,
+
+    /// Source de vérité unique sur l'état ouvert/fermé de chaque élément.
+    ///
+    /// La clé est l'identifiant de l'élément : adresse `.onion` pour un foyer,
+    /// [`CLE_NOEUD`] pour le nœud. La valeur précise la catégorie via
+    /// [`ElementsOuverts`]. Seul [`Feu`] insère et retire des entrées —
+    /// aucun composant interne n'y accède directement.
+    elements_ouverts: HashMap<String, ElementsOuverts>,
 
     /// Gardien des données locales — fichiers, foyers, configuration.
     /// `None` tant que le nœud n'a pas été initialisé.
@@ -89,6 +114,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
     pub fn new(interface_feu_core: I) -> Self {
         Self {
             interface_feu_core,
+            elements_ouverts: HashMap::new(),
             gardien: None,
             cryptographe: None,
         }
@@ -167,6 +193,10 @@ impl<I: InterfaceFeuCore> Feu<I> {
             }
         };
 
+        // Ajoute à `elements_ouverts'
+        self.elements_ouverts
+            .insert(cle.clone(), ElementsOuverts::Foyer);
+
         // Enregistrement de feu.toml
         gardien.enregistrement_feu_toml()?;
 
@@ -199,7 +229,13 @@ impl<I: InterfaceFeuCore> Feu<I> {
     ///
     /// Retourne une erreur si le gardien ou le cryptographe est absent,
     /// si la création de l'archive échoue, ou si la suppression du dossier échoue.
-    pub fn commande_fermeture_foyer(&self, onion: &str) -> ResultFeu<()> {
+    pub fn commande_fermeture_foyer(&mut self, onion: &str) -> ResultFeu<()> {
+        if !self.elements_ouverts.contains_key(onion) {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le foyer n'est pas ouvert.",
+            )));
+        }
+
         match (&self.gardien, &self.cryptographe) {
             (Some(gardien), Some(cryptographe)) => {
                 // Demande au gardien d'ouvrir un fichier en écriture
@@ -213,6 +249,10 @@ impl<I: InterfaceFeuCore> Feu<I> {
                 )?;
                 // Demande au gardien de supprimer le dossier `onion` en vérifant qu'une archive existe
                 gardien.suppression_dossier_onion(onion)?;
+
+                // Suppression du foyer des éléments ouvertsi
+                self.elements_ouverts.remove(onion);
+
                 Ok(())
             }
             (_, _) => Err(ErreurFeu::Gardien(String::from("Le gardien est absent."))),

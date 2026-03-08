@@ -27,6 +27,10 @@ pub enum ErreurFeu {
     Gardien(String),
     #[error("{0}")]
     Cryptographe(String),
+    /// Erreur liée à l'état de [`Feu`](crate::Feu) lui-même — état invalide,
+    /// précondition non respectée. Indépendante du gardien et du cryptographe.
+    #[error("{0}")]
+    Standard(String),
 }
 
 impl From<ErreurGardien> for ErreurFeu {
