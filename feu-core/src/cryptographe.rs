@@ -38,14 +38,19 @@
 //! données en clair. Cette centralisation est un invariant fondamental
 //! du protocole.
 
+use crate::cryptographe::flux_chiffre::Finalise;
+
 use super::InterfaceFeuCore;
 use bip39::{Language, Mnemonic};
 use erreur::ResultCryptographe;
+use flux_chiffre::EcritureChiffree;
 use secrecy::{ExposeSecret, SecretBox};
+use std::fs::File;
+use std::io::Write;
 use trousseau::Trousseau;
 use trousseau_public::TrousseauPublic;
 
-mod flux_chiffre;
+pub(crate) mod flux_chiffre;
 mod trousseau;
 pub(crate) mod trousseau_public;
 
@@ -180,5 +185,15 @@ impl Cryptographe {
         self.trousseau.efface_cle_ephemere();
 
         Ok(resultat)
+    }
+
+    pub(super) fn creation_ecriture_chiffree(
+        &self,
+        onion: &str,
+        fichier: File,
+    ) -> ResultCryptographe<impl Write + Finalise> {
+        let (encryptor, nonce) = self.trousseau.cree_stream_encryptor(onion)?;
+
+        Ok(EcritureChiffree::new(fichier, encryptor, nonce)?)
     }
 }

@@ -32,10 +32,12 @@ pub(crate) mod erreur;
 mod feu_toml;
 
 use super::cryptographe::trousseau_public::TrousseauPublic;
+use crate::cryptographe::flux_chiffre::Finalise;
 use carnet::Carnet;
 use erreur::{ErreurGardien, ResultGardien};
 use feu_toml::FeuToml;
 use std::fs::File;
+use std::io::Write;
 
 /// Gardien des données locales du nœud Feu.
 ///
@@ -110,8 +112,66 @@ impl Gardien {
         Ok(())
     }
 
+    /// Ouvre le fichier de destination `<onion>.feu` en écriture exclusive.
+    ///
+    /// Délègue au carnet la création du fichier avec les permissions `rw-------` (0o600).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier existe déjà ou si la création échoue.
     pub(super) fn ouverture_fichier_ecriture(&self, onion: &str) -> ResultGardien<File> {
         Ok(self.carnet.ouvre_fichier_ecriture(onion)?)
+    }
+
+    /// Archive et chiffre le dossier `<onion>` dans un flux AES-256-GCM-stream.
+    ///
+    /// Construit une archive tar du dossier `<onion>` en écrivant directement
+    /// dans `ecrivain` — un flux chiffré `Write + Finalise`. Les fichiers sont
+    /// archivés à la racine (`.`) sans chemin parent.
+    /// `finalise()` est appelé après le dernier chunk pour clore le stream AES-GCM.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le dossier `<onion>` est absent, si l'archivage
+    /// tar échoue, ou si la finalisation du flux chiffré échoue.
+    pub(super) fn creation_archive_chiffree<T: Write + Finalise>(
+        &self,
+        onion: &str,
+        ecrivain: T,
+    ) -> ResultGardien<()> {
+        if self.carnet.donne_chemin_onion(onion).exists() {
+            let mut builder = tar::Builder::new(ecrivain);
+
+            builder.append_dir_all(".", self.carnet.donne_chemin_onion(onion))?;
+            let ecrivain = builder.into_inner()?;
+            ecrivain.finalise().map_err(|e| ErreurGardien::Interne(e))?;
+            Ok(())
+        } else {
+            return Err(ErreurGardien::Interne(String::from(
+                "Impossible de trouver le dossier `onion` correspondant.",
+            )));
+        }
+    }
+
+    /// Supprime le dossier clair `<onion>` après vérification que l'archive existe.
+    ///
+    /// Contrôle l'existence de `<onion>.feu` avant toute suppression —
+    /// garantit qu'on ne supprime pas un dossier non archivé.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si l'archive `<onion>.feu` est absente
+    /// ou si la suppression récursive du dossier échoue.
+    pub(super) fn suppression_dossier_onion(&self, onion: &str) -> ResultGardien<()> {
+        // Vérification que l'archive existe avant de supprimer le dossier. Sinon impossible
+        if self.carnet.donne_chemin_archive(onion).exists() {
+            self.carnet.supprime_dossier_onion(onion)?;
+            Ok(())
+        } else {
+            return Err(ErreurGardien::Interne(String::from(
+                "Le gardien ne supprimera pas le dossier s'il n'est pas archivé.",
+            )));
+        }
     }
 }
 // ── Opérations mémoire ───────────────────────────────────────────────────────

@@ -33,6 +33,10 @@ use aes_gcm::Aes256Gcm;
 use std::fs::File;
 use std::io::Write;
 
+pub(crate) trait Finalise {
+    fn finalise(self) -> Result<(), String>;
+}
+
 pub(super) struct EcritureChiffree {
     fichier: File,
     encryptor: EncryptorBE32<Aes256Gcm>,
@@ -60,7 +64,9 @@ impl EcritureChiffree {
         fichier.write_all(&nonce)?;
         Ok(Self { fichier, encryptor })
     }
+}
 
+impl Finalise for EcritureChiffree {
     /// Clôt le flux chiffré et écrit le tag final dans le fichier.
     ///
     /// Consomme `self` — après appel, [`EcritureChiffree`] n'est plus utilisable.
@@ -70,13 +76,15 @@ impl EcritureChiffree {
     ///
     /// Retourne une erreur si le chiffrement du chunk final échoue ou si
     /// l'écriture dans le fichier échoue.
-    pub(super) fn finalise(mut self) -> ResultCryptographe<()> {
+    fn finalise(mut self) -> Result<(), String> {
         let last_chunk = self
             .encryptor
             .encrypt_last(b"".as_ref())
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
-        self.fichier.write_all(&last_chunk)?;
+        self.fichier
+            .write_all(&last_chunk)
+            .map_err(|e| e.to_string())?;
 
         Ok(())
     }

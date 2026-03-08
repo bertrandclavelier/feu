@@ -19,6 +19,7 @@
 use super::erreur::ResultGardien;
 use crate::cryptographe::trousseau_public::TrousseauPublic;
 use std::env;
+use std::fs;
 use std::fs::DirBuilder;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -68,6 +69,16 @@ impl Carnet {
         self.chemin_feu.exists()
     }
 
+    /// Donne le chemin du dossier `~/.feu/adresse.onion`
+    pub(super) fn donne_chemin_onion(&self, onion: &str) -> PathBuf {
+        self.chemin_feu.join(PathBuf::from(onion))
+    }
+
+    /// Donne le chemin de l'archive `adresse.onion.feu`
+    pub(super) fn donne_chemin_archive(&self, onion: &str) -> PathBuf {
+        self.chemin_feu.join(format!("{}.feu", onion))
+    }
+
     /// Crée un dossier avec les permissions `rwx------` (0o700).
     ///
     /// Crée les dossiers intermédiaires si nécessaire (`recursive`).
@@ -81,6 +92,12 @@ impl Carnet {
             .mode(0o700)
             .recursive(true)
             .create(&path)?;
+        Ok(())
+    }
+
+    /// Supprime le dossier `~/.feu/adresse.onion'
+    pub(super) fn supprime_dossier_onion(&self, onion: &str) -> ResultGardien<()> {
+        fs::remove_dir_all(self.donne_chemin_onion(onion))?;
         Ok(())
     }
 
@@ -168,12 +185,10 @@ impl Carnet {
     }
 
     pub(super) fn ouvre_fichier_ecriture(&self, onion: &str) -> ResultGardien<File> {
-        let chemin = self.chemin_feu.join(onion);
-
         Ok(OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .open(chemin)?)
+            .open(self.donne_chemin_archive(onion))?)
     }
 }

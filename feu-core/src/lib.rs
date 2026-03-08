@@ -129,12 +129,22 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// 4. Crée l'arborescence globale `~/.feu` et `~/.feu/.cles`.
     /// 5. Crée l'arborescence du premier foyer `~/.feu/<onion>/.cles`.
     /// 6. Enregistre le foyer dans `feu.toml` et écrit sur le disque.
+    /// 7. Archive et chiffre le dossier du foyer — produit `<onion>.feu`.
+    /// 8. Supprime le dossier clair `<onion>` après vérification de l'archive.
+    /// 9. Droppe le gardien et le cryptographe — le nœud est éteint à l'issue.
     ///
     /// # Erreurs
     ///
     /// Retourne une [`ErreurFeu`] à la première étape qui échoue.
-    /// Le gardien et le cryptographe ne sont stockés dans `self` que si
-    /// toutes les étapes réussissent.
+    /// Le gardien et le cryptographe sont intégrés à `self` avant l'étape 7 —
+    /// un échec à cette étape laisse `self` dans un état partiellement initialisé.
+    ///
+    /// # Dette technique
+    ///
+    /// Si [`commande_fermeture_foyer`](Self::commande_fermeture_foyer) échoue,
+    /// `self.gardien` et `self.cryptographe` sont déjà assignés et `feu.toml`
+    /// est écrit sur le disque. Un mécanisme de rollback est nécessaire pour
+    /// garantir l'atomicité complète de l'initialisation.
     pub fn initialise_noeud_vierge(&mut self) -> ResultFeu<()> {
         // Création du gardien et du cryptographe
         let mut gardien = Gardien::new()?;
@@ -156,36 +166,67 @@ impl<I: InterfaceFeuCore> Feu<I> {
         gardien.cree_premiere_arborescence(&trousseau_public)?;
 
         // Ajout du SEUL foyer dans FeuToml (on est sûr qu'il y en a un)
-        match trousseau_public.cles_foyers.iter().next() {
-            Some((cle, _)) => {
-                gardien.ajout_nouveau_foyer_dans_feu_toml(cle.clone());
+        let cle = match trousseau_public.cles_foyers.iter().next() {
+            Some((c, _)) => {
+                gardien.ajout_nouveau_foyer_dans_feu_toml(c.clone());
+                c.clone()
             }
             None => {
                 return Err(ErreurFeu::Gardien(String::from(
                     "Erreur de récupération du .onion.",
                 )));
             }
-        }
+        };
 
         // Enregistrement de feu.toml
         gardien.enregistrement_feu_toml()?;
 
-        // Toutes les étapes ont réussi : on les intègre à la structure.
+        // Toutes les étapes ont réussi : on les intègre à la structure
+        // pour une utilisation lors de la fermeture du foyer.
         self.gardien = Some(gardien);
         self.cryptographe = Some(cryptographe);
 
+        // Fermeture du foyer
+        self.commande_fermeture_foyer(&cle)?;
+
+        // On remercie le gardien et le cryptographe
+        self.gardien = None;
+        self.cryptographe = None;
         Ok(())
     }
 
+    /// Archive et chiffre le dossier d'un foyer, puis supprime le dossier clair.
+    ///
+    /// Orchestre trois opérations séquentielles :
+    /// 1. Ouvre le fichier de destination `<onion>.feu` en écriture.
+    /// 2. Crée l'archive tar chiffrée AES-256-GCM-stream du dossier `<onion>`.
+    /// 3. Supprime le dossier clair `<onion>` après vérification que l'archive existe.
+    ///
+    /// # Prérequis
+    ///
+    /// Le gardien et le cryptographe doivent être initialisés dans `self`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le gardien ou le cryptographe est absent,
+    /// si la création de l'archive échoue, ou si la suppression du dossier échoue.
     pub fn commande_fermeture_foyer(&self, onion: &str) -> ResultFeu<()> {
-        match &self.gardien {
-            Some(valeur) => {
+        match (&self.gardien, &self.cryptographe) {
+            (Some(gardien), Some(cryptographe)) => {
                 // Demande au gardien d'ouvrir un fichier en écriture
-                let fichier = valeur.ouverture_fichier_ecriture(onion)?;
+                let fichier = gardien.ouverture_fichier_ecriture(onion)?;
 
+                // Demande au cryptographe de créer un flux chiffré à transmettre au gardien
+                // pour créer l'archive chiffrée
+                gardien.creation_archive_chiffree(
+                    onion,
+                    cryptographe.creation_ecriture_chiffree(onion, fichier)?,
+                )?;
+                // Demande au gardien de supprimer le dossier `onion` en vérifant qu'une archive existe
+                gardien.suppression_dossier_onion(onion)?;
                 Ok(())
             }
-            None => Err(ErreurFeu::Gardien(String::from("Le gardien 'est absent."))),
+            (_, _) => Err(ErreurFeu::Gardien(String::from("Le gardien est absent."))),
         }
     }
 }
