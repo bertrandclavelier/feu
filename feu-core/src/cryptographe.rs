@@ -38,6 +38,7 @@
 //! données en clair. Cette centralisation est un invariant fondamental
 //! du protocole.
 
+use crate::MAX_FOYERS;
 use crate::cryptographe::flux_chiffre::Finalise;
 
 use super::InterfaceFeuCore;
@@ -75,7 +76,7 @@ impl Cryptographe {
     ///
     /// À partir de la seed, dérive et enregistre dans le trousseau de manière déterministe :
     /// - la paire de clés de signature du nœud (`m/0'`)
-    /// - l'ensemble des clés du premier foyer (`m/1'`)
+    /// - l'ensemble des clés de chaque foyer (`m/1'` à `m/MAX_FOYERS'`)
     ///
     /// La seed est zéroïsée avant le retour. Rien n'est écrit sur le disque —
     /// c'est le rôle du gardien.
@@ -83,7 +84,7 @@ impl Cryptographe {
     /// # Erreurs
     ///
     /// Retourne une erreur si la génération du mnémonique BIP39 échoue ou si
-    /// la dérivation des clés du premier foyer échoue.
+    /// la dérivation des clés d'un foyer échoue.
     pub(crate) fn initialise_noeud_from_nouvelle_seed(
         &mut self,
         interface: &impl InterfaceFeuCore,
@@ -115,12 +116,14 @@ impl Cryptographe {
             dans mon trousseau.",
             );
 
-            // Ajoute le trousseau du premier foyer et retourne son adresse .onion
-            self.trousseau.ajouter_trousseau_foyer(&seed_bytes, 1)?;
-            interface.afficher(
-                "Cryptographe ›› Toutes les clés nécessaires au fonctionnement d'un premier foyer
-            ont été générées et mises dans mon trousseau.",
-            );
+            // Ajoute les trousseaux des MAX_FOYERS
+            for i in 0..MAX_FOYERS {
+                self.trousseau.ajouter_trousseau_foyer(&seed_bytes, i)?;
+            }
+            interface.afficher(&format!(
+                "Cryptographe ›› Toutes les clés nécessaires au fonctionnement des {} foyers ont été générées et mises dans mon trousseau.",
+                MAX_FOYERS
+            ));
 
             // Génère le sel et le met dans le trousseau
             self.trousseau.genere_sel()?;

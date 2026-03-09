@@ -16,7 +16,8 @@
 //! et les clés publiques (Ed25519, X25519) apparaissent sans chiffrement.
 //! Ces structures sont destinées à être écrites sur le disque par le gardien.
 
-use std::collections::HashMap;
+use super::erreur::{ErreurCryptographe, ResultCryptographe};
+use crate::{MAX_CLASSEURS, MAX_FOYERS};
 
 /// Représentation persistable des clés d'un foyer Feu.
 ///
@@ -30,14 +31,15 @@ pub(crate) struct TrousseauFoyerPublic {
     pub(crate) cle_chiff_privee: [u8; 60], // chiffrée
     pub(crate) cle_chiff_pub: [u8; 32],
 
-    pub(crate) cles_chiffrement_classeurs: Vec<[u8; 60]>, // chiffrées
+    pub(crate) cles_chiffrement_classeurs: [Option<[u8; 60]>; MAX_CLASSEURS], // chiffrées
 }
 
 impl TrousseauFoyerPublic {
-    /// Crée un [`TrousseauFoyerPublic`] sans clés de classeur.
+    /// Crée un [`TrousseauFoyerPublic`] avec un tableau de classeurs vide.
     ///
     /// Les clés de classeur sont ajoutées après construction via
-    /// [`ajoute_cle_chiffrement_classeur`](Self::ajoute_cle_chiffrement_classeur).
+    /// [`ajoute_cle_chiffrement_classeur`](Self::ajoute_cle_chiffrement_classeur)
+    /// en précisant la `position` dans le tableau (0-indexé).
     pub(crate) fn new(
         cle_chiffrement: [u8; 60],
         cle_sig_privee: [u8; 60],
@@ -52,13 +54,27 @@ impl TrousseauFoyerPublic {
             cle_chiff_privee,
             cle_chiff_pub,
 
-            cles_chiffrement_classeurs: Vec::new(),
+            cles_chiffrement_classeurs: std::array::from_fn(|_| None),
         }
     }
 
-    /// Ajoute une clé de chiffrement de classeur chiffrée.
-    pub(crate) fn ajoute_cle_chiffrement_classeur(&mut self, cle: [u8; 60]) {
-        self.cles_chiffrement_classeurs.push(cle);
+    /// Insère une clé de chiffrement de classeur chiffrée à la `position` donnée.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si `position >= MAX_CLASSEURS`.
+    pub(crate) fn ajoute_cle_chiffrement_classeur(
+        &mut self,
+        cle: [u8; 60],
+        position: usize,
+    ) -> ResultCryptographe<()> {
+        if position >= self.cles_chiffrement_classeurs.len() {
+            return Err(ErreurCryptographe::Interne(String::from(
+                "Erreur Ajout classeur chiffré",
+            )));
+        }
+        self.cles_chiffrement_classeurs[position] = Some(cle);
+        Ok(())
     }
 }
 
@@ -73,29 +89,41 @@ pub(crate) struct TrousseauPublic {
     pub(crate) cle_sig_privee: [u8; 60], // chiffrée
     pub(crate) cle_sig_pub: [u8; 32],
 
-    pub(crate) cles_foyers: HashMap<String, TrousseauFoyerPublic>,
+    pub(crate) cles_foyers: [Option<(String, TrousseauFoyerPublic)>; MAX_FOYERS],
 }
 
 impl TrousseauPublic {
-    /// Crée un [`TrousseauPublic`] sans foyers.
+    /// Crée un [`TrousseauPublic`] avec un tableau de foyers vide.
     ///
     /// Les foyers sont ajoutés après construction via
-    /// [`ajoute_trousseau_foyer_public`](Self::ajoute_trousseau_foyer_public).
+    /// [`ajoute_trousseau_foyer_public`](Self::ajoute_trousseau_foyer_public)
+    /// en précisant la `position` dans le tableau (0-indexé).
     pub(crate) fn new(sel: [u8; 16], cle_sig_privee: [u8; 60], cle_sig_pub: [u8; 32]) -> Self {
         Self {
             sel,
             cle_sig_privee,
             cle_sig_pub,
-            cles_foyers: HashMap::new(),
+            cles_foyers: std::array::from_fn(|_| None),
         }
     }
 
-    /// Ajoute le trousseau public d'un foyer.
+    /// Insère le trousseau public d'un foyer à la `position` donnée.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si `position >= MAX_FOYERS`.
     pub(crate) fn ajoute_trousseau_foyer_public(
         &mut self,
         onion: String,
         trousseau: TrousseauFoyerPublic,
-    ) {
-        self.cles_foyers.insert(onion, trousseau);
+        position: usize,
+    ) -> ResultCryptographe<()> {
+        if position >= self.cles_foyers.len() {
+            return Err(ErreurCryptographe::Interne(String::from(
+                "Erreur ajout trousseau foyer public",
+            )));
+        }
+        self.cles_foyers[position] = Some((onion, trousseau));
+        Ok(())
     }
 }

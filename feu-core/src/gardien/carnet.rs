@@ -141,7 +141,11 @@ impl Carnet {
         )?;
 
         // Pour chaque foyer
-        for (onion, foyer) in &tp.cles_foyers {
+        for element in &tp.cles_foyers {
+            let (onion, foyer) = match element {
+                Some(valeur) => valeur,
+                None => continue,
+            };
             let chemin_foyer = &self.chemin_feu.join(onion).join(".cles/");
 
             Self::creer_dossier(chemin_foyer)?;

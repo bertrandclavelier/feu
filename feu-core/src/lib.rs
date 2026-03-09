@@ -38,6 +38,9 @@ mod gardien;
 #[allow(dead_code)]
 const CLE_NOEUD: &str = "noeud";
 
+pub(crate) const MAX_FOYERS: usize = 5;
+pub(crate) const MAX_CLASSEURS: usize = 5;
+
 /// Contrat de communication entre `feu-core` et toute interface utilisateur.
 ///
 /// Ce trait définit le canal d'échange entre le cœur du protocole et sa
@@ -137,15 +140,15 @@ impl<I: InterfaceFeuCore> Feu<I> {
     ///
     /// **Phase mémoire — cryptographe**
     /// 1. Collecte le mot de passe Feu.
-    /// 2. Génère la seed BIP39 et dérive les clés du nœud et du premier foyer.
+    /// 2. Génère la seed BIP39 et dérive les clés du nœud et des `MAX_FOYERS` foyers.
     /// 3. Dérive le sel Argon2id et chiffre les clés — produit le trousseau public.
     ///
     /// **Phase disque — gardien**
     /// 4. Crée l'arborescence globale `~/.feu` et `~/.feu/.cles`.
-    /// 5. Crée l'arborescence du premier foyer `~/.feu/<onion>/.cles`.
-    /// 6. Enregistre le foyer dans `feu.toml` et écrit sur le disque.
-    /// 7. Archive et chiffre le dossier du foyer — produit `<onion>.feu`.
-    /// 8. Supprime le dossier clair `<onion>` après vérification de l'archive.
+    /// 5. Crée l'arborescence de chaque foyer `~/.feu/<onion>/.cles`.
+    /// 6. Enregistre les `MAX_FOYERS` foyers dans `feu.toml` et écrit sur le disque.
+    /// 7. Pour chaque foyer : archive et chiffre le dossier — produit `<onion>.feu`.
+    /// 8. Supprime chaque dossier clair `<onion>` après vérification de l'archive.
     /// 9. Droppe le gardien et le cryptographe — le nœud est éteint à l'issue.
     ///
     /// # Erreurs
@@ -180,22 +183,25 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         gardien.cree_premiere_arborescence(&trousseau_public)?;
 
-        // Ajout du SEUL foyer dans FeuToml (on est sûr qu'il y en a un)
-        let cle = match trousseau_public.cles_foyers.iter().next() {
-            Some((c, _)) => {
-                gardien.ajout_nouveau_foyer_dans_feu_toml(c.clone());
-                c.clone()
-            }
-            None => {
-                return Err(ErreurFeu::Gardien(String::from(
-                    "Erreur de récupération du .onion.",
-                )));
-            }
-        };
+        // Ajout des MAX_FOYERS foyers dans FeuToml
+        let mut cles: [String; MAX_FOYERS] = std::array::from_fn(|_| String::from(""));
+        for i in 0..MAX_FOYERS {
+            cles[i] = match &trousseau_public.cles_foyers[i] {
+                Some((c, _)) => {
+                    gardien.ajout_nouveau_foyer_dans_feu_toml(c.clone());
+                    c.clone()
+                }
+                None => {
+                    return Err(ErreurFeu::Gardien(String::from(
+                        "Erreur de récupération du .onion.",
+                    )));
+                }
+            };
 
-        // Ajoute à `elements_ouverts'
-        self.elements_ouverts
-            .insert(cle.clone(), ElementsOuverts::Foyer);
+            // Ajoute à `elements_ouverts'
+            self.elements_ouverts
+                .insert(cles[i].clone(), ElementsOuverts::Foyer);
+        }
 
         // Enregistrement de feu.toml
         gardien.enregistrement_feu_toml()?;
@@ -205,8 +211,10 @@ impl<I: InterfaceFeuCore> Feu<I> {
         self.gardien = Some(gardien);
         self.cryptographe = Some(cryptographe);
 
-        // Fermeture du foyer
-        self.commande_fermeture_foyer(&cle)?;
+        // Fermeture des foyers
+        for i in 0..MAX_FOYERS {
+            self.commande_fermeture_foyer(&cles[i])?;
+        }
 
         // On remercie le gardien et le cryptographe
         self.gardien = None;

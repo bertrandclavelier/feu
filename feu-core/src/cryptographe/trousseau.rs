@@ -49,8 +49,8 @@
 //! # État initial
 //!
 //! À l'instanciation, le trousseau est vide : `mdp` et
-//! `paire_signature_noeud` sont à `None`, `cles_foyers` est un `HashMap`
-//! vide. Les champs sont peuplés au fil du cycle de vie de la session.
+//! `paire_signature_noeud` sont à `None`, `cles_foyers` est un tableau fixe
+//! de `None`. Les champs sont peuplés au fil du cycle de vie de la session.
 //!
 //! # Invariant
 //!
@@ -73,6 +73,9 @@
 //!   dans `Option<SecretBox<[u8; 32]>>` — présente uniquement le temps du
 //!   chiffrement des clés, effacée dès que le trousseau persistable est constitué.
 
+use crate::MAX_CLASSEURS;
+use crate::MAX_FOYERS;
+
 use super::erreur::ErreurCryptographe;
 use super::erreur::ResultCryptographe;
 use super::trousseau_public::{TrousseauFoyerPublic, TrousseauPublic};
@@ -88,7 +91,6 @@ use rand::rngs::OsRng;
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use sha3::{Digest, Sha3_256};
 use slip10_ed25519::derive_ed25519_private_key;
-use std::collections::HashMap;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 const CHAINE_A_SIGNER_POUR_SEL: &str = "feu-noeud-sel";
@@ -114,7 +116,7 @@ struct TrousseauFoyer {
     cle_chiffrement: SecretBox<[u8; 32]>,
     paire_signature: PaireClesSignature,
     paire_chiffrement: PaireClesChiffrement,
-    cles_chiffrement_classeurs: Vec<SecretBox<[u8; 32]>>,
+    cles_chiffrement_classeurs: [Option<SecretBox<[u8; 32]>>; MAX_CLASSEURS],
 }
 
 impl TrousseauFoyer {
@@ -173,7 +175,7 @@ pub(super) struct Trousseau {
     cle_ephemere: Option<SecretBox<[u8; 32]>>,
     sel: Option<[u8; 16]>,
     paire_signature_noeud: Option<PaireClesSignature>,
-    cles_foyers: HashMap<String, TrousseauFoyer>,
+    cles_foyers: [Option<(String, TrousseauFoyer)>; MAX_FOYERS],
 }
 
 //
@@ -187,8 +189,20 @@ impl Trousseau {
             cle_ephemere: None,
             sel: None,
             paire_signature_noeud: None,
-            cles_foyers: HashMap::new(),
+            cles_foyers: std::array::from_fn(|_| None),
         }
+    }
+
+    // Donne le TrousseauFoyer à partir de l'onion
+    fn onion_donne_trousseau_foyer(&self, onion: &str) -> Option<&TrousseauFoyer> {
+        for element in &self.cles_foyers {
+            if let Some((adresse, foyer)) = element {
+                if onion == adresse {
+                    return Some(foyer);
+                }
+            }
+        }
+        None
     }
 
     /// Dérive le sel Argon2id depuis la clé privée du nœud et l'enregistre dans le trousseau.
@@ -291,8 +305,8 @@ impl Trousseau {
 
     /// Dérive et enregistre dans le trousseau l'ensemble des clés d'un foyer.
     ///
-    /// À partir de `seed_bytes` et de `index_foyer`, dérive via SLIP-0010
-    /// une clé mère (`m/index_foyer'`), puis en tire par signature + HKDF-SHA3-256 :
+    /// À partir de `seed_bytes` et de `position`, dérive via SLIP-0010
+    /// une clé mère (`m/(position+1)'`), puis en tire par signature + HKDF-SHA3-256 :
     ///
     /// - une clé symétrique de chiffrement du foyer
     /// - une paire de clés Ed25519 de signature
@@ -303,8 +317,11 @@ impl Trousseau {
     pub(super) fn ajouter_trousseau_foyer(
         &mut self,
         seed_bytes: &SecretBox<[u8; 64]>,
-        index_foyer: u32,
+        position: usize,
     ) -> ResultCryptographe<()> {
+        // L'index de dérivation est position + 1
+        let index_foyer = (position + 1) as u32;
+
         let cle_privee: SigningKey;
 
         // Bloc encadrant la portée de cle_brute
@@ -366,13 +383,15 @@ impl Trousseau {
         };
 
         // Création des clés de chiffrement des 5 premiers classeurs
-        let mut cles_chiffrement_classeurs: Vec<SecretBox<[u8; 32]>> = Vec::new();
-        for i in 1..=5 {
-            cles_chiffrement_classeurs.push(Trousseau::genere_cle_brute_from_signature(
+        let mut cles_chiffrement_classeurs: [Option<SecretBox<[u8; 32]>>; MAX_CLASSEURS] =
+            std::array::from_fn(|_| None);
+        for i in 0..MAX_CLASSEURS {
+            cles_chiffrement_classeurs[i] = Some(Trousseau::genere_cle_brute_from_signature(
                 &cle_privee,
                 &format!(
-                    "{}{i}",
-                    CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR
+                    "{}{}",
+                    CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR,
+                    i + 1,
                 ),
             )?);
         }
@@ -386,8 +405,13 @@ impl Trousseau {
         };
 
         // Ajout du TrousseauFoyer dans le trousseau
-        self.cles_foyers
-            .insert(trousseau_foyer.derive_adresse_onion(), trousseau_foyer);
+        if position >= self.cles_foyers.len() {
+            return Err(ErreurCryptographe::Interne(String::from(
+                "Problème indice tableau.",
+            )));
+        }
+        self.cles_foyers[position] =
+            Some((trousseau_foyer.derive_adresse_onion(), trousseau_foyer));
 
         Ok(())
     }
@@ -515,9 +539,17 @@ impl TrousseauFoyer {
             self.paire_chiffrement.publique.to_bytes(),
         );
 
-        for e in &self.cles_chiffrement_classeurs {
-            trousseau_foyer_public
-                .ajoute_cle_chiffrement_classeur(trousseau.chiffre_cle(e.expose_secret())?);
+        for i in 0..MAX_CLASSEURS {
+            if let Some(cle) = &self.cles_chiffrement_classeurs[i] {
+                trousseau_foyer_public.ajoute_cle_chiffrement_classeur(
+                    trousseau.chiffre_cle(cle.expose_secret())?,
+                    i,
+                )?;
+            } else {
+                return Err(ErreurCryptographe::Interne(String::from(
+                    "Erreur génération du trousseau foyer public",
+                )));
+            }
         }
 
         Ok(trousseau_foyer_public)
@@ -551,11 +583,14 @@ impl Trousseau {
                     *valeur2.publique.as_bytes(),
                 );
 
-                for (_, foyer) in &self.cles_foyers {
-                    trousseau_public.ajoute_trousseau_foyer_public(
-                        foyer.derive_adresse_onion(),
-                        foyer.genere_trousseau_foyer_public(&self)?,
-                    );
+                for i in 0..MAX_FOYERS {
+                    if let Some((onion, foyer)) = &self.cles_foyers[i] {
+                        trousseau_public.ajoute_trousseau_foyer_public(
+                            onion.clone(),
+                            foyer.genere_trousseau_foyer_public(&self)?,
+                            i,
+                        )?;
+                    }
                 }
 
                 Ok(trousseau_public)
@@ -579,7 +614,7 @@ impl Trousseau {
 
         // Création encryptor
         let encryptor;
-        match self.cles_foyers.get(onion) {
+        match self.onion_donne_trousseau_foyer(onion) {
             None => {
                 return Err(ErreurCryptographe::Interne(String::from(
                     "Problème récupération clé privée.",
