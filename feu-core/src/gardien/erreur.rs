@@ -21,9 +21,9 @@
 //! # Conversion des erreurs tierces
 //!
 //! Les trois erreurs tierces — `std::env::VarError`, `std::io::Error` et
-//! `toml::ser::Error` — implémentent toutes `std::error::Error`. `#[from]`
-//! (thiserror) génère automatiquement leur conversion. Le type original est
-//! préservé dans la variante et peut être inspecté ou ré-affiché.
+//! `std::num::ParseIntError` — implémentent `std::error::Error`.
+//! `#[from]` (thiserror) génère automatiquement leur conversion. Le type
+//! original est préservé dans la variante et peut être inspecté ou ré-affiché.
 
 use std::env::VarError;
 
@@ -45,7 +45,7 @@ pub(crate) enum ErreurGardien {
     #[error("Le gardien est en galère avec une opération d'entrée/sortie : {0}")]
     IoError(#[from] std::io::Error),
 
-    /// Erreur de sérialisation TOML émise par la crate `toml`.
-    #[error("Le gardien est en galère avec une opération TOML : {0}")]
-    TomlError(#[from] toml::ser::Error),
+    /// Erreur de parsing émise lors de la conversion d'une chaîne en entier.
+    #[error("Le gardien est en galère avec une valeur à transformer : {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
 }

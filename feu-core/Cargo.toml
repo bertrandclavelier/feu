@@ -9,18 +9,15 @@ aead = { version = "0", features = ["stream"] }
 aes-gcm = { version = "0", features = ["std", "zeroize"] }
 argon2 = { version = "0", features = ["std"] }
 bip39 = { version = "2", features = ["rand", "french", "zeroize"] }
-chrono = { version = "0.4", features = ["serde"] }
 data-encoding = { version = "2", features = ["alloc"] }
 ed25519-dalek = { version = "2", features = ["zeroize"] }
 hkdf = "0"
 rand = "0"
 secrecy = "0"
-serde = {version = "1", features = ["derive"]}
 sha3 = "0"
 slip10_ed25519 = "0"
 tar = "0"
 thiserror = "2"
-toml = "1"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 

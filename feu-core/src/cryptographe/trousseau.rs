@@ -512,6 +512,42 @@ impl Trousseau {
             }
         }
     }
+
+    /// Déchiffre une clé de 60 octets (`nonce || ciphertext || tag`) avec AES-256-GCM.
+    ///
+    /// Extrait le nonce des 12 premiers octets, déchiffre les 48 octets restants
+    /// (`ciphertext` de 32 octets + `auth tag` de 16 octets) et retourne les
+    /// 32 octets en clair. Si le mot de passe est incorrect, la vérification
+    /// de l'auth tag AES-GCM échoue — c'est le mécanisme de vérification du mot de passe.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé éphémère est absente, si l'auth tag est invalide
+    /// (mot de passe incorrect), ou si la conversion du résultat en `[u8; 32]` échoue.
+    pub(super) fn dechiffre_cle(&self, cle: &[u8; 60]) -> ResultCryptographe<SecretBox<[u8; 32]>> {
+        match &self.cle_ephemere {
+            None => Err(ErreurCryptographe::Interne(String::from(
+                "Problème de chiffrement des clés.",
+            ))),
+            Some(valeur) => {
+                // Conversion de la clé éphémère brute en Key<Aes256Gcm>
+                let key = Key::<Aes256Gcm>::from_slice(valeur.expose_secret());
+
+                // Création du cipher à partir de key
+                let cipher = Aes256Gcm::new(key);
+
+                // Déchiffrement de la clé
+                let cle_dechiffree =
+                    cipher.decrypt(Nonce::from_slice(&cle[0..12]), &cle[12..60])?;
+
+                let resultat = cle_dechiffree.try_into().map_err(|_| {
+                    ErreurCryptographe::Interne(String::from("Erreur déchiffrement."))
+                })?;
+
+                Ok(SecretBox::new(Box::new(resultat)))
+            }
+        }
+    }
 }
 
 //
@@ -599,6 +635,42 @@ impl Trousseau {
                 "Problème génération du trousseau public.",
             ))),
         }
+    }
+
+    /// Reconstruit la paire de signature du nœud à partir d'un [`TrousseauPublic`].
+    ///
+    /// Charge le sel, déchiffre la clé privée de signature du nœud via
+    /// [`dechiffre_cle`](Self::dechiffre_cle), et reconstitue la paire Ed25519
+    /// en mémoire. Le déchiffrement échoue si le mot de passe est incorrect —
+    /// c'est le seul mécanisme de vérification du mot de passe dans Feu.
+    ///
+    /// Les clés des foyers ne sont pas chargées ici — chaque foyer est
+    /// déchiffré séparément lors de son ouverture explicite.
+    ///
+    /// # Prérequis
+    ///
+    /// La clé éphémère doit être présente dans le trousseau — dérivée par
+    /// [`derive_cle_ephemere`](Self::derive_cle_ephemere).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le déchiffrement échoue ou si la clé publique
+    /// ne peut pas être reconstruite depuis les octets lus.
+    pub(super) fn trousseau_public_vers_trousseau(
+        &mut self,
+        tp: &TrousseauPublic,
+    ) -> ResultCryptographe<()> {
+        self.sel = Some(tp.sel);
+        let cle_dechiffree = self.dechiffre_cle(&tp.cle_sig_privee)?;
+        let cle_pub = tp.cle_sig_pub;
+
+        self.paire_signature_noeud = Some(PaireClesSignature {
+            privee: SigningKey::from_bytes(&cle_dechiffree.expose_secret()),
+            publique: VerifyingKey::from_bytes(&cle_pub).map_err(|_| {
+                ErreurCryptographe::Interne(String::from("Erreur récupération de clé."))
+            })?,
+        });
+        Ok(())
     }
 }
 

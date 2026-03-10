@@ -16,7 +16,7 @@
 //! Les noms de fichiers du protocole sont définis comme constantes privées
 //! au niveau du module — point de vérité unique pour toute l'arborescence.
 
-use super::erreur::ResultGardien;
+use super::erreur::{ErreurGardien, ResultGardien};
 use crate::cryptographe::trousseau_public::TrousseauPublic;
 use std::env;
 use std::fs;
@@ -27,7 +27,7 @@ use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-const FEU_TOML: &str = "feu.toml";
+const FEU_CONFIGURATION: &str = "config.feu";
 const FEU_SEL: &str = "sel.feu";
 const CLE_NOEUD_SIG_PRIV: &str = "feu_sig.priv";
 const CLE_NOEUD_SIG_PUB: &str = "feu_sig.pub";
@@ -65,7 +65,7 @@ impl Carnet {
     }
 
     /// Indique si le dossier `~/.feu` existe sur le système de fichiers.
-    pub(super) fn existe(&self) -> bool {
+    pub(super) fn existe_arborescence_noeud(&self) -> bool {
         self.chemin_feu.exists()
     }
 
@@ -176,16 +176,82 @@ impl Carnet {
         Ok(())
     }
 
-    /// Écrit le contenu de `feu.toml` sur le disque.
+    /// Lit le sel Argon2id depuis `~/.feu/.cles/sel.feu`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 16 octets.
+    pub(super) fn lire_pour_donner_sel(&self) -> ResultGardien<[u8; 16]> {
+        Ok(std::fs::read(&self.chemin_feu.join(".cles").join(FEU_SEL))?
+            .try_into()
+            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?)
+    }
+
+    /// Lit la clé privée de signature du nœud depuis `~/.feu/.cles/feu_sig.priv`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 60 octets.
+    pub(super) fn lire_pour_donner_cle_sig_privee(&self) -> ResultGardien<[u8; 60]> {
+        Ok(
+            std::fs::read(&self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV))?
+                .try_into()
+                .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?,
+        )
+    }
+
+    /// Lit la clé publique de signature du nœud depuis `~/.feu/.cles/feu_sig.pub`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 32 octets.
+    pub(super) fn lire_pour_donner_cle_sig_pub(&self) -> ResultGardien<[u8; 32]> {
+        Ok(
+            std::fs::read(&self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB))?
+                .try_into()
+                .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?,
+        )
+    }
+
+    /// Lit la clé symétrique de chiffrement d'un foyer depuis `~/.feu/.cles/<onion>.cle`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 60 octets.
+    pub(super) fn lire_pour_donner_cle_chiffrement_foyer(
+        &self,
+        onion: &str,
+    ) -> ResultGardien<[u8; 60]> {
+        Ok(std::fs::read(
+            &self
+                .chemin_feu
+                .join(".cles/")
+                .join(format!("{}{}", onion, ".cle")),
+        )?
+        .try_into()
+        .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?)
+    }
+
+    /// Écrit le contenu de `config.feu` sur le disque.
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si l'écriture échoue.
-    pub(super) fn enregistre_feu_toml(&self, feu_toml: String) -> ResultGardien<()> {
-        // Écriture du fichier feu.toml
-        std::fs::write(self.chemin_feu.join(FEU_TOML), feu_toml)?;
+    pub(super) fn enregistre_configuration(&self, configuration: String) -> ResultGardien<()> {
+        std::fs::write(self.chemin_feu.join(FEU_CONFIGURATION), configuration)?;
 
         Ok(())
+    }
+
+    /// Lit le contenu de `config.feu` depuis le disque et le retourne en `String`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent ou illisible.
+    pub(super) fn ouvre_configuration(&self) -> ResultGardien<String> {
+        Ok(std::fs::read_to_string(
+            self.chemin_feu.join(FEU_CONFIGURATION),
+        )?)
     }
 
     pub(super) fn ouvre_fichier_ecriture(&self, onion: &str) -> ResultGardien<File> {

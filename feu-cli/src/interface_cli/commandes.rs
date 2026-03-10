@@ -29,8 +29,14 @@ pub(super) fn traite_commande(
     _arguments: &str,
 ) -> SuiteCommandes {
     match commande {
+        "allume" => {
+            if let Err(e) = feu.commande_allumage_noeud() {
+                eprintln!("Erreur d'allumage du nœud : {}", e)
+            }
+            SuiteCommandes::Continuer
+        }
         "initialise" => {
-            if let Err(e) = feu.initialise_noeud_vierge() {
+            if let Err(e) = feu.commande_initialise_noeud_vierge() {
                 eprintln!("Erreur d'initialisation du nœud : {}", e)
             }
             SuiteCommandes::Continuer
@@ -39,9 +45,9 @@ pub(super) fn traite_commande(
             liste_commande();
             SuiteCommandes::Continuer
         }
-        "quitter" => SuiteCommandes::Quitter,
+        "quitte" => SuiteCommandes::Quitter,
         "version" => {
-            feu.affiche_version();
+            feu.commande_affiche_version();
             SuiteCommandes::Continuer
         }
         _ => {
@@ -54,8 +60,9 @@ pub(super) fn traite_commande(
 /// Fonction qui affiche la liste des commandes disponibles
 fn liste_commande() {
     println!("Commandes disponibles :");
+    println!("{:<12} | allume le noeud", "allume");
     println!("{:<12} | initialise un nœud vierge", "initialise");
     println!("{:<12} | liste les commandes disponibles", "liste");
-    println!("{:<12} | quitter Feu", "quitter");
+    println!("{:<12} | quitter Feu", "quitte");
     println!("{:<12} | affiche la version de `Feu`", "version");
 }

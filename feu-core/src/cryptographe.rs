@@ -63,7 +63,7 @@ pub(crate) struct Cryptographe {
 
 impl Cryptographe {
     /// Crée le cryptographe de [`Feu`].
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Cryptographe {
             trousseau: Trousseau::new(),
         }
@@ -85,7 +85,7 @@ impl Cryptographe {
     ///
     /// Retourne une erreur si la génération du mnémonique BIP39 échoue ou si
     /// la dérivation des clés d'un foyer échoue.
-    pub(crate) fn initialise_noeud_from_nouvelle_seed(
+    pub(super) fn initialise_noeud_from_nouvelle_seed(
         &mut self,
         interface: &impl InterfaceFeuCore,
     ) -> ResultCryptographe<()> {
@@ -158,6 +158,16 @@ impl Cryptographe {
         }
     }
 
+    /// Collecte le mot de passe Feu via l'interface et le stocke dans le trousseau.
+    ///
+    /// Le mot de passe est encapsulé dans [`SecretBox`] dès réception.
+    /// Il doit être effacé via [`Trousseau::efface_mdp`] dès qu'il n'est plus nécessaire.
+    pub(super) fn demande_mdp(&mut self, interface: &impl InterfaceFeuCore) {
+        let mdp = SecretBox::new(Box::new(interface.demander_mdp("Entrez le mot de passe :")));
+
+        self.trousseau.definit_mdp(mdp);
+    }
+
     /// Produit le trousseau public chiffré à partir des clés du trousseau en mémoire.
     ///
     /// Enchaîne trois opérations séquentielles :
@@ -198,5 +208,36 @@ impl Cryptographe {
         let (encryptor, nonce) = self.trousseau.cree_stream_encryptor(onion)?;
 
         Ok(EcritureChiffree::new(fichier, encryptor, nonce)?)
+    }
+
+    /// Déverrouille le trousseau à partir d'un [`TrousseauPublic`] existant.
+    ///
+    /// Enchaîne quatre opérations séquentielles :
+    ///
+    /// 1. Collecte le mot de passe Feu via l'interface.
+    /// 2. Dérive la clé éphémère AES-256-GCM via Argon2id(mot de passe, sel).
+    /// 3. Tente de déchiffrer la clé privée de signature du nœud — un mot de passe
+    ///    incorrect provoque un échec AES-GCM (auth tag invalide) qui est propagé
+    ///    comme erreur. C'est le mécanisme de vérification du mot de passe.
+    /// 4. Efface le mot de passe et la clé éphémère de la mémoire.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la dérivation Argon2id échoue, si le mot de passe
+    /// est incorrect, ou si la reconstruction de la clé de signature échoue.
+    pub(super) fn ouverture_trousseau(
+        &mut self,
+        tp: &TrousseauPublic,
+        interface: &impl InterfaceFeuCore,
+    ) -> ResultCryptographe<()> {
+        self.demande_mdp(interface);
+        self.trousseau.derive_cle_ephemere()?;
+
+        self.trousseau.trousseau_public_vers_trousseau(tp)?;
+
+        self.trousseau.efface_mdp();
+        self.trousseau.efface_cle_ephemere();
+
+        Ok(())
     }
 }
