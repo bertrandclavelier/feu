@@ -456,6 +456,14 @@ impl Trousseau {
         self.mdp = Some(mot);
     }
 
+    /// Définit le sel Argon2id du trousseau.
+    ///
+    /// Doit être appelé avant [`derive_cle_ephemere`](Self::derive_cle_ephemere)
+    /// qui en a besoin pour dériver la clé éphémère.
+    pub(super) fn definit_sel(&mut self, sel: [u8; 16]) {
+        self.sel = Some(sel);
+    }
+
     /// Efface la clé éphémère du trousseau.
     ///
     /// Met `cle_ephemere` à `None` — la destruction du [`SecretBox<[u8; 32]>`] déclenche
@@ -639,8 +647,8 @@ impl Trousseau {
 
     /// Reconstruit la paire de signature du nœud à partir d'un [`TrousseauPublic`].
     ///
-    /// Charge le sel, déchiffre la clé privée de signature du nœud via
-    /// [`dechiffre_cle`](Self::dechiffre_cle), et reconstitue la paire Ed25519
+    /// Déchiffre la clé privée de signature du nœud via
+    /// [`dechiffre_cle`](Self::dechiffre_cle) et reconstitue la paire Ed25519
     /// en mémoire. Le déchiffrement échoue si le mot de passe est incorrect —
     /// c'est le seul mécanisme de vérification du mot de passe dans Feu.
     ///
@@ -649,7 +657,8 @@ impl Trousseau {
     ///
     /// # Prérequis
     ///
-    /// La clé éphémère doit être présente dans le trousseau — dérivée par
+    /// Le sel et la clé éphémère doivent être présents dans le trousseau —
+    /// chargés respectivement par [`definit_sel`](Self::definit_sel) et
     /// [`derive_cle_ephemere`](Self::derive_cle_ephemere).
     ///
     /// # Erreurs
@@ -660,7 +669,6 @@ impl Trousseau {
         &mut self,
         tp: &TrousseauPublic,
     ) -> ResultCryptographe<()> {
-        self.sel = Some(tp.sel);
         let cle_dechiffree = self.dechiffre_cle(&tp.cle_sig_privee)?;
         let cle_pub = tp.cle_sig_pub;
 

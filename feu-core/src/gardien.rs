@@ -108,7 +108,7 @@ impl Configuration {
 /// Orchestre les opérations sur le système de fichiers via son [`Carnet`]
 /// et maintient en mémoire la configuration globale via [`Configuration`].
 /// Aucun autre composant n'accède directement au disque.
-pub(crate) struct Gardien {
+pub(super) struct Gardien {
     carnet: Carnet,
     configuration: Configuration,
 }
@@ -148,6 +148,21 @@ impl Gardien {
             configuration: Configuration::new_from_string(&carnet.ouvre_configuration()?)?,
             carnet,
         })
+    }
+
+    /// Construit le tableau de session des foyers depuis la configuration en mémoire.
+    ///
+    /// Retourne un tableau de `MAX_FOYERS` tuples `(false, adresse_onion)` —
+    /// tous les foyers sont marqués éteints à l'allumage du nœud.
+    pub(super) fn creation_tableau_session_foyers(&self) -> [(bool, String); MAX_FOYERS] {
+        let mut t: [(bool, String); MAX_FOYERS] =
+            std::array::from_fn(|_| (false, String::from("")));
+
+        for i in 0..MAX_FOYERS {
+            t[i] = (false, self.configuration.adresses_onion[i].clone());
+        }
+
+        t
     }
 }
 

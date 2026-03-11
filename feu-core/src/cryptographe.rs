@@ -212,14 +212,15 @@ impl Cryptographe {
 
     /// Déverrouille le trousseau à partir d'un [`TrousseauPublic`] existant.
     ///
-    /// Enchaîne quatre opérations séquentielles :
+    /// Enchaîne cinq opérations séquentielles :
     ///
     /// 1. Collecte le mot de passe Feu via l'interface.
-    /// 2. Dérive la clé éphémère AES-256-GCM via Argon2id(mot de passe, sel).
-    /// 3. Tente de déchiffrer la clé privée de signature du nœud — un mot de passe
+    /// 2. Charge le sel depuis le [`TrousseauPublic`] fourni.
+    /// 3. Dérive la clé éphémère AES-256-GCM via Argon2id(mot de passe, sel).
+    /// 4. Tente de déchiffrer la clé privée de signature du nœud — un mot de passe
     ///    incorrect provoque un échec AES-GCM (auth tag invalide) qui est propagé
     ///    comme erreur. C'est le mécanisme de vérification du mot de passe.
-    /// 4. Efface le mot de passe et la clé éphémère de la mémoire.
+    /// 5. Efface le mot de passe et la clé éphémère de la mémoire.
     ///
     /// # Erreurs
     ///
@@ -231,6 +232,7 @@ impl Cryptographe {
         interface: &impl InterfaceFeuCore,
     ) -> ResultCryptographe<()> {
         self.demande_mdp(interface);
+        self.trousseau.definit_sel(tp.sel);
         self.trousseau.derive_cle_ephemere()?;
 
         self.trousseau.trousseau_public_vers_trousseau(tp)?;

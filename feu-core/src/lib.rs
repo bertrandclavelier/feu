@@ -34,8 +34,8 @@ mod cryptographe;
 mod erreur;
 mod gardien;
 
-pub(crate) const MAX_FOYERS: usize = 3;
-pub(crate) const MAX_CLASSEURS: usize = 5;
+pub const MAX_FOYERS: usize = 3;
+pub const MAX_CLASSEURS: usize = 5;
 
 /// Contrat de communication entre `feu-core` et toute interface utilisateur.
 ///
@@ -81,6 +81,14 @@ impl Session {
             noeud: false,
             foyers: std::array::from_fn(|_| (false, String::from(""))),
         }
+    }
+
+    /// Remplace le tableau des foyers par celui fourni.
+    ///
+    /// Utilisé à l'allumage pour peupler la session avec les adresses
+    /// lues depuis `config.feu`.
+    fn definition_foyers(&mut self, t: [(bool, String); MAX_FOYERS]) {
+        self.foyers = t;
     }
 
     /// Retourne l'adresse `.onion` du foyer à la position `indice`.
@@ -302,17 +310,24 @@ impl<I: InterfaceFeuCore> Feu<I> {
     ///    de passe est incorrect, le déchiffrement AES-GCM échoue et l'erreur
     ///    est propagée. C'est le mécanisme de vérification du mot de passe.
     /// 6. Efface le mot de passe et la clé éphémère de la mémoire.
-    /// 7. Marque le nœud comme actif dans la session.
+    /// 7. Peuple la session avec les adresses `.onion` des foyers lues depuis
+    ///    `config.feu` — tous les foyers sont marqués éteints à ce stade.
+    /// 8. Marque le nœud comme actif dans la session.
     ///
-    /// Les foyers ne sont pas chargés à cette étape — chaque foyer est ouvert
-    /// explicitement via une commande dédiée.
+    /// Les foyers ne sont pas déchiffrés à cette étape — chaque foyer est
+    /// allumé explicitement via une commande dédiée.
     ///
     /// # Erreurs
     ///
-    /// Retourne une [`ErreurFeu`] si l'arborescence `~/.feu` est introuvable,
-    /// si `config.feu` est absent ou illisible, si un fichier de clé est absent
-    /// ou de taille incorrecte, ou si le mot de passe est incorrect.
+    /// Retourne une [`ErreurFeu`] si le nœud est déjà allumé, si l'arborescence
+    /// `~/.feu` est introuvable, si `config.feu` est absent ou illisible, si un
+    /// fichier de clé est absent ou de taille incorrecte, ou si le mot de passe
+    /// est incorrect.
     pub fn commande_allumage_noeud(&mut self) -> ResultFeu<()> {
+        if self.session.noeud {
+            return Err(ErreurFeu::Standard(String::from("Le nœud est déjà allumé")));
+        }
+
         let gardien = Gardien::ouvre_nouveau()?;
         let mut cryptographe = Cryptographe::new();
 
@@ -320,6 +335,9 @@ impl<I: InterfaceFeuCore> Feu<I> {
             &gardien.lecture_pour_creation_trousseau_public()?,
             &self.interface_feu_core,
         )?;
+
+        self.session
+            .definition_foyers(gardien.creation_tableau_session_foyers());
 
         self.gardien = Some(gardien);
         self.cryptographe = Some(cryptographe);
@@ -371,5 +389,13 @@ impl<I: InterfaceFeuCore> Feu<I> {
             }
             (_, _) => Err(ErreurFeu::Gardien(String::from("Le gardien est absent."))),
         }
+    }
+
+    /// Retourne l'état courant des foyers de la session.
+    ///
+    /// Chaque élément du tableau est un tuple `(allumé, adresse_onion)`.
+    /// Les adresses sont vides tant que le nœud n'a pas été allumé.
+    pub fn commande_liste_foyers(&self) -> [(bool, String); MAX_FOYERS] {
+        self.session.foyers.clone()
     }
 }
