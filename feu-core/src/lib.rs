@@ -61,6 +61,17 @@ pub trait InterfaceFeuCore {
     fn demander_mdp(&self, question: &str) -> String;
 }
 
+struct Foyer {
+    onion: String,
+    est_ouvert: bool,
+}
+
+impl Foyer {
+    fn new(onion: String, est_ouvert: bool) -> Self {
+        Self { onion, est_ouvert }
+    }
+}
+
 /// État de la session courante — foyers ouverts et leurs adresses `.onion`.
 ///
 /// Maintient pour chaque foyer un tuple `(ouvert, onion)` indexé par
@@ -71,7 +82,7 @@ struct Session {
     /// `true` si le nœud est allumé (trousseau déverrouillé), `false` sinon.
     noeud: bool,
     /// État et adresse de chaque foyer — `(ouvert, adresse_onion)`.
-    foyers: [(bool, String); MAX_FOYERS],
+    foyers: [Foyer; MAX_FOYERS],
 }
 
 impl Session {
@@ -79,8 +90,20 @@ impl Session {
     fn new() -> Self {
         Self {
             noeud: false,
-            foyers: std::array::from_fn(|_| (false, String::from(""))),
+            foyers: std::array::from_fn(|_| Foyer {
+                onion: String::from(""),
+                est_ouvert: false,
+            }),
         }
+    }
+
+    fn donne_liste_foyers(&self) -> [(bool, String); MAX_FOYERS] {
+        let mut tableau: [(bool, String); MAX_FOYERS] =
+            std::array::from_fn(|_| (false, String::from("")));
+        for i in 0..MAX_FOYERS {
+            tableau[i] = (self.foyers[i].est_ouvert, self.foyers[i].onion.clone());
+        }
+        tableau
     }
 
     /// Remplace le tableau des foyers par celui fourni.
@@ -88,21 +111,23 @@ impl Session {
     /// Utilisé à l'allumage pour peupler la session avec les adresses
     /// lues depuis `config.feu`.
     fn definition_foyers(&mut self, t: [(bool, String); MAX_FOYERS]) {
-        self.foyers = t;
+        for i in 0..MAX_FOYERS {
+            self.foyers[i] = Foyer::new(t[i].1.clone(), t[i].0);
+        }
     }
 
-    /// Retourne l'adresse `.onion` du foyer à la position `indice`.
+    /// Retourne l'adresse `.onion` du foyer à la position `index`.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si `indice >= MAX_FOYERS`.
-    fn indice_vers_onion(&self, indice: usize) -> ResultFeu<&str> {
-        if indice >= MAX_FOYERS {
+    /// Retourne une erreur si `index >= MAX_FOYERS`.
+    fn index_vers_onion(&self, index: usize) -> ResultFeu<&str> {
+        if index >= MAX_FOYERS {
             Err(ErreurFeu::Standard(String::from(
                 "Adresse onion introuvable",
             )))
         } else {
-            Ok(&self.foyers[indice].1)
+            Ok(&self.foyers[index].onion)
         }
     }
 
@@ -111,13 +136,13 @@ impl Session {
     /// # Erreurs
     ///
     /// Retourne une erreur si l'adresse n'est pas trouvée dans la session.
-    fn onion_vers_indice(&self, onion: &str) -> ResultFeu<usize> {
-        for i in 0..MAX_FOYERS {
-            if self.foyers[i].1 == onion {
-                return Ok(i);
+    fn onion_vers_index(&self, onion: &str) -> ResultFeu<usize> {
+        for index in 0..MAX_FOYERS {
+            if self.foyers[index].onion == onion {
+                return Ok(index);
             }
         }
-        Err(ErreurFeu::Standard(String::from("Indice introuvable")))
+        Err(ErreurFeu::Standard(String::from("Index introuvable")))
     }
 
     /// Indique si le foyer identifié par `onion` est actuellement ouvert.
@@ -126,9 +151,7 @@ impl Session {
     ///
     /// Retourne une erreur si l'adresse n'est pas trouvée dans la session.
     fn onion_est_ouvert(&self, onion: &str) -> ResultFeu<bool> {
-        let indice = self.onion_vers_indice(onion)?;
-
-        Ok(self.foyers[indice].0)
+        Ok(self.foyers[self.onion_vers_index(onion)?].est_ouvert)
     }
 
     /// Modifie le statut d'ouverture du foyer identifié par `onion`.
@@ -137,9 +160,7 @@ impl Session {
     ///
     /// Retourne une erreur si l'adresse n'est pas trouvée dans la session.
     fn change_statut_onion(&mut self, onion: &str, valeur: bool) -> ResultFeu<()> {
-        let indice = self.onion_vers_indice(onion)?;
-
-        self.foyers[indice].0 = valeur;
+        self.foyers[self.onion_vers_index(onion)?].est_ouvert = valeur;
 
         Ok(())
     }
@@ -234,10 +255,10 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// garantir l'atomicité complète de l'initialisation.
     pub fn commande_initialise_noeud_vierge(&mut self) -> ResultFeu<()> {
         // Création du gardien et du cryptographe
-        let mut gardien = Gardien::new()?;
+        let gardien = Gardien::new()?;
         let mut cryptographe = Cryptographe::new();
 
-        if gardien.existance_arborescence() {
+        if gardien.existence_arborescence() {
             return Err(ErreurFeu::Standard(String::from(
                 "Une arborescence existe déjà.",
             )));
@@ -245,34 +266,26 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         // 1- LE CRYPTOGRAPHE TRAVAILLE EN MÉMOIRE
 
-        // Le cryptographe demande à l'utilisateur de définir un mot de passe 'Feu'
-        cryptographe.nouveau_mdp(&self.interface_feu_core);
-
         // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
         cryptographe.initialise_noeud_from_nouvelle_seed(&self.interface_feu_core)?;
 
         // Le cryptographe génère le trousseau public pour le gardien
-        let trousseau_public = cryptographe.genere_trousseau_public()?;
+        let trousseau_public_complet = cryptographe.donne_trousseau_public_complet()?;
 
         // 2- LE GARDIEN TRAVAILLE SUR LE DISQUE
 
-        gardien.cree_premiere_arborescence(&trousseau_public)?;
+        gardien.cree_premiere_arborescence(&trousseau_public_complet)?;
 
         // Ajout des MAX_FOYERS foyers dans la configuration
-        let mut cles: [String; MAX_FOYERS] = std::array::from_fn(|_| String::from(""));
         for i in 0..MAX_FOYERS {
-            cles[i] = match &trousseau_public.cles_foyers[i] {
-                Some((c, _)) => {
-                    gardien.ajout_nouveau_foyer_dans_configuration(c.clone(), i);
-                    self.session.foyers[i] = (true, c.clone());
-                    c.clone()
-                }
-                None => {
-                    return Err(ErreurFeu::Gardien(String::from(
-                        "Erreur de récupération du .onion.",
-                    )));
-                }
-            };
+            self.session.foyers[i] = Foyer::new(
+                String::from(
+                    trousseau_public_complet
+                        .donne_trousseau_public_foyer(i)?
+                        .donne_onion(),
+                ),
+                true,
+            );
         }
 
         // Enregistrement de config.feu
@@ -285,7 +298,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         // Fermeture des foyers
         for i in 0..MAX_FOYERS {
-            self.commande_fermeture_foyer(&cles[i])?;
+            self.commande_fermeture_foyer(&self.session.foyers[i].onion.clone())?;
         }
 
         // On remercie le gardien et le cryptographe
@@ -330,15 +343,13 @@ impl<I: InterfaceFeuCore> Feu<I> {
         let gardien = Gardien::ouvre_nouveau()?;
         let mut cryptographe = Cryptographe::new();
 
-        cryptographe.ouverture_trousseau(
-            &gardien.lecture_pour_creation_trousseau_public()?,
+        cryptographe.recoit_trousseau_public_noeud(
+            &gardien.lecture_pour_creation_trousseau_public_noeud()?,
             &self.interface_feu_core,
         )?;
 
         self.session
             .definition_foyers(gardien.creation_tableau_session_foyers());
-
-        cryptographe.efface_mdp_et_cle_ephemere();
 
         self.gardien = Some(gardien);
         self.cryptographe = Some(cryptographe);
@@ -387,7 +398,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
         if index >= MAX_FOYERS {
             return Err(ErreurFeu::Standard(String::from("Index foyer trop élevé.")));
         }
-        let onion = self.session.indice_vers_onion(index)?;
+        let onion = self.session.index_vers_onion(index)?;
 
         if self.session.onion_est_ouvert(onion)? {
             return Err(ErreurFeu::Standard(String::from(
@@ -397,22 +408,18 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         match (&mut self.gardien, &mut self.cryptographe) {
             (Some(g), Some(c)) => {
-                c.demande_mdp(&self.interface_feu_core);
-                c.derivation_cle_ephemere()?;
-
                 let (fichier, cle) = g.ouverture_fichier_lecture(&onion)?;
 
-                let lecture_dechiffree = c.creation_lecture_dechiffree(fichier, cle)?;
+                let lecture_dechiffree =
+                    c.donne_lecture_dechiffree(fichier, cle, &self.interface_feu_core)?;
 
                 g.creation_dossier_desarchive(onion, lecture_dechiffree)?;
 
-                let tp = g.creation_trousseau_foyer_public(onion)?;
+                let trousseau_public_foyer = g.creation_trousseau_foyer_public(onion)?;
 
-                c.ouverture_trousseau_foyer(tp, index, onion)?;
+                c.recoit_trousseau_public_foyer(trousseau_public_foyer, index)?;
 
-                c.efface_mdp_et_cle_ephemere();
-
-                self.session.foyers[index].0 = true;
+                self.session.foyers[index].est_ouvert = true;
                 Ok(())
             }
             (_, _) => Err(ErreurFeu::Standard(String::from(
@@ -452,7 +459,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
                 // pour créer l'archive chiffrée
                 gardien.creation_archive_chiffree(
                     onion,
-                    cryptographe.creation_ecriture_chiffree(onion, fichier)?,
+                    cryptographe.donne_ecriture_chiffree(onion, fichier)?,
                 )?;
                 // Demande au gardien de supprimer le dossier `onion` en vérifant qu'une archive existe
                 gardien.suppression_dossier_onion(onion)?;
@@ -471,6 +478,6 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// Chaque élément du tableau est un tuple `(allumé, adresse_onion)`.
     /// Les adresses sont vides tant que le nœud n'a pas été allumé.
     pub fn commande_liste_foyers(&self) -> [(bool, String); MAX_FOYERS] {
-        self.session.foyers.clone()
+        self.session.donne_liste_foyers().clone()
     }
 }

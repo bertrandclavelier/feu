@@ -16,9 +16,9 @@
 //! Les noms de fichiers du protocole sont définis comme constantes privées
 //! au niveau du module — point de vérité unique pour toute l'arborescence.
 
+use crate::MAX_FOYERS;
 use super::erreur::{ErreurGardien, ResultGardien};
-use crate::cryptographe::trousseau_public::TrousseauFoyerPublic;
-use crate::cryptographe::trousseau_public::TrousseauPublic;
+use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
 use std::env;
 use std::fs;
 use std::fs::DirBuilder;
@@ -80,6 +80,7 @@ impl Carnet {
         self.chemin_feu.join(format!("{}.feu", onion))
     }
 
+    /// Retourne le chemin racine du nœud `~/.feu`.
     pub(super) fn donne_chemin_feu(&self) -> PathBuf {
         self.chemin_feu.clone()
     }
@@ -100,7 +101,7 @@ impl Carnet {
         Ok(())
     }
 
-    /// Supprime le dossier `~/.feu/adresse.onion'
+    /// Supprime le dossier `~/.feu/adresse.onion`
     pub(super) fn supprime_dossier_onion(&self, onion: &str) -> ResultGardien<()> {
         fs::remove_dir_all(self.donne_chemin_onion(onion))?;
         Ok(())
@@ -126,32 +127,33 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur à la première opération disque qui échoue.
-    pub(super) fn ecrire_trousseau_public(&self, tp: &TrousseauPublic) -> ResultGardien<()> {
+    pub(super) fn ecrire_trousseau_public_complet(&self, trousseau_public_complet: &TrousseauPublicComplet) -> ResultGardien<()> {
         Self::creer_dossier(&self.chemin_feu)?;
         Self::creer_dossier(&self.chemin_feu.join(".cles"))?;
 
         // Écriture du sel
-        std::fs::write(&self.chemin_feu.join(".cles").join(FEU_SEL), tp.sel)?;
+        std::fs::write(&self.chemin_feu.join(".cles").join(FEU_SEL), trousseau_public_complet.donne_trousseau_public_noeud().donne_sel())?;
 
         // Écriture de la clé privée du nœud
         std::fs::write(
             &self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV),
-            tp.cle_sig_privee,
+            trousseau_public_complet.donne_trousseau_public_noeud().donne_cle_sig_privee(),
         )?;
 
         // Écriture de la clé publique du nœud
         std::fs::write(
             &self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB),
-            tp.cle_sig_pub,
+            trousseau_public_complet.donne_trousseau_public_noeud().donne_cle_sig_pub(),
         )?;
 
-        // Pour chaque foyer
-        for element in &tp.cles_foyers {
-            let (onion, foyer) = match element {
-                Some(valeur) => valeur,
-                None => continue,
+        // Pour chaque foyer            
+        for i in 0..MAX_FOYERS {
+            let foyer = match trousseau_public_complet.donne_trousseau_public_foyer(i) {
+                Ok(valeur) => valeur,
+                Err(_) => continue,
             };
-            let chemin_foyer = &self.chemin_feu.join(onion).join(".cles/");
+            
+            let chemin_foyer = &self.chemin_feu.join(foyer.donne_onion()).join(".cles/");
 
             Self::creer_dossier(chemin_foyer)?;
 
@@ -160,20 +162,20 @@ impl Carnet {
                 &self
                     .chemin_feu
                     .join(".cles/")
-                    .join(format!("{}{}", onion, ".cle")),
-                foyer.cle_chiffrement,
+                    .join(format!("{}{}", foyer.donne_onion(), ".cle")),
+                foyer.donne_cle_chiffrement(),
             )?;
 
             // Écriture de la paire de clés sig du foyer
-            std::fs::write(chemin_foyer.join(CLE_FOYER_SIG_PRIV), foyer.cle_sig_privee)?;
-            std::fs::write(chemin_foyer.join(CLE_FOYER_SIG_PUB), foyer.cle_sig_pub)?;
+            std::fs::write(chemin_foyer.join(CLE_FOYER_SIG_PRIV), foyer.donne_cle_sig_privee())?;
+            std::fs::write(chemin_foyer.join(CLE_FOYER_SIG_PUB), foyer.donne_cle_sig_pub())?;
 
             // Écriture de la paire de clés chif du foyer
             std::fs::write(
                 chemin_foyer.join(CLE_FOYER_CHIF_PRIV),
-                foyer.cle_chiff_privee,
+                foyer.donne_cle_chiff_privee(),
             )?;
-            std::fs::write(chemin_foyer.join(CLE_FOYER_CHIF_PUB), foyer.cle_chiff_pub)?;
+            std::fs::write(chemin_foyer.join(CLE_FOYER_CHIF_PUB), foyer.donne_cle_chiff_pub())?;
 
             // Cette version de Feu ne prends pas encore en charge les clés des classeurs
         }
@@ -197,7 +199,7 @@ impl Carnet {
     pub(super) fn creer_trousseau_public(
         &self,
         onion: &str,
-    ) -> ResultGardien<TrousseauFoyerPublic> {
+    ) -> ResultGardien<TrousseauPublicFoyer> {
         let cle_chiffrement = std::fs::read(
             &self
                 .chemin_feu
@@ -227,7 +229,8 @@ impl Carnet {
 
         // Cette version de Feu ne prends pas encore en charge les clés des classeurs
 
-        Ok(TrousseauFoyerPublic::new(
+        Ok(TrousseauPublicFoyer::new(
+            String::from(onion),
             cle_chiffrement,
             cle_sig_privee,
             cle_sig_pub,
@@ -314,6 +317,11 @@ impl Carnet {
         )?)
     }
 
+    /// Ouvre le fichier `<onion>.feu` en écriture exclusive avec les permissions `rw-------` (0o600).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier existe déjà ou si la création échoue.
     pub(super) fn ouvre_fichier_ecriture(&self, onion: &str) -> ResultGardien<File> {
         Ok(OpenOptions::new()
             .write(true)

@@ -52,18 +52,21 @@ use std::fs::File;
 use std::io::{Read, Write};
 
 use trousseau::Trousseau;
-use trousseau_public::{TrousseauFoyerPublic, TrousseauPublic};
+use trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud};
 
 pub(crate) mod flux_chiffre;
 mod trousseau;
-pub(crate) mod trousseau_public;
+pub(crate) mod trousseaux_publics;
 
-pub(crate) mod erreur;
+pub(super) mod erreur;
 
-pub(crate) struct Cryptographe {
+pub(super) struct Cryptographe {
     trousseau: Trousseau,
 }
 
+//
+// Construction
+//
 impl Cryptographe {
     /// Crée le cryptographe de [`Feu`].
     pub(super) fn new() -> Self {
@@ -71,7 +74,12 @@ impl Cryptographe {
             trousseau: Trousseau::new(),
         }
     }
+}
 
+//
+// Interface publique
+//
+impl Cryptographe {
     /// Génère une nouvelle seed BIP39 et initialise le trousseau pour un nouveau nœud.
     ///
     /// La seed mnémonique (12 mots, français) est affichée via `interface` une seule
@@ -92,6 +100,8 @@ impl Cryptographe {
         &mut self,
         interface: &impl InterfaceFeuCore,
     ) -> ResultCryptographe<()> {
+        self.initialisation_nouveau_mdp(interface);
+
         // Bloc encadrant la portée de seed_bytes
         {
             let seed_bytes: SecretBox<[u8; 64]>;
@@ -134,6 +144,157 @@ impl Cryptographe {
         Ok(())
     }
 
+    /// Produit le trousseau public chiffré à partir des clés du trousseau en mémoire.
+    ///
+    /// Enchaîne trois opérations séquentielles :
+    ///
+    /// 1. Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel.
+    /// 2. Chiffre toutes les clés du trousseau via [`Trousseau::genere_trousseau_public`].
+    /// 3. Efface le mot de passe et la clé éphémère du trousseau.
+    ///
+    /// # Prérequis
+    ///
+    /// Le mot de passe et le sel doivent être présents dans le trousseau —
+    /// définis au cours de [`initialise_noeud_from_nouvelle_seed`](Self::initialise_noeud_from_nouvelle_seed).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la dérivation de la clé éphémère ou le chiffrement
+    /// d'une clé échoue.
+    pub(super) fn donne_trousseau_public_complet(
+        &mut self,
+    ) -> ResultCryptographe<TrousseauPublicComplet> {
+        self.derivation_cle_ephemere()?;
+
+        let resultat = self.trousseau.genere_trousseau_public()?;
+
+        self.efface_mdp_et_cle_ephemere();
+
+        Ok(resultat)
+    }
+
+    /// Crée un flux d'écriture chiffré AES-256-GCM-stream pour le foyer `onion`.
+    ///
+    /// Délègue la création de l'encrypteur à [`Trousseau::cree_stream_encryptor`] et
+    /// retourne un [`EcritureChiffree`] prêt à recevoir les données à chiffrer.
+    /// Le nonce est écrit en tête du fichier par [`EcritureChiffree`].
+    ///
+    /// # Prérequis
+    ///
+    /// Le foyer identifié par `onion` doit être présent dans le trousseau.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le foyer est introuvable ou si la création du flux échoue.
+    pub(super) fn donne_ecriture_chiffree(
+        &self,
+        onion: &str,
+        fichier: File,
+    ) -> ResultCryptographe<impl Write + Finalise> {
+        let (encryptor, nonce) = self.trousseau.cree_stream_encryptor(onion)?;
+
+        Ok(EcritureChiffree::new(fichier, encryptor, nonce)?)
+    }
+
+    /// Crée un flux de lecture déchiffré AES-256-GCM-stream pour un foyer.
+    ///
+    /// Déchiffre la clé symétrique du foyer (`cle`) avec la clé éphémère du trousseau,
+    /// construit le cipher AES-256-GCM correspondant et retourne un [`LectureDechiffree`]
+    /// prêt à lire l'archive `<onion>.feu`. Le nonce est lu en tête du fichier.
+    ///
+    /// # Prérequis
+    ///
+    /// Le mot de passe doit pouvoir être collecté via `interface` — la clé éphémère
+    /// est dérivée en interne avant le déchiffrement.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la dérivation de la clé éphémère échoue, si le déchiffrement
+    /// de la clé symétrique échoue, ou si la lecture du nonce en tête de fichier échoue.
+    pub(super) fn donne_lecture_dechiffree(
+        &mut self,
+        fichier: File,
+        cle: [u8; 60],
+        interface: &impl InterfaceFeuCore,
+    ) -> ResultCryptographe<impl Read> {
+        self.demande_mdp(interface);
+        self.derivation_cle_ephemere()?;
+
+        let cle_dechiffree = self.trousseau.dechiffre_cle(&cle)?;
+        let key = Key::<Aes256Gcm>::from_slice(cle_dechiffree.expose_secret());
+        let cipher = Aes256Gcm::new(key);
+
+        Ok(LectureDechiffree::new(fichier, cipher)?)
+    }
+
+    /// Déverrouille le trousseau à partir d'un [`TrousseauPublicNoeud`] existant.
+    ///
+    /// Enchaîne quatre opérations séquentielles :
+    ///
+    /// 1. Collecte le mot de passe Feu via l'interface.
+    /// 2. Charge le sel depuis le [`TrousseauPublicNoeud`] fourni.
+    /// 3. Dérive la clé éphémère AES-256-GCM via Argon2id(mot de passe, sel).
+    /// 4. Tente de déchiffrer la clé privée de signature du nœud — un mot de passe
+    ///    incorrect provoque un échec AES-GCM (auth tag invalide) qui est propagé
+    ///    comme erreur. C'est le mécanisme de vérification du mot de passe.
+    ///
+    /// Le mot de passe et la clé éphémère sont effacés avant le retour.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la dérivation Argon2id échoue, si le mot de passe
+    /// est incorrect, ou si la reconstruction de la clé de signature échoue.
+    pub(super) fn recoit_trousseau_public_noeud(
+        &mut self,
+        trousseau_public_noeud: &TrousseauPublicNoeud,
+        interface: &impl InterfaceFeuCore,
+    ) -> ResultCryptographe<()> {
+        self.demande_mdp(interface);
+        self.trousseau
+            .definit_sel(trousseau_public_noeud.donne_sel());
+        self.derivation_cle_ephemere()?;
+
+        self.trousseau
+            .trousseau_public_noeud_vers_trousseau(trousseau_public_noeud)?;
+
+        self.efface_mdp_et_cle_ephemere();
+
+        Ok(())
+    }
+
+    /// Déchiffre et charge les clés d'un foyer dans le trousseau.
+    ///
+    /// Déchiffre toutes les clés privées et symétriques du [`TrousseauPublicFoyer`]
+    /// fourni avec la clé éphémère et les enregistre dans le trousseau à la position
+    /// `index`. L'adresse `.onion` est lue depuis le [`TrousseauPublicFoyer`].
+    /// Le mot de passe et la clé éphémère sont effacés avant le retour.
+    ///
+    /// # Prérequis
+    ///
+    /// La clé éphémère doit être présente dans le trousseau.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé éphémère est absente ou si le déchiffrement
+    /// d'une clé échoue.
+    pub(super) fn recoit_trousseau_public_foyer(
+        &mut self,
+        trousseau_public_foyer: TrousseauPublicFoyer,
+        index: usize,
+    ) -> ResultCryptographe<()> {
+        self.trousseau
+            .trousseau_public_foyer_vers_trousseau_foyer(&trousseau_public_foyer, index)?;
+
+        self.efface_mdp_et_cle_ephemere();
+
+        Ok(())
+    }
+}
+
+//
+// Helpers internes — gestion des secrets éphémères
+//
+impl Cryptographe {
     /// Demande un nouveau mot de passe à l'utilisateur et le stocke dans le trousseau.
     ///
     /// Sollicite deux saisies successives via `interface`. Si elles diffèrent,
@@ -143,7 +304,7 @@ impl Cryptographe {
     /// Le mot de passe est encapsulé dans [`SecretBox`] dès réception et
     /// remplace tout mot de passe précédemment défini (l'ancien est zéroïsé
     /// automatiquement au remplacement).
-    pub(super) fn nouveau_mdp(&mut self, interface: &impl InterfaceFeuCore) {
+    fn initialisation_nouveau_mdp(&mut self, interface: &impl InterfaceFeuCore) {
         loop {
             let mdp = SecretBox::new(Box::new(
                 interface.demander_mdp("Entrez un nouveau mot de passe :"),
@@ -164,8 +325,9 @@ impl Cryptographe {
     /// Collecte le mot de passe Feu via l'interface et le stocke dans le trousseau.
     ///
     /// Le mot de passe est encapsulé dans [`SecretBox`] dès réception.
-    /// Il doit être effacé via [`Trousseau::efface_mdp`] dès qu'il n'est plus nécessaire.
-    pub(super) fn demande_mdp(&mut self, interface: &impl InterfaceFeuCore) {
+    /// Il doit être effacé via [`efface_mdp_et_cle_ephemere`](Self::efface_mdp_et_cle_ephemere)
+    /// dès qu'il n'est plus nécessaire.
+    fn demande_mdp(&mut self, interface: &impl InterfaceFeuCore) {
         let mdp = SecretBox::new(Box::new(interface.demander_mdp("Entrez le mot de passe :")));
 
         self.trousseau.definit_mdp(mdp);
@@ -181,7 +343,7 @@ impl Cryptographe {
     ///
     /// Retourne une erreur si le mot de passe ou le sel est absent, ou si la
     /// dérivation Argon2id échoue.
-    pub(super) fn derivation_cle_ephemere(&mut self) -> ResultCryptographe<()> {
+    fn derivation_cle_ephemere(&mut self) -> ResultCryptographe<()> {
         self.trousseau.derive_cle_ephemere()?;
         Ok(())
     }
@@ -190,133 +352,8 @@ impl Cryptographe {
     ///
     /// Doit être appelé dès que les opérations nécessitant ces secrets sont terminées.
     /// La destruction des [`SecretBox`] déclenche la zéroïsation automatique de la mémoire.
-    pub(super) fn efface_mdp_et_cle_ephemere(&mut self) {
+    fn efface_mdp_et_cle_ephemere(&mut self) {
         self.trousseau.efface_mdp();
         self.trousseau.efface_cle_ephemere();
-    }
-
-    /// Produit le trousseau public chiffré à partir des clés du trousseau en mémoire.
-    ///
-    /// Enchaîne trois opérations séquentielles :
-    ///
-    /// 1. Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel.
-    /// 2. Chiffre toutes les clés du trousseau via [`Trousseau::genere_trousseau_public`].
-    /// 3. Efface le mot de passe et la clé éphémère du trousseau.
-    ///
-    /// # Prérequis
-    ///
-    /// Le mot de passe et le sel doivent être présents dans le trousseau —
-    /// définis respectivement par [`nouveau_mdp`](Self::nouveau_mdp) et
-    /// [`initialise_noeud_from_nouvelle_seed`](Self::initialise_noeud_from_nouvelle_seed).
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la dérivation de la clé éphémère ou le chiffrement
-    /// d'une clé échoue.
-    pub(super) fn genere_trousseau_public(&mut self) -> ResultCryptographe<TrousseauPublic> {
-        // Génère la clé éphémère
-        self.trousseau.derive_cle_ephemere()?;
-
-        // Génération du trousseau public
-        let resultat = self.trousseau.genere_trousseau_public()?;
-
-        // Effacement du mot de passe et de la clé éphémère du trousseau (mémoire)
-        self.trousseau.efface_mdp();
-        self.trousseau.efface_cle_ephemere();
-
-        Ok(resultat)
-    }
-
-    pub(super) fn creation_ecriture_chiffree(
-        &self,
-        onion: &str,
-        fichier: File,
-    ) -> ResultCryptographe<impl Write + Finalise> {
-        let (encryptor, nonce) = self.trousseau.cree_stream_encryptor(onion)?;
-
-        Ok(EcritureChiffree::new(fichier, encryptor, nonce)?)
-    }
-
-    /// Crée un flux de lecture déchiffré AES-256-GCM-stream pour un foyer.
-    ///
-    /// Déchiffre la clé symétrique du foyer (`cle`) avec la clé éphémère du trousseau,
-    /// construit le cipher AES-256-GCM correspondant et retourne un [`LectureDechiffree`]
-    /// prêt à lire l'archive `<onion>.feu`. Le nonce est lu en tête du fichier.
-    ///
-    /// # Prérequis
-    ///
-    /// La clé éphémère doit être présente dans le trousseau —
-    /// dérivée préalablement via [`derivation_cle_ephemere`](Self::derivation_cle_ephemere).
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la clé éphémère est absente, si le déchiffrement
-    /// de la clé symétrique échoue, ou si la lecture du nonce en tête de fichier échoue.
-    pub(super) fn creation_lecture_dechiffree(
-        &mut self,
-        fichier: File,
-        cle: [u8; 60],
-    ) -> ResultCryptographe<impl Read> {
-        let cle_dechiffree = self.trousseau.dechiffre_cle(&cle)?;
-        let key = Key::<Aes256Gcm>::from_slice(cle_dechiffree.expose_secret());
-        let cipher = Aes256Gcm::new(key);
-
-        Ok(LectureDechiffree::new(fichier, cipher)?)
-    }
-
-    /// Déverrouille le trousseau à partir d'un [`TrousseauPublic`] existant.
-    ///
-    /// Enchaîne cinq opérations séquentielles :
-    ///
-    /// 1. Collecte le mot de passe Feu via l'interface.
-    /// 2. Charge le sel depuis le [`TrousseauPublic`] fourni.
-    /// 3. Dérive la clé éphémère AES-256-GCM via Argon2id(mot de passe, sel).
-    /// 4. Tente de déchiffrer la clé privée de signature du nœud — un mot de passe
-    ///    incorrect provoque un échec AES-GCM (auth tag invalide) qui est propagé
-    ///    comme erreur. C'est le mécanisme de vérification du mot de passe.
-    /// 5. Efface le mot de passe et la clé éphémère de la mémoire.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la dérivation Argon2id échoue, si le mot de passe
-    /// est incorrect, ou si la reconstruction de la clé de signature échoue.
-    pub(super) fn ouverture_trousseau(
-        &mut self,
-        tp: &TrousseauPublic,
-        interface: &impl InterfaceFeuCore,
-    ) -> ResultCryptographe<()> {
-        self.demande_mdp(interface);
-        self.trousseau.definit_sel(tp.sel);
-        self.trousseau.derive_cle_ephemere()?;
-
-        self.trousseau.trousseau_public_vers_trousseau(tp)?;
-
-        Ok(())
-    }
-
-    /// Déchiffre et charge les clés d'un foyer dans le trousseau.
-    ///
-    /// Déchiffre toutes les clés privées et symétriques du [`TrousseauFoyerPublic`]
-    /// fourni avec la clé éphémère et les enregistre dans le trousseau à la position
-    /// `index` sous l'adresse `onion`.
-    ///
-    /// # Prérequis
-    ///
-    /// La clé éphémère doit être présente dans le trousseau.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la clé éphémère est absente ou si le déchiffrement
-    /// d'une clé échoue.
-    pub(super) fn ouverture_trousseau_foyer(
-        &mut self,
-        tp: TrousseauFoyerPublic,
-        index: usize,
-        onion: &str,
-    ) -> ResultCryptographe<()> {
-        self.trousseau
-            .trousseau_foyer_public_vers_trousseau_foyer(&tp, index, onion)?;
-
-        Ok(())
     }
 }

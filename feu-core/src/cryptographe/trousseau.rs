@@ -49,7 +49,7 @@
 //! # État initial
 //!
 //! À l'instanciation, le trousseau est vide : `mdp` et
-//! `paire_signature_noeud` sont à `None`, `cles_foyers` est un tableau fixe
+//! `paire_signature_noeud` sont à `None`, `trousseaux_foyers` est un tableau fixe
 //! de `None`. Les champs sont peuplés au fil du cycle de vie de la session.
 //!
 //! # Invariant
@@ -78,7 +78,9 @@ use crate::MAX_FOYERS;
 
 use super::erreur::ErreurCryptographe;
 use super::erreur::ResultCryptographe;
-use super::trousseau_public::{TrousseauFoyerPublic, TrousseauPublic};
+use super::trousseaux_publics::{
+    TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
+};
 use aead::stream::EncryptorBE32;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -113,6 +115,7 @@ struct PaireClesChiffrement {
 }
 
 struct TrousseauFoyer {
+    onion: String,
     cle_chiffrement: SecretBox<[u8; 32]>,
     paire_signature: PaireClesSignature,
     paire_chiffrement: PaireClesChiffrement,
@@ -148,11 +151,11 @@ impl TrousseauFoyer {
     ///
     /// SHA3-256 est utilisé ici en cohérence avec le reste du protocole Feu,
     /// qui retient SHA3-256 comme unique primitive de hashage.
-    fn derive_adresse_onion(&self) -> String {
+    fn derive_adresse_onion(cle: VerifyingKey) -> String {
         // 1. Buffer checksum (48 octets)
         let mut buf = Vec::new();
         buf.extend_from_slice(b".onion checksum");
-        buf.extend_from_slice(self.paire_signature.publique.as_bytes());
+        buf.extend_from_slice(cle.as_bytes());
         buf.push(0x03);
 
         // 2. Checksum (2 octets)
@@ -161,7 +164,7 @@ impl TrousseauFoyer {
 
         // 3. Buffer final (35 octets)
         let mut data = Vec::new();
-        data.extend_from_slice(self.paire_signature.publique.as_bytes());
+        data.extend_from_slice(cle.as_bytes());
         data.extend_from_slice(checksum);
         data.push(0x03);
 
@@ -175,11 +178,11 @@ pub(super) struct Trousseau {
     cle_ephemere: Option<SecretBox<[u8; 32]>>,
     sel: Option<[u8; 16]>,
     paire_signature_noeud: Option<PaireClesSignature>,
-    cles_foyers: [Option<(String, TrousseauFoyer)>; MAX_FOYERS],
+    trousseaux_foyers: [Option<TrousseauFoyer>; MAX_FOYERS],
 }
 
 //
-// Constructeur et initialisation du trousseau
+// Construction
 //
 impl Trousseau {
     /// Crée un trousseau vide.
@@ -189,89 +192,7 @@ impl Trousseau {
             cle_ephemere: None,
             sel: None,
             paire_signature_noeud: None,
-            cles_foyers: std::array::from_fn(|_| None),
-        }
-    }
-
-    // Donne le TrousseauFoyer à partir de l'onion
-    fn onion_donne_trousseau_foyer(&self, onion: &str) -> Option<&TrousseauFoyer> {
-        for element in &self.cles_foyers {
-            if let Some((adresse, foyer)) = element {
-                if onion == adresse {
-                    return Some(foyer);
-                }
-            }
-        }
-        None
-    }
-
-    /// Dérive le sel Argon2id depuis la clé privée du nœud et l'enregistre dans le trousseau.
-    ///
-    /// Signe [`CHAINE_A_SIGNER_POUR_SEL`] avec la clé privée du nœud — signature
-    /// déterministe Ed25519 (RFC 8032) — et retient les 16 premiers octets de la
-    /// signature (64 octets). Le sel n'est pas secret et sera stocké en clair sur
-    /// le disque aux côtés des clés chiffrées.
-    ///
-    /// Cette dérivation déterministe garantit que le sel est toujours reconstituable
-    /// depuis la seed, même en cas de perte des données disque.
-    ///
-    /// # Prérequis
-    ///
-    /// La paire de signature du nœud doit être présente dans le trousseau.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la paire de signature du nœud est absente.
-    pub(super) fn genere_sel(&mut self) -> ResultCryptographe<()> {
-        match &self.paire_signature_noeud {
-            Some(valeur) => {
-                let sig = valeur
-                    .privee
-                    .sign(CHAINE_A_SIGNER_POUR_SEL.as_bytes())
-                    .to_bytes();
-
-                let mut sel = [0u8; 16];
-                sel.copy_from_slice(&sig[..16]);
-                self.sel = Some(sel);
-                Ok(())
-            }
-            None => Err(ErreurCryptographe::Interne(String::from(
-                "Problème de génération du sel.",
-            ))),
-        }
-    }
-
-    /// Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel du trousseau.
-    ///
-    /// Utilise Argon2id (RFC 9106) avec les paramètres par défaut pour produire
-    /// 32 octets de matière clé à partir du mot de passe et du sel. La clé
-    /// résultante est encapsulée dans [`SecretBox`] et stockée dans `cle_ephemere`.
-    ///
-    /// Cette clé sert uniquement à chiffrer les clés privées via [`chiffre_cle`] —
-    /// elle doit être effacée dès que le trousseau persistable est constitué.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si le mot de passe ou le sel est absent du trousseau,
-    /// ou si la dérivation Argon2id échoue.
-    pub(super) fn derive_cle_ephemere(&mut self) -> ResultCryptographe<()> {
-        let argon2 = Argon2::default();
-
-        let mut buffer = SecretBox::new(Box::new([0u8; 32]));
-
-        match (&self.mdp, self.sel) {
-            (Some(valeur1), Some(valeur2)) => {
-                argon2.hash_password_into(
-                    valeur1.expose_secret().as_bytes(),
-                    &valeur2,
-                    buffer.expose_secret_mut(),
-                )?;
-                self.cle_ephemere = Some(buffer);
-                Ok(())
-            }
-            (_, _) => Err(ErreurCryptographe::Interne(String::from(
-                "Pas de mot de passe",
-            ))),
+            trousseaux_foyers: std::array::from_fn(|_| None),
         }
     }
 
@@ -355,14 +276,14 @@ impl Trousseau {
             cle_sign_priv = SigningKey::from_bytes(&cle_brute.expose_secret());
         }
 
-        let cle_publique = cle_sign_priv.verifying_key();
+        let cle_sig_pub = cle_sign_priv.verifying_key();
 
         let paire_signature = PaireClesSignature {
             privee: cle_sign_priv,
-            publique: cle_publique,
+            publique: cle_sig_pub,
         };
 
-        let cle_chif_priv: SecretBox<StaticSecret>;
+        let cle_chiff_priv: SecretBox<StaticSecret>;
 
         // Bloc encadrant la portée de cle_brute
         {
@@ -371,15 +292,15 @@ impl Trousseau {
                 &cle_privee,
                 CHAINE_A_SIGNER_POUR_PAIRE_CHIFFREMENT,
             )?;
-            cle_chif_priv =
+            cle_chiff_priv =
                 SecretBox::new(Box::new(StaticSecret::from(*cle_brute.expose_secret())));
         }
 
-        let cle_publique = PublicKey::from(cle_chif_priv.expose_secret());
+        let cle_chiff_pub = PublicKey::from(cle_chiff_priv.expose_secret());
 
         let paire_chiffrement = PaireClesChiffrement {
-            privee: cle_chif_priv,
-            publique: cle_publique,
+            privee: cle_chiff_priv,
+            publique: cle_chiff_pub,
         };
 
         // Création des clés de chiffrement des 5 premiers classeurs
@@ -398,6 +319,7 @@ impl Trousseau {
 
         // enregistrement de toutes les clés dans un TrousseauFoyer
         let trousseau_foyer = TrousseauFoyer {
+            onion: TrousseauFoyer::derive_adresse_onion(paire_signature.publique),
             cle_chiffrement,
             paire_signature,
             paire_chiffrement,
@@ -405,15 +327,50 @@ impl Trousseau {
         };
 
         // Ajout du TrousseauFoyer dans le trousseau
-        if position >= self.cles_foyers.len() {
+        if position >= MAX_FOYERS {
             return Err(ErreurCryptographe::Interne(String::from(
-                "Problème indice tableau.",
+                "Problème index tableau.",
             )));
         }
-        self.cles_foyers[position] =
-            Some((trousseau_foyer.derive_adresse_onion(), trousseau_foyer));
+        self.trousseaux_foyers[position] = Some(trousseau_foyer);
 
         Ok(())
+    }
+
+    /// Dérive le sel Argon2id depuis la clé privée du nœud et l'enregistre dans le trousseau.
+    ///
+    /// Signe [`CHAINE_A_SIGNER_POUR_SEL`] avec la clé privée du nœud — signature
+    /// déterministe Ed25519 (RFC 8032) — et retient les 16 premiers octets de la
+    /// signature (64 octets). Le sel n'est pas secret et sera stocké en clair sur
+    /// le disque aux côtés des clés chiffrées.
+    ///
+    /// Cette dérivation déterministe garantit que le sel est toujours reconstituable
+    /// depuis la seed, même en cas de perte des données disque.
+    ///
+    /// # Prérequis
+    ///
+    /// La paire de signature du nœud doit être présente dans le trousseau.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la paire de signature du nœud est absente.
+    pub(super) fn genere_sel(&mut self) -> ResultCryptographe<()> {
+        match &self.paire_signature_noeud {
+            Some(valeur) => {
+                let sig = valeur
+                    .privee
+                    .sign(CHAINE_A_SIGNER_POUR_SEL.as_bytes())
+                    .to_bytes();
+
+                let mut sel = [0u8; 16];
+                sel.copy_from_slice(&sig[..16]);
+                self.sel = Some(sel);
+                Ok(())
+            }
+            None => Err(ErreurCryptographe::Interne(String::from(
+                "Problème de génération du sel.",
+            ))),
+        }
     }
 
     /// Dérive 32 octets de matière clé à partir d'une signature Ed25519.
@@ -436,17 +393,9 @@ impl Trousseau {
 }
 
 //
-// Gestion mot de passe, clé éphémère et chiffrement
+// Gestion des secrets éphémères
 //
 impl Trousseau {
-    /// Efface le mot de passe du trousseau.
-    ///
-    /// Met `mdp` à `None` — la destruction du [`SecretBox<String>`] déclenche
-    /// la zéroïsation automatique de la mémoire.
-    pub(super) fn efface_mdp(&mut self) {
-        self.mdp = None;
-    }
-
     /// Définit le mot de passe du trousseau.
     ///
     /// `mot` est un [`SecretBox<String>`] déjà construit par l'appelant —
@@ -454,6 +403,14 @@ impl Trousseau {
     /// défini est remplacé et zéroïsé au drop.
     pub(super) fn definit_mdp(&mut self, mot: SecretBox<String>) {
         self.mdp = Some(mot);
+    }
+
+    /// Efface le mot de passe du trousseau.
+    ///
+    /// Met `mdp` à `None` — la destruction du [`SecretBox<String>`] déclenche
+    /// la zéroïsation automatique de la mémoire.
+    pub(super) fn efface_mdp(&mut self) {
+        self.mdp = None;
     }
 
     /// Définit le sel Argon2id du trousseau.
@@ -464,6 +421,40 @@ impl Trousseau {
         self.sel = Some(sel);
     }
 
+    /// Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel du trousseau.
+    ///
+    /// Utilise Argon2id (RFC 9106) avec les paramètres par défaut pour produire
+    /// 32 octets de matière clé à partir du mot de passe et du sel. La clé
+    /// résultante est encapsulée dans [`SecretBox`] et stockée dans `cle_ephemere`.
+    ///
+    /// Cette clé sert uniquement à chiffrer les clés privées via [`chiffre_cle`] —
+    /// elle doit être effacée dès que le trousseau persistable est constitué.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le mot de passe ou le sel est absent du trousseau,
+    /// ou si la dérivation Argon2id échoue.
+    pub(super) fn derive_cle_ephemere(&mut self) -> ResultCryptographe<()> {
+        let argon2 = Argon2::default();
+
+        let mut buffer = SecretBox::new(Box::new([0u8; 32]));
+
+        match (&self.mdp, self.sel) {
+            (Some(valeur1), Some(valeur2)) => {
+                argon2.hash_password_into(
+                    valeur1.expose_secret().as_bytes(),
+                    &valeur2,
+                    buffer.expose_secret_mut(),
+                )?;
+                self.cle_ephemere = Some(buffer);
+                Ok(())
+            }
+            (_, _) => Err(ErreurCryptographe::Interne(String::from(
+                "Pas de mot de passe",
+            ))),
+        }
+    }
+
     /// Efface la clé éphémère du trousseau.
     ///
     /// Met `cle_ephemere` à `None` — la destruction du [`SecretBox<[u8; 32]>`] déclenche
@@ -471,7 +462,12 @@ impl Trousseau {
     pub(super) fn efface_cle_ephemere(&mut self) {
         self.cle_ephemere = None;
     }
+}
 
+//
+// Chiffrement / déchiffrement des clés
+//
+impl Trousseau {
     /// Chiffre une clé privée ou symétrique de 32 octets avec AES-256-GCM.
     ///
     /// Utilise la clé éphémère du trousseau comme clé AES-256-GCM. Un nonce
@@ -559,10 +555,10 @@ impl Trousseau {
 }
 
 //
-// Génération du trousseau public
+// Export — génération du trousseau public
 //
 impl TrousseauFoyer {
-    /// Chiffre toutes les clés du foyer et produit le [`TrousseauFoyerPublic`] persistable.
+    /// Chiffre toutes les clés du foyer et produit le [`TrousseauPublicFoyer`] persistable.
     ///
     /// Délègue le chiffrement AES-256-GCM de chaque clé à [`Trousseau::chiffre_cle`].
     /// Les clés publiques sont copiées en clair.
@@ -571,11 +567,12 @@ impl TrousseauFoyer {
     ///
     /// Retourne une erreur si le chiffrement d'une clé échoue — clé éphémère
     /// absente du trousseau ou échec AES-256-GCM.
-    fn genere_trousseau_foyer_public(
+    fn genere_trousseau_public_foyer(
         &self,
         trousseau: &Trousseau,
-    ) -> ResultCryptographe<TrousseauFoyerPublic> {
-        let mut trousseau_foyer_public = TrousseauFoyerPublic::new(
+    ) -> ResultCryptographe<TrousseauPublicFoyer> {
+        let mut trousseau_public_foyer = TrousseauPublicFoyer::new(
+            self.onion.clone(),
             trousseau.chiffre_cle(self.cle_chiffrement.expose_secret())?,
             trousseau.chiffre_cle(self.paire_signature.privee.as_bytes())?,
             self.paire_signature.publique.to_bytes(),
@@ -585,7 +582,7 @@ impl TrousseauFoyer {
 
         for i in 0..MAX_CLASSEURS {
             if let Some(cle) = &self.cles_chiffrement_classeurs[i] {
-                trousseau_foyer_public.ajoute_cle_chiffrement_classeur(
+                trousseau_public_foyer.ajoute_cle_chiffrement_classeur(
                     trousseau.chiffre_cle(cle.expose_secret())?,
                     i,
                 )?;
@@ -596,17 +593,16 @@ impl TrousseauFoyer {
             }
         }
 
-        Ok(trousseau_foyer_public)
+        Ok(trousseau_public_foyer)
     }
 }
 
 impl Trousseau {
-    /// Chiffre l'ensemble des secrets du trousseau et produit le [`TrousseauPublic`] persistable.
+    /// Chiffre l'ensemble des secrets du trousseau et produit le [`TrousseauPublicComplet`] persistable.
     ///
-    /// Chiffre les clés du nœud puis délègue le chiffrement de chaque foyer à
-    /// [`TrousseauFoyer::genere_trousseau_foyer_public`]. Le sel est inclus en clair
-    /// dans le résultat pour faciliter le déchiffrement en usage courant — il est
-    /// re-dérivable depuis la seed en cas de perte du disque.
+    /// Construit d'abord un [`TrousseauPublicNoeud`] avec les clés du nœud, puis délègue
+    /// le chiffrement de chaque foyer à [`TrousseauFoyer::genere_trousseau_public_foyer`].
+    /// Le sel est inclus en clair — il est re-dérivable depuis la seed en cas de perte du disque.
     ///
     /// # Prérequis
     ///
@@ -618,42 +614,47 @@ impl Trousseau {
     ///
     /// Retourne une erreur si le sel ou la paire de signature du nœud est absente,
     /// ou si le chiffrement d'une clé échoue.
-    pub(super) fn genere_trousseau_public(&self) -> ResultCryptographe<TrousseauPublic> {
+    pub(super) fn genere_trousseau_public(&self) -> ResultCryptographe<TrousseauPublicComplet> {
         match (self.sel, &self.paire_signature_noeud) {
             (Some(valeur1), Some(valeur2)) => {
-                let mut trousseau_public = TrousseauPublic::new(
+                let trousseau_public_noeud = TrousseauPublicNoeud::new(
                     valeur1,
                     self.chiffre_cle(valeur2.privee.as_bytes())?,
                     *valeur2.publique.as_bytes(),
                 );
 
+                let mut trousseau_public_complet =
+                    TrousseauPublicComplet::new(trousseau_public_noeud);
                 for i in 0..MAX_FOYERS {
-                    if let Some((onion, foyer)) = &self.cles_foyers[i] {
-                        trousseau_public.ajoute_trousseau_foyer_public(
-                            onion.clone(),
-                            foyer.genere_trousseau_foyer_public(&self)?,
+                    if let Some(trousseau_foyer) = &self.trousseaux_foyers[i] {
+                        trousseau_public_complet.ajoute_trousseau_foyer_public(
+                            trousseau_foyer.genere_trousseau_public_foyer(&self)?,
                             i,
                         )?;
                     }
                 }
 
-                Ok(trousseau_public)
+                Ok(trousseau_public_complet)
             }
             (_, _) => Err(ErreurCryptographe::Interne(String::from(
                 "Problème génération du trousseau public.",
             ))),
         }
     }
+}
 
-    /// Reconstruit la paire de signature du nœud à partir d'un [`TrousseauPublic`].
+//
+// Import — chargement depuis le trousseau public
+//
+impl Trousseau {
+    /// Reconstruit la paire de signature du nœud à partir d'un [`TrousseauPublicNoeud`].
     ///
-    /// Déchiffre la clé privée de signature du nœud via
-    /// [`dechiffre_cle`](Self::dechiffre_cle) et reconstitue la paire Ed25519
+    /// Déchiffre la clé privée de signature du nœud et reconstitue la paire Ed25519
     /// en mémoire. Le déchiffrement échoue si le mot de passe est incorrect —
-    /// c'est le seul mécanisme de vérification du mot de passe dans Feu.
+    /// c'est le mécanisme de vérification du mot de passe dans Feu.
     ///
     /// Les clés des foyers ne sont pas chargées ici — chaque foyer est
-    /// déchiffré séparément lors de son ouverture explicite.
+    /// déchiffré séparément via [`trousseau_public_foyer_vers_trousseau_foyer`](Self::trousseau_public_foyer_vers_trousseau_foyer).
     ///
     /// # Prérequis
     ///
@@ -665,12 +666,12 @@ impl Trousseau {
     ///
     /// Retourne une erreur si le déchiffrement échoue ou si la clé publique
     /// ne peut pas être reconstruite depuis les octets lus.
-    pub(super) fn trousseau_public_vers_trousseau(
+    pub(super) fn trousseau_public_noeud_vers_trousseau(
         &mut self,
-        tp: &TrousseauPublic,
+        trousseau_public_noeud: &TrousseauPublicNoeud,
     ) -> ResultCryptographe<()> {
-        let cle_dechiffree = self.dechiffre_cle(&tp.cle_sig_privee)?;
-        let cle_pub = tp.cle_sig_pub;
+        let cle_dechiffree = self.dechiffre_cle(&trousseau_public_noeud.donne_cle_sig_privee())?;
+        let cle_pub = trousseau_public_noeud.donne_cle_sig_pub();
 
         self.paire_signature_noeud = Some(PaireClesSignature {
             privee: SigningKey::from_bytes(&cle_dechiffree.expose_secret()),
@@ -681,51 +682,91 @@ impl Trousseau {
         Ok(())
     }
 
-    pub(super) fn trousseau_foyer_public_vers_trousseau_foyer(
+    /// Déchiffre et charge les clés d'un foyer dans le trousseau à partir d'un [`TrousseauPublicFoyer`].
+    ///
+    /// Déchiffre la clé symétrique, la paire de signature Ed25519 et la paire de chiffrement X25519
+    /// avec la clé éphémère, puis enregistre le [`TrousseauFoyer`] résultant à l'`index` donné.
+    /// L'adresse `.onion` est lue depuis le [`TrousseauPublicFoyer`].
+    ///
+    /// Les clés de classeur ne sont pas chargées ici — elles sont chargées lors de l'ouverture
+    /// d'un classeur.
+    ///
+    /// # Prérequis
+    ///
+    /// La clé éphémère doit être présente dans le trousseau —
+    /// dérivée préalablement via [`derive_cle_ephemere`](Self::derive_cle_ephemere).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé éphémère est absente, si le déchiffrement d'une clé
+    /// échoue, ou si la reconstruction d'une clé publique depuis ses octets échoue.
+    pub(super) fn trousseau_public_foyer_vers_trousseau_foyer(
         &mut self,
-        tp: &TrousseauFoyerPublic,
+        trousseau_public_foyer: &TrousseauPublicFoyer,
         index: usize,
-        onion: &str,
     ) -> ResultCryptographe<()> {
-        let cle_chiffrement = self.dechiffre_cle(&tp.cle_chiffrement)?;
+        let cle_chiffrement =
+            self.dechiffre_cle(&trousseau_public_foyer.donne_cle_chiffrement())?;
 
-        let cle_dechiffree = self.dechiffre_cle(&tp.cle_sig_privee)?;
-        let cle_pub = tp.cle_sig_pub;
+        let cle_sig_priv = self.dechiffre_cle(&trousseau_public_foyer.donne_cle_sig_privee())?;
+        let cle_sig_pub = trousseau_public_foyer.donne_cle_sig_pub();
 
         let paire_signature = PaireClesSignature {
-            privee: SigningKey::from_bytes(&cle_dechiffree.expose_secret()),
-            publique: VerifyingKey::from_bytes(&cle_pub).map_err(|_| {
+            privee: SigningKey::from_bytes(&cle_sig_priv.expose_secret()),
+            publique: VerifyingKey::from_bytes(&cle_sig_pub).map_err(|_| {
                 ErreurCryptographe::Interne(String::from("Erreur récupération de clé."))
             })?,
         };
 
-        let cle_dechiffree = self.dechiffre_cle(&tp.cle_chiff_privee)?;
-        let cle_pub = tp.cle_chiff_pub;
+        let cle_chiff_priv =
+            self.dechiffre_cle(&trousseau_public_foyer.donne_cle_chiff_privee())?;
+        let cle_chiff_pub = trousseau_public_foyer.donne_cle_chiff_pub();
 
         let paire_chiffrement = PaireClesChiffrement {
             privee: SecretBox::new(Box::new(StaticSecret::from(
-                cle_dechiffree.expose_secret().clone(),
+                cle_chiff_priv.expose_secret().clone(),
             ))),
-            publique: PublicKey::from(cle_pub),
+            publique: PublicKey::from(cle_chiff_pub),
         };
 
         let cles_chiffrement_classeurs = std::array::from_fn(|_| None);
 
-        self.cles_foyers[index] = Some((
-            String::from(onion),
-            TrousseauFoyer {
-                cle_chiffrement,
-                paire_signature,
-                paire_chiffrement,
-                cles_chiffrement_classeurs,
-            },
-        ));
+        self.trousseaux_foyers[index] = Some(TrousseauFoyer {
+            onion: String::from(trousseau_public_foyer.donne_onion()),
+            cle_chiffrement,
+            paire_signature,
+            paire_chiffrement,
+            cles_chiffrement_classeurs,
+        });
         Ok(())
     }
 }
 
-// Partie StreamEncryptor
+//
+// Stream encrypteur
+//
 impl Trousseau {
+    // Retourne le TrousseauFoyer correspondant à l'adresse `onion`, ou `None` si absent.
+    fn onion_donne_trousseau_foyer(&self, onion: &str) -> Option<&TrousseauFoyer> {
+        for element in &self.trousseaux_foyers {
+            if let Some(trousseau) = element {
+                if trousseau.onion == onion {
+                    return Some(trousseau);
+                }
+            }
+        }
+        None
+    }
+
+    /// Crée un `EncryptorBE32<Aes256Gcm>` prêt à chiffrer en streaming pour le foyer `onion`.
+    ///
+    /// Génère un nonce aléatoire de 7 octets via [`OsRng`], construit l'encrypteur AES-256-GCM
+    /// depuis la clé symétrique du foyer et retourne `(encrypteur, nonce)`.
+    /// Le nonce doit être écrit en tête du fichier de destination pour permettre le déchiffrement.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si aucun foyer correspondant à `onion` n'est présent dans le trousseau.
     pub(super) fn cree_stream_encryptor(
         &self,
         onion: &str,

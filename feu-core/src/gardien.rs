@@ -30,7 +30,9 @@
 mod carnet;
 pub(crate) mod erreur;
 
-use super::cryptographe::trousseau_public::{TrousseauFoyerPublic, TrousseauPublic};
+use super::cryptographe::trousseaux_publics::{
+    TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
+};
 use crate::MAX_FOYERS;
 use crate::cryptographe::flux_chiffre::Finalise;
 use carnet::Carnet;
@@ -169,7 +171,7 @@ impl Gardien {
 // ── Opérations disque ────────────────────────────────────────────────────────
 
 impl Gardien {
-    pub(super) fn existance_arborescence(&self) -> bool {
+    pub(super) fn existence_arborescence(&self) -> bool {
         self.carnet.existe_arborescence_noeud()
     }
     /// Ancre le nœud vierge sur le disque à partir du trousseau public.
@@ -184,7 +186,7 @@ impl Gardien {
     /// opération disque échoue.
     pub(super) fn cree_premiere_arborescence(
         &self,
-        trousseau_public: &TrousseauPublic,
+        trousseau_public_complet: &TrousseauPublicComplet,
     ) -> ResultGardien<()> {
         match self.carnet.existe_arborescence_noeud() {
             true => Err(ErreurGardien::Interne(String::from(
@@ -192,7 +194,8 @@ impl Gardien {
             ))),
             false => {
                 // Écriture du trousseau public sur le disque
-                self.carnet.ecrire_trousseau_public(&trousseau_public)?;
+                self.carnet
+                    .ecrire_trousseau_public_complet(&trousseau_public_complet)?;
 
                 Ok(())
             }
@@ -318,23 +321,25 @@ impl Gardien {
         }
     }
 
-    /// Lit les clés du nœud sur le disque et construit un [`TrousseauPublic`] partiel.
+    /// Lit les clés du nœud sur le disque et construit un [`TrousseauPublicNoeud`].
     ///
     /// Lit le sel, la clé privée et la clé publique de signature du nœud.
-    /// Les foyers sont à ajouter séparément via [`TrousseauPublic::ajoute_trousseau_foyer_public`].
+    /// Les foyers sont gérés séparément dans [`TrousseauPublicComplet`].
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si un fichier est absent, illisible ou de taille incorrecte.
-    pub(super) fn lecture_pour_creation_trousseau_public(&self) -> ResultGardien<TrousseauPublic> {
-        Ok(TrousseauPublic::new(
+    pub(super) fn lecture_pour_creation_trousseau_public_noeud(
+        &self,
+    ) -> ResultGardien<TrousseauPublicNoeud> {
+        Ok(TrousseauPublicNoeud::new(
             self.carnet.lire_pour_donner_sel()?,
             self.carnet.lire_pour_donner_cle_sig_privee()?,
             self.carnet.lire_pour_donner_cle_sig_pub()?,
         ))
     }
 
-    /// Lit les clés chiffrées d'un foyer sur le disque et construit un [`TrousseauFoyerPublic`].
+    /// Lit les clés chiffrées d'un foyer sur le disque et construit un [`TrousseauPublicFoyer`].
     ///
     /// Délègue la lecture au carnet. Les clés lues sont toujours chiffrées —
     /// elles seront déchiffrées par le cryptographe.
@@ -345,7 +350,7 @@ impl Gardien {
     pub(super) fn creation_trousseau_foyer_public(
         &self,
         onion: &str,
-    ) -> ResultGardien<TrousseauFoyerPublic> {
+    ) -> ResultGardien<TrousseauPublicFoyer> {
         Ok(self.carnet.creer_trousseau_public(onion)?)
     }
 }
