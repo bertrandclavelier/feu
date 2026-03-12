@@ -96,7 +96,6 @@ impl Session {
     /// # Erreurs
     ///
     /// Retourne une erreur si `indice >= MAX_FOYERS`.
-    #[allow(dead_code)]
     fn indice_vers_onion(&self, indice: usize) -> ResultFeu<&str> {
         if indice >= MAX_FOYERS {
             Err(ErreurFeu::Standard(String::from(
@@ -339,6 +338,8 @@ impl<I: InterfaceFeuCore> Feu<I> {
         self.session
             .definition_foyers(gardien.creation_tableau_session_foyers());
 
+        cryptographe.efface_mdp_et_cle_ephemere();
+
         self.gardien = Some(gardien);
         self.cryptographe = Some(cryptographe);
 
@@ -346,7 +347,81 @@ impl<I: InterfaceFeuCore> Feu<I> {
         Ok(())
     }
 
-    /// Archive et chiffre le dossier d'un foyer, puis supprime le dossier clair.
+    /// Ouvre un foyer Feu existant : déchiffre l'archive et charge les clés en mémoire.
+    ///
+    /// Enchaîne cinq phases séquentielles :
+    ///
+    /// **Vérifications préalables**
+    /// 1. Vérifie que `index < MAX_FOYERS` et que le foyer n'est pas déjà ouvert.
+    ///
+    /// **Phase mémoire — cryptographe**
+    /// 2. Collecte le mot de passe Feu et dérive la clé éphémère Argon2id.
+    /// 3. Déchiffre la clé symétrique du foyer (`<onion>.cle`) avec la clé éphémère.
+    /// 4. Crée un flux de lecture déchiffré AES-256-GCM-stream.
+    ///
+    /// **Phase disque — gardien**
+    /// 5. Extrait l'archive `<onion>.feu` dans `~/.feu/` via le flux déchiffré.
+    ///    Supprime l'archive après extraction.
+    /// 6. Lit les clés chiffrées du foyer depuis le dossier extrait.
+    ///
+    /// **Phase mémoire — cryptographe**
+    /// 7. Déchiffre et charge les clés du foyer dans le trousseau.
+    /// 8. Efface le mot de passe et la clé éphémère.
+    ///
+    /// **Session**
+    /// 9. Marque le foyer comme ouvert.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une [`ErreurFeu`] si l'index est invalide, si le foyer est déjà
+    /// ouvert, si le gardien ou le cryptographe est absent, si le mot de passe est
+    /// incorrect, ou si une opération disque échoue.
+    ///
+    /// # Avertissement sécurité
+    ///
+    /// Si une erreur survient entre la dérivation de la clé éphémère (étape 2) et
+    /// son effacement (étape 8), le mot de passe et la clé éphémère restent en
+    /// mémoire. Un mécanisme de drop guard sera introduit pour garantir l'effacement
+    /// sur tous les chemins d'erreur.
+    pub fn commande_ouverture_foyer(&mut self, index: usize) -> ResultFeu<()> {
+        if index >= MAX_FOYERS {
+            return Err(ErreurFeu::Standard(String::from("Index foyer trop élevé.")));
+        }
+        let onion = self.session.indice_vers_onion(index)?;
+
+        if self.session.onion_est_ouvert(onion)? {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le foyer est déjà ouvert.",
+            )));
+        }
+
+        match (&mut self.gardien, &mut self.cryptographe) {
+            (Some(g), Some(c)) => {
+                c.demande_mdp(&self.interface_feu_core);
+                c.derivation_cle_ephemere()?;
+
+                let (fichier, cle) = g.ouverture_fichier_lecture(&onion)?;
+
+                let lecture_dechiffree = c.creation_lecture_dechiffree(fichier, cle)?;
+
+                g.creation_dossier_desarchive(onion, lecture_dechiffree)?;
+
+                let tp = g.creation_trousseau_foyer_public(onion)?;
+
+                c.ouverture_trousseau_foyer(tp, index, onion)?;
+
+                c.efface_mdp_et_cle_ephemere();
+
+                self.session.foyers[index].0 = true;
+                Ok(())
+            }
+            (_, _) => Err(ErreurFeu::Standard(String::from(
+                "Gardien et/ou cryptographe absent",
+            ))),
+        }
+    }
+
+    /// Archive et chiffre le dossier d'un foyer, puis supprime le dossier clair
     ///
     /// Orchestre trois opérations séquentielles :
     /// 1. Ouvre le fichier de destination `<onion>.feu` en écriture.

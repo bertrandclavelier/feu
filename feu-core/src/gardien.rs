@@ -30,13 +30,13 @@
 mod carnet;
 pub(crate) mod erreur;
 
-use super::cryptographe::trousseau_public::TrousseauPublic;
+use super::cryptographe::trousseau_public::{TrousseauFoyerPublic, TrousseauPublic};
 use crate::MAX_FOYERS;
 use crate::cryptographe::flux_chiffre::Finalise;
 use carnet::Carnet;
 use erreur::{ErreurGardien, ResultGardien};
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 
 const VERSION_CONFIGURATION: u32 = 1;
 
@@ -226,6 +226,24 @@ impl Gardien {
         Ok(self.carnet.ouvre_fichier_ecriture(onion)?)
     }
 
+    /// Ouvre l'archive `<onion>.feu` en lecture et lit la clé symétrique chiffrée du foyer.
+    ///
+    /// Retourne un tuple `(fichier, cle_chiffree)` — le fichier positionné au début
+    /// de l'archive et la clé symétrique de 60 octets (`nonce || ciphertext || tag`)
+    /// lue depuis `~/.feu/.cles/<onion>.cle`. Les deux sont nécessaires pour créer
+    /// le flux de lecture déchiffré.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si l'archive ou le fichier de clé est absent, illisible,
+    /// ou si la clé ne fait pas 60 octets.
+    pub(super) fn ouverture_fichier_lecture(&self, onion: &str) -> ResultGardien<(File, [u8; 60])> {
+        Ok((
+            self.carnet.ouvre_archive_foyer_lecture(onion)?,
+            self.carnet.lire_pour_donner_cle_chiffrement_foyer(onion)?,
+        ))
+    }
+
     /// Archive et chiffre le dossier `<onion>` dans un flux AES-256-GCM-stream.
     ///
     /// Construit une archive tar du dossier `<onion>` en écrivant directement
@@ -254,6 +272,29 @@ impl Gardien {
                 "Impossible de trouver le dossier `onion` correspondant.",
             )));
         }
+    }
+
+    /// Extrait l'archive chiffrée d'un foyer et supprime l'archive après extraction.
+    ///
+    /// Lit l'archive tar depuis `lecteur` — un flux déchiffré `Read` — et extrait
+    /// son contenu dans `~/.feu/`. Supprime ensuite `<onion>.feu` pour ne laisser
+    /// que le dossier clair `<onion>` sur le disque.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si l'extraction tar échoue ou si la suppression de
+    /// l'archive échoue.
+    pub(super) fn creation_dossier_desarchive<T: Read>(
+        &self,
+        onion: &str,
+        lecteur: T,
+    ) -> ResultGardien<()> {
+        let mut archive = tar::Archive::new(lecteur);
+
+        archive.unpack(self.carnet.donne_chemin_feu())?;
+
+        std::fs::remove_file(self.carnet.donne_chemin_archive(onion))?;
+        Ok(())
     }
 
     /// Supprime le dossier clair `<onion>` après vérification que l'archive existe.
@@ -291,6 +332,21 @@ impl Gardien {
             self.carnet.lire_pour_donner_cle_sig_privee()?,
             self.carnet.lire_pour_donner_cle_sig_pub()?,
         ))
+    }
+
+    /// Lit les clés chiffrées d'un foyer sur le disque et construit un [`TrousseauFoyerPublic`].
+    ///
+    /// Délègue la lecture au carnet. Les clés lues sont toujours chiffrées —
+    /// elles seront déchiffrées par le cryptographe.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si un fichier de clé est absent, illisible ou de taille incorrecte.
+    pub(super) fn creation_trousseau_foyer_public(
+        &self,
+        onion: &str,
+    ) -> ResultGardien<TrousseauFoyerPublic> {
+        Ok(self.carnet.creer_trousseau_public(onion)?)
     }
 }
 // ── Opérations mémoire ───────────────────────────────────────────────────────

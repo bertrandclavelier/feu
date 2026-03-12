@@ -42,14 +42,17 @@ use crate::MAX_FOYERS;
 use crate::cryptographe::flux_chiffre::Finalise;
 
 use super::InterfaceFeuCore;
+use aes_gcm::aead::KeyInit;
+use aes_gcm::{Aes256Gcm, Key};
 use bip39::{Language, Mnemonic};
 use erreur::ResultCryptographe;
-use flux_chiffre::EcritureChiffree;
+use flux_chiffre::{EcritureChiffree, LectureDechiffree};
 use secrecy::{ExposeSecret, SecretBox};
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
+
 use trousseau::Trousseau;
-use trousseau_public::TrousseauPublic;
+use trousseau_public::{TrousseauFoyerPublic, TrousseauPublic};
 
 pub(crate) mod flux_chiffre;
 mod trousseau;
@@ -168,6 +171,30 @@ impl Cryptographe {
         self.trousseau.definit_mdp(mdp);
     }
 
+    /// Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel du trousseau.
+    ///
+    /// Délègue à [`Trousseau::derive_cle_ephemere`]. La clé éphémère doit être
+    /// effacée via [`efface_mdp_et_cle_ephemere`](Self::efface_mdp_et_cle_ephemere)
+    /// dès qu'elle n'est plus nécessaire.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le mot de passe ou le sel est absent, ou si la
+    /// dérivation Argon2id échoue.
+    pub(super) fn derivation_cle_ephemere(&mut self) -> ResultCryptographe<()> {
+        self.trousseau.derive_cle_ephemere()?;
+        Ok(())
+    }
+
+    /// Efface le mot de passe et la clé éphémère du trousseau.
+    ///
+    /// Doit être appelé dès que les opérations nécessitant ces secrets sont terminées.
+    /// La destruction des [`SecretBox`] déclenche la zéroïsation automatique de la mémoire.
+    pub(super) fn efface_mdp_et_cle_ephemere(&mut self) {
+        self.trousseau.efface_mdp();
+        self.trousseau.efface_cle_ephemere();
+    }
+
     /// Produit le trousseau public chiffré à partir des clés du trousseau en mémoire.
     ///
     /// Enchaîne trois opérations séquentielles :
@@ -210,6 +237,33 @@ impl Cryptographe {
         Ok(EcritureChiffree::new(fichier, encryptor, nonce)?)
     }
 
+    /// Crée un flux de lecture déchiffré AES-256-GCM-stream pour un foyer.
+    ///
+    /// Déchiffre la clé symétrique du foyer (`cle`) avec la clé éphémère du trousseau,
+    /// construit le cipher AES-256-GCM correspondant et retourne un [`LectureDechiffree`]
+    /// prêt à lire l'archive `<onion>.feu`. Le nonce est lu en tête du fichier.
+    ///
+    /// # Prérequis
+    ///
+    /// La clé éphémère doit être présente dans le trousseau —
+    /// dérivée préalablement via [`derivation_cle_ephemere`](Self::derivation_cle_ephemere).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé éphémère est absente, si le déchiffrement
+    /// de la clé symétrique échoue, ou si la lecture du nonce en tête de fichier échoue.
+    pub(super) fn creation_lecture_dechiffree(
+        &mut self,
+        fichier: File,
+        cle: [u8; 60],
+    ) -> ResultCryptographe<impl Read> {
+        let cle_dechiffree = self.trousseau.dechiffre_cle(&cle)?;
+        let key = Key::<Aes256Gcm>::from_slice(cle_dechiffree.expose_secret());
+        let cipher = Aes256Gcm::new(key);
+
+        Ok(LectureDechiffree::new(fichier, cipher)?)
+    }
+
     /// Déverrouille le trousseau à partir d'un [`TrousseauPublic`] existant.
     ///
     /// Enchaîne cinq opérations séquentielles :
@@ -237,8 +291,31 @@ impl Cryptographe {
 
         self.trousseau.trousseau_public_vers_trousseau(tp)?;
 
-        self.trousseau.efface_mdp();
-        self.trousseau.efface_cle_ephemere();
+        Ok(())
+    }
+
+    /// Déchiffre et charge les clés d'un foyer dans le trousseau.
+    ///
+    /// Déchiffre toutes les clés privées et symétriques du [`TrousseauFoyerPublic`]
+    /// fourni avec la clé éphémère et les enregistre dans le trousseau à la position
+    /// `index` sous l'adresse `onion`.
+    ///
+    /// # Prérequis
+    ///
+    /// La clé éphémère doit être présente dans le trousseau.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé éphémère est absente ou si le déchiffrement
+    /// d'une clé échoue.
+    pub(super) fn ouverture_trousseau_foyer(
+        &mut self,
+        tp: TrousseauFoyerPublic,
+        index: usize,
+        onion: &str,
+    ) -> ResultCryptographe<()> {
+        self.trousseau
+            .trousseau_foyer_public_vers_trousseau_foyer(&tp, index, onion)?;
 
         Ok(())
     }

@@ -680,6 +680,48 @@ impl Trousseau {
         });
         Ok(())
     }
+
+    pub(super) fn trousseau_foyer_public_vers_trousseau_foyer(
+        &mut self,
+        tp: &TrousseauFoyerPublic,
+        index: usize,
+        onion: &str,
+    ) -> ResultCryptographe<()> {
+        let cle_chiffrement = self.dechiffre_cle(&tp.cle_chiffrement)?;
+
+        let cle_dechiffree = self.dechiffre_cle(&tp.cle_sig_privee)?;
+        let cle_pub = tp.cle_sig_pub;
+
+        let paire_signature = PaireClesSignature {
+            privee: SigningKey::from_bytes(&cle_dechiffree.expose_secret()),
+            publique: VerifyingKey::from_bytes(&cle_pub).map_err(|_| {
+                ErreurCryptographe::Interne(String::from("Erreur récupération de clé."))
+            })?,
+        };
+
+        let cle_dechiffree = self.dechiffre_cle(&tp.cle_chiff_privee)?;
+        let cle_pub = tp.cle_chiff_pub;
+
+        let paire_chiffrement = PaireClesChiffrement {
+            privee: SecretBox::new(Box::new(StaticSecret::from(
+                cle_dechiffree.expose_secret().clone(),
+            ))),
+            publique: PublicKey::from(cle_pub),
+        };
+
+        let cles_chiffrement_classeurs = std::array::from_fn(|_| None);
+
+        self.cles_foyers[index] = Some((
+            String::from(onion),
+            TrousseauFoyer {
+                cle_chiffrement,
+                paire_signature,
+                paire_chiffrement,
+                cles_chiffrement_classeurs,
+            },
+        ));
+        Ok(())
+    }
 }
 
 // Partie StreamEncryptor

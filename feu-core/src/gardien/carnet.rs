@@ -17,6 +17,7 @@
 //! au niveau du module — point de vérité unique pour toute l'arborescence.
 
 use super::erreur::{ErreurGardien, ResultGardien};
+use crate::cryptographe::trousseau_public::TrousseauFoyerPublic;
 use crate::cryptographe::trousseau_public::TrousseauPublic;
 use std::env;
 use std::fs;
@@ -77,6 +78,10 @@ impl Carnet {
     /// Donne le chemin de l'archive `adresse.onion.feu`
     pub(super) fn donne_chemin_archive(&self, onion: &str) -> PathBuf {
         self.chemin_feu.join(format!("{}.feu", onion))
+    }
+
+    pub(super) fn donne_chemin_feu(&self) -> PathBuf {
+        self.chemin_feu.clone()
     }
 
     /// Crée un dossier avec les permissions `rwx------` (0o700).
@@ -176,6 +181,61 @@ impl Carnet {
         Ok(())
     }
 
+    /// Lit toutes les clés chiffrées d'un foyer depuis le disque.
+    ///
+    /// Lit depuis `~/.feu/.cles/<onion>.cle` et `~/.feu/<onion>/.cles/` :
+    /// - la clé symétrique de chiffrement (`<onion>.cle`) — 60 octets
+    /// - la paire de clés de signature (`sig.priv`, `sig.pub`) — 60 et 32 octets
+    /// - la paire de clés de chiffrement (`chif.priv`, `chif.pub`) — 60 et 32 octets
+    ///
+    /// Les clés privées et symétriques sont retournées chiffrées (AES-256-GCM).
+    /// Les clés de classeurs ne sont pas encore prises en charge (v0.0.1).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si un fichier est absent, illisible ou de taille incorrecte.
+    pub(super) fn creer_trousseau_public(
+        &self,
+        onion: &str,
+    ) -> ResultGardien<TrousseauFoyerPublic> {
+        let cle_chiffrement = std::fs::read(
+            &self
+                .chemin_feu
+                .join(".cles/")
+                .join(format!("{}{}", onion, ".cle")),
+        )?
+        .try_into()
+        .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
+
+        let chemin_foyer = &self.chemin_feu.join(onion).join(".cles/");
+
+        let cle_sig_privee = std::fs::read(chemin_foyer.join(CLE_FOYER_SIG_PRIV))?
+            .try_into()
+            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
+
+        let cle_sig_pub = std::fs::read(chemin_foyer.join(CLE_FOYER_SIG_PUB))?
+            .try_into()
+            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
+
+        let cle_chiff_privee = std::fs::read(chemin_foyer.join(CLE_FOYER_CHIF_PRIV))?
+            .try_into()
+            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
+
+        let cle_chiff_pub = std::fs::read(chemin_foyer.join(CLE_FOYER_CHIF_PUB))?
+            .try_into()
+            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
+
+        // Cette version de Feu ne prends pas encore en charge les clés des classeurs
+
+        Ok(TrousseauFoyerPublic::new(
+            cle_chiffrement,
+            cle_sig_privee,
+            cle_sig_pub,
+            cle_chiff_privee,
+            cle_chiff_pub,
+        ))
+    }
+
     /// Lit le sel Argon2id depuis `~/.feu/.cles/sel.feu`.
     ///
     /// # Erreurs
@@ -259,6 +319,17 @@ impl Carnet {
             .write(true)
             .create_new(true)
             .mode(0o600)
+            .open(self.donne_chemin_archive(onion))?)
+    }
+
+    /// Ouvre l'archive `<onion>.feu` en lecture.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent ou illisible.
+    pub(super) fn ouvre_archive_foyer_lecture(&self, onion: &str) -> ResultGardien<File> {
+        Ok(OpenOptions::new()
+            .read(true)
             .open(self.donne_chemin_archive(onion))?)
     }
 }

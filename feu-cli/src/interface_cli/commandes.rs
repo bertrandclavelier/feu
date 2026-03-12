@@ -49,6 +49,17 @@ pub(super) fn traite_commande(
             affiche_liste_foyers(&feu.commande_liste_foyers());
             SuiteCommandes::Continuer
         }
+        ("ouvre", _) => {
+            match arguments.parse::<usize>() {
+                Ok(i) => {
+                    if let Err(e) = feu.commande_ouverture_foyer(i) {
+                        eprintln!("Impossible d'ouvrir le foyer {} : {}", i, e);
+                    }
+                }
+                Err(_) => eprintln!("Argument invalide : {}", arguments),
+            }
+            SuiteCommandes::Continuer
+        }
         ("quitte", _) => SuiteCommandes::Quitter,
         ("version", _) => {
             feu.commande_affiche_version();
@@ -68,6 +79,7 @@ fn liste_commandes() {
     println!("{:<12} | initialise un nœud vierge", "initialise");
     println!("{:<12} | liste les commandes disponibles", "liste -C");
     println!("{:<12} | liste les foyers et leur état", "liste -F");
+    println!("{:<12} | ouvre le foyer d'index `i`", "ouvre `i`");
     println!("{:<12} | quitter Feu", "quitte");
     println!("{:<12} | affiche la version de `Feu`", "version");
 }
