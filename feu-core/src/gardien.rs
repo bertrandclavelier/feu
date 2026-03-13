@@ -34,11 +34,9 @@ use super::cryptographe::trousseaux_publics::{
     TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
 };
 use crate::MAX_FOYERS;
-use crate::cryptographe::flux_chiffre::Finalise;
 use carnet::Carnet;
 use erreur::{ErreurGardien, ResultGardien};
 use std::fs::File;
-use std::io::{Read, Write};
 
 const VERSION_CONFIGURATION: u32 = 1;
 
@@ -171,6 +169,7 @@ impl Gardien {
 // ── Opérations disque ────────────────────────────────────────────────────────
 
 impl Gardien {
+    /// Indique si l'arborescence `~/.feu` existe sur le système de fichiers.
     pub(super) fn existence_arborescence(&self) -> bool {
         self.carnet.existe_arborescence_noeud()
     }
@@ -211,92 +210,85 @@ impl Gardien {
     ///
     /// Retourne une erreur si l'écriture échoue.
     pub(super) fn enregistrement_configuration(&self) -> ResultGardien<()> {
-        // Écriture sur le disque
         self.carnet
             .enregistre_configuration(self.configuration.exporte_en_texte())?;
 
         Ok(())
     }
 
-    /// Ouvre le fichier de destination `<onion>.feu` en écriture exclusive.
+    /// Prépare les deux flux nécessaires à l'archivage chiffré d'un foyer.
     ///
-    /// Délègue au carnet la création du fichier avec les permissions `rw-------` (0o600).
+    /// Enchaîne trois opérations :
+    ///
+    /// 1. Crée l'archive tar intermédiaire `<onion>.tar` depuis le dossier `<onion>`.
+    /// 2. Ouvre `<onion>.tar` en lecture — source du chiffrement.
+    /// 3. Crée `<onion>.feu` en écriture exclusive — destination du chiffrement.
+    ///
+    /// Le tuple retourné `(source, destination)` est passé directement au cryptographe
+    /// via [`Cryptographe::donne_flux_chiffrement_foyer`].
+    /// `<onion>.tar` doit être supprimé après chiffrement.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le fichier existe déjà ou si la création échoue.
-    pub(super) fn ouverture_fichier_ecriture(&self, onion: &str) -> ResultGardien<File> {
-        Ok(self.carnet.ouvre_fichier_ecriture(onion)?)
-    }
+    /// Retourne une erreur si la création du tar échoue, si `<onion>.feu` existe déjà,
+    /// ou si une opération disque échoue.
+    pub(super) fn preparation_archivage_chiffre_foyer(
+        &self,
+        onion: &str,
+    ) -> ResultGardien<(File, File)> {
+        self.carnet.archive_tar_foyer(onion)?;
 
-    /// Ouvre l'archive `<onion>.feu` en lecture et lit la clé symétrique chiffrée du foyer.
-    ///
-    /// Retourne un tuple `(fichier, cle_chiffree)` — le fichier positionné au début
-    /// de l'archive et la clé symétrique de 60 octets (`nonce || ciphertext || tag`)
-    /// lue depuis `~/.feu/.cles/<onion>.cle`. Les deux sont nécessaires pour créer
-    /// le flux de lecture déchiffré.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si l'archive ou le fichier de clé est absent, illisible,
-    /// ou si la clé ne fait pas 60 octets.
-    pub(super) fn ouverture_fichier_lecture(&self, onion: &str) -> ResultGardien<(File, [u8; 60])> {
         Ok((
-            self.carnet.ouvre_archive_foyer_lecture(onion)?,
-            self.carnet.lire_pour_donner_cle_chiffrement_foyer(onion)?,
+            self.carnet.ouvre_archive_tar_foyer_lecture(onion)?,
+            self.carnet.ouvre_archive_chiffree_foyer_ecriture(onion)?,
         ))
     }
 
-    /// Archive et chiffre le dossier `<onion>` dans un flux AES-256-GCM-stream.
+    /// Prépare les éléments nécessaires au déchiffrement d'un foyer.
     ///
-    /// Construit une archive tar du dossier `<onion>` en écrivant directement
-    /// dans `ecrivain` — un flux chiffré `Write + Finalise`. Les fichiers sont
-    /// archivés à la racine (`.`) sans chemin parent.
-    /// `finalise()` est appelé après le dernier chunk pour clore le stream AES-GCM.
+    /// Lit depuis le disque et ouvre les fichiers dans l'ordre attendu par
+    /// [`Cryptographe::donne_flux_dechiffrement_foyer`] :
+    ///
+    /// 1. La clé symétrique chiffrée depuis `~/.feu/.cles/<onion>.cle` — 60 octets.
+    /// 2. L'archive chiffrée `<onion>.feu` en lecture — source du déchiffrement.
+    /// 3. Un fichier `<onion>.tar` vide en écriture — destination du déchiffrement.
+    ///
+    /// Après déchiffrement, appeler [`extraction_dechiffree_foyer`](Self::extraction_dechiffree_foyer)
+    /// pour extraire le tar et nettoyer les fichiers intermédiaires.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le dossier `<onion>` est absent, si l'archivage
-    /// tar échoue, ou si la finalisation du flux chiffré échoue.
-    pub(super) fn creation_archive_chiffree<T: Write + Finalise>(
+    /// Retourne une erreur si un fichier de clé est absent ou de taille incorrecte,
+    /// si `<onion>.feu` est absent, ou si la création de `<onion>.tar` échoue.
+    pub(super) fn preparation_desarchivage_chiffre_foyer(
         &self,
         onion: &str,
-        ecrivain: T,
-    ) -> ResultGardien<()> {
-        if self.carnet.donne_chemin_onion(onion).exists() {
-            let mut builder = tar::Builder::new(ecrivain);
-
-            builder.append_dir_all(".", self.carnet.donne_chemin_onion(onion))?;
-            let ecrivain = builder.into_inner()?;
-            ecrivain.finalise().map_err(|e| ErreurGardien::Interne(e))?;
-            Ok(())
-        } else {
-            return Err(ErreurGardien::Interne(String::from(
-                "Impossible de trouver le dossier `onion` correspondant.",
-            )));
-        }
+    ) -> ResultGardien<([u8; 60], File, File)> {
+        Ok((
+            self.carnet.lire_pour_donner_cle_chiffrement_foyer(onion)?,
+            self.carnet.ouvre_archive_chiffree_foyer_lecture(onion)?,
+            self.carnet.ouvre_archive_tar_vide_ecriture(onion)?,
+        ))
     }
 
-    /// Extrait l'archive chiffrée d'un foyer et supprime l'archive après extraction.
+    /// Extrait l'archive tar déchiffrée et supprime les fichiers intermédiaires.
     ///
-    /// Lit l'archive tar depuis `lecteur` — un flux déchiffré `Read` — et extrait
-    /// son contenu dans `~/.feu/`. Supprime ensuite `<onion>.feu` pour ne laisser
-    /// que le dossier clair `<onion>` sur le disque.
+    /// Enchaîne trois opérations séquentielles :
+    ///
+    /// 1. Extrait `<onion>.tar` vers `~/.feu/<onion>/`.
+    /// 2. Supprime `<onion>.tar`.
+    /// 3. Supprime `<onion>.feu`.
+    ///
+    /// Doit être appelé immédiatement après [`Cryptographe::donne_flux_dechiffrement_foyer`].
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si l'extraction tar échoue ou si la suppression de
-    /// l'archive échoue.
-    pub(super) fn creation_dossier_desarchive<T: Read>(
-        &self,
-        onion: &str,
-        lecteur: T,
-    ) -> ResultGardien<()> {
-        let mut archive = tar::Archive::new(lecteur);
-
-        archive.unpack(self.carnet.donne_chemin_feu())?;
-
-        std::fs::remove_file(self.carnet.donne_chemin_archive(onion))?;
+    /// Retourne une erreur si l'extraction échoue ou si la suppression d'un
+    /// fichier intermédiaire échoue.
+    pub(super) fn desarchivage_chiffre_foyer(&self, onion: &str) -> ResultGardien<()> {
+        self.carnet.desarchive_tar_foyer(onion)?;
+        self.carnet.supprime_archive_foyer_tar(onion)?;
+        self.carnet.supprime_archive_foyer_chiffree(onion)?;
         Ok(())
     }
 
@@ -311,7 +303,7 @@ impl Gardien {
     /// ou si la suppression récursive du dossier échoue.
     pub(super) fn suppression_dossier_onion(&self, onion: &str) -> ResultGardien<()> {
         // Vérification que l'archive existe avant de supprimer le dossier. Sinon impossible
-        if self.carnet.donne_chemin_archive(onion).exists() {
+        if self.carnet.donne_chemin_archive_chiffree(onion).exists() {
             self.carnet.supprime_dossier_onion(onion)?;
             Ok(())
         } else {
@@ -319,6 +311,21 @@ impl Gardien {
                 "Le gardien ne supprimera pas le dossier s'il n'est pas archivé.",
             )));
         }
+    }
+
+    /// Supprime l'archive tar intermédiaire `<onion>.tar` après chiffrement.
+    ///
+    /// Doit être appelé immédiatement après [`preparation_archivage_chiffre_foyer`](Self::preparation_archivage_chiffre_foyer)
+    /// et le chiffrement — le `.tar` est un fichier temporaire qui ne doit pas
+    /// persister sur le disque.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
+    pub(super) fn suppression_archive_foyer_tar(&self, onion: &str) -> ResultGardien<()> {
+        self.carnet.supprime_archive_foyer_tar(onion)?;
+
+        Ok(())
     }
 
     /// Lit les clés du nœud sur le disque et construit un [`TrousseauPublicNoeud`].

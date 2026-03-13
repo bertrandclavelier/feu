@@ -35,6 +35,17 @@ pub(super) fn traite_commande(
             }
             SuiteCommandes::Continuer
         }
+        ("ferme", _) => {
+            match arguments.parse::<usize>() {
+                Ok(i) => {
+                    if let Err(e) = &feu.commande_fermeture_foyer_index(i) {
+                        eprintln!("Impossible de fermer le foyer {} : {}", i, e);
+                    }
+                }
+                Err(_) => eprintln!("Argument invalide : {}", arguments),
+            }
+            SuiteCommandes::Continuer
+        }
         ("initialise", _) => {
             if let Err(e) = feu.commande_initialise_noeud_vierge() {
                 eprintln!("Erreur d'initialisation du nœud : {}", e)
@@ -76,6 +87,7 @@ pub(super) fn traite_commande(
 fn liste_commandes() {
     println!("Commandes disponibles :");
     println!("{:<12} | allume le noeud", "allume");
+    println!("{:<12} | ferme le foyer d'index `i`", "ferme `i`");
     println!("{:<12} | initialise un nœud vierge", "initialise");
     println!("{:<12} | liste les commandes disponibles", "liste -C");
     println!("{:<12} | liste les foyers et leur état", "liste -F");

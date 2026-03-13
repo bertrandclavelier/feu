@@ -81,7 +81,8 @@ use super::erreur::ResultCryptographe;
 use super::trousseaux_publics::{
     TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
 };
-use aead::stream::EncryptorBE32;
+
+use aead::stream::{DecryptorBE32, EncryptorBE32};
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use argon2::Argon2;
@@ -93,6 +94,7 @@ use rand::rngs::OsRng;
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use sha3::{Digest, Sha3_256};
 use slip10_ed25519::derive_ed25519_private_key;
+use std::io::{Read, Write};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 const CHAINE_A_SIGNER_POUR_SEL: &str = "feu-noeud-sel";
@@ -100,6 +102,8 @@ const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE: &str = "feu-foyer-symetrique"
 const CHAINE_A_SIGNER_POUR_PAIRE_SIGNATURE: &str = "feu-foyer-paire-signature";
 const CHAINE_A_SIGNER_POUR_PAIRE_CHIFFREMENT: &str = "feu-foyer-paire-chiffrement";
 const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu-foyer-classeur";
+
+const CHUNK_SIZE: usize = 4096;
 
 struct PaireClesSignature {
     // SigningKey n'implémente pas Zeroize (contrainte d'ed25519-dalek v2) —
@@ -170,6 +174,11 @@ impl TrousseauFoyer {
 
         // 4. Encodage
         format!("{}.onion", BASE32.encode(&data).to_lowercase())
+    }
+
+    /// Retourne une référence à la clé symétrique de chiffrement du foyer.
+    fn donne_cle_chiffrement(&self) -> &SecretBox<[u8; 32]> {
+        &self.cle_chiffrement
     }
 }
 
@@ -740,57 +749,200 @@ impl Trousseau {
         });
         Ok(())
     }
-}
 
-//
-// Stream encrypteur
-//
-impl Trousseau {
-    // Retourne le TrousseauFoyer correspondant à l'adresse `onion`, ou `None` si absent.
-    fn onion_donne_trousseau_foyer(&self, onion: &str) -> Option<&TrousseauFoyer> {
-        for element in &self.trousseaux_foyers {
-            if let Some(trousseau) = element {
-                if trousseau.onion == onion {
-                    return Some(trousseau);
-                }
-            }
-        }
-        None
-    }
-
-    /// Crée un `EncryptorBE32<Aes256Gcm>` prêt à chiffrer en streaming pour le foyer `onion`.
+    /// Chiffre un flux de données du foyer à la position `index`.
     ///
-    /// Génère un nonce aléatoire de 7 octets via [`OsRng`], construit l'encrypteur AES-256-GCM
-    /// depuis la clé symétrique du foyer et retourne `(encrypteur, nonce)`.
-    /// Le nonce doit être écrit en tête du fichier de destination pour permettre le déchiffrement.
+    /// Récupère la clé symétrique du foyer dans le trousseau et délègue
+    /// le chiffrement à [`chiffre_avec_cle`](Self::chiffre_avec_cle).
+    ///
+    /// # Prérequis
+    ///
+    /// Le foyer à l'`index` donné doit être présent dans le trousseau —
+    /// c'est-à-dire que le foyer doit être ouvert.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si aucun foyer correspondant à `onion` n'est présent dans le trousseau.
-    pub(super) fn cree_stream_encryptor(
+    /// Retourne une erreur si aucun foyer n'est chargé à cet index,
+    /// ou si le chiffrement AES-GCM-stream échoue.
+    pub(super) fn chiffre_avec_cle_foyer(
         &self,
-        onion: &str,
-    ) -> ResultCryptographe<(EncryptorBE32<Aes256Gcm>, [u8; 7])> {
+        index: usize,
+        source: &mut impl Read,
+        destination: &mut impl Write,
+    ) -> ResultCryptographe<()> {
+        if let Some(trousseau_foyer) = &self.trousseaux_foyers[index] {
+            self.chiffre_avec_cle(
+                trousseau_foyer.donne_cle_chiffrement().expose_secret(),
+                source,
+                destination,
+            )?;
+            return Ok(());
+        }
+        Err(ErreurCryptographe::Interne(String::from(
+            "Pas de trousseau pour cet index",
+        )))
+    }
+
+    /// Déchiffre un flux de données d'un foyer à partir de sa clé symétrique chiffrée.
+    ///
+    /// `cle_chiffree` est la clé symétrique du foyer telle que lue sur disque
+    /// (`nonce || ciphertext || tag`, 60 octets). Elle est déchiffrée avec la
+    /// clé éphémère du trousseau, puis utilisée pour déchiffrer le flux
+    /// AES-256-GCM-stream depuis `source` vers `destination`.
+    ///
+    /// # Prérequis
+    ///
+    /// La clé éphémère doit être présente dans le trousseau —
+    /// dérivée via [`derive_cle_ephemere`](Self::derive_cle_ephemere).
+    /// Cette méthode est conçue pour l'ouverture d'un foyer : le foyer
+    /// n'a pas besoin d'être dans le trousseau.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé éphémère est absente, si le déchiffrement
+    /// de `cle_chiffree` échoue (auth tag invalide — mot de passe incorrect),
+    /// ou si le déchiffrement du flux AES-GCM-stream échoue.
+    pub(super) fn dechiffre_avec_cle_foyer(
+        &self,
+        cle_chiffree: &[u8; 60],
+        source: &mut impl Read,
+        destination: &mut impl Write,
+    ) -> ResultCryptographe<()> {
+        self.dechiffre_avec_cle(
+            self.dechiffre_cle(cle_chiffree)?.expose_secret(),
+            source,
+            destination,
+        )?;
+        Ok(())
+    }
+}
+
+//
+// Chiffrement de flux
+//
+impl Trousseau {
+    /// Chiffre un flux d'octets avec AES-256-GCM-stream.
+    ///
+    /// Génère un nonce aléatoire de 7 octets (écrit en tête de `destination`),
+    /// puis traite `source` par chunks de [`CHUNK_SIZE`] octets via un look-ahead
+    /// à deux buffers : quand le second `read` retourne 0, le premier buffer est
+    /// le dernier chunk — `encrypt_last` est appelé, terminant le stream sans
+    /// sentinel vide.
+    ///
+    /// # Format du flux chiffré
+    ///
+    /// ```text
+    /// [0..7]  nonce (7 octets)
+    /// [7..]   chunks chiffrés : n octets plaintext → n + 16 octets ciphertext
+    ///         (16 octets = auth tag AES-GCM par chunk)
+    /// ```
+    ///
+    /// # Dettes techniques
+    ///
+    /// - **Copie pile** : `buffer1 = buffer2` copie `CHUNK_SIZE` octets sur la pile
+    ///   à chaque itération, y compris les octets non valides au-delà de `n2`.
+    ///
+    /// - **Short-read** : `read()` peut légalement retourner `n < CHUNK_SIZE` pour
+    ///   un chunk non-final. Le chunk chiffré aura la taille `n + 16` au lieu de
+    ///   `CHUNK_SIZE + 16`, et le déchiffreur devra lire exactement `n + 16` octets
+    ///   pour ce chunk — ce qui dépend du comportement du lecteur sous-jacent.
+    ///   Pour les fichiers réguliers sur disque, ce cas ne se produit pas en pratique.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si une opération d'entrée/sortie échoue ou si le
+    /// chiffrement AES-GCM-stream échoue.
+    fn chiffre_avec_cle(
+        &self,
+        cle_chiffrement: &[u8; 32],
+        source: &mut impl Read,
+        destination: &mut impl Write,
+    ) -> ResultCryptographe<()> {
         // Génération du nonce aléatoire
         let mut nonce = [0u8; 7];
         OsRng.fill_bytes(&mut nonce);
 
-        // Création encryptor
-        let encryptor;
-        match self.onion_donne_trousseau_foyer(onion) {
-            None => {
-                return Err(ErreurCryptographe::Interne(String::from(
-                    "Problème récupération clé privée.",
-                )));
+        // Création du StreamEncryptor
+        let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
+        let cipher = Aes256Gcm::new(key);
+        let mut encryptor = EncryptorBE32::from_aead(cipher, nonce.as_slice().into());
+
+        // Écriture du nonce en tête du fichier
+        destination.write_all(&nonce)?;
+
+        let mut buffer1 = [0u8; CHUNK_SIZE];
+        let mut buffer2 = [0u8; CHUNK_SIZE];
+
+        let mut n1 = source.read(&mut buffer1)?;
+        loop {
+            let n2 = source.read(&mut buffer2)?;
+            if n2 == 0 {
+                // buffer1 dernier chunk de taille n1
+                let last_chunk = encryptor.encrypt_last(&buffer1[..n1])?;
+                destination.write_all(&last_chunk)?;
+                break;
             }
-            Some(foyer) => {
-                // Création du StreamEncryptor
-                let key = Key::<Aes256Gcm>::from_slice(foyer.cle_chiffrement.expose_secret());
-                let cipher = Aes256Gcm::new(key);
-                encryptor = EncryptorBE32::from_aead(cipher, nonce.as_slice().into());
-            }
+            let chunk = encryptor.encrypt_next(&buffer1[..n1])?;
+            destination.write_all(&chunk)?;
+            buffer1 = buffer2;
+            n1 = n2;
         }
 
-        Ok((encryptor, nonce))
+        Ok(())
+    }
+
+    /// Déchiffre un flux AES-256-GCM-stream produit par [`chiffre_avec_cle`](Self::chiffre_avec_cle).
+    ///
+    /// Lit le nonce de 7 octets en tête via `read_exact`, puis traite les chunks
+    /// chiffrés via un look-ahead à deux buffers symétrique à `chiffre_avec_cle` :
+    /// `decrypt_last` est déclenché quand le second `read` retourne 0.
+    ///
+    /// Chaque buffer de déchiffrement est dimensionné à `CHUNK_SIZE + 16` octets
+    /// (plaintext + auth tag AES-GCM).
+    ///
+    /// # Dettes techniques
+    ///
+    /// Mêmes dettes que [`chiffre_avec_cle`](Self::chiffre_avec_cle) —
+    /// copie pile et short-read symétrique.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la lecture du nonce échoue, si une opération
+    /// d'entrée/sortie échoue, ou si la vérification de l'auth tag AES-GCM échoue
+    /// (données corrompues ou clé incorrecte).
+    fn dechiffre_avec_cle(
+        &self,
+        cle_chiffrement: &[u8; 32],
+        source: &mut impl Read,
+        destination: &mut impl Write,
+    ) -> ResultCryptographe<()> {
+        // Récupération du nonce
+        let mut nonce = [0u8; 7];
+        source.read_exact(&mut nonce)?;
+
+        // Création du StreamDecryptor
+        let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
+        let cipher = Aes256Gcm::new(key);
+        let mut decryptor = DecryptorBE32::from_aead(cipher, nonce.as_slice().into());
+
+        let mut buffer1 = [0u8; CHUNK_SIZE + 16];
+        let mut buffer2 = [0u8; CHUNK_SIZE + 16];
+
+        let mut n1 = source.read(&mut buffer1)?;
+        loop {
+            let n2 = source.read(&mut buffer2)?;
+            if n2 == 0 {
+                // buffer1 dernier chunk de taille n1
+                let last_chunk = decryptor.decrypt_last(&buffer1[..n1])?;
+                destination.write_all(&last_chunk)?;
+                break;
+            }
+            let chunk = decryptor.decrypt_next(&buffer1[..n1])?;
+            destination.write_all(&chunk)?;
+            buffer1 = buffer2;
+            n1 = n2;
+        }
+
+        Ok(())
     }
 }

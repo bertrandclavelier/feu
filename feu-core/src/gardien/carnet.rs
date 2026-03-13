@@ -16,8 +16,8 @@
 //! Les noms de fichiers du protocole sont définis comme constantes privées
 //! au niveau du module — point de vérité unique pour toute l'arborescence.
 
-use crate::MAX_FOYERS;
 use super::erreur::{ErreurGardien, ResultGardien};
+use crate::MAX_FOYERS;
 use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
 use std::env;
 use std::fs;
@@ -75,14 +75,14 @@ impl Carnet {
         self.chemin_feu.join(PathBuf::from(onion))
     }
 
-    /// Donne le chemin de l'archive `adresse.onion.feu`
-    pub(super) fn donne_chemin_archive(&self, onion: &str) -> PathBuf {
+    /// Donne le chemin de l'archive chiffrée `~/.feu/<onion>.feu`.
+    pub(super) fn donne_chemin_archive_chiffree(&self, onion: &str) -> PathBuf {
         self.chemin_feu.join(format!("{}.feu", onion))
     }
 
-    /// Retourne le chemin racine du nœud `~/.feu`.
-    pub(super) fn donne_chemin_feu(&self) -> PathBuf {
-        self.chemin_feu.clone()
+    /// Donne le chemin de l'archive tar intermédiaire `~/.feu/<onion>.tar`.
+    pub(super) fn donne_chemin_archive_tar(&self, onion: &str) -> PathBuf {
+        self.chemin_feu.join(format!("{}.tar", onion))
     }
 
     /// Crée un dossier avec les permissions `rwx------` (0o700).
@@ -107,6 +107,26 @@ impl Carnet {
         Ok(())
     }
 
+    /// Supprime l'archive chiffrée `~/.feu/<onion>.feu` après extraction.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
+    pub(super) fn supprime_archive_foyer_chiffree(&self, onion: &str) -> ResultGardien<()> {
+        fs::remove_file(self.donne_chemin_archive_chiffree(onion))?;
+        Ok(())
+    }
+
+    /// Supprime l'archive tar intermédiaire `~/.feu/<onion>.tar`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
+    pub(super) fn supprime_archive_foyer_tar(&self, onion: &str) -> ResultGardien<()> {
+        fs::remove_file(self.donne_chemin_archive_tar(onion))?;
+        Ok(())
+    }
+
     /// Écrit l'intégralité du trousseau public sur le disque.
     ///
     /// Crée l'arborescence complète du nœud puis écrit chaque fichier de clé :
@@ -127,32 +147,44 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur à la première opération disque qui échoue.
-    pub(super) fn ecrire_trousseau_public_complet(&self, trousseau_public_complet: &TrousseauPublicComplet) -> ResultGardien<()> {
+    pub(super) fn ecrire_trousseau_public_complet(
+        &self,
+        trousseau_public_complet: &TrousseauPublicComplet,
+    ) -> ResultGardien<()> {
         Self::creer_dossier(&self.chemin_feu)?;
         Self::creer_dossier(&self.chemin_feu.join(".cles"))?;
 
         // Écriture du sel
-        std::fs::write(&self.chemin_feu.join(".cles").join(FEU_SEL), trousseau_public_complet.donne_trousseau_public_noeud().donne_sel())?;
+        std::fs::write(
+            &self.chemin_feu.join(".cles").join(FEU_SEL),
+            trousseau_public_complet
+                .donne_trousseau_public_noeud()
+                .donne_sel(),
+        )?;
 
         // Écriture de la clé privée du nœud
         std::fs::write(
             &self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV),
-            trousseau_public_complet.donne_trousseau_public_noeud().donne_cle_sig_privee(),
+            trousseau_public_complet
+                .donne_trousseau_public_noeud()
+                .donne_cle_sig_privee(),
         )?;
 
         // Écriture de la clé publique du nœud
         std::fs::write(
             &self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB),
-            trousseau_public_complet.donne_trousseau_public_noeud().donne_cle_sig_pub(),
+            trousseau_public_complet
+                .donne_trousseau_public_noeud()
+                .donne_cle_sig_pub(),
         )?;
 
-        // Pour chaque foyer            
+        // Pour chaque foyer
         for i in 0..MAX_FOYERS {
             let foyer = match trousseau_public_complet.donne_trousseau_public_foyer(i) {
                 Ok(valeur) => valeur,
                 Err(_) => continue,
             };
-            
+
             let chemin_foyer = &self.chemin_feu.join(foyer.donne_onion()).join(".cles/");
 
             Self::creer_dossier(chemin_foyer)?;
@@ -167,15 +199,24 @@ impl Carnet {
             )?;
 
             // Écriture de la paire de clés sig du foyer
-            std::fs::write(chemin_foyer.join(CLE_FOYER_SIG_PRIV), foyer.donne_cle_sig_privee())?;
-            std::fs::write(chemin_foyer.join(CLE_FOYER_SIG_PUB), foyer.donne_cle_sig_pub())?;
+            std::fs::write(
+                chemin_foyer.join(CLE_FOYER_SIG_PRIV),
+                foyer.donne_cle_sig_privee(),
+            )?;
+            std::fs::write(
+                chemin_foyer.join(CLE_FOYER_SIG_PUB),
+                foyer.donne_cle_sig_pub(),
+            )?;
 
             // Écriture de la paire de clés chif du foyer
             std::fs::write(
                 chemin_foyer.join(CLE_FOYER_CHIF_PRIV),
                 foyer.donne_cle_chiff_privee(),
             )?;
-            std::fs::write(chemin_foyer.join(CLE_FOYER_CHIF_PUB), foyer.donne_cle_chiff_pub())?;
+            std::fs::write(
+                chemin_foyer.join(CLE_FOYER_CHIF_PUB),
+                foyer.donne_cle_chiff_pub(),
+            )?;
 
             // Cette version de Feu ne prends pas encore en charge les clés des classeurs
         }
@@ -322,12 +363,12 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier existe déjà ou si la création échoue.
-    pub(super) fn ouvre_fichier_ecriture(&self, onion: &str) -> ResultGardien<File> {
+    pub(super) fn ouvre_archive_chiffree_foyer_ecriture(&self, onion: &str) -> ResultGardien<File> {
         Ok(OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .open(self.donne_chemin_archive(onion))?)
+            .open(self.donne_chemin_archive_chiffree(onion))?)
     }
 
     /// Ouvre l'archive `<onion>.feu` en lecture.
@@ -335,9 +376,79 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou illisible.
-    pub(super) fn ouvre_archive_foyer_lecture(&self, onion: &str) -> ResultGardien<File> {
+    pub(super) fn ouvre_archive_chiffree_foyer_lecture(&self, onion: &str) -> ResultGardien<File> {
         Ok(OpenOptions::new()
             .read(true)
-            .open(self.donne_chemin_archive(onion))?)
+            .open(self.donne_chemin_archive_chiffree(onion))?)
+    }
+
+    /// Ouvre l'archive tar intermédiaire `<onion>.tar` en lecture.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent ou illisible.
+    pub(super) fn ouvre_archive_tar_foyer_lecture(&self, onion: &str) -> ResultGardien<File> {
+        Ok(OpenOptions::new()
+            .read(true)
+            .open(self.donne_chemin_archive_tar(onion))?)
+    }
+
+    /// Crée `~/.feu/<onion>.tar` vide en écriture exclusive avec les permissions `rw-------` (0o600).
+    ///
+    /// Destiné à recevoir les données déchiffrées depuis `<onion>.feu`.
+    /// Doit être supprimé après désarchivage via [`supprime_archive_foyer_tar`](Self::supprime_archive_foyer_tar).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier existe déjà ou si la création échoue.
+    pub(super) fn ouvre_archive_tar_vide_ecriture(&self, onion: &str) -> ResultGardien<File> {
+        Ok(OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(self.donne_chemin_archive_tar(onion))?)
+    }
+
+    /// Crée l'archive tar intermédiaire `<onion>.tar` à partir du dossier `<onion>`.
+    ///
+    /// Ouvre `~/.feu/<onion>.tar` en écriture exclusive (`rw-------`, 0o600),
+    /// archive récursivement le dossier `~/.feu/<onion>` à la racine de l'archive (`.`),
+    /// puis finalise l'archive via `into_inner()`.
+    ///
+    /// Ce fichier tar est destiné à être chiffré par le cryptographe immédiatement après.
+    /// Il doit être supprimé après chiffrement.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier existe déjà, si la création échoue,
+    /// si l'archivage tar échoue, ou si la finalisation échoue.
+    pub(super) fn archive_tar_foyer(&self, onion: &str) -> ResultGardien<()> {
+        let fichier = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(self.donne_chemin_archive_tar(onion))?;
+        let mut builder = tar::Builder::new(fichier);
+
+        builder.append_dir_all(".", self.donne_chemin_onion(onion))?;
+        builder.into_inner()?;
+        Ok(())
+    }
+
+    /// Extrait l'archive tar intermédiaire `<onion>.tar` vers `~/.feu/<onion>/`.
+    ///
+    /// Ouvre `<onion>.tar` en lecture et extrait son contenu dans
+    /// `~/.feu/<onion>/` — symétrique de [`archive_tar_foyer`](Self::archive_tar_foyer)
+    /// qui archive avec `.` comme racine.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si `<onion>.tar` est absent, illisible,
+    /// ou si l'extraction échoue.
+    pub(super) fn desarchive_tar_foyer(&self, onion: &str) -> ResultGardien<()> {
+        let mut archive = tar::Archive::new(self.ouvre_archive_tar_foyer_lecture(onion)?);
+
+        archive.unpack(self.donne_chemin_onion(onion))?;
+        Ok(())
     }
 }

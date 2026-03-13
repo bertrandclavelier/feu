@@ -39,22 +39,16 @@
 //! du protocole.
 
 use crate::MAX_FOYERS;
-use crate::cryptographe::flux_chiffre::Finalise;
 
 use super::InterfaceFeuCore;
-use aes_gcm::aead::KeyInit;
-use aes_gcm::{Aes256Gcm, Key};
 use bip39::{Language, Mnemonic};
 use erreur::ResultCryptographe;
-use flux_chiffre::{EcritureChiffree, LectureDechiffree};
 use secrecy::{ExposeSecret, SecretBox};
-use std::fs::File;
 use std::io::{Read, Write};
 
 use trousseau::Trousseau;
 use trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud};
 
-pub(crate) mod flux_chiffre;
 mod trousseau;
 pub(crate) mod trousseaux_publics;
 
@@ -173,60 +167,6 @@ impl Cryptographe {
         Ok(resultat)
     }
 
-    /// Crée un flux d'écriture chiffré AES-256-GCM-stream pour le foyer `onion`.
-    ///
-    /// Délègue la création de l'encrypteur à [`Trousseau::cree_stream_encryptor`] et
-    /// retourne un [`EcritureChiffree`] prêt à recevoir les données à chiffrer.
-    /// Le nonce est écrit en tête du fichier par [`EcritureChiffree`].
-    ///
-    /// # Prérequis
-    ///
-    /// Le foyer identifié par `onion` doit être présent dans le trousseau.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si le foyer est introuvable ou si la création du flux échoue.
-    pub(super) fn donne_ecriture_chiffree(
-        &self,
-        onion: &str,
-        fichier: File,
-    ) -> ResultCryptographe<impl Write + Finalise> {
-        let (encryptor, nonce) = self.trousseau.cree_stream_encryptor(onion)?;
-
-        Ok(EcritureChiffree::new(fichier, encryptor, nonce)?)
-    }
-
-    /// Crée un flux de lecture déchiffré AES-256-GCM-stream pour un foyer.
-    ///
-    /// Déchiffre la clé symétrique du foyer (`cle`) avec la clé éphémère du trousseau,
-    /// construit le cipher AES-256-GCM correspondant et retourne un [`LectureDechiffree`]
-    /// prêt à lire l'archive `<onion>.feu`. Le nonce est lu en tête du fichier.
-    ///
-    /// # Prérequis
-    ///
-    /// Le mot de passe doit pouvoir être collecté via `interface` — la clé éphémère
-    /// est dérivée en interne avant le déchiffrement.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la dérivation de la clé éphémère échoue, si le déchiffrement
-    /// de la clé symétrique échoue, ou si la lecture du nonce en tête de fichier échoue.
-    pub(super) fn donne_lecture_dechiffree(
-        &mut self,
-        fichier: File,
-        cle: [u8; 60],
-        interface: &impl InterfaceFeuCore,
-    ) -> ResultCryptographe<impl Read> {
-        self.demande_mdp(interface);
-        self.derivation_cle_ephemere()?;
-
-        let cle_dechiffree = self.trousseau.dechiffre_cle(&cle)?;
-        let key = Key::<Aes256Gcm>::from_slice(cle_dechiffree.expose_secret());
-        let cipher = Aes256Gcm::new(key);
-
-        Ok(LectureDechiffree::new(fichier, cipher)?)
-    }
-
     /// Déverrouille le trousseau à partir d'un [`TrousseauPublicNoeud`] existant.
     ///
     /// Enchaîne quatre opérations séquentielles :
@@ -287,6 +227,64 @@ impl Cryptographe {
 
         self.efface_mdp_et_cle_ephemere();
 
+        Ok(())
+    }
+
+    /// Chiffre un flux de données du foyer à la position `index`.
+    ///
+    /// Délègue directement à [`Trousseau::chiffre_avec_cle_foyer`] —
+    /// la clé symétrique est lue depuis le trousseau en mémoire.
+    ///
+    /// # Prérequis
+    ///
+    /// Le foyer à l'`index` donné doit être ouvert — ses clés doivent être
+    /// présentes dans le trousseau.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si aucun foyer n'est chargé à cet index,
+    /// ou si le chiffrement AES-GCM-stream échoue.
+    pub(super) fn donne_flux_chiffrement_foyer(
+        &self,
+        index: usize,
+        source: &mut impl Read,
+        destination: &mut impl Write,
+    ) -> ResultCryptographe<()> {
+        self.trousseau
+            .chiffre_avec_cle_foyer(index, source, destination)?;
+        Ok(())
+    }
+
+    /// Déchiffre un flux de données d'un foyer fermé.
+    ///
+    /// Enchaîne trois opérations séquentielles :
+    ///
+    /// 1. Collecte le mot de passe Feu via `interface`.
+    /// 2. Dérive la clé éphémère Argon2id.
+    /// 3. Déchiffre `cle_chiffree` (clé symétrique du foyer, 60 octets lus sur disque)
+    ///    avec la clé éphémère, puis déchiffre le flux AES-256-GCM-stream.
+    ///
+    /// La clé éphémère **n'est pas effacée** à l'issue de cette méthode —
+    /// elle reste disponible pour le chargement des clés du foyer via
+    /// [`recoit_trousseau_public_foyer`](Self::recoit_trousseau_public_foyer),
+    /// qui l'effacera en fin d'opération.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la dérivation Argon2id échoue, si le déchiffrement
+    /// de `cle_chiffree` échoue (auth tag invalide — mot de passe incorrect),
+    /// ou si le déchiffrement du flux AES-GCM-stream échoue.
+    pub(super) fn donne_flux_dechiffrement_foyer(
+        &mut self,
+        cle_chiffree: &[u8; 60],
+        source: &mut impl Read,
+        destination: &mut impl Write,
+        interface: &impl InterfaceFeuCore,
+    ) -> ResultCryptographe<()> {
+        self.demande_mdp(interface);
+        self.derivation_cle_ephemere()?;
+        self.trousseau
+            .dechiffre_avec_cle_foyer(cle_chiffree, source, destination)?;
         Ok(())
     }
 }

@@ -27,8 +27,8 @@ use crate::{MAX_CLASSEURS, MAX_FOYERS};
 pub(crate) struct TrousseauPublicFoyer {
     onion: String,
 
-    cle_chiffrement: [u8; 60],  // chiffrée
-    cle_sig_privee: [u8; 60],   // chiffrée
+    cle_chiffrement: [u8; 60], // chiffrée
+    cle_sig_privee: [u8; 60],  // chiffrée
     cle_sig_pub: [u8; 32],
     cle_chiff_privee: [u8; 60], // chiffrée
     cle_chiff_pub: [u8; 32],
@@ -95,6 +95,7 @@ impl TrousseauPublicFoyer {
     /// # Erreurs
     ///
     /// Retourne une erreur si aucune clé n'est présente à cet index.
+    #[allow(dead_code)]
     pub(crate) fn donne_cle_chiffrement_classeur(
         &self,
         index: usize,

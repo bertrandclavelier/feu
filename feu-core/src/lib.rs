@@ -255,7 +255,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// garantir l'atomicité complète de l'initialisation.
     pub fn commande_initialise_noeud_vierge(&mut self) -> ResultFeu<()> {
         // Création du gardien et du cryptographe
-        let gardien = Gardien::new()?;
+        let mut gardien = Gardien::new()?;
         let mut cryptographe = Cryptographe::new();
 
         if gardien.existence_arborescence() {
@@ -278,14 +278,13 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         // Ajout des MAX_FOYERS foyers dans la configuration
         for i in 0..MAX_FOYERS {
-            self.session.foyers[i] = Foyer::new(
-                String::from(
-                    trousseau_public_complet
-                        .donne_trousseau_public_foyer(i)?
-                        .donne_onion(),
-                ),
-                true,
+            let onion = String::from(
+                trousseau_public_complet
+                    .donne_trousseau_public_foyer(i)?
+                    .donne_onion(),
             );
+            gardien.ajout_nouveau_foyer_dans_configuration(onion.clone(), i);
+            self.session.foyers[i] = Foyer::new(onion, true);
         }
 
         // Enregistrement de config.feu
@@ -395,6 +394,12 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// mémoire. Un mécanisme de drop guard sera introduit pour garantir l'effacement
     /// sur tous les chemins d'erreur.
     pub fn commande_ouverture_foyer(&mut self, index: usize) -> ResultFeu<()> {
+        if !self.session.noeud {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le nœud doit être allumé.",
+            )));
+        }
+
         if index >= MAX_FOYERS {
             return Err(ErreurFeu::Standard(String::from("Index foyer trop élevé.")));
         }
@@ -408,13 +413,17 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         match (&mut self.gardien, &mut self.cryptographe) {
             (Some(g), Some(c)) => {
-                let (fichier, cle) = g.ouverture_fichier_lecture(&onion)?;
+                let (cle, mut source, mut destination) =
+                    g.preparation_desarchivage_chiffre_foyer(onion)?;
 
-                let lecture_dechiffree =
-                    c.donne_lecture_dechiffree(fichier, cle, &self.interface_feu_core)?;
+                c.donne_flux_dechiffrement_foyer(
+                    &cle,
+                    &mut source,
+                    &mut destination,
+                    &self.interface_feu_core,
+                )?;
 
-                g.creation_dossier_desarchive(onion, lecture_dechiffree)?;
-
+                g.desarchivage_chiffre_foyer(onion)?;
                 let trousseau_public_foyer = g.creation_trousseau_foyer_public(onion)?;
 
                 c.recoit_trousseau_public_foyer(trousseau_public_foyer, index)?;
@@ -426,6 +435,12 @@ impl<I: InterfaceFeuCore> Feu<I> {
                 "Gardien et/ou cryptographe absent",
             ))),
         }
+    }
+
+    pub fn commande_fermeture_foyer_index(&mut self, index: usize) -> ResultFeu<()> {
+        let onion = String::from(self.session.index_vers_onion(index)?);
+        self.commande_fermeture_foyer(&onion)?;
+        Ok(())
     }
 
     /// Archive et chiffre le dossier d'un foyer, puis supprime le dossier clair
@@ -452,19 +467,18 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         match (&self.gardien, &self.cryptographe) {
             (Some(gardien), Some(cryptographe)) => {
-                // Demande au gardien d'ouvrir un fichier en écriture
-                let fichier = gardien.ouverture_fichier_ecriture(onion)?;
+                let (mut source, mut destination) =
+                    gardien.preparation_archivage_chiffre_foyer(onion)?;
 
-                // Demande au cryptographe de créer un flux chiffré à transmettre au gardien
-                // pour créer l'archive chiffrée
-                gardien.creation_archive_chiffree(
-                    onion,
-                    cryptographe.donne_ecriture_chiffree(onion, fichier)?,
+                cryptographe.donne_flux_chiffrement_foyer(
+                    self.session.onion_vers_index(onion)?,
+                    &mut source,
+                    &mut destination,
                 )?;
-                // Demande au gardien de supprimer le dossier `onion` en vérifant qu'une archive existe
+
+                gardien.suppression_archive_foyer_tar(onion)?;
                 gardien.suppression_dossier_onion(onion)?;
 
-                // Marque le foyer comme fermé dans la session
                 self.session.change_statut_onion(onion, false)?;
 
                 Ok(())

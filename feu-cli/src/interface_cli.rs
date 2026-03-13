@@ -50,8 +50,9 @@ enum SuiteCommandes {
 impl InterfaceCli {
     /// Point d'entrée du REPL de Feu.
     ///
-    /// Affiche le logo et initialise l'instance [`Feu`] avec une [`InterfaceCli`],
-    /// puis ouvre la boucle interactive via [`rustyline`].
+    /// Affiche le logo et initialise l'instance [`Feu`] avec une [`InterfaceCli`]
+    /// en mode d'affichage normal, puis ouvre la boucle interactive via
+    /// [`rustyline`].
     ///
     /// Chaque itération lit une commande sur l'invite `> `, l'enregistre dans
     /// l'historique de session et la dispatche vers [`Feu`]. La boucle se termine
@@ -67,12 +68,17 @@ impl InterfaceCli {
         println!(
             "{}",
             r#"
-         ███████╗███████╗██╗   ██╗
-         ██╔════╝██╔════╝██║   ██║
-         █████╗  █████╗  ██║   ██║
-         ██╔══╝  ██╔══╝  ██║   ██║
-         ██║     ███████╗╚██████╔╝
-         ╚═╝     ╚══════╝ ╚═════╝
+
+             ███████╗███████╗██╗   ██╗
+             ██╔════╝██╔════╝██║   ██║
+             █████╗  █████╗  ██║   ██║
+             ██╔══╝  ██╔══╝  ██║   ██║
+             ██║     ███████╗╚██████╔╝
+             ╚═╝     ╚══════╝ ╚═════╝
+        
+                Copyright (C) 2026
+        Bertrand CLAVELIER — Licence GPL v3.0
+
 "#
             .truecolor(255, 90, 31)
         );
