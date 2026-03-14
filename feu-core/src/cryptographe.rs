@@ -160,7 +160,7 @@ impl Cryptographe {
     ) -> ResultCryptographe<TrousseauPublicComplet> {
         self.derivation_cle_ephemere()?;
 
-        let resultat = self.trousseau.genere_trousseau_public()?;
+        let resultat = self.trousseau.genere_trousseau_public_complet()?;
 
         self.efface_mdp_et_cle_ephemere();
 
@@ -318,6 +318,29 @@ impl Cryptographe {
                 interface.afficher("Les deux entrées sont différentes. Recommencez...");
             }
         }
+    }
+
+    /// Collecte un nouveau mot de passe et rechiffre l'intégralité du trousseau.
+    ///
+    /// 1. Collecte le nouveau mot de passe (deux saisies avec vérification).
+    /// 2. Dérive une nouvelle clé éphémère Argon2id avec le sel existant.
+    /// 3. Rechiffre toutes les clés (nœud + foyers) — produit un nouveau trousseau public.
+    /// 4. Efface le mot de passe et la clé éphémère de la mémoire.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la dérivation ou le chiffrement échoue.
+    pub(super) fn changement_mdp(
+        &mut self,
+        interface: &impl InterfaceFeuCore,
+    ) -> ResultCryptographe<TrousseauPublicComplet> {
+        self.initialisation_nouveau_mdp(interface);
+        self.trousseau.derive_cle_ephemere()?;
+        let trousseau_public_complet = self.trousseau.genere_trousseau_public_complet()?;
+        self.trousseau.efface_cle_ephemere();
+        self.trousseau.efface_mdp();
+
+        Ok(trousseau_public_complet)
     }
 
     /// Collecte le mot de passe Feu via l'interface et le stocke dans le trousseau.

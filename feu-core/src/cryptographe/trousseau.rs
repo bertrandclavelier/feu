@@ -623,7 +623,9 @@ impl Trousseau {
     ///
     /// Retourne une erreur si le sel ou la paire de signature du nœud est absente,
     /// ou si le chiffrement d'une clé échoue.
-    pub(super) fn genere_trousseau_public(&self) -> ResultCryptographe<TrousseauPublicComplet> {
+    pub(super) fn genere_trousseau_public_complet(
+        &self,
+    ) -> ResultCryptographe<TrousseauPublicComplet> {
         match (self.sel, &self.paire_signature_noeud) {
             (Some(valeur1), Some(valeur2)) => {
                 let trousseau_public_noeud = TrousseauPublicNoeud::new(

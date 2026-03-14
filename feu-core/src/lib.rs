@@ -120,6 +120,16 @@ impl Session {
         true
     }
 
+    /// Retourne `true` si tous les foyers sont ouverts.
+    fn est_tout_ouvert(&self) -> bool {
+        for e in &self.foyers {
+            if !e.est_ouvert {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Remplace le tableau des foyers par celui fourni.
     ///
     /// Utilisé à l'allumage pour peupler la session avec les adresses
@@ -553,7 +563,47 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
                 Ok(())
             }
-            (_, _) => Err(ErreurFeu::Gardien(String::from("Le gardien est absent."))),
+            (_, _) => Err(ErreurFeu::Standard(String::from(
+                "Le gardien et/ou le cryptographe est absent.",
+            ))),
+        }
+    }
+
+    /// Change le mot de passe du nœud et rechiffre l'intégralité du trousseau.
+    ///
+    /// Tous les foyers doivent être ouverts — leurs clés doivent être en mémoire
+    /// pour être rechiffrées avec le nouveau mot de passe.
+    ///
+    /// **Phase mémoire — cryptographe**
+    /// 1. Collecte le nouveau mot de passe (deux saisies avec vérification).
+    /// 2. Dérive une nouvelle clé éphémère Argon2id avec le sel existant.
+    /// 3. Rechiffre toutes les clés (nœud + foyers) avec la nouvelle clé éphémère.
+    /// 4. Efface le mot de passe et la clé éphémère de la mémoire.
+    ///
+    /// **Phase disque — gardien**
+    /// 5. Réécrit atomiquement tous les fichiers de clés sur le disque.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si un foyer n'est pas ouvert, si le gardien ou le
+    /// cryptographe est absent, ou si une opération disque échoue.
+    pub fn commande_changement_mdp(&mut self) -> ResultFeu<()> {
+        if !self.session.est_tout_ouvert() {
+            return Err(ErreurFeu::Standard(String::from(
+                "Tous les foyers doivent être ouverts.",
+            )));
+        }
+
+        match (&mut self.gardien, &mut self.cryptographe) {
+            (Some(gardien), Some(cryptographe)) => {
+                let trousseau_public_complet =
+                    cryptographe.changement_mdp(&self.interface_feu_core)?;
+                gardien.ecriture_trousseau_public_complet(&trousseau_public_complet)?;
+                Ok(())
+            }
+            (_, _) => Err(ErreurFeu::Standard(String::from(
+                "Le gardien et/ou le cryptographe est absent.",
+            ))),
         }
     }
 

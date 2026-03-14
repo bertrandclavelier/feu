@@ -201,6 +201,24 @@ impl Gardien {
         }
     }
 
+    /// Réécrit le trousseau public complet sur le disque.
+    ///
+    /// Délègue à [`Carnet::ecrire_trousseau_public_complet`]. Les fichiers
+    /// existants sont écrasés atomiquement — utilisé lors du changement de
+    /// mot de passe.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si une opération disque échoue.
+    pub(super) fn ecriture_trousseau_public_complet(
+        &self,
+        trousseau_public_complet: &TrousseauPublicComplet,
+    ) -> ResultGardien<()> {
+        self.carnet
+            .ecrire_trousseau_public_complet(trousseau_public_complet)?;
+        Ok(())
+    }
+
     /// Orchestre la persistance de `config.feu` sur le disque.
     ///
     /// Exporte la configuration en mémoire via [`Configuration::exporte_en_texte`]
@@ -358,7 +376,7 @@ impl Gardien {
         &self,
         onion: &str,
     ) -> ResultGardien<TrousseauPublicFoyer> {
-        Ok(self.carnet.creer_trousseau_public(onion)?)
+        Ok(self.carnet.creer_trousseau_public_foyer(onion)?)
     }
 }
 // ── Opérations mémoire ───────────────────────────────────────────────────────

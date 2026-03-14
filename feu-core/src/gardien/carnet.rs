@@ -227,7 +227,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si un fichier est absent, illisible ou de taille incorrecte.
-    pub(super) fn creer_trousseau_public(
+    pub(super) fn creer_trousseau_public_foyer(
         &self,
         onion: &str,
     ) -> ResultGardien<TrousseauPublicFoyer> {
@@ -458,22 +458,29 @@ impl Carnet {
         Ok(())
     }
 
-    /// Crée un fichier avec les permissions `rw-------` (0o600) et y écrit `contenu`.
+    /// Écrit `contenu` dans `chemin` avec les permissions `rw-------` (0o600).
     ///
-    /// Utilise `create_new` — échoue si le fichier existe déjà.
+    /// Écrit d'abord dans un fichier temporaire `<chemin>.tmp`, puis le renomme
+    /// sur la cible — le renommage est atomique sur Unix et écrase l'ancien
+    /// fichier s'il existe. Fonctionne à l'initialisation (fichier absent)
+    /// comme au changement de mot de passe (fichier existant).
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le fichier existe déjà, si la création échoue,
-    /// ou si l'écriture échoue.
+    /// Retourne une erreur si la création du fichier temporaire échoue,
+    /// si l'écriture échoue, ou si le renommage échoue.
     fn ecrire_fichier_600(chemin: &Path, contenu: &[u8]) -> ResultGardien<()> {
+        let nouveau_chemin = chemin.with_added_extension("tmp");
+
         let mut fichier = OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .open(chemin)?;
+            .open(&nouveau_chemin)?;
 
         fichier.write_all(contenu)?;
+
+        std::fs::rename(&nouveau_chemin, chemin)?; // rename écrase l'ancien fichier
 
         Ok(())
     }

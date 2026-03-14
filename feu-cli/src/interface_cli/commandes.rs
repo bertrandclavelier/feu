@@ -31,13 +31,19 @@ pub(super) fn traite_commande(
     match (commande, arguments) {
         ("allume", _) => {
             if let Err(e) = feu.commande_allumage_noeud() {
-                eprintln!("Erreur d'allumage du nœud : {}", e)
+                eprintln!("Erreur d'allumage du nœud => {}", e)
+            }
+            SuiteCommandes::Continuer
+        }
+        ("change", "mdp") => {
+            if let Err(e) = feu.commande_changement_mdp() {
+                eprintln!("Erreur de changement de mdp => {}", e)
             }
             SuiteCommandes::Continuer
         }
         ("eteins", _) => {
             if let Err(e) = feu.commande_extinction_noeud() {
-                eprintln!("Erreur d'extinction du nœud : {}", e)
+                eprintln!("Erreur d'extinction du nœud => {}", e)
             }
             SuiteCommandes::Continuer
         }
@@ -46,7 +52,7 @@ pub(super) fn traite_commande(
             match arguments.parse::<usize>() {
                 Ok(i) => {
                     if let Err(e) = &feu.commande_fermeture_foyer_index(i) {
-                        eprintln!("Impossible de fermer le foyer {} : {}", i, e);
+                        eprintln!("Impossible de fermer le foyer {} => {}", i, e);
                     }
                 }
                 Err(_) => eprintln!("Argument invalide : {}", arguments),
@@ -55,7 +61,7 @@ pub(super) fn traite_commande(
         }
         ("initialise", _) => {
             if let Err(e) = feu.commande_initialise_noeud_vierge() {
-                eprintln!("Erreur d'initialisation du nœud : {}", e)
+                eprintln!("Erreur d'initialisation du nœud => {}", e)
             }
             SuiteCommandes::Continuer
         }
@@ -71,10 +77,10 @@ pub(super) fn traite_commande(
             match arguments.parse::<usize>() {
                 Ok(i) => {
                     if let Err(e) = feu.commande_ouverture_foyer(i) {
-                        eprintln!("Impossible d'ouvrir le foyer {} : {}", i, e);
+                        eprintln!("Impossible d'ouvrir le foyer {} => {}", i, e);
                     }
                 }
-                Err(_) => eprintln!("Argument invalide : {}", arguments),
+                Err(_) => eprintln!("Argument invalide => {}", arguments),
             }
             SuiteCommandes::Continuer
         }
@@ -101,6 +107,7 @@ pub(super) fn traite_commande(
 fn liste_commandes() {
     println!("Commandes disponibles :");
     println!("{:<12} | allume le noeud", "allume");
+    println!("{:<12} | change le mdp", "change mdp");
     println!("{:<12} | éteint le noeud", "eteins");
     println!("{:<12} | ferme le foyer d'index `i`", "ferme `i`");
     println!("{:<12} | initialise un nœud vierge", "initialise");
