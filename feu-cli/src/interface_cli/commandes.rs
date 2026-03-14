@@ -130,12 +130,7 @@ fn conversion_bool_statut(b: bool) -> String {
 /// Affiche le tableau des foyers avec leur index, état et adresse `.onion`.
 fn affiche_liste_foyers(t: &[(bool, String); MAX_FOYERS]) {
     println!("Liste des foyers et leur état (allumé/éteint)");
-    for i in 0..MAX_FOYERS {
-        println!(
-            "{:<5} | {:<10} | {}",
-            i,
-            conversion_bool_statut(t[i].0),
-            t[i].1
-        );
+    for (i, e) in t.iter().enumerate() {
+        println!("{:<5} | {:<10} | {}", i, conversion_bool_statut(e.0), e.1);
     }
 }

@@ -104,8 +104,8 @@ impl Session {
     fn donne_liste_foyers(&self) -> [(bool, String); MAX_FOYERS] {
         let mut tableau: [(bool, String); MAX_FOYERS] =
             std::array::from_fn(|_| (false, String::from("")));
-        for i in 0..MAX_FOYERS {
-            tableau[i] = (self.foyers[i].est_ouvert, self.foyers[i].onion.clone());
+        for (i, e) in tableau.iter_mut().enumerate() {
+            *e = (self.foyers[i].est_ouvert, self.foyers[i].onion.clone());
         }
         tableau
     }
@@ -135,8 +135,8 @@ impl Session {
     /// Utilisé à l'allumage pour peupler la session avec les adresses
     /// lues depuis `config.feu`.
     fn definition_foyers(&mut self, t: [(bool, String); MAX_FOYERS]) {
-        for i in 0..MAX_FOYERS {
-            self.foyers[i] = Foyer::new(t[i].1.clone(), t[i].0);
+        for (i, foyer) in self.foyers.iter_mut().enumerate() {
+            *foyer = Foyer::new(t[i].1.clone(), t[i].0);
         }
     }
 
@@ -197,7 +197,7 @@ impl Session {
 
 /// Point d'entrée unique du protocole Feu.
 ///
-/// Orchestre [`Gardien`] et [`Cryptographe`] sans exposer leurs
+/// Orchestre `Gardien` et `Cryptographe` sans exposer leurs
 /// détails d'implémentation. Paramétrique sur `I: InterfaceFeuCore` —
 /// toute communication utilisateur est déléguée à l'interface injectée
 /// à la création, garantissant une séparation totale entre logique
@@ -612,6 +612,6 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// Chaque élément du tableau est un tuple `(allumé, adresse_onion)`.
     /// Les adresses sont vides tant que le nœud n'a pas été allumé.
     pub fn commande_liste_foyers(&self) -> [(bool, String); MAX_FOYERS] {
-        self.session.donne_liste_foyers().clone()
+        self.session.donne_liste_foyers()
     }
 }

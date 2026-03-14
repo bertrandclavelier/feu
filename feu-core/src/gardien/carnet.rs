@@ -172,7 +172,12 @@ impl Carnet {
         for i in 0..MAX_FOYERS {
             let foyer = match trousseau_public_complet.donne_trousseau_public_foyer(i) {
                 Ok(valeur) => valeur,
-                Err(_) => continue,
+                Err(_) => {
+                    return Err(ErreurGardien::Interne(format!(
+                        "Pas de trousseau public pour le foyer {}.",
+                        i,
+                    )));
+                }
             };
 
             let chemin_foyer = &self.chemin_feu.join(foyer.donne_onion()).join(".cles/");
@@ -232,8 +237,7 @@ impl Carnet {
         onion: &str,
     ) -> ResultGardien<TrousseauPublicFoyer> {
         let cle_chiffrement = std::fs::read(
-            &self
-                .chemin_feu
+            self.chemin_feu
                 .join(".cles/")
                 .join(format!("{}{}", onion, ".cle")),
         )?
@@ -276,9 +280,9 @@ impl Carnet {
     ///
     /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 16 octets.
     pub(super) fn lire_pour_donner_sel(&self) -> ResultGardien<[u8; 16]> {
-        Ok(std::fs::read(&self.chemin_feu.join(".cles").join(FEU_SEL))?
+        std::fs::read(self.chemin_feu.join(".cles").join(FEU_SEL))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?)
+            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))
     }
 
     /// Lit la clé privée de signature du nœud depuis `~/.feu/.cles/feu_sig.priv`.
@@ -287,11 +291,9 @@ impl Carnet {
     ///
     /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 60 octets.
     pub(super) fn lire_pour_donner_cle_sig_privee(&self) -> ResultGardien<[u8; 60]> {
-        Ok(
-            std::fs::read(&self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV))?
-                .try_into()
-                .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?,
-        )
+        std::fs::read(self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV))?
+            .try_into()
+            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))
     }
 
     /// Lit la clé publique de signature du nœud depuis `~/.feu/.cles/feu_sig.pub`.
@@ -300,11 +302,9 @@ impl Carnet {
     ///
     /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 32 octets.
     pub(super) fn lire_pour_donner_cle_sig_pub(&self) -> ResultGardien<[u8; 32]> {
-        Ok(
-            std::fs::read(&self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB))?
-                .try_into()
-                .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?,
-        )
+        std::fs::read(self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB))?
+            .try_into()
+            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))
     }
 
     /// Lit la clé symétrique de chiffrement d'un foyer depuis `~/.feu/.cles/<onion>.cle`.
@@ -316,14 +316,13 @@ impl Carnet {
         &self,
         onion: &str,
     ) -> ResultGardien<[u8; 60]> {
-        Ok(std::fs::read(
-            &self
-                .chemin_feu
+        std::fs::read(
+            self.chemin_feu
                 .join(".cles/")
                 .join(format!("{}{}", onion, ".cle")),
         )?
         .try_into()
-        .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?)
+        .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))
     }
 
     /// Écrit le contenu de `config.feu` sur le disque.
@@ -332,7 +331,10 @@ impl Carnet {
     ///
     /// Retourne une erreur si l'écriture échoue.
     pub(super) fn enregistre_configuration(&self, configuration: String) -> ResultGardien<()> {
-        std::fs::write(self.chemin_feu.join(FEU_CONFIGURATION), configuration)?;
+        Self::ecrire_fichier_600(
+            &self.chemin_feu.join(FEU_CONFIGURATION),
+            configuration.as_bytes(),
+        )?;
 
         Ok(())
     }
@@ -451,10 +453,7 @@ impl Carnet {
     /// Retourne une erreur si la création échoue — permissions
     /// insuffisantes, chemin invalide ou erreur d'entrée/sortie.
     fn creer_dossier(path: &Path) -> ResultGardien<()> {
-        DirBuilder::new()
-            .mode(0o700)
-            .recursive(true)
-            .create(&path)?;
+        DirBuilder::new().mode(0o700).recursive(true).create(path)?;
         Ok(())
     }
 

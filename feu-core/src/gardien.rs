@@ -78,8 +78,8 @@ impl Configuration {
         let prochain_index = lignes.remove(0).parse::<u32>()?;
 
         let mut tableau: [String; MAX_FOYERS] = std::array::from_fn(|_| String::from(""));
-        for i in 0..MAX_FOYERS {
-            tableau[i] = String::from(lignes.remove(0));
+        for e in tableau.iter_mut() {
+            *e = String::from(lignes.remove(0));
         }
 
         Ok(Self {
@@ -97,7 +97,7 @@ impl Configuration {
         let mut resultat = format!("{}\n{}\n", self.version, self.prochain_index);
         for e in &self.adresses_onion {
             resultat.push_str(e);
-            resultat.push_str("\n");
+            resultat.push('\n');
         }
         resultat
     }
@@ -158,8 +158,8 @@ impl Gardien {
         let mut t: [(bool, String); MAX_FOYERS] =
             std::array::from_fn(|_| (false, String::from("")));
 
-        for i in 0..MAX_FOYERS {
-            t[i] = (false, self.configuration.adresses_onion[i].clone());
+        for (i, e) in t.iter_mut().enumerate() {
+            *e = (false, self.configuration.adresses_onion[i].clone());
         }
 
         t
@@ -194,7 +194,7 @@ impl Gardien {
             false => {
                 // Écriture du trousseau public sur le disque
                 self.carnet
-                    .ecrire_trousseau_public_complet(&trousseau_public_complet)?;
+                    .ecrire_trousseau_public_complet(trousseau_public_complet)?;
 
                 Ok(())
             }
@@ -325,9 +325,9 @@ impl Gardien {
             self.carnet.supprime_dossier_onion(onion)?;
             Ok(())
         } else {
-            return Err(ErreurGardien::Interne(String::from(
+            Err(ErreurGardien::Interne(String::from(
                 "Le gardien ne supprimera pas le dossier s'il n'est pas archivé.",
-            )));
+            )))
         }
     }
 
@@ -376,7 +376,7 @@ impl Gardien {
         &self,
         onion: &str,
     ) -> ResultGardien<TrousseauPublicFoyer> {
-        Ok(self.carnet.creer_trousseau_public_foyer(onion)?)
+        self.carnet.creer_trousseau_public_foyer(onion)
     }
 }
 // ── Opérations mémoire ───────────────────────────────────────────────────────

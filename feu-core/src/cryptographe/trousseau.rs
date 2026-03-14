@@ -263,7 +263,7 @@ impl Trousseau {
             )));
 
             // Clé mère du foyer — sert à dériver toutes les sous-clés du foyer
-            cle_privee = SigningKey::from_bytes(&cle_brute.expose_secret());
+            cle_privee = SigningKey::from_bytes(cle_brute.expose_secret());
         }
 
         // Clé symétrique de chiffrement du foyer
@@ -282,7 +282,7 @@ impl Trousseau {
                 CHAINE_A_SIGNER_POUR_PAIRE_SIGNATURE,
             )?;
 
-            cle_sign_priv = SigningKey::from_bytes(&cle_brute.expose_secret());
+            cle_sign_priv = SigningKey::from_bytes(cle_brute.expose_secret());
         }
 
         let cle_sig_pub = cle_sign_priv.verifying_key();
@@ -315,8 +315,8 @@ impl Trousseau {
         // Création des clés de chiffrement des 5 premiers classeurs
         let mut cles_chiffrement_classeurs: [Option<SecretBox<[u8; 32]>>; MAX_CLASSEURS] =
             std::array::from_fn(|_| None);
-        for i in 0..MAX_CLASSEURS {
-            cles_chiffrement_classeurs[i] = Some(Trousseau::genere_cle_brute_from_signature(
+        for (i, e) in cles_chiffrement_classeurs.iter_mut().enumerate() {
+            *e = Some(Trousseau::genere_cle_brute_from_signature(
                 &cle_privee,
                 &format!(
                     "{}{}",
@@ -432,8 +432,12 @@ impl Trousseau {
 
     /// Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel du trousseau.
     ///
-    /// Utilise Argon2id (RFC 9106) avec les paramètres par défaut pour produire
-    /// 32 octets de matière clé à partir du mot de passe et du sel. La clé
+    /// Utilise Argon2id (RFC 9106) avec les paramètres par défaut de la crate
+    /// `argon2` (conformes aux recommandations minimales de la RFC 9106) :
+    /// mémoire = 19 456 Kio (19 MiB), itérations = 2, parallélisme = 1.
+    /// Ces paramètres sont intentionnellement conservateurs pour v0.0.1 —
+    /// ils seront réévalués dans une version ultérieure.
+    /// Produit 32 octets de matière clé à partir du mot de passe et du sel. La clé
     /// résultante est encapsulée dans [`SecretBox`] et stockée dans `cle_ephemere`.
     ///
     /// Cette clé sert uniquement à chiffrer les clés privées via [`chiffre_cle`] —
@@ -596,6 +600,12 @@ impl TrousseauFoyer {
                     i,
                 )?;
             } else {
+                // DETTE TECHNIQUE v0.0.1 : les clés de classeurs ne sont pas
+                // persistées sur le disque et ne sont donc pas rechargées à
+                // l'ouverture d'un foyer — elles sont None ici. Cette branche
+                // bloque le changement de mot de passe tant que les classeurs
+                // ne sont pas implémentés. À corriger lors de l'implémentation
+                // des classeurs (v0.0.2+).
                 return Err(ErreurCryptographe::Interne(String::from(
                     "Erreur génération du trousseau foyer public",
                 )));
@@ -639,7 +649,7 @@ impl Trousseau {
                 for i in 0..MAX_FOYERS {
                     if let Some(trousseau_foyer) = &self.trousseaux_foyers[i] {
                         trousseau_public_complet.ajoute_trousseau_foyer_public(
-                            trousseau_foyer.genere_trousseau_public_foyer(&self)?,
+                            trousseau_foyer.genere_trousseau_public_foyer(self)?,
                             i,
                         )?;
                     }
@@ -685,7 +695,7 @@ impl Trousseau {
         let cle_pub = trousseau_public_noeud.donne_cle_sig_pub();
 
         self.paire_signature_noeud = Some(PaireClesSignature {
-            privee: SigningKey::from_bytes(&cle_dechiffree.expose_secret()),
+            privee: SigningKey::from_bytes(cle_dechiffree.expose_secret()),
             publique: VerifyingKey::from_bytes(&cle_pub).map_err(|_| {
                 ErreurCryptographe::Interne(String::from("Erreur récupération de clé."))
             })?,
@@ -723,7 +733,7 @@ impl Trousseau {
         let cle_sig_pub = trousseau_public_foyer.donne_cle_sig_pub();
 
         let paire_signature = PaireClesSignature {
-            privee: SigningKey::from_bytes(&cle_sig_priv.expose_secret()),
+            privee: SigningKey::from_bytes(cle_sig_priv.expose_secret()),
             publique: VerifyingKey::from_bytes(&cle_sig_pub).map_err(|_| {
                 ErreurCryptographe::Interne(String::from("Erreur récupération de clé."))
             })?,
@@ -735,11 +745,16 @@ impl Trousseau {
 
         let paire_chiffrement = PaireClesChiffrement {
             privee: SecretBox::new(Box::new(StaticSecret::from(
-                cle_chiff_priv.expose_secret().clone(),
+                *cle_chiff_priv.expose_secret(),
             ))),
             publique: PublicKey::from(cle_chiff_pub),
         };
 
+        // DETTE TECHNIQUE v0.0.1 : les clés de classeurs ne sont pas encore
+        // stockées sur le disque — elles restent à None au chargement d'un foyer.
+        // Conséquence : `change mdp` est non fonctionnel en v0.0.1 après la
+        // fermeture et la réouverture d'un foyer. Ce sera résolu naturellement
+        // lors de l'implémentation des classeurs (v0.0.2+).
         let cles_chiffrement_classeurs = std::array::from_fn(|_| None);
 
         self.trousseaux_foyers[index] = Some(TrousseauFoyer {
