@@ -24,6 +24,7 @@ use std::fs;
 use std::fs::DirBuilder;
 use std::fs::File;
 use std::fs::OpenOptions;
+use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -85,23 +86,11 @@ impl Carnet {
         self.chemin_feu.join(format!("{}.tar", onion))
     }
 
-    /// Crée un dossier avec les permissions `rwx------` (0o700).
-    ///
-    /// Crée les dossiers intermédiaires si nécessaire (`recursive`).
+    /// Supprime le dossier `~/.feu/<onion>` et tout son contenu.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la création échoue — permissions
-    /// insuffisantes, chemin invalide ou erreur d'entrée/sortie.
-    fn creer_dossier(path: &Path) -> ResultGardien<()> {
-        DirBuilder::new()
-            .mode(0o700)
-            .recursive(true)
-            .create(&path)?;
-        Ok(())
-    }
-
-    /// Supprime le dossier `~/.feu/adresse.onion`
+    /// Retourne une erreur si le dossier est absent ou si la suppression échoue.
     pub(super) fn supprime_dossier_onion(&self, onion: &str) -> ResultGardien<()> {
         fs::remove_dir_all(self.donne_chemin_onion(onion))?;
         Ok(())
@@ -143,6 +132,7 @@ impl Carnet {
     /// - `~/.feu/<onion>/.cles/chif.pub` — clé publique de chiffrement réseau (en clair)
     ///
     /// Tous les dossiers sont créés avec les permissions `rwx------` (0o700).
+    /// Tous les fichiers sont créés avec les permissions `rw-------` (0o600).
     ///
     /// # Erreurs
     ///
@@ -155,25 +145,25 @@ impl Carnet {
         Self::creer_dossier(&self.chemin_feu.join(".cles"))?;
 
         // Écriture du sel
-        std::fs::write(
+        Self::ecrire_fichier_600(
             &self.chemin_feu.join(".cles").join(FEU_SEL),
-            trousseau_public_complet
+            &trousseau_public_complet
                 .donne_trousseau_public_noeud()
                 .donne_sel(),
         )?;
 
         // Écriture de la clé privée du nœud
-        std::fs::write(
+        Self::ecrire_fichier_600(
             &self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV),
-            trousseau_public_complet
+            &trousseau_public_complet
                 .donne_trousseau_public_noeud()
                 .donne_cle_sig_privee(),
         )?;
 
         // Écriture de la clé publique du nœud
-        std::fs::write(
+        Self::ecrire_fichier_600(
             &self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB),
-            trousseau_public_complet
+            &trousseau_public_complet
                 .donne_trousseau_public_noeud()
                 .donne_cle_sig_pub(),
         )?;
@@ -190,32 +180,32 @@ impl Carnet {
             Self::creer_dossier(chemin_foyer)?;
 
             // Écriture de la clé symétrique du foyer
-            std::fs::write(
+            Self::ecrire_fichier_600(
                 &self
                     .chemin_feu
                     .join(".cles/")
                     .join(format!("{}{}", foyer.donne_onion(), ".cle")),
-                foyer.donne_cle_chiffrement(),
+                &foyer.donne_cle_chiffrement(),
             )?;
 
             // Écriture de la paire de clés sig du foyer
-            std::fs::write(
-                chemin_foyer.join(CLE_FOYER_SIG_PRIV),
-                foyer.donne_cle_sig_privee(),
+            Self::ecrire_fichier_600(
+                &chemin_foyer.join(CLE_FOYER_SIG_PRIV),
+                &foyer.donne_cle_sig_privee(),
             )?;
-            std::fs::write(
-                chemin_foyer.join(CLE_FOYER_SIG_PUB),
-                foyer.donne_cle_sig_pub(),
+            Self::ecrire_fichier_600(
+                &chemin_foyer.join(CLE_FOYER_SIG_PUB),
+                &foyer.donne_cle_sig_pub(),
             )?;
 
             // Écriture de la paire de clés chif du foyer
-            std::fs::write(
-                chemin_foyer.join(CLE_FOYER_CHIF_PRIV),
-                foyer.donne_cle_chiff_privee(),
+            Self::ecrire_fichier_600(
+                &chemin_foyer.join(CLE_FOYER_CHIF_PRIV),
+                &foyer.donne_cle_chiff_privee(),
             )?;
-            std::fs::write(
-                chemin_foyer.join(CLE_FOYER_CHIF_PUB),
-                foyer.donne_cle_chiff_pub(),
+            Self::ecrire_fichier_600(
+                &chemin_foyer.join(CLE_FOYER_CHIF_PUB),
+                &foyer.donne_cle_chiff_pub(),
             )?;
 
             // Cette version de Feu ne prends pas encore en charge les clés des classeurs
@@ -449,6 +439,42 @@ impl Carnet {
         let mut archive = tar::Archive::new(self.ouvre_archive_tar_foyer_lecture(onion)?);
 
         archive.unpack(self.donne_chemin_onion(onion))?;
+        Ok(())
+    }
+
+    /// Crée un dossier avec les permissions `rwx------` (0o700).
+    ///
+    /// Crée les dossiers intermédiaires si nécessaire (`recursive`).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la création échoue — permissions
+    /// insuffisantes, chemin invalide ou erreur d'entrée/sortie.
+    fn creer_dossier(path: &Path) -> ResultGardien<()> {
+        DirBuilder::new()
+            .mode(0o700)
+            .recursive(true)
+            .create(&path)?;
+        Ok(())
+    }
+
+    /// Crée un fichier avec les permissions `rw-------` (0o600) et y écrit `contenu`.
+    ///
+    /// Utilise `create_new` — échoue si le fichier existe déjà.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier existe déjà, si la création échoue,
+    /// ou si l'écriture échoue.
+    fn ecrire_fichier_600(chemin: &Path, contenu: &[u8]) -> ResultGardien<()> {
+        let mut fichier = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(chemin)?;
+
+        fichier.write_all(contenu)?;
+
         Ok(())
     }
 }
