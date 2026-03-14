@@ -35,6 +35,13 @@ pub(super) fn traite_commande(
             }
             SuiteCommandes::Continuer
         }
+        ("eteins", _) => {
+            if let Err(e) = feu.commande_extinction_noeud() {
+                eprintln!("Erreur d'extinction du nœud : {}", e)
+            }
+            SuiteCommandes::Continuer
+        }
+
         ("ferme", _) => {
             match arguments.parse::<usize>() {
                 Ok(i) => {
@@ -71,7 +78,14 @@ pub(super) fn traite_commande(
             }
             SuiteCommandes::Continuer
         }
-        ("quitte", _) => SuiteCommandes::Quitter,
+        ("quitte", _) => {
+            if feu.commande_quitter_feu() {
+                SuiteCommandes::Quitter
+            } else {
+                eprintln!("Le noeud doit être éteint avant de quitter");
+                SuiteCommandes::Continuer
+            }
+        }
         ("version", _) => {
             feu.commande_affiche_version();
             SuiteCommandes::Continuer
@@ -87,15 +101,17 @@ pub(super) fn traite_commande(
 fn liste_commandes() {
     println!("Commandes disponibles :");
     println!("{:<12} | allume le noeud", "allume");
+    println!("{:<12} | éteint le noeud", "eteins");
     println!("{:<12} | ferme le foyer d'index `i`", "ferme `i`");
     println!("{:<12} | initialise un nœud vierge", "initialise");
     println!("{:<12} | liste les commandes disponibles", "liste -C");
     println!("{:<12} | liste les foyers et leur état", "liste -F");
     println!("{:<12} | ouvre le foyer d'index `i`", "ouvre `i`");
-    println!("{:<12} | quitter Feu", "quitte");
+    println!("{:<12} | quitte Feu", "quitte");
     println!("{:<12} | affiche la version de `Feu`", "version");
 }
 
+/// Convertit un booléen d'état en libellé lisible.
 fn conversion_bool_statut(b: bool) -> String {
     if b {
         String::from("Allumé")
@@ -104,8 +120,9 @@ fn conversion_bool_statut(b: bool) -> String {
     }
 }
 
+/// Affiche le tableau des foyers avec leur index, état et adresse `.onion`.
 fn affiche_liste_foyers(t: &[(bool, String); MAX_FOYERS]) {
-    println!("Listes des foyers et leur état (allumé/éteint)");
+    println!("Liste des foyers et leur état (allumé/éteint)");
     for i in 0..MAX_FOYERS {
         println!(
             "{:<5} | {:<10} | {}",

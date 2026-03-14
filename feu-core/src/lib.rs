@@ -35,6 +35,7 @@ mod erreur;
 mod gardien;
 
 pub const MAX_FOYERS: usize = 3;
+/// Nombre maximum de classeurs par foyer.
 pub const MAX_CLASSEURS: usize = 5;
 
 /// Contrat de communication entre `feu-core` et toute interface utilisateur.
@@ -97,6 +98,9 @@ impl Session {
         }
     }
 
+    /// Retourne l'état et l'adresse de chaque foyer sous forme de tableau.
+    ///
+    /// Chaque élément est un tuple `(ouvert, adresse_onion)`.
     fn donne_liste_foyers(&self) -> [(bool, String); MAX_FOYERS] {
         let mut tableau: [(bool, String); MAX_FOYERS] =
             std::array::from_fn(|_| (false, String::from("")));
@@ -104,6 +108,16 @@ impl Session {
             tableau[i] = (self.foyers[i].est_ouvert, self.foyers[i].onion.clone());
         }
         tableau
+    }
+
+    /// Retourne `true` si aucun foyer n'est ouvert.
+    fn est_tout_ferme(&self) -> bool {
+        for e in &self.foyers {
+            if e.est_ouvert {
+                return false;
+            }
+        }
+        true
     }
 
     /// Remplace le tableau des foyers par celui fourni.
@@ -194,6 +208,20 @@ pub struct Feu<I: InterfaceFeuCore> {
     cryptographe: Option<Cryptographe>,
 }
 
+impl<I: InterfaceFeuCore> Drop for Feu<I> {
+    /// Filet de sécurité : panic si le nœud n'a pas été éteint proprement.
+    ///
+    /// Le chemin normal d'arrêt est [`Feu::commande_extinction_noeud`] suivi
+    /// de [`Feu::commande_quitter_feu`]. Ce `drop` ne fait pas de cleanup —
+    /// il garantit uniquement qu'une sortie silencieuse avec des foyers ouverts
+    /// est impossible.
+    fn drop(&mut self) {
+        if self.session.noeud {
+            panic!("Le noeud n'était pas éteint avant de quitter");
+        }
+    }
+}
+
 impl<I: InterfaceFeuCore> Feu<I> {
     /// Crée une instance de [`Feu`] prête à l'emploi.
     ///
@@ -210,6 +238,15 @@ impl<I: InterfaceFeuCore> Feu<I> {
             gardien: None,
             cryptographe: None,
         }
+    }
+
+    /// Indique si le nœud est prêt à être quitté.
+    ///
+    /// Retourne `true` si le nœud est éteint, `false` s'il est encore allumé.
+    /// C'est à l'interface d'interpréter ce retour — quitter la boucle REPL,
+    /// afficher un message d'erreur, etc.
+    pub fn commande_quitter_feu(&self) -> bool {
+        !self.session.noeud
     }
 
     /// Affiche la version de `feu-core` via l'interface.
@@ -336,7 +373,9 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// est incorrect.
     pub fn commande_allumage_noeud(&mut self) -> ResultFeu<()> {
         if self.session.noeud {
-            return Err(ErreurFeu::Standard(String::from("Le nœud est déjà allumé")));
+            return Err(ErreurFeu::Standard(String::from(
+                "Le nœud est déjà allumé.",
+            )));
         }
 
         let gardien = Gardien::ouvre_nouveau()?;
@@ -354,6 +393,29 @@ impl<I: InterfaceFeuCore> Feu<I> {
         self.cryptographe = Some(cryptographe);
 
         self.session.change_statut_noeud(true);
+        Ok(())
+    }
+
+    /// Éteint le nœud Feu et libère le gardien et le cryptographe.
+    ///
+    /// Toutes les clés en mémoire sont supprimées avec le drop du cryptographe.
+    /// La session est marquée comme inactive.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si au moins un foyer est encore ouvert — tous les
+    /// foyers doivent être fermés avant d'éteindre le nœud.
+    pub fn commande_extinction_noeud(&mut self) -> ResultFeu<()> {
+        if !self.session.est_tout_ferme() {
+            return Err(ErreurFeu::Standard(String::from(
+                "Tous les foyers doivent être fermés.",
+            )));
+        }
+        self.gardien = None;
+        self.cryptographe = None;
+
+        self.session.change_statut_noeud(false);
+
         Ok(())
     }
 
@@ -437,6 +499,14 @@ impl<I: InterfaceFeuCore> Feu<I> {
         }
     }
 
+    /// Ferme un foyer à partir de son index dans la session.
+    ///
+    /// Résout l'index en adresse `.onion` puis délègue à
+    /// [`commande_fermeture_foyer`](Self::commande_fermeture_foyer).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si `index >= MAX_FOYERS` ou si la fermeture échoue.
     pub fn commande_fermeture_foyer_index(&mut self, index: usize) -> ResultFeu<()> {
         let onion = String::from(self.session.index_vers_onion(index)?);
         self.commande_fermeture_foyer(&onion)?;
