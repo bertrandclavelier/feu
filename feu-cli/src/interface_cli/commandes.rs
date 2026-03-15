@@ -55,7 +55,7 @@ pub(super) fn traite_commande(
                         eprintln!("Impossible de fermer le foyer {} => {}", i, e);
                     }
                 }
-                Err(_) => eprintln!("Argument invalide : {}", arguments),
+                Err(_) => eprintln!("Argument invalide => {}", arguments),
             }
             SuiteCommandes::Continuer
         }
@@ -103,7 +103,7 @@ pub(super) fn traite_commande(
     }
 }
 
-/// Fonction qui affiche la liste des commandes disponibles
+/// Affiche la liste des commandes disponibles avec leur description.
 fn liste_commandes() {
     println!("Commandes disponibles :");
     println!("{:<12} | allume le noeud", "allume");

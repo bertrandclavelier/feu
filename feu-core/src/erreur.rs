@@ -23,10 +23,16 @@ pub type ResultFeu<T> = Result<T, ErreurFeu>;
 
 #[derive(Error, Debug)]
 pub enum ErreurFeu {
+    /// Erreur remontée depuis le gardien — opération disque ou parsing échoué.
+    /// Le message textuel provient de [`ErreurGardien`] via `.to_string()`.
     #[error("{0}")]
     Gardien(String),
+
+    /// Erreur remontée depuis le cryptographe — opération cryptographique échouée.
+    /// Le message textuel provient de [`ErreurCryptographe`] via `.to_string()`.
     #[error("{0}")]
     Cryptographe(String),
+
     /// Erreur liée à l'état de [`Feu`](crate::Feu) lui-même — état invalide,
     /// précondition non respectée. Indépendante du gardien et du cryptographe.
     #[error("{0}")]
@@ -34,12 +40,20 @@ pub enum ErreurFeu {
 }
 
 impl From<ErreurGardien> for ErreurFeu {
+    /// Convertit [`ErreurGardien`] en [`ErreurFeu::Gardien`].
+    ///
+    /// Le type interne est perdu — seul le message textuel est propagé,
+    /// préservant l'encapsulation des détails d'implémentation du gardien.
     fn from(e: ErreurGardien) -> Self {
         ErreurFeu::Gardien(e.to_string())
     }
 }
 
 impl From<ErreurCryptographe> for ErreurFeu {
+    /// Convertit [`ErreurCryptographe`] en [`ErreurFeu::Cryptographe`].
+    ///
+    /// Le type interne est perdu — seul le message textuel est propagé,
+    /// préservant l'encapsulation des détails d'implémentation du cryptographe.
     fn from(e: ErreurCryptographe) -> Self {
         ErreurFeu::Cryptographe(e.to_string())
     }

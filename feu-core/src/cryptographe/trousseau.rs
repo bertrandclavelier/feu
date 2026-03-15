@@ -105,6 +105,11 @@ const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu-foyer-cl
 
 const CHUNK_SIZE: usize = 4096;
 
+/// Paire de clés Ed25519 d'un foyer — signature réseau et dérivation de l'adresse `.onion`.
+///
+/// `privee` est protégée par `ZeroizeOnDrop` (ed25519-dalek, feature `zeroize`) —
+/// `SigningKey` n'implémente pas `Zeroize`, `SecretBox` est donc inutilisable.
+/// La zéroïsation est garantie à la destruction, mais ne peut pas être déclenchée manuellement.
 struct PaireClesSignature {
     // SigningKey n'implémente pas Zeroize (contrainte d'ed25519-dalek v2) —
     // SecretBox impossible. La mémoire est zéroïsée à la destruction via
@@ -113,11 +118,19 @@ struct PaireClesSignature {
     publique: VerifyingKey,
 }
 
+/// Paire de clés X25519 d'un foyer — chiffrement réseau asymétrique.
+///
+/// `privee` est encapsulée dans [`SecretBox`] — zéroïsée automatiquement au `Drop`.
 struct PaireClesChiffrement {
     privee: SecretBox<StaticSecret>,
     publique: PublicKey,
 }
 
+/// Clés opérationnelles d'un foyer ouvert, maintenues en mémoire pour la durée de la session.
+///
+/// Contient l'adresse `.onion`, la clé symétrique d'archive, la paire de signature réseau,
+/// la paire de chiffrement réseau et les clés des classeurs. Toutes les clés privées et
+/// symétriques sont encapsulées dans [`SecretBox`] ou protégées par `ZeroizeOnDrop`.
 struct TrousseauFoyer {
     onion: String,
     cle_chiffrement: SecretBox<[u8; 32]>,

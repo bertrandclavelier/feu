@@ -42,8 +42,11 @@ use std::process;
 /// Canal d'entrée/sortie de Feu en mode CLI.
 pub(super) struct InterfaceCli {}
 
+/// Signal retourné par chaque commande à la boucle REPL.
 enum SuiteCommandes {
+    /// La session continue — lire la prochaine commande.
     Continuer,
+    /// La session se termine — quitter la boucle REPL.
     Quitter,
 }
 

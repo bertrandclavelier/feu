@@ -62,12 +62,14 @@ pub trait InterfaceFeuCore {
     fn demander_mdp(&self, question: &str) -> String;
 }
 
+/// État d'un foyer dans la session courante.
 struct Foyer {
     onion: String,
     est_ouvert: bool,
 }
 
 impl Foyer {
+    /// Crée un [`Foyer`] avec l'adresse `.onion` et l'état d'ouverture fournis.
     fn new(onion: String, est_ouvert: bool) -> Self {
         Self { onion, est_ouvert }
     }
