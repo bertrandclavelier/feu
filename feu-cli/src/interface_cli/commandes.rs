@@ -70,7 +70,13 @@ pub(super) fn traite_commande(
             SuiteCommandes::Continuer
         }
         ("liste", "-F") => {
-            affiche_liste_foyers(&feu.commande_liste_foyers());
+            match &feu.commande_liste_foyers() {
+                Ok(valeur) => affiche_liste_foyers(valeur),
+                Err(e) => {
+                    eprintln!("Erreur d'affiche des foyers => {}", e);
+                }
+            }
+
             SuiteCommandes::Continuer
         }
         ("ouvre", _) => {

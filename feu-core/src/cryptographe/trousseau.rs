@@ -584,6 +584,33 @@ impl Trousseau {
 // Export — génération du trousseau public
 //
 impl TrousseauFoyer {
+    /// Crée un [`TrousseauFoyer`] avec les clés principales du foyer.
+    ///
+    /// Les slots de classeurs sont initialisés à `None` — ils sont peuplés
+    /// après construction via [`ajoute_cle_classeur`](Self::ajoute_cle_classeur).
+    fn new(
+        onion: String,
+        cle_chiffrement: SecretBox<[u8; 32]>,
+        paire_signature: PaireClesSignature,
+        paire_chiffrement: PaireClesChiffrement,
+    ) -> Self {
+        Self {
+            onion,
+            cle_chiffrement,
+            paire_signature,
+            paire_chiffrement,
+            cles_chiffrement_classeurs: std::array::from_fn(|_| None),
+        }
+    }
+
+    /// Insère la clé de chiffrement d'un classeur à l'`index` donné.
+    ///
+    /// Appelée après [`new`](Self::new) pour peupler les slots de classeurs
+    /// un par un. L'accès est direct — l'appelant garantit que `index < MAX_CLASSEURS`.
+    fn ajoute_cle_classeur(&mut self, cle_classeur: SecretBox<[u8; 32]>, index: usize) {
+        self.cles_chiffrement_classeurs[index] = Some(cle_classeur);
+    }
+
     /// Chiffre toutes les clés du foyer et produit le [`TrousseauPublicFoyer`] persistable.
     ///
     /// Délègue le chiffrement AES-256-GCM de chaque clé à [`Trousseau::chiffre_cle`].
@@ -613,12 +640,6 @@ impl TrousseauFoyer {
                     i,
                 )?;
             } else {
-                // DETTE TECHNIQUE v0.0.1 : les clés de classeurs ne sont pas
-                // persistées sur le disque et ne sont donc pas rechargées à
-                // l'ouverture d'un foyer — elles sont None ici. Cette branche
-                // bloque le changement de mot de passe tant que les classeurs
-                // ne sont pas implémentés. À corriger lors de l'implémentation
-                // des classeurs (v0.0.2+).
                 return Err(ErreurCryptographe::Interne(String::from(
                     "Erreur génération du trousseau foyer public",
                 )));
@@ -718,12 +739,9 @@ impl Trousseau {
 
     /// Déchiffre et charge les clés d'un foyer dans le trousseau à partir d'un [`TrousseauPublicFoyer`].
     ///
-    /// Déchiffre la clé symétrique, la paire de signature Ed25519 et la paire de chiffrement X25519
-    /// avec la clé éphémère, puis enregistre le [`TrousseauFoyer`] résultant à l'`index` donné.
-    /// L'adresse `.onion` est lue depuis le [`TrousseauPublicFoyer`].
-    ///
-    /// Les clés de classeur ne sont pas chargées ici — elles sont chargées lors de l'ouverture
-    /// d'un classeur.
+    /// Déchiffre la clé symétrique, la paire de signature Ed25519, la paire de chiffrement X25519
+    /// et les cinq clés de classeurs avec la clé éphémère, puis enregistre le [`TrousseauFoyer`]
+    /// résultant à l'`index` donné. L'adresse `.onion` est lue depuis le [`TrousseauPublicFoyer`].
     ///
     /// # Prérequis
     ///
@@ -763,20 +781,20 @@ impl Trousseau {
             publique: PublicKey::from(cle_chiff_pub),
         };
 
-        // DETTE TECHNIQUE v0.0.1 : les clés de classeurs ne sont pas encore
-        // stockées sur le disque — elles restent à None au chargement d'un foyer.
-        // Conséquence : `change mdp` est non fonctionnel en v0.0.1 après la
-        // fermeture et la réouverture d'un foyer. Ce sera résolu naturellement
-        // lors de l'implémentation des classeurs (v0.0.2+).
-        let cles_chiffrement_classeurs = std::array::from_fn(|_| None);
-
-        self.trousseaux_foyers[index] = Some(TrousseauFoyer {
-            onion: String::from(trousseau_public_foyer.donne_onion()),
+        let mut trousseau_foyer = TrousseauFoyer::new(
+            String::from(trousseau_public_foyer.donne_onion()),
             cle_chiffrement,
             paire_signature,
             paire_chiffrement,
-            cles_chiffrement_classeurs,
-        });
+        );
+
+        for j in 0..MAX_CLASSEURS {
+            let cle_classeur =
+                self.dechiffre_cle(trousseau_public_foyer.donne_cle_chiffrement_classeur(j)?)?;
+            trousseau_foyer.ajoute_cle_classeur(cle_classeur, j);
+        }
+        self.trousseaux_foyers[index] = Some(trousseau_foyer);
+
         Ok(())
     }
 

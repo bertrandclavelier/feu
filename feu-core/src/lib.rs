@@ -103,13 +103,22 @@ impl Session {
     /// Retourne l'état et l'adresse de chaque foyer sous forme de tableau.
     ///
     /// Chaque élément est un tuple `(ouvert, adresse_onion)`.
-    fn donne_liste_foyers(&self) -> [(bool, String); MAX_FOYERS] {
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le nœud n'est pas allumé.
+    fn donne_liste_foyers(&self) -> ResultFeu<[(bool, String); MAX_FOYERS]> {
+        if !self.noeud {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le nœud doit être allumé.",
+            )));
+        }
         let mut tableau: [(bool, String); MAX_FOYERS] =
             std::array::from_fn(|_| (false, String::from("")));
         for (i, e) in tableau.iter_mut().enumerate() {
             *e = (self.foyers[i].est_ouvert, self.foyers[i].onion.clone());
         }
-        tableau
+        Ok(tableau)
     }
 
     /// Retourne `true` si aucun foyer n'est ouvert.
@@ -611,9 +620,12 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
     /// Retourne l'état courant des foyers de la session.
     ///
-    /// Chaque élément du tableau est un tuple `(allumé, adresse_onion)`.
-    /// Les adresses sont vides tant que le nœud n'a pas été allumé.
-    pub fn commande_liste_foyers(&self) -> [(bool, String); MAX_FOYERS] {
+    /// Chaque élément du tableau est un tuple `(ouvert, adresse_onion)`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le nœud n'est pas allumé.
+    pub fn commande_liste_foyers(&self) -> ResultFeu<[(bool, String); MAX_FOYERS]> {
         self.session.donne_liste_foyers()
     }
 }

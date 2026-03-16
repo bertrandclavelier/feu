@@ -17,8 +17,8 @@
 //! au niveau du module — point de vérité unique pour toute l'arborescence.
 
 use super::erreur::{ErreurGardien, ResultGardien};
-use crate::MAX_FOYERS;
 use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
+use crate::{MAX_CLASSEURS, MAX_FOYERS};
 use std::env;
 use std::fs;
 use std::fs::DirBuilder;
@@ -40,8 +40,6 @@ const CLE_FOYER_SIG_PRIV: &str = "sig.priv";
 const CLE_FOYER_SIG_PUB: &str = "sig.pub";
 const CLE_FOYER_CHIF_PRIV: &str = "chif.priv";
 const CLE_FOYER_CHIF_PUB: &str = "chif.pub";
-
-// L'enregistrement des classeurs ne sont pas encore pris en compte dans la v0.0.1
 
 /// Registre cartographique du gardien.
 ///
@@ -130,6 +128,7 @@ impl Carnet {
     /// - `~/.feu/<onion>/.cles/sig.pub` — clé publique de signature réseau (en clair)
     /// - `~/.feu/<onion>/.cles/chif.priv` — clé privée de chiffrement réseau (chiffrée)
     /// - `~/.feu/<onion>/.cles/chif.pub` — clé publique de chiffrement réseau (en clair)
+    /// - `~/.feu/<onion>/.cles/classeur0.cle` à `classeur4.cle` — clés des classeurs (chiffrées)
     ///
     /// Tous les dossiers sont créés avec les permissions `rwx------` (0o700).
     /// Tous les fichiers sont créés avec les permissions `rw-------` (0o600).
@@ -213,7 +212,23 @@ impl Carnet {
                 &foyer.donne_cle_chiff_pub(),
             )?;
 
-            // Cette version de Feu ne prends pas encore en charge les clés des classeurs
+            // Pour chaque classeur
+            for j in 0..MAX_CLASSEURS {
+                let cle_chiffree = match foyer.donne_cle_chiffrement_classeur(j) {
+                    Ok(valeur) => valeur,
+                    Err(_) => {
+                        return Err(ErreurGardien::Interne(format!(
+                            "Pas de clé pour le classeur {}",
+                            j,
+                        )));
+                    }
+                };
+
+                Self::ecrire_fichier_600(
+                    &chemin_foyer.join(format!("classeur{j}.cle")),
+                    cle_chiffree,
+                )?;
+            }
         }
 
         Ok(())
@@ -226,8 +241,8 @@ impl Carnet {
     /// - la paire de clés de signature (`sig.priv`, `sig.pub`) — 60 et 32 octets
     /// - la paire de clés de chiffrement (`chif.priv`, `chif.pub`) — 60 et 32 octets
     ///
-    /// Les clés privées et symétriques sont retournées chiffrées (AES-256-GCM).
-    /// Les clés de classeurs ne sont pas encore prises en charge (v0.0.1).
+    /// Les clés privées et symétriques sont retournées chiffrées (AES-256-GCM),
+    /// y compris les cinq clés de classeurs (`classeur0.cle` à `classeur4.cle`).
     ///
     /// # Erreurs
     ///
@@ -262,16 +277,31 @@ impl Carnet {
             .try_into()
             .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
 
-        // Cette version de Feu ne prends pas encore en charge les clés des classeurs
-
-        Ok(TrousseauPublicFoyer::new(
+        let mut trousseau_public_foyer = TrousseauPublicFoyer::new(
             String::from(onion),
             cle_chiffrement,
             cle_sig_privee,
             cle_sig_pub,
             cle_chiff_privee,
             cle_chiff_pub,
-        ))
+        );
+
+        // Pour chaque classeur
+        for j in 0..MAX_CLASSEURS {
+            let cle_classeur = std::fs::read(chemin_foyer.join(format!("classeur{j}.cle")))?
+                .try_into()
+                .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
+            if trousseau_public_foyer
+                .ajoute_cle_chiffrement_classeur(cle_classeur, j)
+                .is_err()
+            {
+                return Err(ErreurGardien::Interne(String::from(
+                    "Problème ajout clé classeur dans trousseau_public_foyer.",
+                )));
+            }
+        }
+
+        Ok(trousseau_public_foyer)
     }
 
     /// Lit le sel Argon2id depuis `~/.feu/.cles/sel.feu`.
