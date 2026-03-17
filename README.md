@@ -25,7 +25,7 @@ Projet en phase de conception et de développement initial.
 ## Installation et lancement
 
 ```sh
-git clone <url-du-dépôt>
+git clone https://github.com/bertrandclavelier/feu.git
 cd workspace
 cargo build --release
 cargo run --release -p feu-cli

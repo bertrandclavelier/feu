@@ -24,12 +24,14 @@
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 compile_error!("feu-core only supports Linux and macOS.");
 
+use archiviste::Archiviste;
 use cryptographe::Cryptographe;
 use gardien::Gardien;
 
 pub use erreur::ErreurFeu;
 pub use erreur::ResultFeu;
 
+mod archiviste;
 mod cryptographe;
 mod erreur;
 mod gardien;
@@ -227,6 +229,10 @@ pub struct Feu<I: InterfaceFeuCore> {
     /// Gardien de la sécurité cryptographique — clés, chiffrement, seed.
     /// `None` tant que le nœud n'a pas été initialisé.
     cryptographe: Option<Cryptographe>,
+
+    /// Un Archiviste par foyer ouvert — `None` si le foyer est fermé.
+    /// Instancié à l'ouverture du foyer, détruit à la fermeture.
+    archivistes: [Option<Archiviste>; MAX_FOYERS],
 }
 
 impl<I: InterfaceFeuCore> Drop for Feu<I> {
@@ -258,6 +264,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
             session: Session::new(),
             gardien: None,
             cryptographe: None,
+            archivistes: std::array::from_fn(|_| None),
         }
     }
 
@@ -440,9 +447,10 @@ impl<I: InterfaceFeuCore> Feu<I> {
         Ok(())
     }
 
-    /// Ouvre un foyer Feu existant : déchiffre l'archive et charge les clés en mémoire.
+    /// Ouvre un foyer Feu existant : déchiffre l'archive, charge les clés en mémoire
+    /// et initialise l'Archiviste du foyer.
     ///
-    /// Enchaîne cinq phases séquentielles :
+    /// Enchaîne six phases séquentielles :
     ///
     /// **Vérifications préalables**
     /// 1. Vérifie que `index < MAX_FOYERS` et que le foyer n'est pas déjà ouvert.
@@ -461,8 +469,13 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// 7. Déchiffre et charge les clés du foyer dans le trousseau.
     /// 8. Efface le mot de passe et la clé éphémère.
     ///
+    /// **Archiviste**
+    /// 9. Instancie l'Archiviste du foyer. À la première ouverture, crée l'arborescence
+    ///    `registre/` et `classeur0/` à `classeur4/`. Lors des ouvertures suivantes,
+    ///    l'Archiviste détecte la présence de `registre/` et ne fait rien.
+    ///
     /// **Session**
-    /// 9. Marque le foyer comme ouvert.
+    /// 10. Marque le foyer comme ouvert.
     ///
     /// # Erreurs
     ///
@@ -511,6 +524,11 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
                 c.recoit_trousseau_public_foyer(trousseau_public_foyer, index)?;
 
+                // Instanciation de l'archiviste — crée l'arborescence classeurs/registre
+                // à la première ouverture, ne fait rien lors des ouvertures suivantes.
+                self.archivistes[index] =
+                    Some(Archiviste::new(g.donne_chemin_onion(onion), index)?);
+
                 self.session.foyers[index].est_ouvert = true;
                 Ok(())
             }
@@ -534,12 +552,15 @@ impl<I: InterfaceFeuCore> Feu<I> {
         Ok(())
     }
 
-    /// Archive et chiffre le dossier d'un foyer, puis supprime le dossier clair
+    /// Archive et chiffre le dossier d'un foyer, détruit l'Archiviste, puis supprime
+    /// le dossier clair.
     ///
-    /// Orchestre trois opérations séquentielles :
+    /// Orchestre quatre opérations séquentielles :
     /// 1. Ouvre le fichier de destination `<onion>.feu` en écriture.
     /// 2. Crée l'archive tar chiffrée AES-256-GCM-stream du dossier `<onion>`.
+    ///    L'archive inclut `registre/`, `classeur0/` à `classeur4/` et leur contenu.
     /// 3. Supprime le dossier clair `<onion>` après vérification que l'archive existe.
+    /// 4. Détruit l'Archiviste du foyer.
     ///
     /// # Prérequis
     ///
@@ -569,6 +590,9 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
                 gardien.suppression_archive_foyer_tar(onion)?;
                 gardien.suppression_dossier_onion(onion)?;
+
+                // Destruction de l'archiviste — le dossier du foyer est déjà supprimé.
+                self.archivistes[self.session.onion_vers_index(onion)?] = None;
 
                 self.session.change_statut_onion(onion, false)?;
 

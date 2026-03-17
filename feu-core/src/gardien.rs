@@ -28,7 +28,7 @@
 //!   réalise elle-même l'opération sans déléguer.
 
 mod carnet;
-pub(crate) mod erreur;
+pub(super) mod erreur;
 
 use super::cryptographe::trousseaux_publics::{
     TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
@@ -37,6 +37,7 @@ use crate::MAX_FOYERS;
 use carnet::Carnet;
 use erreur::{ErreurGardien, ResultGardien};
 use std::fs::File;
+use std::path::PathBuf;
 
 const VERSION_CONFIGURATION: u32 = 1;
 
@@ -125,6 +126,10 @@ impl Gardien {
             carnet: Carnet::new()?,
             configuration: Configuration::new(),
         })
+    }
+
+    pub(super) fn donne_chemin_onion(&self, onion: &str) -> PathBuf {
+        self.carnet.donne_chemin_onion(onion)
     }
 
     /// Ouvre un nœud Feu existant en chargeant sa configuration depuis `config.feu`.

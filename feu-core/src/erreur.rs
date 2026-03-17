@@ -16,7 +16,10 @@
 //! [`ResultFeu<T>`] est l'alias de [`Result<T, ErreurFeu>`] utilisé dans
 //! toutes les fonctions publiques de `feu-core`.
 
-use crate::{cryptographe::erreur::ErreurCryptographe, gardien::erreur::ErreurGardien};
+use crate::{
+    archiviste::erreur::ErreurArchiviste, cryptographe::erreur::ErreurCryptographe,
+    gardien::erreur::ErreurGardien,
+};
 use thiserror::Error;
 
 pub type ResultFeu<T> = Result<T, ErreurFeu>;
@@ -32,6 +35,9 @@ pub enum ErreurFeu {
     /// Le message textuel provient de [`ErreurCryptographe`] via `.to_string()`.
     #[error("{0}")]
     Cryptographe(String),
+
+    #[error("{0}")]
+    Archiviste(String),
 
     /// Erreur liée à l'état de [`Feu`](crate::Feu) lui-même — état invalide,
     /// précondition non respectée. Indépendante du gardien et du cryptographe.
@@ -56,5 +62,11 @@ impl From<ErreurCryptographe> for ErreurFeu {
     /// préservant l'encapsulation des détails d'implémentation du cryptographe.
     fn from(e: ErreurCryptographe) -> Self {
         ErreurFeu::Cryptographe(e.to_string())
+    }
+}
+
+impl From<ErreurArchiviste> for ErreurFeu {
+    fn from(e: ErreurArchiviste) -> Self {
+        ErreurFeu::Archiviste(e.to_string())
     }
 }
