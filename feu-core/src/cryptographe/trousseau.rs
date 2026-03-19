@@ -218,6 +218,25 @@ impl Trousseau {
         }
     }
 
+    fn donne_cle_chiffrement_classeur(
+        &self,
+        index_foyer: usize,
+        index_classeur: usize,
+    ) -> ResultCryptographe<&SecretBox<[u8; 32]>> {
+        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
+            return Err(ErreurCryptographe::Interne(String::from(
+                "Pas trousseau foyer",
+            )));
+        };
+
+        let Some(cle_classeur) = &trousseau_foyer.cles_chiffrement_classeurs[index_classeur] else {
+            return Err(ErreurCryptographe::Interne(String::from(
+                "Pas de clé du classeur",
+            )));
+        };
+        Ok(cle_classeur)
+    }
+
     /// Dérive et enregistre dans le trousseau la paire de clés de signature du nœud.
     ///
     /// Le chemin de dérivation SLIP-0010 utilisé est `m/0'`.
@@ -519,28 +538,41 @@ impl Trousseau {
             None => Err(ErreurCryptographe::Interne(String::from(
                 "Problème de chiffrement des clés.",
             ))),
-            Some(valeur) => {
-                // Conversion de la clé éphémère brute en Key<Aes256Gcm>
-                let key = Key::<Aes256Gcm>::from_slice(valeur.expose_secret());
-
-                // Création du cipher à partir de key
-                let cipher = Aes256Gcm::new(key);
-
-                // Génération aléatoire du nonce de 12 octets
-                let mut nonce = [0u8; 12];
-                OsRng.fill_bytes(&mut nonce);
-
-                // Chiffrement de la clé
-                let cle_chiffree = cipher.encrypt(Nonce::from_slice(&nonce), cle.as_ref())?;
-
-                // Création du résultat
-                let mut resultat = [0u8; 60];
-                resultat[0..12].copy_from_slice(&nonce);
-                resultat[12..60].copy_from_slice(&cle_chiffree);
-
-                Ok(resultat)
-            }
+            Some(valeur) => Ok(
+                Self::chiffrement_generique_avec_cle(valeur.expose_secret(), cle)?
+                    .try_into()
+                    .map_err(|_| ErreurCryptographe::Interne(String::from("Erreur chiffrement")))?,
+            ),
         }
+    }
+
+    /// Chiffre un blob avec la clé AES-256-GCM du classeur désigné.
+    ///
+    /// Récupère la clé de chiffrement du classeur `index_classeur` du foyer
+    /// `index_foyer` depuis le trousseau, puis délègue à
+    /// [`chiffrement_generique_avec_cle`](Self::chiffrement_generique_avec_cle).
+    ///
+    /// Le résultat est structuré comme suit :
+    /// ```text
+    /// [0..12]   nonce (12 octets)
+    /// [12..]    ciphertext + auth tag
+    /// ```
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le foyer ou le classeur est absent du trousseau,
+    /// ou si le chiffrement AES-256-GCM échoue.
+    pub(super) fn chiffre_blob(
+        &self,
+        index_foyer: usize,
+        index_classeur: usize,
+        blob: &[u8],
+    ) -> ResultCryptographe<Vec<u8>> {
+        Self::chiffrement_generique_avec_cle(
+            self.donne_cle_chiffrement_classeur(index_foyer, index_classeur)?
+                .expose_secret(),
+            blob,
+        )
     }
 
     /// Déchiffre une clé de 60 octets (`nonce || ciphertext || tag`) avec AES-256-GCM.
@@ -992,5 +1024,30 @@ impl Trousseau {
         }
 
         Ok(())
+    }
+
+    fn chiffrement_generique_avec_cle(
+        cle_chiffrement: &[u8; 32],
+        contenu: &[u8],
+    ) -> ResultCryptographe<Vec<u8>> {
+        // Conversion de la clé de chiffrement brute en Key<Aes256Gcm>
+        let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
+
+        // Création du cipher à partir de key
+        let cipher = Aes256Gcm::new(key);
+
+        // Génération aléatoire du nonce de 12 octets
+        let mut nonce = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce);
+
+        // Chiffrement du contenu
+        let contenu_chiffre = cipher.encrypt(Nonce::from_slice(&nonce), contenu.as_ref())?;
+
+        // Création du résultat
+        let mut resultat = Vec::new();
+        resultat.extend_from_slice(&nonce);
+        resultat.extend_from_slice(&contenu_chiffre);
+
+        Ok(resultat)
     }
 }

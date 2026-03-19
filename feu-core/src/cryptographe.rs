@@ -44,8 +44,8 @@ use super::InterfaceFeuCore;
 use bip39::{Language, Mnemonic};
 use erreur::ResultCryptographe;
 use secrecy::{ExposeSecret, SecretBox};
+use sha3::{Digest, Sha3_256};
 use std::io::{Read, Write};
-
 use trousseau::Trousseau;
 use trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud};
 
@@ -286,6 +286,32 @@ impl Cryptographe {
         self.trousseau
             .dechiffre_avec_cle_foyer(cle_chiffree, source, destination)?;
         Ok(())
+    }
+
+    /// Calcule le hash SHA3-256 du blob en clair et le chiffre avec la clé du classeur.
+    ///
+    /// Le hash est calculé **avant** chiffrement — il sert d'identifiant
+    /// content-addressable pour le stockage dans le classeur.
+    ///
+    /// Retourne un tuple `(blob_chiffré, hash)`. Le blob chiffré est structuré
+    /// comme suit : `nonce (12 octets) || ciphertext || auth tag (16 octets)`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le foyer ou le classeur à l'index donné est absent
+    /// du trousseau, ou si le chiffrement AES-256-GCM échoue.
+    pub(super) fn chiffrement_blob(
+        &self,
+        index_foyer: usize,
+        index_classeur: usize,
+        blob: &[u8],
+    ) -> ResultCryptographe<(Vec<u8>, [u8; 32])> {
+        let hash: [u8; 32] = Sha3_256::digest(blob).into();
+        Ok((
+            self.trousseau
+                .chiffre_blob(index_foyer, index_classeur, blob)?,
+            hash,
+        ))
     }
 }
 

@@ -298,7 +298,7 @@ dependencies = [
 
 [[package]]
 name = "feu-cli"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "colored",
  "feu-core",
@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "feu-core"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "aead",
  "aes-gcm",
@@ -324,6 +324,7 @@ dependencies = [
  "tar",
  "thiserror",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]

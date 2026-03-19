@@ -27,6 +27,7 @@ compile_error!("feu-core only supports Linux and macOS.");
 use archiviste::Archiviste;
 use cryptographe::Cryptographe;
 use gardien::Gardien;
+use std::io::Read;
 
 pub use erreur::ErreurFeu;
 pub use erreur::ResultFeu;
@@ -36,9 +37,14 @@ mod cryptographe;
 mod erreur;
 mod gardien;
 
+/// Nombre maximum de foyers dans le nœud
 pub const MAX_FOYERS: usize = 3;
 /// Nombre maximum de classeurs par foyer.
 pub const MAX_CLASSEURS: usize = 5;
+/// Taille maximum d'un blob
+pub const MAX_TAILLE_BLOB: usize = 512 * 1024 * 1024;
+
+pub(crate) const TAILLE_CHUNK: usize = 8 * 1024;
 
 /// Contrat de communication entre `feu-core` et toute interface utilisateur.
 ///
@@ -651,5 +657,63 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// Retourne une erreur si le nœud n'est pas allumé.
     pub fn commande_liste_foyers(&self) -> ResultFeu<[(bool, String); MAX_FOYERS]> {
         self.session.donne_liste_foyers()
+    }
+
+    /// Stocke un blob dans un classeur d'un foyer ouvert.
+    ///
+    /// Orchestre cinq opérations séquentielles :
+    ///
+    /// 1. Valide les index et l'état du foyer.
+    /// 2. Crée un tiroir vide via l'Archiviste du foyer.
+    /// 3. Lit `source` dans le tiroir par chunks — erreur si la taille dépasse
+    ///    [`MAX_TAILLE_BLOB`].
+    /// 4. Calcule le hash SHA3-256 du clair et chiffre le blob avec la clé du
+    ///    classeur (AES-256-GCM) via le Cryptographe.
+    /// 5. Écrit le blob chiffré dans `classeurN/<hash>.dat` via l'Archiviste.
+    ///
+    /// # Invariants de sécurité
+    ///
+    /// Le blob en clair ne transite que dans le tiroir et n'est jamais écrit sur
+    /// le disque. L'Archiviste ne reçoit le tiroir qu'après chiffrement.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
+    /// ouvert, si le Cryptographe ou l'Archiviste est absent, si la lecture de
+    /// `source` échoue, si la taille dépasse [`MAX_TAILLE_BLOB`], si le chiffrement
+    /// échoue, ou si l'écriture disque échoue.
+    pub fn commande_depot_donnees(
+        &mut self,
+        index_foyer: usize,
+        index_classeur: usize,
+        source: impl Read,
+    ) -> ResultFeu<()> {
+        if index_foyer >= MAX_FOYERS || index_classeur >= MAX_CLASSEURS {
+            return Err(ErreurFeu::Standard(String::from("Index incorrect")));
+        }
+        if !self.session.foyers[index_foyer].est_ouvert {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le foyer doit être ouvert",
+            )));
+        }
+        let Some(cryptographe) = &self.cryptographe else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver le cryptographe.",
+            )));
+        };
+        let Some(archiviste) = &self.archivistes[index_foyer] else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver l'archiviste.",
+            )));
+        };
+
+        let mut tiroir = archiviste.donne_tiroir_vide(index_classeur);
+        tiroir.remplir_tiroir(source)?;
+        let (blob_chiffre, hash) =
+            cryptographe.chiffrement_blob(index_foyer, index_classeur, tiroir.lire_blob())?;
+        tiroir.remplace_blob(blob_chiffre);
+        tiroir.definit_hash(hash);
+        archiviste.ecrire_blob(tiroir)?;
+        Ok(())
     }
 }

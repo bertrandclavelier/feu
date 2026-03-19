@@ -1,8 +1,8 @@
 [package]
 name = "feu-core"
-version = "0.0.1"
 edition = "2024"
 license.workspace = true
+version.workspace = true
 
 [dependencies]
 aead = { version = "0", features = ["stream"] }
@@ -19,4 +19,5 @@ slip10_ed25519 = "0"
 tar = "0"
 thiserror = "2"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
+zeroize = "1"
 

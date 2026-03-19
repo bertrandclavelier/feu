@@ -41,6 +41,18 @@ pub(super) fn traite_commande(
             }
             SuiteCommandes::Continuer
         }
+        // Commande de test — foyer 0, classeur 0, chemin absolu obligatoire
+        ("depot", _) => {
+            match std::fs::File::open(arguments) {
+                Err(e) => eprintln!("Erreur fichier => {}", e),
+                Ok(fichier) => {
+                    if let Err(e) = feu.commande_depot_donnees(0, 0, fichier) {
+                        eprintln!("Erreur dépôt => {}", e);
+                    }
+                }
+            }
+            SuiteCommandes::Continuer
+        }
         ("eteins", _) => {
             if let Err(e) = feu.commande_extinction_noeud() {
                 eprintln!("Erreur d'extinction du nœud => {}", e)
@@ -112,16 +124,20 @@ pub(super) fn traite_commande(
 /// Affiche la liste des commandes disponibles avec leur description.
 fn liste_commandes() {
     println!("Commandes disponibles :");
-    println!("{:<12} | allume le noeud", "allume");
-    println!("{:<12} | change le mdp", "change mdp");
-    println!("{:<12} | éteint le noeud", "eteins");
-    println!("{:<12} | ferme le foyer d'index `i`", "ferme `i`");
-    println!("{:<12} | initialise un nœud vierge", "initialise");
-    println!("{:<12} | liste les commandes disponibles", "liste -C");
-    println!("{:<12} | liste les foyers et leur état", "liste -F");
-    println!("{:<12} | ouvre le foyer d'index `i`", "ouvre `i`");
-    println!("{:<12} | quitte Feu", "quitte");
-    println!("{:<12} | affiche la version de `Feu`", "version");
+    println!("{:<15} | allume le noeud", "allume");
+    println!("{:<15} | change le mdp", "change mdp");
+    println!(
+        "{:<15} | dépose un fichier dans le classeur 0 du foyer 0 (test)",
+        "depot `chemin`"
+    );
+    println!("{:<15} | éteint le noeud", "eteins");
+    println!("{:<15} | ferme le foyer d'index `i`", "ferme `i`");
+    println!("{:<15} | initialise un nœud vierge", "initialise");
+    println!("{:<15} | liste les commandes disponibles", "liste -C");
+    println!("{:<15} | liste les foyers et leur état", "liste -F");
+    println!("{:<15} | ouvre le foyer d'index `i`", "ouvre `i`");
+    println!("{:<15} | quitte Feu", "quitte");
+    println!("{:<15} | affiche la version de `Feu`", "version");
 }
 
 /// Convertit un booléen d'état en libellé lisible.

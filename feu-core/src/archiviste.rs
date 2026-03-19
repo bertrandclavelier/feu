@@ -14,7 +14,7 @@
 //! Il est responsable de :
 //! - la détection de la première ouverture d'un foyer
 //! - la création de l'arborescence interne (`registre/`, `classeur0/` à `classeur4/`)
-//! - la lecture et l'écriture des blobs chiffrés dans les classeurs (à venir)
+//! - la création des tiroirs vides et l'écriture des blobs chiffrés dans les classeurs
 //!
 //! # Invariant de sécurité
 //!
@@ -46,14 +46,20 @@
 //!     classeur4/
 //! ```
 
+use data_encoding::HEXLOWER;
 use erreur::{ErreurArchiviste, ResultArchiviste};
 use std::fs::DirBuilder;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use tiroir::Tiroir;
 
 use crate::MAX_CLASSEURS;
 
 pub(super) mod erreur;
+pub(crate) mod tiroir;
 
 /// Noms des sous-dossiers de l'arborescence d'un foyer.
 const REGISTRE: &str = "registre";
@@ -95,6 +101,15 @@ impl Archiviste {
             }
         }
         Ok(archiviste)
+    }
+
+    /// Crée et retourne un [`Tiroir`] vide pour le classeur à `index_classeur`.
+    ///
+    /// Le tiroir est un objet éphémère de transfert — il est destiné à être
+    /// rempli par [`Feu`](crate::Feu) puis transmis au Cryptographe pour chiffrement,
+    /// avant d'être retourné à l'Archiviste via [`ecrire_blob`](Self::ecrire_blob).
+    pub(super) fn donne_tiroir_vide(&self, index_classeur: usize) -> Tiroir {
+        Tiroir::new(index_classeur)
     }
 
     /// Retourne le chemin de `registre/` dans le foyer.
@@ -150,6 +165,41 @@ impl Archiviste {
     /// Retourne une erreur si la création échoue.
     fn creer_dossier(path: &Path) -> ResultArchiviste<()> {
         DirBuilder::new().mode(0o700).recursive(true).create(path)?;
+        Ok(())
+    }
+
+    /// Écrit le blob chiffré du tiroir dans le classeur correspondant.
+    ///
+    /// Construit le chemin de destination à partir de l'index du classeur et du
+    /// hash (encodé en hexadécimal minuscule) : `classeurN/<hash>.dat`.
+    ///
+    /// Le fichier est créé avec `create_new` — l'opération échoue si un blob
+    /// portant ce hash existe déjà. Les permissions sont `rw-------` (0o600).
+    ///
+    /// # Invariant de sécurité
+    ///
+    /// Le tiroir doit contenir un blob **chiffré** à ce stade. L'Archiviste ne
+    /// vérifie pas cet invariant — c'est la responsabilité de l'orchestrateur
+    /// [`Feu`](crate::Feu).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le hash est absent du tiroir, si le fichier existe
+    /// déjà, ou si une opération disque échoue.
+    pub(super) fn ecrire_blob(&self, tiroir: Tiroir) -> ResultArchiviste<()> {
+        let chemin = self
+            .racine
+            .join(format!("{}{}", CLASSEUR, tiroir.lire_index_classeur()))
+            .join(format!("{}.dat", HEXLOWER.encode(&tiroir.lire_hash()?)));
+
+        let mut fichier = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&chemin)?;
+
+        fichier.write_all(tiroir.lire_blob())?;
+
         Ok(())
     }
 }
