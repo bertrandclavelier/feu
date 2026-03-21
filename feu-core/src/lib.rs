@@ -27,7 +27,7 @@ compile_error!("feu-core only supports Linux and macOS.");
 use archiviste::Archiviste;
 use cryptographe::Cryptographe;
 use gardien::Gardien;
-use std::io::Read;
+use std::io::{Read, Write};
 
 pub use erreur::ErreurFeu;
 pub use erreur::ResultFeu;
@@ -676,6 +676,11 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// Le blob en clair ne transite que dans le tiroir et n'est jamais écrit sur
     /// le disque. L'Archiviste ne reçoit le tiroir qu'après chiffrement.
     ///
+    /// # Retour
+    ///
+    /// Retourne le hash SHA3-256 du blob en clair — identifiant content-addressable
+    /// à conserver pour relire la donnée via [`commande_lecture_donnees`](Self::commande_lecture_donnees).
+    ///
     /// # Erreurs
     ///
     /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
@@ -687,7 +692,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
         index_foyer: usize,
         index_classeur: usize,
         source: impl Read,
-    ) -> ResultFeu<()> {
+    ) -> ResultFeu<[u8; 32]> {
         if index_foyer >= MAX_FOYERS || index_classeur >= MAX_CLASSEURS {
             return Err(ErreurFeu::Standard(String::from("Index incorrect")));
         }
@@ -708,12 +713,72 @@ impl<I: InterfaceFeuCore> Feu<I> {
         };
 
         let mut tiroir = archiviste.donne_tiroir_vide(index_classeur);
-        tiroir.remplir_tiroir(source)?;
+        tiroir.remplir(source)?;
         let (blob_chiffre, hash) =
             cryptographe.chiffrement_blob(index_foyer, index_classeur, tiroir.lire_blob())?;
         tiroir.remplace_blob(blob_chiffre);
         tiroir.definit_hash(hash);
         archiviste.ecrire_blob(tiroir)?;
+        Ok(hash)
+    }
+
+    /// Lit et déchiffre un blob depuis un classeur d'un foyer ouvert.
+    ///
+    /// Orchestre trois opérations séquentielles :
+    ///
+    /// 1. Charge le blob chiffré depuis `classeurN/<hash>.dat` via l'Archiviste du foyer.
+    /// 2. Déchiffre le blob avec la clé du classeur (AES-256-GCM) et vérifie son
+    ///    intégrité — le hash SHA3-256 du clair doit correspondre à `hash`.
+    /// 3. Écrit le blob en clair dans `destination` via le tiroir, puis zéroïse le clair.
+    ///
+    /// # Invariants de sécurité
+    ///
+    /// Le blob en clair ne transite que dans le tiroir et n'est jamais écrit sur
+    /// le disque. Le tiroir est zéroïsé après vidage.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
+    /// ouvert, si le Cryptographe ou l'Archiviste est absent, si aucun fichier
+    /// ne correspond au `hash`, si le déchiffrement ou la vérification d'intégrité
+    /// échoue, ou si l'écriture dans `destination` échoue.
+    pub fn commande_lecture_donnees(
+        &mut self,
+        index_foyer: usize,
+        index_classeur: usize,
+        hash: [u8; 32],
+        destination: impl Write,
+    ) -> ResultFeu<()> {
+        if index_foyer >= MAX_FOYERS || index_classeur >= MAX_CLASSEURS {
+            return Err(ErreurFeu::Standard(String::from("Index incorrect")));
+        }
+        if !self.session.foyers[index_foyer].est_ouvert {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le foyer doit être ouvert",
+            )));
+        }
+        let Some(cryptographe) = &self.cryptographe else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver le cryptographe.",
+            )));
+        };
+        let Some(archiviste) = &self.archivistes[index_foyer] else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver l'archiviste.",
+            )));
+        };
+
+        let mut tiroir = archiviste.donne_tiroir_plein(index_classeur, hash)?;
+
+        tiroir.remplace_blob(cryptographe.dechiffrement_blob(
+            index_foyer,
+            index_classeur,
+            hash,
+            tiroir.lire_blob(),
+        )?);
+
+        tiroir.vider(destination)?;
+
         Ok(())
     }
 }

@@ -6,6 +6,7 @@ version.workspace = true
 
 [dependencies]
 colored = "2"
+data-encoding = { version = "2", features = ["alloc"] }
 feu-core = { path = "../feu-core" }
 rpassword = "7"
 rustyline = "17"

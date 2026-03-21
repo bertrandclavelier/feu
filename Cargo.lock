@@ -301,6 +301,7 @@ name = "feu-cli"
 version = "0.0.2"
 dependencies = [
  "colored",
+ "data-encoding",
  "feu-core",
  "rpassword",
  "rustyline",

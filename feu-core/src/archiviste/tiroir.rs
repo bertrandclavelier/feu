@@ -9,7 +9,7 @@
 use super::{ErreurArchiviste, ResultArchiviste};
 use crate::MAX_TAILLE_BLOB;
 use crate::TAILLE_CHUNK;
-use std::io::Read;
+use std::io::{Read, Write};
 use zeroize::Zeroize;
 
 /// Objet de transfert éphémère entre l'Archiviste et le Cryptographe.
@@ -59,7 +59,7 @@ impl Tiroir {
     ///
     /// Retourne une erreur si le tiroir n'est pas vide, si la lecture de `source`
     /// échoue, ou si la taille dépasse [`MAX_TAILLE_BLOB`].
-    pub(crate) fn remplir_tiroir(&mut self, mut source: impl Read) -> ResultArchiviste<()> {
+    pub(crate) fn remplir(&mut self, mut source: impl Read) -> ResultArchiviste<()> {
         if !self.blob.is_empty() {
             return Err(ErreurArchiviste::Interne(String::from(
                 "Le tiroir n'est pas vide",
@@ -81,6 +81,17 @@ impl Tiroir {
             self.blob.extend_from_slice(&chunk[0..n]);
         }
 
+        Ok(())
+    }
+
+    /// Écrit le contenu du tiroir dans `destination` et zéroïse le blob.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si l'écriture dans `destination` échoue.
+    pub(crate) fn vider(&mut self, mut destination: impl Write) -> ResultArchiviste<()> {
+        destination.write_all(&self.blob)?;
+        self.blob.zeroize();
         Ok(())
     }
 

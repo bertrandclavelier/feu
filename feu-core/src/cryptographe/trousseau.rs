@@ -592,23 +592,37 @@ impl Trousseau {
                 "Problème de chiffrement des clés.",
             ))),
             Some(valeur) => {
-                // Conversion de la clé éphémère brute en Key<Aes256Gcm>
-                let key = Key::<Aes256Gcm>::from_slice(valeur.expose_secret());
-
-                // Création du cipher à partir de key
-                let cipher = Aes256Gcm::new(key);
-
-                // Déchiffrement de la clé
-                let cle_dechiffree =
-                    cipher.decrypt(Nonce::from_slice(&cle[0..12]), &cle[12..60])?;
-
-                let resultat = cle_dechiffree.try_into().map_err(|_| {
-                    ErreurCryptographe::Interne(String::from("Erreur déchiffrement."))
-                })?;
-
+                let resultat = Self::dechiffrement_generique_avec_cle(valeur.expose_secret(), cle)?
+                    .try_into()
+                    .map_err(|_| {
+                        ErreurCryptographe::Interne(String::from("Erreur déchiffrement"))
+                    })?;
                 Ok(SecretBox::new(Box::new(resultat)))
             }
         }
+    }
+
+    /// Déchiffre un blob chiffré avec la clé AES-256-GCM du classeur désigné.
+    ///
+    /// Récupère la clé du classeur `index_classeur` du foyer `index_foyer`
+    /// depuis le trousseau, puis délègue à
+    /// [`dechiffrement_generique_avec_cle`](Self::dechiffrement_generique_avec_cle).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le foyer ou le classeur est absent du trousseau,
+    /// ou si le déchiffrement AES-256-GCM échoue.
+    pub(super) fn dechiffre_blob(
+        &self,
+        index_foyer: usize,
+        index_classeur: usize,
+        blob: &[u8],
+    ) -> ResultCryptographe<Vec<u8>> {
+        Self::dechiffrement_generique_avec_cle(
+            self.donne_cle_chiffrement_classeur(index_foyer, index_classeur)?
+                .expose_secret(),
+            blob,
+        )
     }
 }
 
@@ -1049,5 +1063,22 @@ impl Trousseau {
         resultat.extend_from_slice(&contenu_chiffre);
 
         Ok(resultat)
+    }
+
+    fn dechiffrement_generique_avec_cle(
+        cle_chiffrement: &[u8; 32],
+        contenu: &[u8],
+    ) -> ResultCryptographe<Vec<u8>> {
+        // Conversion de la clé éphémère brute en Key<Aes256Gcm>
+        let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
+
+        // Création du cipher à partir de key
+        let cipher = Aes256Gcm::new(key);
+
+        // Déchiffrement de la clé
+        let contenu_dechiffre =
+            cipher.decrypt(Nonce::from_slice(&contenu[0..12]), &contenu[12..])?;
+
+        Ok(contenu_dechiffre)
     }
 }

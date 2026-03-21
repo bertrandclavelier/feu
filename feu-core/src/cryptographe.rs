@@ -313,6 +313,39 @@ impl Cryptographe {
             hash,
         ))
     }
+
+    /// Déchiffre un blob et vérifie son intégrité via son hash SHA3-256.
+    ///
+    /// Déchiffre `blob` avec la clé AES-256-GCM du classeur désigné, puis
+    /// recalcule le hash SHA3-256 du résultat. Si le hash recalculé ne correspond
+    /// pas à `hash`, la donnée est considérée corrompue et une erreur est retournée.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le foyer ou le classeur est absent du trousseau,
+    /// si le déchiffrement AES-256-GCM échoue, ou si le hash du clair ne
+    /// correspond pas à `hash` (donnée corrompue).
+    pub(super) fn dechiffrement_blob(
+        &self,
+        index_foyer: usize,
+        index_classeur: usize,
+        hash: [u8; 32],
+        blob: &[u8],
+    ) -> ResultCryptographe<Vec<u8>> {
+        let blob_dechiffre = self
+            .trousseau
+            .dechiffre_blob(index_foyer, index_classeur, blob)?;
+
+        let nouveau_hash: [u8; 32] = Sha3_256::digest(&blob_dechiffre).into();
+
+        if nouveau_hash != hash {
+            return Err(erreur::ErreurCryptographe::Interne(String::from(
+                "Donnée corrompue après déchiffrement",
+            )));
+        }
+
+        Ok(blob_dechiffre)
+    }
 }
 
 //

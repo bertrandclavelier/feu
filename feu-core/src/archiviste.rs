@@ -50,7 +50,6 @@ use data_encoding::HEXLOWER;
 use erreur::{ErreurArchiviste, ResultArchiviste};
 use std::fs::DirBuilder;
 use std::fs::OpenOptions;
-use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -110,6 +109,33 @@ impl Archiviste {
     /// avant d'être retourné à l'Archiviste via [`ecrire_blob`](Self::ecrire_blob).
     pub(super) fn donne_tiroir_vide(&self, index_classeur: usize) -> Tiroir {
         Tiroir::new(index_classeur)
+    }
+
+    /// Charge le blob chiffré identifié par `hash` depuis le classeur et retourne
+    /// un [`Tiroir`] prêt pour le déchiffrement.
+    ///
+    /// Ouvre `classeurN/<hash>.dat`, lit son contenu dans le tiroir et enregistre
+    /// le hash. Le blob contenu est chiffré — c'est le Cryptographe qui le déchiffre.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si aucun fichier ne correspond au `hash` dans le classeur,
+    /// ou si la lecture échoue.
+    pub(super) fn donne_tiroir_plein(
+        &self,
+        index_classeur: usize,
+        hash: [u8; 32],
+    ) -> ResultArchiviste<Tiroir> {
+        let chemin = self
+            .donne_chemin_classeur(index_classeur)
+            .join(format!("{}.dat", HEXLOWER.encode(&hash)));
+
+        let fichier = std::fs::File::open(chemin)?;
+        let mut tiroir = Tiroir::new(index_classeur);
+        tiroir.definit_hash(hash);
+        tiroir.remplir(fichier)?;
+
+        Ok(tiroir)
     }
 
     /// Retourne le chemin de `registre/` dans le foyer.
@@ -186,19 +212,18 @@ impl Archiviste {
     ///
     /// Retourne une erreur si le hash est absent du tiroir, si le fichier existe
     /// déjà, ou si une opération disque échoue.
-    pub(super) fn ecrire_blob(&self, tiroir: Tiroir) -> ResultArchiviste<()> {
+    pub(super) fn ecrire_blob(&self, mut tiroir: Tiroir) -> ResultArchiviste<()> {
         let chemin = self
-            .racine
-            .join(format!("{}{}", CLASSEUR, tiroir.lire_index_classeur()))
+            .donne_chemin_classeur(tiroir.lire_index_classeur())
             .join(format!("{}.dat", HEXLOWER.encode(&tiroir.lire_hash()?)));
 
-        let mut fichier = OpenOptions::new()
+        let fichier = OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&chemin)?;
 
-        fichier.write_all(tiroir.lire_blob())?;
+        tiroir.vider(fichier)?;
 
         Ok(())
     }

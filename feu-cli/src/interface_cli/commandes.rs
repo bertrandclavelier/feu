@@ -18,6 +18,7 @@
 use feu_core::{Feu, MAX_FOYERS};
 
 use super::SuiteCommandes;
+use data_encoding::HEXLOWER;
 
 /// Dispatche une commande vers [`Feu`].
 ///
@@ -26,62 +27,89 @@ use super::SuiteCommandes;
 pub(super) fn traite_commande(
     feu: &mut Feu<super::InterfaceCli>,
     commande: &str,
-    arguments: &str,
+    argument1: &str,
+    argument2: &str,
 ) -> SuiteCommandes {
-    match (commande, arguments) {
-        ("allume", _) => {
+    match (commande, argument1, argument2) {
+        ("allume", _, _) => {
             if let Err(e) = feu.commande_allumage_noeud() {
                 eprintln!("Erreur d'allumage du nœud => {}", e)
             }
             SuiteCommandes::Continuer
         }
-        ("change", "mdp") => {
+        ("change", "mdp", _) => {
             if let Err(e) = feu.commande_changement_mdp() {
                 eprintln!("Erreur de changement de mdp => {}", e)
             }
             SuiteCommandes::Continuer
         }
         // Commande de test — foyer 0, classeur 0, chemin absolu obligatoire
-        ("depot", _) => {
-            match std::fs::File::open(arguments) {
+        ("depot", _, _) => {
+            match std::fs::File::open(argument1) {
                 Err(e) => eprintln!("Erreur fichier => {}", e),
-                Ok(fichier) => {
-                    if let Err(e) = feu.commande_depot_donnees(0, 0, fichier) {
+                Ok(fichier) => match feu.commande_depot_donnees(0, 0, fichier) {
+                    Err(e) => {
                         eprintln!("Erreur dépôt => {}", e);
                     }
-                }
+                    Ok(hash) => {
+                        println!(
+                            "Voici le hash du fichier déposé : {}",
+                            HEXLOWER.encode(&hash)
+                        );
+                    }
+                },
             }
             SuiteCommandes::Continuer
         }
-        ("eteins", _) => {
+        ("eteins", _, _) => {
             if let Err(e) = feu.commande_extinction_noeud() {
                 eprintln!("Erreur d'extinction du nœud => {}", e)
             }
             SuiteCommandes::Continuer
         }
 
-        ("ferme", _) => {
-            match arguments.parse::<usize>() {
+        ("ferme", _, _) => {
+            match argument1.parse::<usize>() {
                 Ok(i) => {
                     if let Err(e) = &feu.commande_fermeture_foyer_index(i) {
                         eprintln!("Impossible de fermer le foyer {} => {}", i, e);
                     }
                 }
-                Err(_) => eprintln!("Argument invalide => {}", arguments),
+                Err(_) => eprintln!("Argument invalide => {}", argument1),
             }
             SuiteCommandes::Continuer
         }
-        ("initialise", _) => {
+        ("initialise", _, _) => {
             if let Err(e) = feu.commande_initialise_noeud_vierge() {
                 eprintln!("Erreur d'initialisation du nœud => {}", e)
             }
             SuiteCommandes::Continuer
         }
-        ("liste", "-C") => {
+        ("lire", _, _) => {
+            match std::fs::File::create(argument1) {
+                Err(e) => eprintln!("Erreur fichier => {}", e),
+                Ok(fichier) => {
+                    let mut hash_decode = [0u8; 32];
+                    HEXLOWER
+                        .decode_mut(argument2.as_bytes(), &mut hash_decode)
+                        .unwrap();
+                    match feu.commande_lecture_donnees(0, 0, hash_decode, fichier) {
+                        Err(e) => {
+                            eprintln!("Erreur lecture => {}", e);
+                        }
+                        Ok(_) => {
+                            println!("Fichier enregistré");
+                        }
+                    }
+                }
+            }
+            SuiteCommandes::Continuer
+        }
+        ("liste", "-C", _) => {
             liste_commandes();
             SuiteCommandes::Continuer
         }
-        ("liste", "-F") => {
+        ("liste", "-F", _) => {
             match &feu.commande_liste_foyers() {
                 Ok(valeur) => affiche_liste_foyers(valeur),
                 Err(e) => {
@@ -91,18 +119,18 @@ pub(super) fn traite_commande(
 
             SuiteCommandes::Continuer
         }
-        ("ouvre", _) => {
-            match arguments.parse::<usize>() {
+        ("ouvre", _, _) => {
+            match argument1.parse::<usize>() {
                 Ok(i) => {
                     if let Err(e) = feu.commande_ouverture_foyer(i) {
                         eprintln!("Impossible d'ouvrir le foyer {} => {}", i, e);
                     }
                 }
-                Err(_) => eprintln!("Argument invalide => {}", arguments),
+                Err(_) => eprintln!("Argument invalide => {}", argument1),
             }
             SuiteCommandes::Continuer
         }
-        ("quitte", _) => {
+        ("quitte", _, _) => {
             if feu.commande_quitter_feu() {
                 SuiteCommandes::Quitter
             } else {
@@ -110,11 +138,11 @@ pub(super) fn traite_commande(
                 SuiteCommandes::Continuer
             }
         }
-        ("version", _) => {
+        ("version", _, _) => {
             feu.commande_affiche_version();
             SuiteCommandes::Continuer
         }
-        (_, _) => {
+        (_, _, _) => {
             println!("Commande inconnue.");
             SuiteCommandes::Continuer
         }
@@ -133,6 +161,7 @@ fn liste_commandes() {
     println!("{:<15} | éteint le noeud", "eteins");
     println!("{:<15} | ferme le foyer d'index `i`", "ferme `i`");
     println!("{:<15} | initialise un nœud vierge", "initialise");
+    println!("{:<15} | lire fichier", "lire `chemin_dest` `hash`");
     println!("{:<15} | liste les commandes disponibles", "liste -C");
     println!("{:<15} | liste les foyers et leur état", "liste -F");
     println!("{:<15} | ouvre le foyer d'index `i`", "ouvre `i`");

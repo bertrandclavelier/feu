@@ -113,11 +113,12 @@ impl InterfaceCli {
                         continue;
                     }
 
-                    let mut parties = ligne.splitn(2, ' ');
+                    let mut parties = ligne.splitn(3, ' ');
                     let commande = parties.next().unwrap_or("");
-                    let arguments = parties.next().unwrap_or("").trim();
+                    let argument1 = parties.next().unwrap_or("");
+                    let argument2 = parties.next().unwrap_or("").trim();
 
-                    match commandes::traite_commande(&mut feu, commande, arguments) {
+                    match commandes::traite_commande(&mut feu, commande, argument1, argument2) {
                         SuiteCommandes::Continuer => continue,
                         SuiteCommandes::Quitter => break,
                     }
