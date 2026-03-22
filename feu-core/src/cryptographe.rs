@@ -42,6 +42,7 @@ use crate::MAX_FOYERS;
 
 use super::InterfaceFeuCore;
 use bip39::{Language, Mnemonic};
+use data_encoding::HEXLOWER;
 use erreur::ResultCryptographe;
 use secrecy::{ExposeSecret, SecretBox};
 use sha3::{Digest, Sha3_256};
@@ -264,7 +265,7 @@ impl Cryptographe {
     /// 3. Déchiffre `cle_chiffree` (clé symétrique du foyer, 60 octets lus sur disque)
     ///    avec la clé éphémère, puis déchiffre le flux AES-256-GCM-stream.
     ///
-    /// La clé éphémère **n'est pas effacée** à l'issue de cette méthode —
+    // La clé éphémère **n'est pas effacée** à l'issue de cette méthode —
     /// elle reste disponible pour le chargement des clés du foyer via
     /// [`recoit_trousseau_public_foyer`](Self::recoit_trousseau_public_foyer),
     /// qui l'effacera en fin d'opération.
@@ -305,12 +306,12 @@ impl Cryptographe {
         index_foyer: usize,
         index_classeur: usize,
         blob: &[u8],
-    ) -> ResultCryptographe<(Vec<u8>, [u8; 32])> {
+    ) -> ResultCryptographe<(Vec<u8>, String)> {
         let hash: [u8; 32] = Sha3_256::digest(blob).into();
         Ok((
             self.trousseau
                 .chiffre_blob(index_foyer, index_classeur, blob)?,
-            hash,
+            HEXLOWER.encode(&hash),
         ))
     }
 
@@ -329,7 +330,7 @@ impl Cryptographe {
         &self,
         index_foyer: usize,
         index_classeur: usize,
-        hash: [u8; 32],
+        hash: &str,
         blob: &[u8],
     ) -> ResultCryptographe<Vec<u8>> {
         let blob_dechiffre = self
@@ -338,7 +339,9 @@ impl Cryptographe {
 
         let nouveau_hash: [u8; 32] = Sha3_256::digest(&blob_dechiffre).into();
 
-        if nouveau_hash != hash {
+        let mut hash_decode = [0u8; 32];
+        HEXLOWER.decode_mut(hash.as_bytes(), &mut hash_decode)?;
+        if nouveau_hash != hash_decode {
             return Err(erreur::ErreurCryptographe::Interne(String::from(
                 "Donnée corrompue après déchiffrement",
             )));

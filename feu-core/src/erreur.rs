@@ -28,20 +28,20 @@ pub type ResultFeu<T> = Result<T, ErreurFeu>;
 pub enum ErreurFeu {
     /// Erreur remontée depuis le gardien — opération disque ou parsing échoué.
     /// Le message textuel provient de [`ErreurGardien`] via `.to_string()`.
-    #[error("{0}")]
+    #[error("NOY > {0}")]
     Gardien(String),
 
     /// Erreur remontée depuis le cryptographe — opération cryptographique échouée.
     /// Le message textuel provient de [`ErreurCryptographe`] via `.to_string()`.
-    #[error("{0}")]
+    #[error("NOY > {0}")]
     Cryptographe(String),
 
-    #[error("{0}")]
+    #[error("NOY > {0}")]
     Archiviste(String),
 
     /// Erreur liée à l'état de [`Feu`](crate::Feu) lui-même — état invalide,
     /// précondition non respectée. Indépendante du gardien et du cryptographe.
-    #[error("{0}")]
+    #[error("NOY > {0}")]
     Standard(String),
 }
 

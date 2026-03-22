@@ -692,7 +692,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
         index_foyer: usize,
         index_classeur: usize,
         source: impl Read,
-    ) -> ResultFeu<[u8; 32]> {
+    ) -> ResultFeu<String> {
         if index_foyer >= MAX_FOYERS || index_classeur >= MAX_CLASSEURS {
             return Err(ErreurFeu::Standard(String::from("Index incorrect")));
         }
@@ -717,8 +717,8 @@ impl<I: InterfaceFeuCore> Feu<I> {
         let (blob_chiffre, hash) =
             cryptographe.chiffrement_blob(index_foyer, index_classeur, tiroir.lire_blob())?;
         tiroir.remplace_blob(blob_chiffre);
-        tiroir.definit_hash(hash);
-        archiviste.ecrire_blob(tiroir)?;
+        tiroir.definit_hash(&hash);
+        archiviste.ecrit_blob(tiroir)?;
         Ok(hash)
     }
 
@@ -746,7 +746,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
         &mut self,
         index_foyer: usize,
         index_classeur: usize,
-        hash: [u8; 32],
+        hash: &str,
         destination: impl Write,
     ) -> ResultFeu<()> {
         if index_foyer >= MAX_FOYERS || index_classeur >= MAX_CLASSEURS {
@@ -779,6 +779,39 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         tiroir.vider(destination)?;
 
+        Ok(())
+    }
+
+    /// Supprime un blob d'un classeur d'un foyer ouvert.
+    ///
+    /// Supprime le fichier `classeurN/<hash>.dat` via l'Archiviste du foyer.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
+    /// ouvert, si l'Archiviste est absent, ou si aucun fichier ne correspond
+    /// au `hash` dans le classeur.
+    pub fn commande_suppression_donnees(
+        &self,
+        index_foyer: usize,
+        index_classeur: usize,
+        hash: &str,
+    ) -> ResultFeu<()> {
+        if index_foyer >= MAX_FOYERS || index_classeur >= MAX_CLASSEURS {
+            return Err(ErreurFeu::Standard(String::from("Index incorrect")));
+        }
+        if !self.session.foyers[index_foyer].est_ouvert {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le foyer doit être ouvert",
+            )));
+        }
+        let Some(archiviste) = &self.archivistes[index_foyer] else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver l'archiviste.",
+            )));
+        };
+
+        archiviste.supprime_blob(index_classeur, hash)?;
         Ok(())
     }
 }

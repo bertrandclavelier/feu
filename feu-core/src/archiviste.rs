@@ -46,7 +46,6 @@
 //!     classeur4/
 //! ```
 
-use data_encoding::HEXLOWER;
 use erreur::{ErreurArchiviste, ResultArchiviste};
 use std::fs::DirBuilder;
 use std::fs::OpenOptions;
@@ -93,10 +92,10 @@ impl Archiviste {
         let archiviste = Self { racine, index };
 
         if archiviste.teste_arborescence_a_creer_foyer()? {
-            Self::creer_dossier(&archiviste.donne_chemin_registre())?;
+            Self::cree_dossier(&archiviste.donne_chemin_registre())?;
 
             for i in 0..MAX_CLASSEURS {
-                Self::creer_dossier(&archiviste.donne_chemin_classeur(i))?;
+                Self::cree_dossier(&archiviste.donne_chemin_classeur(i))?;
             }
         }
         Ok(archiviste)
@@ -124,11 +123,9 @@ impl Archiviste {
     pub(super) fn donne_tiroir_plein(
         &self,
         index_classeur: usize,
-        hash: [u8; 32],
+        hash: &str,
     ) -> ResultArchiviste<Tiroir> {
-        let chemin = self
-            .donne_chemin_classeur(index_classeur)
-            .join(format!("{}.dat", HEXLOWER.encode(&hash)));
+        let chemin = self.donne_chemin_blob(index_classeur, hash);
 
         let fichier = std::fs::File::open(chemin)?;
         let mut tiroir = Tiroir::new(index_classeur);
@@ -146,6 +143,12 @@ impl Archiviste {
     /// Retourne le chemin du dossier `classeurN/` à l'`index` donné.
     fn donne_chemin_classeur(&self, index: usize) -> PathBuf {
         self.racine.join(format!("{}{}", CLASSEUR, index))
+    }
+
+    /// Retourne le chemin complet du blob `<hash>.dat` dans le classeur à `index_classeur`.
+    fn donne_chemin_blob(&self, index_classeur: usize, hash: &str) -> PathBuf {
+        self.donne_chemin_classeur(index_classeur)
+            .join(format!("{}.dat", hash))
     }
 
     /// Détermine si l'arborescence du foyer doit être créée.
@@ -189,7 +192,7 @@ impl Archiviste {
     /// # Erreurs
     ///
     /// Retourne une erreur si la création échoue.
-    fn creer_dossier(path: &Path) -> ResultArchiviste<()> {
+    fn cree_dossier(path: &Path) -> ResultArchiviste<()> {
         DirBuilder::new().mode(0o700).recursive(true).create(path)?;
         Ok(())
     }
@@ -212,10 +215,8 @@ impl Archiviste {
     ///
     /// Retourne une erreur si le hash est absent du tiroir, si le fichier existe
     /// déjà, ou si une opération disque échoue.
-    pub(super) fn ecrire_blob(&self, mut tiroir: Tiroir) -> ResultArchiviste<()> {
-        let chemin = self
-            .donne_chemin_classeur(tiroir.lire_index_classeur())
-            .join(format!("{}.dat", HEXLOWER.encode(&tiroir.lire_hash()?)));
+    pub(super) fn ecrit_blob(&self, mut tiroir: Tiroir) -> ResultArchiviste<()> {
+        let chemin = self.donne_chemin_blob(tiroir.lire_index_classeur(), &tiroir.lire_hash()?);
 
         let fichier = OpenOptions::new()
             .write(true)
@@ -226,5 +227,22 @@ impl Archiviste {
         tiroir.vider(fichier)?;
 
         Ok(())
+    }
+
+    /// Supprime le blob identifié par `hash` dans le classeur à `index_classeur`.
+    ///
+    /// Vérifie l'existence de `classeurN/<hash>.dat` avant suppression.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier n'existe pas ou si la suppression échoue.
+    pub(super) fn supprime_blob(&self, index_classeur: usize, hash: &str) -> ResultArchiviste<()> {
+        let chemin = self.donne_chemin_blob(index_classeur, hash);
+        if !chemin.exists() {
+            return Err(ErreurArchiviste::Interne(String::from(
+                "Le fichier n'existe pas",
+            )));
+        }
+        Ok(std::fs::remove_file(chemin)?)
     }
 }

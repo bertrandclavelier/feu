@@ -18,7 +18,6 @@
 use feu_core::{Feu, MAX_FOYERS};
 
 use super::SuiteCommandes;
-use data_encoding::HEXLOWER;
 
 /// Dispatche une commande vers [`Feu`].
 ///
@@ -44,7 +43,7 @@ pub(super) fn traite_commande(
             SuiteCommandes::Continuer
         }
         // Commande de test — foyer 0, classeur 0, chemin absolu obligatoire
-        ("depot", _, _) => {
+        ("depose", _, _) => {
             match std::fs::File::open(argument1) {
                 Err(e) => eprintln!("Erreur fichier => {}", e),
                 Ok(fichier) => match feu.commande_depot_donnees(0, 0, fichier) {
@@ -52,10 +51,7 @@ pub(super) fn traite_commande(
                         eprintln!("Erreur dépôt => {}", e);
                     }
                     Ok(hash) => {
-                        println!(
-                            "Voici le hash du fichier déposé : {}",
-                            HEXLOWER.encode(&hash)
-                        );
+                        println!("Voici le hash du fichier déposé : {}", hash,);
                     }
                 },
             }
@@ -88,20 +84,14 @@ pub(super) fn traite_commande(
         ("lire", _, _) => {
             match std::fs::File::create(argument1) {
                 Err(e) => eprintln!("Erreur fichier => {}", e),
-                Ok(fichier) => {
-                    let mut hash_decode = [0u8; 32];
-                    HEXLOWER
-                        .decode_mut(argument2.as_bytes(), &mut hash_decode)
-                        .unwrap();
-                    match feu.commande_lecture_donnees(0, 0, hash_decode, fichier) {
-                        Err(e) => {
-                            eprintln!("Erreur lecture => {}", e);
-                        }
-                        Ok(_) => {
-                            println!("Fichier enregistré");
-                        }
+                Ok(fichier) => match feu.commande_lecture_donnees(0, 0, argument2, fichier) {
+                    Err(e) => {
+                        eprintln!("Erreur lecture => {}", e);
                     }
-                }
+                    Ok(_) => {
+                        println!("Fichier enregistré");
+                    }
+                },
             }
             SuiteCommandes::Continuer
         }
@@ -138,6 +128,12 @@ pub(super) fn traite_commande(
                 SuiteCommandes::Continuer
             }
         }
+        ("supprime", _, _) => {
+            if let Err(e) = feu.commande_suppression_donnees(0, 0, argument1) {
+                eprintln!("Impossible de supprimer la donnée => {}", e);
+            }
+            SuiteCommandes::Continuer
+        }
         ("version", _, _) => {
             feu.commande_affiche_version();
             SuiteCommandes::Continuer
@@ -155,8 +151,8 @@ fn liste_commandes() {
     println!("{:<15} | allume le noeud", "allume");
     println!("{:<15} | change le mdp", "change mdp");
     println!(
-        "{:<15} | dépose un fichier dans le classeur 0 du foyer 0 (test)",
-        "depot `chemin`"
+        "{:<15} | dépose fichier dans clas.0 du foy. 0 (test)",
+        "depose `chemin`"
     );
     println!("{:<15} | éteint le noeud", "eteins");
     println!("{:<15} | ferme le foyer d'index `i`", "ferme `i`");
@@ -166,6 +162,7 @@ fn liste_commandes() {
     println!("{:<15} | liste les foyers et leur état", "liste -F");
     println!("{:<15} | ouvre le foyer d'index `i`", "ouvre `i`");
     println!("{:<15} | quitte Feu", "quitte");
+    println!("{:<15} | supprime données", "supprime `hash`");
     println!("{:<15} | affiche la version de `Feu`", "version");
 }
 

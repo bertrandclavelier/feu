@@ -29,6 +29,11 @@ use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
+const ERR_CAR_001: &str = "CAR-001 > Pas de trousseau public pour le foyer";
+const ERR_CAR_002: &str = "CAR-002 > Pas de clé pour le classeur";
+const ERR_CAR_003: &str = "CAR-003 > Problème lecture fichier";
+const ERR_CAR_004: &str = "CAR-004 > Problème ajout clé classeur dans trousseau_public_foyer";
+
 const FEU_CONFIGURATION: &str = "config.feu";
 const FEU_SEL: &str = "sel.feu";
 const CLE_NOEUD_SIG_PRIV: &str = "feu_sig.priv";
@@ -172,10 +177,7 @@ impl Carnet {
             let foyer = match trousseau_public_complet.donne_trousseau_public_foyer(i) {
                 Ok(valeur) => valeur,
                 Err(_) => {
-                    return Err(ErreurGardien::Interne(format!(
-                        "Pas de trousseau public pour le foyer {}.",
-                        i,
-                    )));
+                    return Err(ErreurGardien::Interne(format!("{} {}.", ERR_CAR_001, i,)));
                 }
             };
 
@@ -217,10 +219,7 @@ impl Carnet {
                 let cle_chiffree = match foyer.donne_cle_chiffrement_classeur(j) {
                     Ok(valeur) => valeur,
                     Err(_) => {
-                        return Err(ErreurGardien::Interne(format!(
-                            "Pas de clé pour le classeur {}",
-                            j,
-                        )));
+                        return Err(ErreurGardien::Interne(format!("{} {}", ERR_CAR_002, j,)));
                     }
                 };
 
@@ -257,25 +256,25 @@ impl Carnet {
                 .join(format!("{}{}", onion, ".cle")),
         )?
         .try_into()
-        .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
+        .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
 
         let chemin_foyer = &self.chemin_feu.join(onion).join(".cles/");
 
         let cle_sig_privee = std::fs::read(chemin_foyer.join(CLE_FOYER_SIG_PRIV))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
+            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
 
         let cle_sig_pub = std::fs::read(chemin_foyer.join(CLE_FOYER_SIG_PUB))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
+            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
 
         let cle_chiff_privee = std::fs::read(chemin_foyer.join(CLE_FOYER_CHIF_PRIV))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
+            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
 
         let cle_chiff_pub = std::fs::read(chemin_foyer.join(CLE_FOYER_CHIF_PUB))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
+            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
 
         let mut trousseau_public_foyer = TrousseauPublicFoyer::new(
             String::from(onion),
@@ -290,14 +289,12 @@ impl Carnet {
         for j in 0..MAX_CLASSEURS {
             let cle_classeur = std::fs::read(chemin_foyer.join(format!("classeur{j}.cle")))?
                 .try_into()
-                .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))?;
+                .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
             if trousseau_public_foyer
                 .ajoute_cle_chiffrement_classeur(cle_classeur, j)
                 .is_err()
             {
-                return Err(ErreurGardien::Interne(String::from(
-                    "Problème ajout clé classeur dans trousseau_public_foyer.",
-                )));
+                return Err(ErreurGardien::Interne(String::from(ERR_CAR_004)));
             }
         }
 
@@ -312,7 +309,7 @@ impl Carnet {
     pub(super) fn lire_pour_donner_sel(&self) -> ResultGardien<[u8; 16]> {
         std::fs::read(self.chemin_feu.join(".cles").join(FEU_SEL))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))
+            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))
     }
 
     /// Lit la clé privée de signature du nœud depuis `~/.feu/.cles/feu_sig.priv`.
@@ -323,7 +320,7 @@ impl Carnet {
     pub(super) fn lire_pour_donner_cle_sig_privee(&self) -> ResultGardien<[u8; 60]> {
         std::fs::read(self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))
+            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))
     }
 
     /// Lit la clé publique de signature du nœud depuis `~/.feu/.cles/feu_sig.pub`.
@@ -334,7 +331,7 @@ impl Carnet {
     pub(super) fn lire_pour_donner_cle_sig_pub(&self) -> ResultGardien<[u8; 32]> {
         std::fs::read(self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))
+            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))
     }
 
     /// Lit la clé symétrique de chiffrement d'un foyer depuis `~/.feu/.cles/<onion>.cle`.
@@ -352,7 +349,7 @@ impl Carnet {
                 .join(format!("{}{}", onion, ".cle")),
         )?
         .try_into()
-        .map_err(|_| ErreurGardien::Interne(String::from("Problème lecture fichier.")))
+        .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))
     }
 
     /// Écrit le contenu de `config.feu` sur le disque.

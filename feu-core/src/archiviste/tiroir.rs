@@ -38,7 +38,7 @@ use zeroize::Zeroize;
 pub(crate) struct Tiroir {
     index_classeur: usize,
     blob: Vec<u8>,
-    hash: Option<[u8; 32]>,
+    hash: Option<String>,
 }
 
 impl Tiroir {
@@ -114,8 +114,8 @@ impl Tiroir {
     ///
     /// Doit être appelé après chiffrement, avant [`ecrire_blob`](super::Archiviste::ecrire_blob).
     /// Le hash est calculé sur le clair — il sert de nom de fichier dans le classeur.
-    pub(crate) fn definit_hash(&mut self, hash: [u8; 32]) {
-        self.hash = Some(hash);
+    pub(crate) fn definit_hash(&mut self, hash: &str) {
+        self.hash = Some(String::from(hash));
     }
 
     /// Retourne le hash SHA3-256 du blob en clair.
@@ -123,11 +123,11 @@ impl Tiroir {
     /// # Erreurs
     ///
     /// Retourne une erreur si [`definit_hash`](Self::definit_hash) n'a pas encore été appelé.
-    pub(crate) fn lire_hash(&self) -> ResultArchiviste<[u8; 32]> {
-        let Some(hash) = self.hash else {
+    pub(crate) fn lire_hash(&self) -> ResultArchiviste<String> {
+        let Some(hash) = &self.hash else {
             return Err(ErreurArchiviste::Interne(String::from("Pas de hash")));
         };
-        Ok(hash)
+        Ok(hash.clone())
     }
 
     /// Retourne l'index du classeur de destination.

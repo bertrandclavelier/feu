@@ -34,18 +34,18 @@ pub(crate) type ResultGardien<T> = Result<T, ErreurGardien>;
 #[derive(Error, Debug)]
 pub(crate) enum ErreurGardien {
     /// Erreur interne générique — portée directement par un message textuel.
-    #[error("Le gardien est en galère : {0}")]
+    #[error("GAR > {0}")]
     Interne(String),
 
     /// Erreur émise par `std::env::var()` lors de la lecture d'une variable d'environnement.
-    #[error("Le gardien est en galère avec la lecture d'une variable d'environnement : {0}")]
+    #[error("GAR > VarError > {0}")]
     VarError(#[from] VarError),
 
     /// Erreur d'entrée/sortie émise par les opérations sur le système de fichiers.
-    #[error("Le gardien est en galère avec une opération d'entrée/sortie : {0}")]
+    #[error("GAR > IoError > {0}")]
     IoError(#[from] std::io::Error),
 
     /// Erreur de parsing émise lors de la conversion d'une chaîne en entier.
-    #[error("Le gardien est en galère avec une valeur à transformer : {0}")]
+    #[error("GAR > ParseIntError > {0}")]
     ParseIntError(#[from] std::num::ParseIntError),
 }
