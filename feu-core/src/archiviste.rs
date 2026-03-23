@@ -89,8 +89,8 @@ impl Archiviste {
             Self::cree_dossier(&archiviste.donne_chemin_registre())?;
 
             for i in 0..MAX_CLASSEURS {
-                std::os::unix::fs::symlink("../", &archiviste.donne_chemin_lien_classeur(i))?;
-                Self::cree_dossier(&archiviste.donne_chemin_classeur(i).as_ref())?;
+                std::os::unix::fs::symlink("../", archiviste.donne_chemin_lien_classeur(i))?;
+                Self::cree_dossier(archiviste.donne_chemin_classeur(i).as_ref())?;
             }
         }
         Ok(archiviste)
@@ -220,5 +220,25 @@ impl Archiviste {
             )));
         }
         Ok(std::fs::remove_file(chemin)?)
+    }
+
+    /// Retourne la liste des hashes de tous les blobs présents dans le classeur à `index_classeur`.
+    ///
+    /// Parcourt le dossier `classeurN/` et collecte le nom de chaque fichier `.dat`
+    /// sans son extension — c'est-à-dire le hash SHA3-256 en hexadécimal minuscule.
+    ///
+    /// L'ordre des entrées n'est pas garanti — il dépend du système de fichiers.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la lecture du dossier échoue.
+    pub(super) fn donne_liste_blobs(&self, index_classeur: usize) -> ResultArchiviste<Vec<String>> {
+        let mut liste = Vec::new();
+        for element in std::fs::read_dir(self.donne_chemin_classeur(index_classeur))? {
+            if let Some(nom) = element?.path().file_stem() {
+                liste.push(nom.to_string_lossy().to_string());
+            }
+        }
+        Ok(liste)
     }
 }

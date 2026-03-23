@@ -813,4 +813,37 @@ impl<I: InterfaceFeuCore> Feu<I> {
         archiviste.supprime_blob(index_classeur, hash)?;
         Ok(())
     }
+
+    /// Retourne la liste des hashes des blobs présents dans un classeur d'un foyer ouvert.
+    ///
+    /// Délègue à l'Archiviste du foyer, qui parcourt le dossier `classeurN/` et
+    /// collecte les noms de fichiers sans extension `.dat`.
+    ///
+    /// L'ordre des hashes retournés n'est pas garanti.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
+    /// ouvert, si l'Archiviste est absent, ou si la lecture du dossier échoue.
+    pub fn commande_liste_blobs(
+        &self,
+        index_foyer: usize,
+        index_classeur: usize,
+    ) -> ResultFeu<Vec<String>> {
+        if index_foyer >= MAX_FOYERS || index_classeur >= MAX_CLASSEURS {
+            return Err(ErreurFeu::Standard(String::from("Index incorrect")));
+        }
+        if !self.session.foyers[index_foyer].est_ouvert {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le foyer doit être ouvert",
+            )));
+        }
+        let Some(archiviste) = &self.archivistes[index_foyer] else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver l'archiviste.",
+            )));
+        };
+
+        Ok(archiviste.donne_liste_blobs(index_classeur)?)
+    }
 }

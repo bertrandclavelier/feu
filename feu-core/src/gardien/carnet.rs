@@ -434,6 +434,10 @@ impl Carnet {
     /// archive récursivement le dossier `~/.feu/<onion>` à la racine de l'archive (`.`),
     /// puis finalise l'archive via `into_inner()`.
     ///
+    /// Les liens symboliques sont archivés **tels quels** (`follow_symlinks(false)`) —
+    /// les suivre provoquerait une boucle infinie sur les liens `registre/classeur.N → ../`,
+    /// qui pointent vers la racine du foyer.
+    ///
     /// Ce fichier tar est destiné à être chiffré par le cryptographe immédiatement après.
     /// Il doit être supprimé après chiffrement.
     ///
@@ -449,6 +453,7 @@ impl Carnet {
             .open(self.donne_chemin_archive_tar(onion))?;
         let mut builder = tar::Builder::new(fichier);
 
+        builder.follow_symlinks(false);
         builder.append_dir_all(".", self.donne_chemin_onion(onion))?;
         builder.into_inner()?;
         Ok(())
@@ -492,8 +497,6 @@ impl Carnet {
     /// comme au changement de mot de passe (fichier existant).
     ///
     /// # Erreurs
-    ///
-    /// Retourne une erreur si la création du fichier temporaire échoue,
     /// si l'écriture échoue, ou si le renommage échoue.
     fn ecrire_fichier_600(chemin: &Path, contenu: &[u8]) -> ResultGardien<()> {
         let nouveau_chemin = chemin.with_added_extension("tmp");
