@@ -28,17 +28,15 @@
 //! détecte cet état et crée l'arborescence complète. Lors des ouvertures suivantes,
 //! il se contente de vérifier l'existence de `registre/` et ne fait rien.
 //!
-//! # État incohérent
-//!
-//! Si `registre/` est absent mais qu'au moins un dossier `classeurN/` existe,
-//! l'arborescence est dans un état incohérent — [`new`](Archiviste::new) retourne
-//! une erreur.
-//!
 //! # Structure disque d'un foyer ouvert
 //!
 //! ```text
 //! ~/.feu/<onion>/
-//!     registre/              ← liens symboliques (v future)
+//!     registre/
+//!         classeur.0  → ../  ← lien symbolique vers la racine du foyer
+//!         classeur.1  → ../
+//!         ...
+//!         classeur.4  → ../
 //!     classeur0/
 //!         <hash>.dat         ← blob chiffré
 //!     classeur1/
@@ -65,14 +63,11 @@ const CLASSEUR: &str = "classeur";
 
 /// Archiviste d'un foyer ouvert.
 ///
-/// Maintient le chemin racine du foyer (`~/.feu/<onion>/`) et son index
-/// dans la session. Instancié par [`Feu`](crate::Feu) à l'ouverture du foyer,
-/// détruit à la fermeture.
+/// Maintient le chemin racine du foyer (`~/.feu/<onion>/`). Instancié par
+/// [`Feu`](crate::Feu) à l'ouverture du foyer, détruit à la fermeture.
 pub(super) struct Archiviste {
     /// Chemin racine du foyer — `~/.feu/<onion>/`.
     racine: PathBuf,
-    /// Index du foyer dans la session (0 à `MAX_FOYERS - 1`).
-    index: usize,
 }
 
 impl Archiviste {
@@ -86,16 +81,16 @@ impl Archiviste {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si l'arborescence est incohérente (classeurs présents
-    /// sans registre), ou si une opération disque échoue.
-    pub(super) fn new(racine: PathBuf, index: usize) -> ResultArchiviste<Self> {
-        let archiviste = Self { racine, index };
+    /// Retourne une erreur si une opération disque échoue.
+    pub(super) fn new(racine: PathBuf) -> ResultArchiviste<Self> {
+        let archiviste = Self { racine };
 
-        if archiviste.teste_arborescence_a_creer_foyer()? {
+        if !&archiviste.donne_chemin_registre().exists() {
             Self::cree_dossier(&archiviste.donne_chemin_registre())?;
 
             for i in 0..MAX_CLASSEURS {
-                Self::cree_dossier(&archiviste.donne_chemin_classeur(i))?;
+                std::os::unix::fs::symlink("../", &archiviste.donne_chemin_lien_classeur(i))?;
+                Self::cree_dossier(&archiviste.donne_chemin_classeur(i).as_ref())?;
             }
         }
         Ok(archiviste)
@@ -140,44 +135,25 @@ impl Archiviste {
         self.racine.join(REGISTRE)
     }
 
+    /// Retourne le chemin du lien symbolique `registre/classeur.N` pour le classeur à `index_classeur`.
+    ///
+    /// Ce lien est le point d'entrée canonique pour accéder au classeur — il permet
+    /// de rediriger les classeurs vers des emplacements arbitraires sans modifier le code.
+    fn donne_chemin_lien_classeur(&self, index_classeur: usize) -> PathBuf {
+        self.donne_chemin_registre()
+            .join(format!("{}.{}", CLASSEUR, index_classeur))
+    }
+
     /// Retourne le chemin du dossier `classeurN/` à l'`index` donné.
-    fn donne_chemin_classeur(&self, index: usize) -> PathBuf {
-        self.racine.join(format!("{}{}", CLASSEUR, index))
+    fn donne_chemin_classeur(&self, index_classeur: usize) -> PathBuf {
+        self.donne_chemin_lien_classeur(index_classeur)
+            .join(format!("{}{}", CLASSEUR, index_classeur))
     }
 
     /// Retourne le chemin complet du blob `<hash>.dat` dans le classeur à `index_classeur`.
     fn donne_chemin_blob(&self, index_classeur: usize, hash: &str) -> PathBuf {
         self.donne_chemin_classeur(index_classeur)
             .join(format!("{}.dat", hash))
-    }
-
-    /// Détermine si l'arborescence du foyer doit être créée.
-    ///
-    /// - `registre/` absent, aucun classeur présent → première ouverture → `Ok(true)`
-    /// - `registre/` présent → déjà initialisé → `Ok(false)`
-    /// - `registre/` absent, classeurs présents → état incohérent → `Err`
-    fn teste_arborescence_a_creer_foyer(&self) -> ResultArchiviste<bool> {
-        if !self.donne_chemin_registre().exists() && !self.existe_aucun_dossier_classeur() {
-            return Err(ErreurArchiviste::Interne(format!(
-                "Problème arborescence foyer {}",
-                self.index,
-            )));
-        }
-        if !self.donne_chemin_registre().exists() {
-            return Ok(true);
-        }
-
-        Ok(false)
-    }
-
-    /// Retourne `true` si aucun dossier `classeurN/` n'existe dans le foyer.
-    fn existe_aucun_dossier_classeur(&self) -> bool {
-        for i in 0..MAX_CLASSEURS {
-            if self.donne_chemin_classeur(i).exists() {
-                return false;
-            }
-        }
-        true
     }
 }
 

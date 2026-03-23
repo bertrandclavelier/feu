@@ -532,8 +532,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
                 // Instanciation de l'archiviste — crée l'arborescence classeurs/registre
                 // à la première ouverture, ne fait rien lors des ouvertures suivantes.
-                self.archivistes[index] =
-                    Some(Archiviste::new(g.donne_chemin_onion(onion), index)?);
+                self.archivistes[index] = Some(Archiviste::new(g.donne_chemin_onion(onion))?);
 
                 self.session.foyers[index].est_ouvert = true;
                 Ok(())

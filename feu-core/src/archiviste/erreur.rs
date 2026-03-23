@@ -13,10 +13,10 @@ pub(crate) type ResultArchiviste<T> = Result<T, ErreurArchiviste>;
 #[derive(Error, Debug)]
 pub(crate) enum ErreurArchiviste {
     /// Erreur interne générique — portée directement par un message textuel.
-    #[error("L'archiviste est en galère : {0}")]
+    #[error("ARC > {0}")]
     Interne(String),
 
     /// Erreur d'entrée/sortie émise par les opérations sur le système de fichiers.
-    #[error("L'archiviste est en galère avec une opération d'entrée/sortie : {0}")]
+    #[error("ARC > {0}")]
     IoError(#[from] std::io::Error),
 }
