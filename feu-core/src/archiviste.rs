@@ -54,6 +54,8 @@ use tiroir::Tiroir;
 
 use crate::MAX_CLASSEURS;
 
+const ERR_ARC_001: &str = "Le fichier n'existe pas";
+
 pub(super) mod erreur;
 pub(crate) mod tiroir;
 
@@ -215,9 +217,7 @@ impl Archiviste {
     pub(super) fn supprime_blob(&self, index_classeur: usize, hash: &str) -> ResultArchiviste<()> {
         let chemin = self.donne_chemin_blob(index_classeur, hash);
         if !chemin.exists() {
-            return Err(ErreurArchiviste::Interne(String::from(
-                "Le fichier n'existe pas",
-            )));
+            return Err(ErreurArchiviste::Interne(String::from(ERR_ARC_001)));
         }
         Ok(std::fs::remove_file(chemin)?)
     }
@@ -240,5 +240,12 @@ impl Archiviste {
             }
         }
         Ok(liste)
+    }
+
+    /// Indique si un blob identifié par `hash` est présent dans le classeur à `index_classeur`.
+    ///
+    /// Retourne `true` si `classeurN/<hash>.dat` existe sur le disque, `false` sinon.
+    pub(super) fn existe_blob(&self, index_classeur: usize, hash: &str) -> bool {
+        self.donne_chemin_blob(index_classeur, hash).exists()
     }
 }

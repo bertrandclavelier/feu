@@ -49,11 +49,22 @@ pub(crate) const TAILLE_CHUNK: usize = 8 * 1024;
 /// Contrat de communication entre `feu-core` et toute interface utilisateur.
 ///
 /// Ce trait définit le canal d'échange entre le cœur du protocole et sa
-/// couche de présentation — CLI, TUI ou web. `feu-core` émet des messages
-/// via `afficher` et `afficher_erreur` sans présumer du niveau de verbosité —
-/// c'est l'interface qui décide de ce qu'elle affiche et comment.
-/// `demander` collecte une réponse interactive, `demander_mdp` collecte
-/// un mot de passe en masquant la saisie.
+/// couche de présentation — CLI, TUI ou application. Il remplit deux rôles :
+///
+/// **Entrées** — le noyau collecte ce dont il a besoin pour opérer :
+/// `demander` pour les réponses interactives, `demander_mdp` pour les mots
+/// de passe (masqués). La collecte du mot de passe est une responsabilité
+/// du noyau : il est le seul à savoir quand et pourquoi en avoir besoin.
+///
+/// **Notifications d'état** — le noyau informe l'interface des changements
+/// d'état significatifs qu'elle ne peut pas observer autrement : clé publique
+/// du nœud à l'allumage, clés publiques des foyers à leur ouverture.
+/// L'interface fait ce qu'elle veut de ces informations — les stocker, les
+/// afficher, les transmettre au réseau.
+///
+/// `afficher` et `afficher_erreur` sont présentes pour la phase de test
+/// (v0.0.2) et ont vocation à disparaître du trait — la couche de présentation
+/// n'a pas à dépendre du noyau pour ses messages.
 pub trait InterfaceFeuCore {
     /// Affiche un message informatif.
     fn afficher(&self, message: &str);
@@ -68,6 +79,26 @@ pub trait InterfaceFeuCore {
     /// Collecte un mot de passe en masquant la saisie.
     /// Retourne une chaîne vide en cas d'erreur de lecture.
     fn demander_mdp(&self, question: &str) -> String;
+
+    /// Notifie l'interface de la clé publique de signature du nœud.
+    ///
+    /// Appelée à l'allumage du nœud, après lecture du trousseau public
+    /// depuis le disque. Cette clé Ed25519 est l'identité cryptographique
+    /// du nœud — socle de l'IdNU à venir.
+    fn recevoir_cle_publique_noeud(&self, cle_publique_sig_noeud: [u8; 32]);
+
+    /// Notifie l'interface des clés publiques d'un foyer à son ouverture.
+    ///
+    /// Appelée après lecture du trousseau public du foyer depuis le disque,
+    /// avant chargement des clés privées en mémoire.
+    /// - `cle_publique_sig` — clé de signature Ed25519 du foyer.
+    /// - `cle_publique_chif` — clé de chiffrement X25519 du foyer.
+    fn recevoir_cles_publiques_foyer(
+        &self,
+        index_foyer: usize,
+        cle_publique_sig: [u8; 32],
+        cle_publique_chif: [u8; 32],
+    );
 }
 
 /// État d'un foyer dans la session courante.
@@ -415,10 +446,13 @@ impl<I: InterfaceFeuCore> Feu<I> {
         let gardien = Gardien::ouvre_nouveau()?;
         let mut cryptographe = Cryptographe::new();
 
-        cryptographe.recoit_trousseau_public_noeud(
-            &gardien.lecture_pour_creation_trousseau_public_noeud()?,
-            &self.interface_feu_core,
-        )?;
+        let trousseau_public_noeud = &gardien.lecture_pour_creation_trousseau_public_noeud()?;
+
+        self.interface_feu_core
+            .recevoir_cle_publique_noeud(trousseau_public_noeud.donne_cle_sig_pub());
+
+        cryptographe
+            .recoit_trousseau_public_noeud(trousseau_public_noeud, &self.interface_feu_core)?;
 
         self.session
             .definition_foyers(gardien.creation_tableau_session_foyers());
@@ -495,17 +529,17 @@ impl<I: InterfaceFeuCore> Feu<I> {
     /// son effacement (étape 8), le mot de passe et la clé éphémère restent en
     /// mémoire. Un mécanisme de drop guard sera introduit pour garantir l'effacement
     /// sur tous les chemins d'erreur.
-    pub fn commande_ouverture_foyer(&mut self, index: usize) -> ResultFeu<()> {
+    pub fn commande_ouverture_foyer(&mut self, index_foyer: usize) -> ResultFeu<()> {
         if !self.session.noeud {
             return Err(ErreurFeu::Standard(String::from(
                 "Le nœud doit être allumé.",
             )));
         }
 
-        if index >= MAX_FOYERS {
+        if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeu::Standard(String::from("Index foyer trop élevé.")));
         }
-        let onion = self.session.index_vers_onion(index)?;
+        let onion = self.session.index_vers_onion(index_foyer)?;
 
         if self.session.onion_est_ouvert(onion)? {
             return Err(ErreurFeu::Standard(String::from(
@@ -528,13 +562,19 @@ impl<I: InterfaceFeuCore> Feu<I> {
                 g.desarchivage_chiffre_foyer(onion)?;
                 let trousseau_public_foyer = g.creation_trousseau_foyer_public(onion)?;
 
-                c.recoit_trousseau_public_foyer(trousseau_public_foyer, index)?;
+                self.interface_feu_core.recevoir_cles_publiques_foyer(
+                    index_foyer,
+                    trousseau_public_foyer.donne_cle_sig_pub(),
+                    trousseau_public_foyer.donne_cle_chiff_pub(),
+                );
+
+                c.recoit_trousseau_public_foyer(trousseau_public_foyer, index_foyer)?;
 
                 // Instanciation de l'archiviste — crée l'arborescence classeurs/registre
                 // à la première ouverture, ne fait rien lors des ouvertures suivantes.
-                self.archivistes[index] = Some(Archiviste::new(g.donne_chemin_onion(onion))?);
+                self.archivistes[index_foyer] = Some(Archiviste::new(g.donne_chemin_onion(onion))?);
 
-                self.session.foyers[index].est_ouvert = true;
+                self.session.foyers[index_foyer].est_ouvert = true;
                 Ok(())
             }
             (_, _) => Err(ErreurFeu::Standard(String::from(
@@ -668,7 +708,9 @@ impl<I: InterfaceFeuCore> Feu<I> {
     ///    [`MAX_TAILLE_BLOB`].
     /// 4. Calcule le hash SHA3-256 du clair et chiffre le blob avec la clé du
     ///    classeur (AES-256-GCM) via le Cryptographe.
-    /// 5. Écrit le blob chiffré dans `classeurN/<hash>.dat` via l'Archiviste.
+    /// 5. Si un blob portant ce hash existe déjà dans le classeur, retourne le
+    ///    hash en silence sans réécriture — invariant content-addressable.
+    /// 6. Écrit le blob chiffré dans `classeurN/<hash>.dat` via l'Archiviste.
     ///
     /// # Invariants de sécurité
     ///
@@ -715,6 +757,11 @@ impl<I: InterfaceFeuCore> Feu<I> {
         tiroir.remplir(source)?;
         let (blob_chiffre, hash) =
             cryptographe.chiffrement_blob(index_foyer, index_classeur, tiroir.lire_blob())?;
+
+        if archiviste.existe_blob(index_classeur, &hash) {
+            return Ok(hash);
+        }
+
         tiroir.remplace_blob(blob_chiffre);
         tiroir.definit_hash(&hash);
         archiviste.ecrit_blob(tiroir)?;
@@ -845,5 +892,38 @@ impl<I: InterfaceFeuCore> Feu<I> {
         };
 
         Ok(archiviste.donne_liste_blobs(index_classeur)?)
+    }
+
+    /// Indique si un blob est présent dans un classeur d'un foyer ouvert.
+    ///
+    /// Retourne `true` si `classeurN/<hash>.dat` existe, `false` sinon.
+    /// Permet aux couches supérieures d'interroger l'existence d'un blob
+    /// sans avoir à le lire.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
+    /// ouvert, ou si l'Archiviste est absent.
+    pub fn commande_blob_existe(
+        &self,
+        index_foyer: usize,
+        index_classeur: usize,
+        hash: &str,
+    ) -> ResultFeu<bool> {
+        if index_foyer >= MAX_FOYERS || index_classeur >= MAX_CLASSEURS {
+            return Err(ErreurFeu::Standard(String::from("Index incorrect")));
+        }
+        if !self.session.foyers[index_foyer].est_ouvert {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le foyer doit être ouvert",
+            )));
+        }
+        let Some(archiviste) = &self.archivistes[index_foyer] else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver l'archiviste.",
+            )));
+        };
+
+        Ok(archiviste.existe_blob(index_classeur, hash))
     }
 }

@@ -9,6 +9,12 @@
 //! Interface CLI de Feu — point d'entrée interactif et canal de communication
 //! entre l'utilisateur et [`feu_core`].
 //!
+//! **Interface temporaire de test.** Ce module n'est pas destiné à rester.
+//! Il sert à exercer les primitives du noyau en cours de développement de
+//! v0.0.2. L'implémentation de [`InterfaceFeuCore`] est délibérément minimale
+//! (affichage debug, saisie stdin brute). La CLI définitive sera construite
+//! en v0.0.3+ avec `feu-app`.
+//!
 //! Ce module remplit deux rôles distincts :
 //!
 //! - [`InterfaceCli`] implémente [`InterfaceFeuCore`], condition nécessaire
@@ -172,5 +178,22 @@ impl InterfaceFeuCore for InterfaceCli {
                 String::new()
             }
         }
+    }
+
+    fn recevoir_cle_publique_noeud(&self, cle_publique_sig_noeud: [u8; 32]) {
+        println!(
+            "Clé publique du nœud bien reçue : {:?}",
+            cle_publique_sig_noeud,
+        );
+    }
+
+    fn recevoir_cles_publiques_foyer(
+        &self,
+        index_foyer: usize,
+        cle_publique_sig: [u8; 32],
+        cle_publique_chif: [u8; 32],
+    ) {
+        println!("Clés publiques du foyer {} bien reçues.", index_foyer);
+        println!("{:?}\n{:?}", cle_publique_sig, cle_publique_chif);
     }
 }

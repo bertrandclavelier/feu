@@ -12,6 +12,9 @@ use crate::TAILLE_CHUNK;
 use std::io::{Read, Write};
 use zeroize::Zeroize;
 
+const ERR_TIR_001: &str = "Le tiroir n'est pas vide";
+const ERR_TIR_002: &str = "Dépassement MAX_TAILLE_BLOB";
+
 /// Objet de transfert éphémère entre l'Archiviste et le Cryptographe.
 ///
 /// Le tiroir transporte un blob depuis la source jusqu'au classeur en passant
@@ -61,9 +64,7 @@ impl Tiroir {
     /// échoue, ou si la taille dépasse [`MAX_TAILLE_BLOB`].
     pub(crate) fn remplir(&mut self, mut source: impl Read) -> ResultArchiviste<()> {
         if !self.blob.is_empty() {
-            return Err(ErreurArchiviste::Interne(String::from(
-                "Le tiroir n'est pas vide",
-            )));
+            return Err(ErreurArchiviste::Interne(String::from(ERR_TIR_001)));
         }
 
         let mut chunk = [0u8; TAILLE_CHUNK];
@@ -74,9 +75,7 @@ impl Tiroir {
                 break;
             }
             if self.blob.len() + n > MAX_TAILLE_BLOB {
-                return Err(ErreurArchiviste::Interne(String::from(
-                    "Dépassement MAX_TAILLE_BLOB",
-                )));
+                return Err(ErreurArchiviste::Interne(String::from(ERR_TIR_002)));
             }
             self.blob.extend_from_slice(&chunk[0..n]);
         }
