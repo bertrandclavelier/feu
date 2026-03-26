@@ -44,11 +44,16 @@ use super::InterfaceFeuCore;
 use bip39::{Language, Mnemonic};
 use data_encoding::HEXLOWER;
 use erreur::ResultCryptographe;
-use secrecy::{ExposeSecret, SecretBox};
+use hkdf::Hkdf;
+use rand::rngs::OsRng;
+use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use sha3::{Digest, Sha3_256};
 use std::io::{Read, Write};
 use trousseau::Trousseau;
 use trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud};
+use x25519_dalek::{EphemeralSecret, PublicKey};
+
+const INFO_HKDF_CHIFFREMENT_ASYMETRIQUE: &str = "feu-chiffrement-asymetrique";
 
 mod trousseau;
 pub(crate) mod trousseaux_publics;
@@ -438,5 +443,59 @@ impl Cryptographe {
     fn efface_mdp_et_cle_ephemere(&mut self) {
         self.trousseau.efface_mdp();
         self.trousseau.efface_cle_ephemere();
+    }
+
+    /// Chiffre des octets à destination d'un nœud identifié par sa clé publique X25519.
+    ///
+    /// Implémente le schéma ECIES sur X25519 :
+    ///
+    /// 1. Génère une paire X25519 éphémère.
+    /// 2. ECDH : `secret_partagé = clé_éphémère_privée × clé_pub_destinataire`.
+    /// 3. Dérive une clé AES-256-GCM via HKDF-SHA3-256 sur le secret partagé.
+    /// 4. Chiffre `octets_a_chiffrer` avec AES-256-GCM (nonce aléatoire).
+    /// 5. Zéroïse le secret partagé et la clé dérivée.
+    ///
+    /// Le secret partagé est extrait dans un [`SecretBox<[u8; 32]>`] immédiatement
+    /// après l'ECDH — le [`SharedSecret`] sort de scope sans persistance.
+    ///
+    /// # Format de sortie
+    ///
+    /// ```text
+    /// [0..32]  clé éphémère publique X25519
+    /// [32..44] nonce AES-GCM (12 octets)
+    /// [44..]   ciphertext + auth tag (16 octets)
+    /// ```
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la dérivation HKDF ou le chiffrement AES-256-GCM échoue.
+    pub(super) fn chiffrement_asymetrique(
+        &self,
+        cle_publique_destinataire: &[u8; 32],
+        octets_a_chiffrer: &[u8],
+    ) -> ResultCryptographe<Vec<u8>> {
+        let secret_ephemere = EphemeralSecret::random_from_rng(OsRng);
+        let cle_publique = PublicKey::from(&secret_ephemere);
+        let cle_pub_dest = PublicKey::from(*cle_publique_destinataire);
+
+        let secret_partage = SecretBox::new(Box::new(
+            *secret_ephemere.diffie_hellman(&cle_pub_dest).as_bytes(),
+        ));
+
+        let hkdf = Hkdf::<Sha3_256>::new(None, secret_partage.expose_secret());
+        let mut cle_brute = SecretBox::new(Box::new([0u8; 32]));
+        hkdf.expand(
+            INFO_HKDF_CHIFFREMENT_ASYMETRIQUE.as_bytes(),
+            cle_brute.expose_secret_mut(),
+        )?;
+
+        let mut resultat: Vec<u8> = Vec::new();
+        resultat.extend_from_slice(cle_publique.as_bytes());
+        resultat.extend(Trousseau::chiffrement_generique_avec_cle(
+            cle_brute.expose_secret(),
+            octets_a_chiffrer,
+        )?);
+
+        Ok(resultat)
     }
 }

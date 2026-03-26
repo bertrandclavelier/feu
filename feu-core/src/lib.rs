@@ -44,6 +44,8 @@ pub const MAX_CLASSEURS: usize = 5;
 /// Taille maximum d'un blob
 pub const MAX_TAILLE_BLOB: usize = 512 * 1024 * 1024;
 
+pub const MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE: usize = 1024 * 1024;
+
 pub(crate) const TAILLE_CHUNK: usize = 8 * 1024;
 
 /// Contrat de communication entre `feu-core` et toute interface utilisateur.
@@ -925,5 +927,46 @@ impl<I: InterfaceFeuCore> Feu<I> {
         };
 
         Ok(archiviste.existe_blob(index_classeur, hash))
+    }
+
+    /// Chiffre des octets à destination d'un nœud identifié par sa clé publique X25519.
+    ///
+    /// Délègue au cryptographe qui implémente le schéma ECIES X25519 + AES-256-GCM.
+    /// Aucune clé privée du trousseau n'est utilisée — seule la clé publique du
+    /// destinataire est nécessaire.
+    ///
+    /// La taille des données est limitée à [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`] —
+    /// l'intégralité du clair et du ciphertext sont chargés en mémoire.
+    ///
+    /// # Format de sortie
+    ///
+    /// Voir [`Cryptographe::chiffrement_asymetrique`] pour le détail du format.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le nœud n'est pas allumé, si la taille dépasse
+    /// [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`], ou si le chiffrement échoue.
+    pub fn commande_chiffrement_asymetrique(
+        &self,
+        cle_publique_destinataire: &[u8; 32],
+        octets_a_chiffrer: &[u8],
+    ) -> ResultFeu<Vec<u8>> {
+        if !self.session.noeud {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le nœud doit être allumé.",
+            )));
+        }
+        if octets_a_chiffrer.len() >= MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE {
+            return Err(ErreurFeu::Standard(String::from(
+                "Dépassement taille pour chiffrement asymétrique",
+            )));
+        }
+        let Some(cryptographe) = &self.cryptographe else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver le cryptographe.",
+            )));
+        };
+
+        Ok(cryptographe.chiffrement_asymetrique(cle_publique_destinataire, octets_a_chiffrer)?)
     }
 }

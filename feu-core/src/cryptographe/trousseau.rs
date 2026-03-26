@@ -1040,7 +1040,7 @@ impl Trousseau {
         Ok(())
     }
 
-    fn chiffrement_generique_avec_cle(
+    pub(super) fn chiffrement_generique_avec_cle(
         cle_chiffrement: &[u8; 32],
         contenu: &[u8],
     ) -> ResultCryptographe<Vec<u8>> {
