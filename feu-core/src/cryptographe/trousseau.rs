@@ -193,8 +193,19 @@ impl TrousseauFoyer {
     fn donne_cle_chiffrement(&self) -> &SecretBox<[u8; 32]> {
         &self.cle_chiffrement
     }
+
+    /// Retourne une référence à la clé privée X25519 de chiffrement du foyer.
+    fn donne_cle_privee_chiffrement(&self) -> &SecretBox<StaticSecret> {
+        &self.paire_chiffrement.privee
+    }
 }
 
+/// Conteneur principal des secrets cryptographiques d'une session active.
+///
+/// Maintient en mémoire : le mot de passe, la clé éphémère, le sel Argon2id,
+/// la paire de signature du nœud, et les trousseaux des foyers ouverts.
+/// Toutes les clés privées et symétriques sont encapsulées dans [`SecretBox`]
+/// ou protégées par `ZeroizeOnDrop`.
 pub(super) struct Trousseau {
     mdp: Option<SecretBox<String>>,
     cle_ephemere: Option<SecretBox<[u8; 32]>>,
@@ -218,6 +229,11 @@ impl Trousseau {
         }
     }
 
+    /// Retourne la clé de chiffrement AES-256-GCM du classeur `index_classeur` du foyer `index_foyer`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le foyer ou le classeur est absent du trousseau.
     fn donne_cle_chiffrement_classeur(
         &self,
         index_foyer: usize,
@@ -235,6 +251,24 @@ impl Trousseau {
             )));
         };
         Ok(cle_classeur)
+    }
+
+    /// Retourne la clé privée X25519 du foyer à la position `index_foyer`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le foyer est absent du trousseau.
+    fn donne_cle_privee_chiffrement_foyer(
+        &self,
+        index_foyer: usize,
+    ) -> ResultCryptographe<&SecretBox<StaticSecret>> {
+        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
+            return Err(ErreurCryptographe::Interne(String::from(
+                "Pas trousseau foyer",
+            )));
+        };
+
+        Ok(trousseau_foyer.donne_cle_privee_chiffrement())
     }
 
     /// Dérive et enregistre dans le trousseau la paire de clés de signature du nœud.
@@ -1040,6 +1074,24 @@ impl Trousseau {
         Ok(())
     }
 
+    /// Chiffre `contenu` avec AES-256-GCM et une clé fournie directement.
+    ///
+    /// Utilisé pour les cas où la clé est dérivée à l'extérieur du trousseau
+    /// (ECIES, chiffrement de blobs). Pour les clés du trousseau, préférer
+    /// [`chiffre_cle`](Self::chiffre_cle) ou [`chiffre_blob`](Self::chiffre_blob).
+    ///
+    /// Un nonce aléatoire de 12 octets est généré via [`OsRng`] à chaque appel.
+    ///
+    /// # Format de sortie
+    ///
+    /// ```text
+    /// [0..12]  nonce (12 octets)
+    /// [12..]   ciphertext + auth tag (16 octets)
+    /// ```
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le chiffrement AES-256-GCM échoue.
     pub(super) fn chiffrement_generique_avec_cle(
         cle_chiffrement: &[u8; 32],
         contenu: &[u8],
@@ -1065,7 +1117,16 @@ impl Trousseau {
         Ok(resultat)
     }
 
-    fn dechiffrement_generique_avec_cle(
+    /// Déchiffre `contenu` avec AES-256-GCM et une clé fournie directement.
+    ///
+    /// Attendu au format `nonce (12 octets) || ciphertext || auth tag (16 octets)`.
+    /// Réciproque de [`chiffrement_generique_avec_cle`](Self::chiffrement_generique_avec_cle).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la vérification de l'auth tag AES-GCM échoue
+    /// (clé incorrecte ou données corrompues).
+    pub(super) fn dechiffrement_generique_avec_cle(
         cle_chiffrement: &[u8; 32],
         contenu: &[u8],
     ) -> ResultCryptographe<Vec<u8>> {
@@ -1080,5 +1141,34 @@ impl Trousseau {
             cipher.decrypt(Nonce::from_slice(&contenu[0..12]), &contenu[12..])?;
 
         Ok(contenu_dechiffre)
+    }
+
+    /// Calcule le secret partagé X25519 entre la clé privée du foyer et la clé éphémère publique.
+    ///
+    /// Effectue le ECDH : `secret_partagé = clé_privée_foyer × clé_éphémère_publique`.
+    /// Le secret est extrait dans un [`SecretBox<[u8; 32]>`] immédiatement —
+    /// le [`SharedSecret`] sort de scope sans persistance.
+    ///
+    /// Utilisé dans le schéma ECIES pour le déchiffrement asymétrique.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le foyer à `index_foyer` est absent du trousseau.
+    pub(super) fn recuperation_secret_partage(
+        &self,
+        index_foyer: usize,
+        cle_ephemere_publique: &[u8; 32],
+    ) -> ResultCryptographe<SecretBox<[u8; 32]>> {
+        let cle_publique = PublicKey::from(*cle_ephemere_publique);
+
+        let secret_partage = SecretBox::new(Box::new(
+            *self
+                .donne_cle_privee_chiffrement_foyer(index_foyer)?
+                .expose_secret()
+                .diffie_hellman(&cle_publique)
+                .as_bytes(),
+        ));
+
+        Ok(secret_partage)
     }
 }

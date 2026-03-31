@@ -969,4 +969,51 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         Ok(cryptographe.chiffrement_asymetrique(cle_publique_destinataire, octets_a_chiffrer)?)
     }
+
+    /// Déchiffre un message chiffré à destination de ce foyer.
+    ///
+    /// Réciproque de [`commande_chiffrement_asymetrique`](Self::commande_chiffrement_asymetrique) —
+    /// délègue au cryptographe qui effectue le ECDH X25519 + HKDF + AES-256-GCM.
+    /// La clé privée X25519 du foyer doit être présente dans le trousseau,
+    /// ce qui requiert que le foyer soit ouvert.
+    ///
+    /// La taille des données est limitée à [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`] + 60 octets
+    /// (surcoût du schéma ECIES : 32 clé éphémère + 12 nonce + 16 auth tag).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le nœud n'est pas allumé, si l'index est invalide,
+    /// si le foyer n'est pas ouvert, si la taille dépasse la limite,
+    /// ou si le déchiffrement échoue.
+    pub fn commande_dechiffrement_asymetrique(
+        &self,
+        index_foyer: usize,
+        octets_a_dechiffrer: &[u8],
+    ) -> ResultFeu<Vec<u8>> {
+        if !self.session.noeud {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le nœud doit être allumé.",
+            )));
+        }
+        if index_foyer >= MAX_FOYERS {
+            return Err(ErreurFeu::Standard(String::from("Index foyer incorrect")));
+        }
+        if !self.session.foyers[index_foyer].est_ouvert {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le foyer doit être ouvert",
+            )));
+        }
+        if octets_a_dechiffrer.len() >= MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE + 60 {
+            return Err(ErreurFeu::Standard(String::from(
+                "Dépassement taille pour déchiffrement asymétrique",
+            )));
+        }
+        let Some(cryptographe) = &self.cryptographe else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver le cryptographe.",
+            )));
+        };
+
+        Ok(cryptographe.dechiffrement_asymetrique(index_foyer, octets_a_dechiffrer)?)
+    }
 }

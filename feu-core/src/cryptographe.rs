@@ -43,7 +43,7 @@ use crate::MAX_FOYERS;
 use super::InterfaceFeuCore;
 use bip39::{Language, Mnemonic};
 use data_encoding::HEXLOWER;
-use erreur::ResultCryptographe;
+use erreur::{ErreurCryptographe, ResultCryptographe};
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
@@ -497,5 +497,55 @@ impl Cryptographe {
         )?);
 
         Ok(resultat)
+    }
+
+    /// Déchiffre un message chiffré par [`chiffrement_asymetrique`](Self::chiffrement_asymetrique).
+    ///
+    /// Implémente le schéma ECIES sur X25519, côté destinataire :
+    ///
+    /// 1. Extrait la clé éphémère publique `[0..32]` (envoyée en clair).
+    /// 2. ECDH : `secret_partagé = clé_privée_foyer × clé_éphémère_publique`.
+    /// 3. Dérive la clé AES-256-GCM via HKDF-SHA3-256 sur le secret partagé.
+    /// 4. Déchiffre `[32..]` avec AES-256-GCM.
+    ///
+    /// Le secret partagé est extrait dans un [`SecretBox<[u8; 32]>`] immédiatement
+    /// après l'ECDH — le [`SharedSecret`] sort de scope sans persistance.
+    ///
+    /// # Format d'entrée
+    ///
+    /// ```text
+    /// [0..32]  clé éphémère publique X25519
+    /// [32..44] nonce AES-GCM (12 octets)
+    /// [44..]   ciphertext + auth tag (16 octets)
+    /// ```
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la conversion de la clé éphémère échoue,
+    /// si le foyer est absent du trousseau, si la dérivation HKDF échoue,
+    /// ou si le déchiffrement AES-256-GCM échoue.
+    pub(super) fn dechiffrement_asymetrique(
+        &self,
+        index_foyer: usize,
+        octets_a_dechiffrer: &[u8],
+    ) -> ResultCryptographe<Vec<u8>> {
+        let cle_ephemere_publique: &[u8; 32] = octets_a_dechiffrer[0..32]
+            .try_into()
+            .map_err(|_| ErreurCryptographe::Interne(String::from("Erreur déchiffrement")))?;
+        let secret_partage = self
+            .trousseau
+            .recuperation_secret_partage(index_foyer, cle_ephemere_publique)?;
+
+        let hkdf = Hkdf::<Sha3_256>::new(None, secret_partage.expose_secret());
+        let mut cle_brute = SecretBox::new(Box::new([0u8; 32]));
+        hkdf.expand(
+            INFO_HKDF_CHIFFREMENT_ASYMETRIQUE.as_bytes(),
+            cle_brute.expose_secret_mut(),
+        )?;
+
+        Trousseau::dechiffrement_generique_avec_cle(
+            cle_brute.expose_secret(),
+            &octets_a_dechiffrer[32..],
+        )
     }
 }
