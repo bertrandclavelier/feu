@@ -548,4 +548,31 @@ impl Cryptographe {
             &octets_a_dechiffrer[32..],
         )
     }
+
+    /// Signe des octets avec la clé privée Ed25519 du nœud.
+    ///
+    /// Délègue directement à [`Trousseau::signe_avec_cle_noeud`].
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé de signature du nœud est absente du trousseau.
+    pub(super) fn signature_noeud(&self, octets_a_signer: &[u8]) -> ResultCryptographe<[u8; 64]> {
+        self.trousseau.signe_avec_cle_noeud(octets_a_signer)
+    }
+
+    /// Signe des octets avec la clé privée Ed25519 du foyer à la position `index_foyer`.
+    ///
+    /// Délègue directement à [`Trousseau::signe_avec_cle_foyer`].
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le foyer est absent du trousseau.
+    pub(super) fn signature_foyer(
+        &self,
+        index_foyer: usize,
+        octets_a_signer: &[u8],
+    ) -> ResultCryptographe<[u8; 64]> {
+        self.trousseau
+            .signe_avec_cle_foyer(index_foyer, octets_a_signer)
+    }
 }

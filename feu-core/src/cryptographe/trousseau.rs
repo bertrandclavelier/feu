@@ -198,6 +198,10 @@ impl TrousseauFoyer {
     fn donne_cle_privee_chiffrement(&self) -> &SecretBox<StaticSecret> {
         &self.paire_chiffrement.privee
     }
+
+    fn donne_cle_privee_signature(&self) -> &SigningKey {
+        &self.paire_signature.privee
+    }
 }
 
 /// Conteneur principal des secrets cryptographiques d'une session active.
@@ -269,6 +273,29 @@ impl Trousseau {
         };
 
         Ok(trousseau_foyer.donne_cle_privee_chiffrement())
+    }
+
+    fn donne_cle_privee_signature_foyer(
+        &self,
+        index_foyer: usize,
+    ) -> ResultCryptographe<&SigningKey> {
+        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
+            return Err(ErreurCryptographe::Interne(String::from(
+                "Pas trousseau foyer",
+            )));
+        };
+
+        Ok(trousseau_foyer.donne_cle_privee_signature())
+    }
+
+    fn donne_cle_privee_signature_noeud(&self) -> ResultCryptographe<&SigningKey> {
+        let Some(paire_signature_noeud) = &self.paire_signature_noeud else {
+            return Err(ErreurCryptographe::Interne(String::from(
+                "Pas de clés signature nœud",
+            )));
+        };
+
+        Ok(&paire_signature_noeud.privee)
     }
 
     /// Dérive et enregistre dans le trousseau la paire de clés de signature du nœud.
@@ -464,6 +491,31 @@ impl Trousseau {
         hkdf.expand(b"", cle_brute.expose_secret_mut())?;
 
         Ok(cle_brute)
+    }
+
+    fn signature_generique_ed25519(cle_privee: &SigningKey, octets_a_signer: &[u8]) -> [u8; 64] {
+        cle_privee.sign(octets_a_signer).to_bytes()
+    }
+
+    pub(super) fn signe_avec_cle_noeud(
+        &self,
+        octets_a_signer: &[u8],
+    ) -> ResultCryptographe<[u8; 64]> {
+        Ok(Self::signature_generique_ed25519(
+            self.donne_cle_privee_signature_noeud()?,
+            octets_a_signer,
+        ))
+    }
+
+    pub(super) fn signe_avec_cle_foyer(
+        &self,
+        index_foyer: usize,
+        octets_a_signer: &[u8],
+    ) -> ResultCryptographe<[u8; 64]> {
+        Ok(Self::signature_generique_ed25519(
+            self.donne_cle_privee_signature_foyer(index_foyer)?,
+            octets_a_signer,
+        ))
     }
 }
 

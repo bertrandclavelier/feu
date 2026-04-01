@@ -46,6 +46,8 @@ pub const MAX_TAILLE_BLOB: usize = 512 * 1024 * 1024;
 
 pub const MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE: usize = 1024 * 1024;
 
+pub const MAX_TAILLE_SIGNATURE: usize = 64 * 1024;
+
 pub(crate) const TAILLE_CHUNK: usize = 8 * 1024;
 
 /// Contrat de communication entre `feu-core` et toute interface utilisateur.
@@ -1015,5 +1017,86 @@ impl<I: InterfaceFeuCore> Feu<I> {
         };
 
         Ok(cryptographe.dechiffrement_asymetrique(index_foyer, octets_a_dechiffrer)?)
+    }
+
+    /// Signe des octets avec la clé privée de signature Ed25519 du nœud.
+    ///
+    /// La clé de signature du nœud (`m/0'`) est l'identité cryptographique
+    /// racine — elle signe les IdNU et tout acte engageant le nœud dans
+    /// sa globalité.
+    ///
+    /// La taille des données est limitée à [`MAX_TAILLE_SIGNATURE`] —
+    /// cette fonction est destinée aux structures légères (IdNU, ENU),
+    /// pas aux blobs de données.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le nœud n'est pas allumé, si la taille
+    /// dépasse [`MAX_TAILLE_SIGNATURE`], ou si le cryptographe est absent.
+    pub fn commande_signature_noeud(&self, octets_a_signer: &[u8]) -> ResultFeu<[u8; 64]> {
+        if !self.session.noeud {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le nœud doit être allumé.",
+            )));
+        }
+        if octets_a_signer.len() >= MAX_TAILLE_SIGNATURE {
+            return Err(ErreurFeu::Standard(String::from(
+                "Dépassement taille pour signature",
+            )));
+        }
+        let Some(cryptographe) = &self.cryptographe else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver le cryptographe.",
+            )));
+        };
+
+        Ok(cryptographe.signature_noeud(octets_a_signer)?)
+    }
+
+    /// Signe des octets avec la clé privée de signature Ed25519 du foyer.
+    ///
+    /// La clé de signature du foyer (`m/index'`, message `"feu-foyer-paire-signature"`)
+    /// authentifie les ENU et les échanges réseau du foyer.
+    /// Le foyer doit être ouvert — sa clé privée doit être présente en mémoire.
+    ///
+    /// La taille des données est limitée à [`MAX_TAILLE_SIGNATURE`] —
+    /// cette fonction est destinée aux structures légères (IdNU, ENU),
+    /// pas aux blobs de données.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le nœud n'est pas allumé, si l'index est invalide,
+    /// si le foyer n'est pas ouvert, si la taille dépasse [`MAX_TAILLE_SIGNATURE`],
+    /// ou si le cryptographe est absent.
+    pub fn commande_signature_foyer(
+        &self,
+        index_foyer: usize,
+        octets_a_signer: &[u8],
+    ) -> ResultFeu<[u8; 64]> {
+        if !self.session.noeud {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le nœud doit être allumé.",
+            )));
+        }
+        if index_foyer >= MAX_FOYERS {
+            return Err(ErreurFeu::Standard(String::from("Index foyer incorrect")));
+        }
+        if !self.session.foyers[index_foyer].est_ouvert {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le foyer doit être ouvert",
+            )));
+        }
+        if octets_a_signer.len() >= MAX_TAILLE_SIGNATURE {
+            return Err(ErreurFeu::Standard(String::from(
+                "Dépassement taille pour signature",
+            )));
+        }
+        let Some(cryptographe) = &self.cryptographe else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver le cryptographe.",
+            )));
+        };
+
+        Ok(cryptographe.signature_foyer(index_foyer, octets_a_signer)?)
     }
 }
