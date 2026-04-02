@@ -29,6 +29,7 @@ use cryptographe::Cryptographe;
 use ed25519_dalek::VerifyingKey;
 use gardien::Gardien;
 use std::io::{Read, Write};
+use std::time::SystemTime;
 
 pub use erreur::ErreurFeu;
 pub use erreur::ResultFeu;
@@ -104,6 +105,56 @@ pub trait InterfaceFeuCore {
         cle_publique_sig: [u8; 32],
         cle_publique_chif: [u8; 32],
     );
+}
+
+/// Métadonnées système d'un blob chiffré.
+///
+/// Restitue les informations fournies par l'OS sur le fichier `.dat` correspondant
+/// au blob. Les données sont brutes — aucune conversion n'est effectuée par le noyau.
+pub struct DonneesBlob {
+    taille: u64,
+    date_creation: Option<SystemTime>,
+    date_derniere_modification: SystemTime,
+    date_dernier_acces: SystemTime,
+}
+
+impl DonneesBlob {
+    /// Construit un [`DonneesBlob`] à partir des métadonnées collectées par l'Archiviste.
+    pub(crate) fn new(
+        taille: u64,
+        date_creation: Option<SystemTime>,
+        date_derniere_modification: SystemTime,
+        date_dernier_acces: SystemTime,
+    ) -> Self {
+        Self {
+            taille,
+            date_creation,
+            date_derniere_modification,
+            date_dernier_acces,
+        }
+    }
+
+    /// Retourne la taille du blob en octets.
+    pub fn donne_taille(&self) -> u64 {
+        self.taille
+    }
+
+    /// Retourne la date de création du fichier, si le système de fichiers la supporte.
+    ///
+    /// `None` sur les systèmes où `created()` n'est pas disponible (certains Linux).
+    pub fn donne_date_creation(&self) -> Option<SystemTime> {
+        self.date_creation
+    }
+
+    /// Retourne la date de dernière modification du fichier.
+    pub fn donne_date_derniere_modification(&self) -> SystemTime {
+        self.date_derniere_modification
+    }
+
+    /// Retourne la date de dernier accès au fichier.
+    pub fn donne_date_dernier_acces(&self) -> SystemTime {
+        self.date_dernier_acces
+    }
 }
 
 /// État d'un foyer dans la session courante.
@@ -1126,5 +1177,41 @@ impl<I: InterfaceFeuCore> Feu<I> {
             signature,
             octets_signes,
         ))
+    }
+
+    /// Retourne les métadonnées système d'un blob.
+    ///
+    /// Délègue à l'Archiviste du foyer désigné — voir [`DonneesBlob`] pour le détail des champs.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le nœud n'est pas allumé, si les index sont hors bornes,
+    /// si le foyer n'est pas ouvert, ou si le blob est introuvable.
+    pub fn commande_informations_blob(
+        &self,
+        index_foyer: usize,
+        index_classeur: usize,
+        hash: &str,
+    ) -> ResultFeu<DonneesBlob> {
+        if !self.session.noeud {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le nœud doit être allumé.",
+            )));
+        }
+        if index_foyer >= MAX_FOYERS || index_classeur >= MAX_CLASSEURS {
+            return Err(ErreurFeu::Standard(String::from("Index incorrect")));
+        }
+        if !self.session.foyers[index_foyer].est_ouvert {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le foyer doit être ouvert",
+            )));
+        }
+        let Some(archiviste) = &self.archivistes[index_foyer] else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver l'archiviste.",
+            )));
+        };
+
+        Ok(archiviste.donne_informations_blob(index_classeur, hash)?)
     }
 }

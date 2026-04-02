@@ -52,6 +52,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use tiroir::Tiroir;
 
+use crate::DonneesBlob;
 use crate::MAX_CLASSEURS;
 
 const ERR_ARC_001: &str = "Le fichier n'existe pas";
@@ -247,5 +248,32 @@ impl Archiviste {
     /// Retourne `true` si `classeurN/<hash>.dat` existe sur le disque, `false` sinon.
     pub(super) fn existe_blob(&self, index_classeur: usize, hash: &str) -> bool {
         self.donne_chemin_blob(index_classeur, hash).exists()
+    }
+
+    /// Retourne les métadonnées système du blob identifié par `hash` dans le classeur à `index_classeur`.
+    ///
+    /// Interroge l'OS via [`std::fs::metadata`] — aucun déchiffrement n'est effectué.
+    /// `date_creation` est `None` si le système de fichiers ne la supporte pas.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier n'existe pas ou si la lecture des métadonnées échoue.
+    pub(super) fn donne_informations_blob(
+        &self,
+        index_classeur: usize,
+        hash: &str,
+    ) -> ResultArchiviste<DonneesBlob> {
+        let metadata = std::fs::metadata(self.donne_chemin_blob(index_classeur, hash))?;
+        let created = match metadata.created() {
+            Ok(valeur) => Some(valeur),
+            Err(_) => None,
+        };
+
+        Ok(DonneesBlob::new(
+            metadata.len(),
+            created,
+            metadata.modified()?,
+            metadata.accessed()?,
+        ))
     }
 }
