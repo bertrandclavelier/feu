@@ -26,6 +26,7 @@ compile_error!("feu-core only supports Linux and macOS.");
 
 use archiviste::Archiviste;
 use cryptographe::Cryptographe;
+use ed25519_dalek::VerifyingKey;
 use gardien::Gardien;
 use std::io::{Read, Write};
 
@@ -1098,5 +1099,32 @@ impl<I: InterfaceFeuCore> Feu<I> {
         };
 
         Ok(cryptographe.signature_foyer(index_foyer, octets_a_signer)?)
+    }
+
+    /// Vérifie une signature Ed25519.
+    ///
+    /// Retourne `Ok(true)` si `signature` est valide pour `octets_signes` avec
+    /// `cle_publique`, `Ok(false)` sinon.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le nœud n'est pas allumé.
+    pub fn commande_verification_signature(
+        &self,
+        cle_publique: VerifyingKey,
+        signature: [u8; 64],
+        octets_signes: &[u8],
+    ) -> ResultFeu<bool> {
+        if !self.session.noeud {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le nœud doit être allumé.",
+            )));
+        }
+
+        Ok(Cryptographe::verification_signature(
+            cle_publique,
+            signature,
+            octets_signes,
+        ))
     }
 }

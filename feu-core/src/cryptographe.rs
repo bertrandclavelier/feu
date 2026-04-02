@@ -43,6 +43,7 @@ use crate::MAX_FOYERS;
 use super::InterfaceFeuCore;
 use bip39::{Language, Mnemonic};
 use data_encoding::HEXLOWER;
+use ed25519_dalek::VerifyingKey;
 use erreur::{ErreurCryptographe, ResultCryptographe};
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
@@ -574,5 +575,22 @@ impl Cryptographe {
     ) -> ResultCryptographe<[u8; 64]> {
         self.trousseau
             .signe_avec_cle_foyer(index_foyer, octets_a_signer)
+    }
+
+    /// Vérifie une signature Ed25519.
+    ///
+    /// Retourne `true` si `signature` est une signature valide de `octets_signes`
+    /// produite par la clé privée correspondant à `cle_publique`, `false` sinon.
+    ///
+    /// Utilise `verify_strict` pour résister aux attaques par malléabilité de signature.
+    pub(super) fn verification_signature(
+        cle_publique: VerifyingKey,
+        signature: [u8; 64],
+        octets_signes: &[u8],
+    ) -> bool {
+        let signature_reconstruite = ed25519_dalek::Signature::from_bytes(&signature);
+        cle_publique
+            .verify_strict(octets_signes, &signature_reconstruite)
+            .is_ok()
     }
 }
