@@ -18,7 +18,7 @@
 
 use super::erreur::{ErreurGardien, ResultGardien};
 use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
-use crate::{MAX_CLASSEURS, MAX_FOYERS};
+use crate::{Anomalie, MAX_CLASSEURS, MAX_FOYERS};
 use std::env;
 use std::fs;
 use std::fs::DirBuilder;
@@ -67,6 +67,11 @@ impl Carnet {
         Ok(Carnet {
             chemin_feu: PathBuf::from(env::var("HOME")?).join(".feu/"),
         })
+    }
+
+    /// Retourne le chemin racine du nœud `~/.feu`.
+    pub(super) fn donne_chemin_feu(&self) -> PathBuf {
+        self.chemin_feu.clone()
     }
 
     /// Indique si le dossier `~/.feu` existe sur le système de fichiers.
@@ -231,6 +236,53 @@ impl Carnet {
         }
 
         Ok(())
+    }
+
+    /// Vérifie la présence des fichiers fixes du nœud.
+    ///
+    /// Contrôle `~/.feu/`, `.cles/`, `config.feu` et les trois clés du nœud.
+    /// N'inspecte pas les foyers — leurs fichiers dépendent de la config,
+    /// lue séparément par [`Gardien::check_up_noeud`].
+    pub(super) fn verifier_arborescence_noeud(&self) -> ResultGardien<Vec<Anomalie>> {
+        let mut resultat: Vec<Anomalie> = Vec::new();
+        if !self.chemin_feu.exists() {
+            resultat.push(Anomalie::ElementAbsent(self.chemin_feu.clone()));
+        }
+        if !self.chemin_feu.join(".cles").exists() {
+            resultat.push(Anomalie::ElementAbsent(self.chemin_feu.join(".cles")));
+        }
+        if !self.chemin_feu.join(".cles").join(FEU_SEL).exists() {
+            resultat.push(Anomalie::ElementAbsent(
+                self.chemin_feu.join(".cles").join(FEU_SEL),
+            ));
+        }
+        if !self
+            .chemin_feu
+            .join(".cles")
+            .join(CLE_NOEUD_SIG_PRIV)
+            .exists()
+        {
+            resultat.push(Anomalie::ElementAbsent(
+                self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV),
+            ));
+        }
+        if !self
+            .chemin_feu
+            .join(".cles")
+            .join(CLE_NOEUD_SIG_PUB)
+            .exists()
+        {
+            resultat.push(Anomalie::ElementAbsent(
+                self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB),
+            ));
+        }
+        if !self.chemin_feu.join(FEU_CONFIGURATION).exists() {
+            resultat.push(Anomalie::ElementAbsent(
+                self.chemin_feu.join(FEU_CONFIGURATION),
+            ));
+        }
+
+        Ok(resultat)
     }
 
     /// Lit toutes les clés chiffrées d'un foyer depuis le disque.

@@ -29,6 +29,7 @@ use cryptographe::Cryptographe;
 use ed25519_dalek::VerifyingKey;
 use gardien::Gardien;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 pub use erreur::ErreurFeu;
@@ -116,6 +117,17 @@ pub struct DonneesBlob {
     date_creation: Option<SystemTime>,
     date_derniere_modification: SystemTime,
     date_dernier_acces: SystemTime,
+}
+
+/// Anomalie détectée lors d'un check-up du nœud.
+///
+/// Retournée dans un [`Vec`] par [`Feu::commande_check_up_noeud`] —
+/// un vecteur vide signifie que le nœud est dans un état nominal.
+pub enum Anomalie {
+    /// Un fichier ou dossier attendu est absent du système de fichiers.
+    ElementAbsent(PathBuf),
+    /// `config.feu` est présent mais son contenu ne peut pas être parsé.
+    ConfigurationIllisible,
 }
 
 impl DonneesBlob {
@@ -1213,5 +1225,28 @@ impl<I: InterfaceFeuCore> Feu<I> {
         };
 
         Ok(archiviste.donne_informations_blob(index_classeur, hash)?)
+    }
+
+    /// Diagnostique l'état du nœud sans modifier quoi que ce soit.
+    ///
+    /// Vérifie la présence de tous les fichiers nécessaires pour allumer le nœud
+    /// et ouvrir ses foyers : arborescence `~/.feu`, `config.feu`, `.cles/`,
+    /// clés du nœud, archives et clés de chaque foyer connu.
+    ///
+    /// Fonction associée — utilisable sans nœud allumé, notamment pour
+    /// diagnostiquer pourquoi [`Feu::commande_allumer`] échoue.
+    ///
+    /// # Retour
+    ///
+    /// `Ok(vec![])` si le nœud est dans un état nominal.
+    /// `Ok(vec![...])` avec la liste des anomalies détectées sinon.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la variable d'environnement `HOME` est absente.
+    pub fn commande_check_up_noeud() -> ResultFeu<Vec<Anomalie>> {
+        let gardien = Gardien::new()?;
+
+        Ok(gardien.check_up_noeud()?)
     }
 }

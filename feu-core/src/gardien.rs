@@ -33,6 +33,7 @@ pub(super) mod erreur;
 use super::cryptographe::trousseaux_publics::{
     TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
 };
+use crate::Anomalie;
 use crate::MAX_FOYERS;
 use carnet::Carnet;
 use erreur::{ErreurGardien, ResultGardien};
@@ -101,6 +102,10 @@ impl Configuration {
             resultat.push('\n');
         }
         resultat
+    }
+
+    fn donne_adresses_onion(&self) -> &[String] {
+        &self.adresses_onion
     }
 }
 
@@ -383,7 +388,60 @@ impl Gardien {
     ) -> ResultGardien<TrousseauPublicFoyer> {
         self.carnet.creer_trousseau_public_foyer(onion)
     }
+
+    /// Orchestre le diagnostic complet du nœud.
+    ///
+    /// Délègue la vérification de l'arborescence au carnet, puis tente de lire
+    /// et parser `config.feu` pour vérifier les fichiers de chaque foyer connu.
+    /// Si la config est illisible, les foyers ne peuvent pas être vérifiés —
+    /// `ConfigurationIllisible` est ajoutée et la boucle foyers est ignorée.
+    pub(super) fn check_up_noeud(&self) -> ResultGardien<Vec<Anomalie>> {
+        let mut resultat = self.carnet.verifier_arborescence_noeud()?;
+
+        match self.carnet.ouvre_configuration() {
+            Err(_) => {
+                // Déjà traité par verifier_arborescence_noeud()
+            }
+            Ok(valeur) => match Configuration::new_from_string(&valeur) {
+                Err(_) => resultat.push(Anomalie::ConfigurationIllisible),
+
+                Ok(configuration) => {
+                    // Pour chaque foyer
+                    for element in configuration.donne_adresses_onion() {
+                        if !self
+                            .carnet
+                            .donne_chemin_feu()
+                            .join(".cles/")
+                            .join(format!("{}{}", element, ".cle"))
+                            .exists()
+                        {
+                            resultat.push(Anomalie::ElementAbsent(
+                                self.carnet
+                                    .donne_chemin_feu()
+                                    .join(".cles/")
+                                    .join(format!("{}{}", element, ".cle")),
+                            ));
+                        }
+                        if !self
+                            .carnet
+                            .donne_chemin_feu()
+                            .join(format!("{}{}", element, ".feu"))
+                            .exists()
+                        {
+                            resultat.push(Anomalie::ElementAbsent(
+                                self.carnet
+                                    .donne_chemin_feu()
+                                    .join(format!("{}{}", element, ".feu")),
+                            ));
+                        }
+                    }
+                }
+            },
+        }
+        Ok(resultat)
+    }
 }
+
 // ── Opérations mémoire ───────────────────────────────────────────────────────
 
 impl Gardien {
