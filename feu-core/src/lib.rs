@@ -1249,4 +1249,55 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         Ok(gardien.check_up_noeud()?)
     }
+
+    /// Diagnostique l'état d'un foyer ouvert sans modifier quoi que ce soit.
+    ///
+    /// Vérifie la présence des clés du foyer et des clés de classeurs sur disque,
+    /// ainsi que l'arborescence interne : dossier `registre/` et liens symboliques
+    /// vers les classeurs.
+    ///
+    /// Complète [`Feu::commande_check_up_noeud`] qui couvre l'état du foyer fermé
+    /// (archive et clés). Cette commande requiert le foyer ouvert pour accéder
+    /// à l'arborescence interne.
+    ///
+    /// # Retour
+    ///
+    /// `Ok(vec![])` si le foyer est dans un état nominal.
+    /// `Ok(vec![...])` avec la liste des anomalies détectées sinon.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le nœud n'est pas allumé, si l'index est invalide,
+    /// ou si le foyer n'est pas ouvert.
+    pub fn commande_check_up_foyer(&self, index_foyer: usize) -> ResultFeu<Vec<Anomalie>> {
+        if !self.session.noeud {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le nœud doit être allumé.",
+            )));
+        }
+        if index_foyer >= MAX_FOYERS {
+            return Err(ErreurFeu::Standard(String::from("Index incorrect")));
+        }
+        if !self.session.foyers[index_foyer].est_ouvert {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le foyer doit être ouvert",
+            )));
+        }
+        let Some(gardien) = &self.gardien else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver le gardien.",
+            )));
+        };
+        let Some(archiviste) = &self.archivistes[index_foyer] else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver l'archiviste.",
+            )));
+        };
+
+        let mut resultat = gardien.check_up_foyer(self.session.index_vers_onion(index_foyer)?);
+
+        resultat.extend(archiviste.verifier_arborescence_classeurs()?);
+
+        Ok(resultat)
+    }
 }

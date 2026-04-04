@@ -440,6 +440,10 @@ impl Gardien {
         }
         Ok(resultat)
     }
+
+    pub(super) fn check_up_foyer(&self, onion: &str) -> Vec<Anomalie> {
+        self.carnet.verifier_arborescence_foyer(onion)
+    }
 }
 
 // ── Opérations mémoire ───────────────────────────────────────────────────────

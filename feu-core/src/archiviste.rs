@@ -45,6 +45,7 @@
 //! ```
 
 use erreur::{ErreurArchiviste, ResultArchiviste};
+use std::fs;
 use std::fs::DirBuilder;
 use std::fs::OpenOptions;
 use std::os::unix::fs::DirBuilderExt;
@@ -52,6 +53,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use tiroir::Tiroir;
 
+use crate::Anomalie;
 use crate::DonneesBlob;
 use crate::MAX_CLASSEURS;
 
@@ -264,10 +266,7 @@ impl Archiviste {
         hash: &str,
     ) -> ResultArchiviste<DonneesBlob> {
         let metadata = std::fs::metadata(self.donne_chemin_blob(index_classeur, hash))?;
-        let created = match metadata.created() {
-            Ok(valeur) => Some(valeur),
-            Err(_) => None,
-        };
+        let created = metadata.created().ok();
 
         Ok(DonneesBlob::new(
             metadata.len(),
@@ -275,5 +274,24 @@ impl Archiviste {
             metadata.modified()?,
             metadata.accessed()?,
         ))
+    }
+
+    pub(super) fn verifier_arborescence_classeurs(&self) -> ResultArchiviste<Vec<Anomalie>> {
+        let mut resultat: Vec<Anomalie> = Vec::new();
+
+        if !self.donne_chemin_registre().exists() {
+            resultat.push(Anomalie::ElementAbsent(self.donne_chemin_registre()));
+        }
+
+        // Pour chaque classeur
+        for j in 0..MAX_CLASSEURS {
+            if !self.donne_chemin_lien_classeur(j).is_symlink() {
+                resultat.push(Anomalie::ElementAbsent(self.donne_chemin_lien_classeur(j)));
+            } else if !self.donne_chemin_lien_classeur(j).exists() {
+                let chemin_cible = fs::read_link(self.donne_chemin_lien_classeur(j))?;
+                resultat.push(Anomalie::ElementAbsent(chemin_cible));
+            }
+        }
+        Ok(resultat)
     }
 }

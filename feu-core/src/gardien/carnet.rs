@@ -285,6 +285,45 @@ impl Carnet {
         Ok(resultat)
     }
 
+    pub(super) fn verifier_arborescence_foyer(&self, onion: &str) -> Vec<Anomalie> {
+        let mut resultat: Vec<Anomalie> = Vec::new();
+
+        let chemin_cles = self.donne_chemin_onion(onion).join(".cles/");
+
+        if !chemin_cles.exists() {
+            resultat.push(Anomalie::ElementAbsent(chemin_cles.clone()));
+        }
+        if !chemin_cles.join(CLE_FOYER_SIG_PRIV).exists() {
+            resultat.push(Anomalie::ElementAbsent(
+                chemin_cles.join(CLE_FOYER_SIG_PRIV),
+            ));
+        }
+        if !chemin_cles.join(CLE_FOYER_SIG_PUB).exists() {
+            resultat.push(Anomalie::ElementAbsent(chemin_cles.join(CLE_FOYER_SIG_PUB)));
+        }
+        if !chemin_cles.join(CLE_FOYER_CHIF_PRIV).exists() {
+            resultat.push(Anomalie::ElementAbsent(
+                chemin_cles.join(CLE_FOYER_CHIF_PRIV),
+            ));
+        }
+        if !chemin_cles.join(CLE_FOYER_CHIF_PUB).exists() {
+            resultat.push(Anomalie::ElementAbsent(
+                chemin_cles.join(CLE_FOYER_CHIF_PUB),
+            ));
+        }
+
+        // Pour chaque classeur
+        for j in 0..MAX_CLASSEURS {
+            let chemin_cle_classeur = chemin_cles.join(format!("classeur{j}.cle"));
+
+            if !chemin_cle_classeur.exists() {
+                resultat.push(Anomalie::ElementAbsent(chemin_cle_classeur));
+            }
+        }
+
+        resultat
+    }
+
     /// Lit toutes les clés chiffrées d'un foyer depuis le disque.
     ///
     /// Lit depuis `~/.feu/.cles/<onion>.cle` et `~/.feu/<onion>/.cles/` :
