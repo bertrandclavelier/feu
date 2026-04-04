@@ -101,6 +101,8 @@ impl Archiviste {
         Ok(archiviste)
     }
 
+    // ── Tiroirs ───────────────────────────────────────────────────────────────
+
     /// Crée et retourne un [`Tiroir`] vide pour le classeur à `index_classeur`.
     ///
     /// Le tiroir est un objet éphémère de transfert — il est destiné à être
@@ -135,48 +137,7 @@ impl Archiviste {
         Ok(tiroir)
     }
 
-    /// Retourne le chemin de `registre/` dans le foyer.
-    fn donne_chemin_registre(&self) -> PathBuf {
-        self.racine.join(REGISTRE)
-    }
-
-    /// Retourne le chemin du lien symbolique `registre/classeur.N` pour le classeur à `index_classeur`.
-    ///
-    /// Ce lien est le point d'entrée canonique pour accéder au classeur — il permet
-    /// de rediriger les classeurs vers des emplacements arbitraires sans modifier le code.
-    fn donne_chemin_lien_classeur(&self, index_classeur: usize) -> PathBuf {
-        self.donne_chemin_registre()
-            .join(format!("{}.{}", CLASSEUR, index_classeur))
-    }
-
-    /// Retourne le chemin du dossier `classeurN/` à l'`index` donné.
-    fn donne_chemin_classeur(&self, index_classeur: usize) -> PathBuf {
-        self.donne_chemin_lien_classeur(index_classeur)
-            .join(format!("{}{}", CLASSEUR, index_classeur))
-    }
-
-    /// Retourne le chemin complet du blob `<hash>.dat` dans le classeur à `index_classeur`.
-    fn donne_chemin_blob(&self, index_classeur: usize, hash: &str) -> PathBuf {
-        self.donne_chemin_classeur(index_classeur)
-            .join(format!("{}.dat", hash))
-    }
-}
-
-//
-// Opérations disque
-//
-impl Archiviste {
-    /// Crée un dossier avec les permissions `rwx------` (0o700).
-    ///
-    /// Crée les dossiers intermédiaires si nécessaire (`recursive`).
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la création échoue.
-    fn cree_dossier(path: &Path) -> ResultArchiviste<()> {
-        DirBuilder::new().mode(0o700).recursive(true).create(path)?;
-        Ok(())
-    }
+    // ── Blobs ─────────────────────────────────────────────────────────────────
 
     /// Écrit le blob chiffré du tiroir dans le classeur correspondant.
     ///
@@ -225,6 +186,13 @@ impl Archiviste {
         Ok(std::fs::remove_file(chemin)?)
     }
 
+    /// Indique si un blob identifié par `hash` est présent dans le classeur à `index_classeur`.
+    ///
+    /// Retourne `true` si `classeurN/<hash>.dat` existe sur le disque, `false` sinon.
+    pub(super) fn existe_blob(&self, index_classeur: usize, hash: &str) -> bool {
+        self.donne_chemin_blob(index_classeur, hash).exists()
+    }
+
     /// Retourne la liste des hashes de tous les blobs présents dans le classeur à `index_classeur`.
     ///
     /// Parcourt le dossier `classeurN/` et collecte le nom de chaque fichier `.dat`
@@ -243,13 +211,6 @@ impl Archiviste {
             }
         }
         Ok(liste)
-    }
-
-    /// Indique si un blob identifié par `hash` est présent dans le classeur à `index_classeur`.
-    ///
-    /// Retourne `true` si `classeurN/<hash>.dat` existe sur le disque, `false` sinon.
-    pub(super) fn existe_blob(&self, index_classeur: usize, hash: &str) -> bool {
-        self.donne_chemin_blob(index_classeur, hash).exists()
     }
 
     /// Retourne les métadonnées système du blob identifié par `hash` dans le classeur à `index_classeur`.
@@ -276,6 +237,8 @@ impl Archiviste {
         ))
     }
 
+    // ── Check-up ──────────────────────────────────────────────────────────────
+
     pub(super) fn verifier_arborescence_classeurs(&self) -> ResultArchiviste<Vec<Anomalie>> {
         let mut resultat: Vec<Anomalie> = Vec::new();
 
@@ -293,5 +256,44 @@ impl Archiviste {
             }
         }
         Ok(resultat)
+    }
+
+    // ── Utilitaires privés ────────────────────────────────────────────────────
+
+    fn donne_chemin_registre(&self) -> PathBuf {
+        self.racine.join(REGISTRE)
+    }
+
+    /// Retourne le chemin du lien symbolique `registre/classeur.N` pour le classeur à `index_classeur`.
+    ///
+    /// Ce lien est le point d'entrée canonique pour accéder au classeur — il permet
+    /// de rediriger les classeurs vers des emplacements arbitraires sans modifier le code.
+    fn donne_chemin_lien_classeur(&self, index_classeur: usize) -> PathBuf {
+        self.donne_chemin_registre()
+            .join(format!("{}.{}", CLASSEUR, index_classeur))
+    }
+
+    /// Retourne le chemin du dossier `classeurN/` à l'`index` donné.
+    fn donne_chemin_classeur(&self, index_classeur: usize) -> PathBuf {
+        self.donne_chemin_lien_classeur(index_classeur)
+            .join(format!("{}{}", CLASSEUR, index_classeur))
+    }
+
+    /// Retourne le chemin complet du blob `<hash>.dat` dans le classeur à `index_classeur`.
+    fn donne_chemin_blob(&self, index_classeur: usize, hash: &str) -> PathBuf {
+        self.donne_chemin_classeur(index_classeur)
+            .join(format!("{}.dat", hash))
+    }
+
+    /// Crée un dossier avec les permissions `rwx------` (0o700).
+    ///
+    /// Crée les dossiers intermédiaires si nécessaire (`recursive`).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la création échoue.
+    fn cree_dossier(path: &Path) -> ResultArchiviste<()> {
+        DirBuilder::new().mode(0o700).recursive(true).create(path)?;
+        Ok(())
     }
 }

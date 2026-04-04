@@ -105,6 +105,20 @@ const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu-foyer-cl
 
 const CHUNK_SIZE: usize = 4096;
 
+const ERR_TRO_001: &str = "TRO-001 > Aucune arborescence du nœud trouvée";
+const ERR_TRO_002: &str = "TRO-002 > Problème index tableau";
+const ERR_TRO_003: &str = "TRO-003 > Problème de génération du sel";
+const ERR_TRO_004: &str = "TRO-004 > Mot de passe manquant";
+const ERR_TRO_005: &str = "TRO-005 > Problème de chiffrement clé";
+const ERR_TRO_006: &str = "TRO-006 > Erreur chiffrement";
+const ERR_TRO_007: &str = "TRO-007 > Erreur déchiffrement";
+const ERR_TRO_008: &str = "TRO-008 > Pas de trousseau pour cet indice";
+const ERR_TRO_009: &str = "TRO-009 > Problème de génération du trousseau public";
+const ERR_TRO_010: &str = "TRO-010 > Erreur récupération clé";
+const ERR_TRO_011: &str = "TRO-011 > Pas de trousseau foyer";
+const ERR_TRO_012: &str = "TRO-012 > Pas de clé du classeur";
+const ERR_TRO_013: &str = "TRO-013 > Pas de clé de signature du nœud";
+
 /// Paire de clés Ed25519 d'un foyer — signature réseau et dérivation de l'adresse `.onion`.
 ///
 /// `privee` est protégée par `ZeroizeOnDrop` (ed25519-dalek, feature `zeroize`) —
@@ -140,6 +154,69 @@ struct TrousseauFoyer {
 }
 
 impl TrousseauFoyer {
+    /// Crée un [`TrousseauFoyer`] avec les clés principales du foyer.
+    ///
+    /// Les slots de classeurs sont initialisés à `None` — ils sont peuplés
+    /// après construction via [`ajoute_cle_classeur`](Self::ajoute_cle_classeur).
+    fn new(
+        onion: String,
+        cle_chiffrement: SecretBox<[u8; 32]>,
+        paire_signature: PaireClesSignature,
+        paire_chiffrement: PaireClesChiffrement,
+    ) -> Self {
+        Self {
+            onion,
+            cle_chiffrement,
+            paire_signature,
+            paire_chiffrement,
+            cles_chiffrement_classeurs: std::array::from_fn(|_| None),
+        }
+    }
+
+    /// Insère la clé de chiffrement d'un classeur à l'`index` donné.
+    ///
+    /// Appelée après [`new`](Self::new) pour peupler les slots de classeurs
+    /// un par un. L'accès est direct — l'appelant garantit que `index < MAX_CLASSEURS`.
+    fn ajoute_cle_classeur(&mut self, cle_classeur: SecretBox<[u8; 32]>, index: usize) {
+        self.cles_chiffrement_classeurs[index] = Some(cle_classeur);
+    }
+
+    /// Chiffre toutes les clés du foyer et produit le [`TrousseauPublicFoyer`] persistable.
+    ///
+    /// Délègue le chiffrement AES-256-GCM de chaque clé à [`Trousseau::chiffre_cle`].
+    /// Les clés publiques sont copiées en clair.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le chiffrement d'une clé échoue — clé éphémère
+    /// absente du trousseau ou échec AES-256-GCM.
+    fn genere_trousseau_public_foyer(
+        &self,
+        trousseau: &Trousseau,
+    ) -> ResultCryptographe<TrousseauPublicFoyer> {
+        let mut trousseau_public_foyer = TrousseauPublicFoyer::new(
+            self.onion.clone(),
+            trousseau.chiffre_cle(self.cle_chiffrement.expose_secret())?,
+            trousseau.chiffre_cle(self.paire_signature.privee.as_bytes())?,
+            self.paire_signature.publique.to_bytes(),
+            trousseau.chiffre_cle(self.paire_chiffrement.privee.expose_secret().as_bytes())?,
+            self.paire_chiffrement.publique.to_bytes(),
+        );
+
+        for i in 0..MAX_CLASSEURS {
+            if let Some(cle) = &self.cles_chiffrement_classeurs[i] {
+                trousseau_public_foyer.ajoute_cle_chiffrement_classeur(
+                    trousseau.chiffre_cle(cle.expose_secret())?,
+                    i,
+                )?;
+            } else {
+                return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_001)));
+            }
+        }
+
+        Ok(trousseau_public_foyer)
+    }
+
     /// Dérive l'adresse `.onion` Tor v3 du foyer depuis sa clé publique de signature.
     ///
     /// Implémente le standard Tor v3 (rend-spec-v3) :
@@ -218,9 +295,6 @@ pub(super) struct Trousseau {
     trousseaux_foyers: [Option<TrousseauFoyer>; MAX_FOYERS],
 }
 
-//
-// Construction
-//
 impl Trousseau {
     /// Crée un trousseau vide.
     pub(super) fn new() -> Self {
@@ -233,70 +307,7 @@ impl Trousseau {
         }
     }
 
-    /// Retourne la clé de chiffrement AES-256-GCM du classeur `index_classeur` du foyer `index_foyer`.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si le foyer ou le classeur est absent du trousseau.
-    fn donne_cle_chiffrement_classeur(
-        &self,
-        index_foyer: usize,
-        index_classeur: usize,
-    ) -> ResultCryptographe<&SecretBox<[u8; 32]>> {
-        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
-            return Err(ErreurCryptographe::Interne(String::from(
-                "Pas trousseau foyer",
-            )));
-        };
-
-        let Some(cle_classeur) = &trousseau_foyer.cles_chiffrement_classeurs[index_classeur] else {
-            return Err(ErreurCryptographe::Interne(String::from(
-                "Pas de clé du classeur",
-            )));
-        };
-        Ok(cle_classeur)
-    }
-
-    /// Retourne la clé privée X25519 du foyer à la position `index_foyer`.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si le foyer est absent du trousseau.
-    fn donne_cle_privee_chiffrement_foyer(
-        &self,
-        index_foyer: usize,
-    ) -> ResultCryptographe<&SecretBox<StaticSecret>> {
-        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
-            return Err(ErreurCryptographe::Interne(String::from(
-                "Pas trousseau foyer",
-            )));
-        };
-
-        Ok(trousseau_foyer.donne_cle_privee_chiffrement())
-    }
-
-    fn donne_cle_privee_signature_foyer(
-        &self,
-        index_foyer: usize,
-    ) -> ResultCryptographe<&SigningKey> {
-        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
-            return Err(ErreurCryptographe::Interne(String::from(
-                "Pas trousseau foyer",
-            )));
-        };
-
-        Ok(trousseau_foyer.donne_cle_privee_signature())
-    }
-
-    fn donne_cle_privee_signature_noeud(&self) -> ResultCryptographe<&SigningKey> {
-        let Some(paire_signature_noeud) = &self.paire_signature_noeud else {
-            return Err(ErreurCryptographe::Interne(String::from(
-                "Pas de clés signature nœud",
-            )));
-        };
-
-        Ok(&paire_signature_noeud.privee)
-    }
+    // ── Initialisation ───────────────────────────────────────────────────────
 
     /// Dérive et enregistre dans le trousseau la paire de clés de signature du nœud.
     ///
@@ -430,9 +441,7 @@ impl Trousseau {
 
         // Ajout du TrousseauFoyer dans le trousseau
         if position >= MAX_FOYERS {
-            return Err(ErreurCryptographe::Interne(String::from(
-                "Problème index tableau.",
-            )));
+            return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_002)));
         }
         self.trousseaux_foyers[position] = Some(trousseau_foyer);
 
@@ -469,60 +478,12 @@ impl Trousseau {
                 self.sel = Some(sel);
                 Ok(())
             }
-            None => Err(ErreurCryptographe::Interne(String::from(
-                "Problème de génération du sel.",
-            ))),
+            None => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_003))),
         }
     }
 
-    /// Dérive 32 octets de matière clé à partir d'une signature Ed25519.
-    ///
-    /// Signe `texte` avec `cle_privee`, soumet la signature à HKDF-SHA3-256
-    /// et retourne les 32 octets résultants. La signature intermédiaire
-    /// est zéroïsée immédiatement après l'étape d'extraction.
-    fn genere_cle_brute_from_signature(
-        cle_privee: &SigningKey,
-        texte: &str,
-    ) -> ResultCryptographe<SecretBox<[u8; 32]>> {
-        let mut sig = SecretBox::new(Box::new(cle_privee.sign(texte.as_bytes()).to_bytes()));
-        let hkdf = Hkdf::<Sha3_256>::new(None, sig.expose_secret_mut());
+    // ── Mot de passe et clé éphémère ─────────────────────────────────────────
 
-        let mut cle_brute = SecretBox::new(Box::new([0u8; 32]));
-        hkdf.expand(b"", cle_brute.expose_secret_mut())?;
-
-        Ok(cle_brute)
-    }
-
-    fn signature_generique_ed25519(cle_privee: &SigningKey, octets_a_signer: &[u8]) -> [u8; 64] {
-        cle_privee.sign(octets_a_signer).to_bytes()
-    }
-
-    pub(super) fn signe_avec_cle_noeud(
-        &self,
-        octets_a_signer: &[u8],
-    ) -> ResultCryptographe<[u8; 64]> {
-        Ok(Self::signature_generique_ed25519(
-            self.donne_cle_privee_signature_noeud()?,
-            octets_a_signer,
-        ))
-    }
-
-    pub(super) fn signe_avec_cle_foyer(
-        &self,
-        index_foyer: usize,
-        octets_a_signer: &[u8],
-    ) -> ResultCryptographe<[u8; 64]> {
-        Ok(Self::signature_generique_ed25519(
-            self.donne_cle_privee_signature_foyer(index_foyer)?,
-            octets_a_signer,
-        ))
-    }
-}
-
-//
-// Gestion des secrets éphémères
-//
-impl Trousseau {
     /// Définit le mot de passe du trousseau.
     ///
     /// `mot` est un [`SecretBox<String>`] déjà construit par l'appelant —
@@ -580,9 +541,7 @@ impl Trousseau {
                 self.cle_ephemere = Some(buffer);
                 Ok(())
             }
-            (_, _) => Err(ErreurCryptographe::Interne(String::from(
-                "Pas de mot de passe",
-            ))),
+            (_, _) => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_004))),
         }
     }
 
@@ -593,12 +552,32 @@ impl Trousseau {
     pub(super) fn efface_cle_ephemere(&mut self) {
         self.cle_ephemere = None;
     }
-}
 
-//
-// Chiffrement / déchiffrement des clés
-//
-impl Trousseau {
+    // ── Signature ────────────────────────────────────────────────────────────
+
+    pub(super) fn signe_avec_cle_noeud(
+        &self,
+        octets_a_signer: &[u8],
+    ) -> ResultCryptographe<[u8; 64]> {
+        Ok(Self::signature_generique_ed25519(
+            self.donne_cle_privee_signature_noeud()?,
+            octets_a_signer,
+        ))
+    }
+
+    pub(super) fn signe_avec_cle_foyer(
+        &self,
+        index_foyer: usize,
+        octets_a_signer: &[u8],
+    ) -> ResultCryptographe<[u8; 64]> {
+        Ok(Self::signature_generique_ed25519(
+            self.donne_cle_privee_signature_foyer(index_foyer)?,
+            octets_a_signer,
+        ))
+    }
+
+    // ── Chiffrement ──────────────────────────────────────────────────────────
+
     /// Chiffre une clé privée ou symétrique de 32 octets avec AES-256-GCM.
     ///
     /// Utilise la clé éphémère du trousseau comme clé AES-256-GCM. Un nonce
@@ -621,14 +600,35 @@ impl Trousseau {
     /// ou si le chiffrement AES-256-GCM échoue.
     pub(super) fn chiffre_cle(&self, cle: &[u8; 32]) -> ResultCryptographe<[u8; 60]> {
         match &self.cle_ephemere {
-            None => Err(ErreurCryptographe::Interne(String::from(
-                "Problème de chiffrement des clés.",
-            ))),
+            None => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_005))),
             Some(valeur) => Ok(
                 Self::chiffrement_generique_avec_cle(valeur.expose_secret(), cle)?
                     .try_into()
-                    .map_err(|_| ErreurCryptographe::Interne(String::from("Erreur chiffrement")))?,
+                    .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_006)))?,
             ),
+        }
+    }
+
+    /// Déchiffre une clé de 60 octets (`nonce || ciphertext || tag`) avec AES-256-GCM.
+    ///
+    /// Extrait le nonce des 12 premiers octets, déchiffre les 48 octets restants
+    /// (`ciphertext` de 32 octets + `auth tag` de 16 octets) et retourne les
+    /// 32 octets en clair. Si le mot de passe est incorrect, la vérification
+    /// de l'auth tag AES-GCM échoue — c'est le mécanisme de vérification du mot de passe.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé éphémère est absente, si l'auth tag est invalide
+    /// (mot de passe incorrect), ou si la conversion du résultat en `[u8; 32]` échoue.
+    pub(super) fn dechiffre_cle(&self, cle: &[u8; 60]) -> ResultCryptographe<SecretBox<[u8; 32]>> {
+        match &self.cle_ephemere {
+            None => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_005))),
+            Some(valeur) => {
+                let resultat = Self::dechiffrement_generique_avec_cle(valeur.expose_secret(), cle)?
+                    .try_into()
+                    .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_007)))?;
+                Ok(SecretBox::new(Box::new(resultat)))
+            }
         }
     }
 
@@ -661,33 +661,6 @@ impl Trousseau {
         )
     }
 
-    /// Déchiffre une clé de 60 octets (`nonce || ciphertext || tag`) avec AES-256-GCM.
-    ///
-    /// Extrait le nonce des 12 premiers octets, déchiffre les 48 octets restants
-    /// (`ciphertext` de 32 octets + `auth tag` de 16 octets) et retourne les
-    /// 32 octets en clair. Si le mot de passe est incorrect, la vérification
-    /// de l'auth tag AES-GCM échoue — c'est le mécanisme de vérification du mot de passe.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la clé éphémère est absente, si l'auth tag est invalide
-    /// (mot de passe incorrect), ou si la conversion du résultat en `[u8; 32]` échoue.
-    pub(super) fn dechiffre_cle(&self, cle: &[u8; 60]) -> ResultCryptographe<SecretBox<[u8; 32]>> {
-        match &self.cle_ephemere {
-            None => Err(ErreurCryptographe::Interne(String::from(
-                "Problème de chiffrement des clés.",
-            ))),
-            Some(valeur) => {
-                let resultat = Self::dechiffrement_generique_avec_cle(valeur.expose_secret(), cle)?
-                    .try_into()
-                    .map_err(|_| {
-                        ErreurCryptographe::Interne(String::from("Erreur déchiffrement"))
-                    })?;
-                Ok(SecretBox::new(Box::new(resultat)))
-            }
-        }
-    }
-
     /// Déchiffre un blob chiffré avec la clé AES-256-GCM du classeur désigné.
     ///
     /// Récupère la clé du classeur `index_classeur` du foyer `index_foyer`
@@ -710,79 +683,171 @@ impl Trousseau {
             blob,
         )
     }
-}
 
-//
-// Export — génération du trousseau public
-//
-impl TrousseauFoyer {
-    /// Crée un [`TrousseauFoyer`] avec les clés principales du foyer.
+    /// Chiffre un flux de données du foyer à la position `index`.
     ///
-    /// Les slots de classeurs sont initialisés à `None` — ils sont peuplés
-    /// après construction via [`ajoute_cle_classeur`](Self::ajoute_cle_classeur).
-    fn new(
-        onion: String,
-        cle_chiffrement: SecretBox<[u8; 32]>,
-        paire_signature: PaireClesSignature,
-        paire_chiffrement: PaireClesChiffrement,
-    ) -> Self {
-        Self {
-            onion,
-            cle_chiffrement,
-            paire_signature,
-            paire_chiffrement,
-            cles_chiffrement_classeurs: std::array::from_fn(|_| None),
-        }
-    }
-
-    /// Insère la clé de chiffrement d'un classeur à l'`index` donné.
+    /// Récupère la clé symétrique du foyer dans le trousseau et délègue
+    /// le chiffrement à [`chiffre_avec_cle`](Self::chiffre_avec_cle).
     ///
-    /// Appelée après [`new`](Self::new) pour peupler les slots de classeurs
-    /// un par un. L'accès est direct — l'appelant garantit que `index < MAX_CLASSEURS`.
-    fn ajoute_cle_classeur(&mut self, cle_classeur: SecretBox<[u8; 32]>, index: usize) {
-        self.cles_chiffrement_classeurs[index] = Some(cle_classeur);
-    }
-
-    /// Chiffre toutes les clés du foyer et produit le [`TrousseauPublicFoyer`] persistable.
+    /// # Prérequis
     ///
-    /// Délègue le chiffrement AES-256-GCM de chaque clé à [`Trousseau::chiffre_cle`].
-    /// Les clés publiques sont copiées en clair.
+    /// Le foyer à l'`index` donné doit être présent dans le trousseau —
+    /// c'est-à-dire que le foyer doit être ouvert.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le chiffrement d'une clé échoue — clé éphémère
-    /// absente du trousseau ou échec AES-256-GCM.
-    fn genere_trousseau_public_foyer(
+    /// Retourne une erreur si aucun foyer n'est chargé à cet index,
+    /// ou si le chiffrement AES-GCM-stream échoue.
+    pub(super) fn chiffre_avec_cle_foyer(
         &self,
-        trousseau: &Trousseau,
-    ) -> ResultCryptographe<TrousseauPublicFoyer> {
-        let mut trousseau_public_foyer = TrousseauPublicFoyer::new(
-            self.onion.clone(),
-            trousseau.chiffre_cle(self.cle_chiffrement.expose_secret())?,
-            trousseau.chiffre_cle(self.paire_signature.privee.as_bytes())?,
-            self.paire_signature.publique.to_bytes(),
-            trousseau.chiffre_cle(self.paire_chiffrement.privee.expose_secret().as_bytes())?,
-            self.paire_chiffrement.publique.to_bytes(),
-        );
-
-        for i in 0..MAX_CLASSEURS {
-            if let Some(cle) = &self.cles_chiffrement_classeurs[i] {
-                trousseau_public_foyer.ajoute_cle_chiffrement_classeur(
-                    trousseau.chiffre_cle(cle.expose_secret())?,
-                    i,
-                )?;
-            } else {
-                return Err(ErreurCryptographe::Interne(String::from(
-                    "Erreur génération du trousseau foyer public",
-                )));
-            }
+        index: usize,
+        source: &mut impl Read,
+        destination: &mut impl Write,
+    ) -> ResultCryptographe<()> {
+        if let Some(trousseau_foyer) = &self.trousseaux_foyers[index] {
+            self.chiffre_avec_cle(
+                trousseau_foyer.donne_cle_chiffrement().expose_secret(),
+                source,
+                destination,
+            )?;
+            return Ok(());
         }
-
-        Ok(trousseau_public_foyer)
+        Err(ErreurCryptographe::Interne(String::from(ERR_TRO_008)))
     }
-}
 
-impl Trousseau {
+    /// Déchiffre un flux de données d'un foyer à partir de sa clé symétrique chiffrée.
+    ///
+    /// `cle_chiffree` est la clé symétrique du foyer telle que lue sur disque
+    /// (`nonce || ciphertext || tag`, 60 octets). Elle est déchiffrée avec la
+    /// clé éphémère du trousseau, puis utilisée pour déchiffrer le flux
+    /// AES-256-GCM-stream depuis `source` vers `destination`.
+    ///
+    /// # Prérequis
+    ///
+    /// La clé éphémère doit être présente dans le trousseau —
+    /// dérivée via [`derive_cle_ephemere`](Self::derive_cle_ephemere).
+    /// Cette méthode est conçue pour l'ouverture d'un foyer : le foyer
+    /// n'a pas besoin d'être dans le trousseau.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé éphémère est absente, si le déchiffrement
+    /// de `cle_chiffree` échoue (auth tag invalide — mot de passe incorrect),
+    /// ou si le déchiffrement du flux AES-GCM-stream échoue.
+    pub(super) fn dechiffre_avec_cle_foyer(
+        &self,
+        cle_chiffree: &[u8; 60],
+        source: &mut impl Read,
+        destination: &mut impl Write,
+    ) -> ResultCryptographe<()> {
+        self.dechiffre_avec_cle(
+            self.dechiffre_cle(cle_chiffree)?.expose_secret(),
+            source,
+            destination,
+        )?;
+        Ok(())
+    }
+
+    /// Chiffre `contenu` avec AES-256-GCM et une clé fournie directement.
+    ///
+    /// Utilisé pour les cas où la clé est dérivée à l'extérieur du trousseau
+    /// (ECIES, chiffrement de blobs). Pour les clés du trousseau, préférer
+    /// [`chiffre_cle`](Self::chiffre_cle) ou [`chiffre_blob`](Self::chiffre_blob).
+    ///
+    /// Un nonce aléatoire de 12 octets est généré via [`OsRng`] à chaque appel.
+    ///
+    /// # Format de sortie
+    ///
+    /// ```text
+    /// [0..12]  nonce (12 octets)
+    /// [12..]   ciphertext + auth tag (16 octets)
+    /// ```
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le chiffrement AES-256-GCM échoue.
+    pub(super) fn chiffrement_generique_avec_cle(
+        cle_chiffrement: &[u8; 32],
+        contenu: &[u8],
+    ) -> ResultCryptographe<Vec<u8>> {
+        // Conversion de la clé de chiffrement brute en Key<Aes256Gcm>
+        let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
+
+        // Création du cipher à partir de key
+        let cipher = Aes256Gcm::new(key);
+
+        // Génération aléatoire du nonce de 12 octets
+        let mut nonce = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce);
+
+        // Chiffrement du contenu
+        let contenu_chiffre = cipher.encrypt(Nonce::from_slice(&nonce), contenu.as_ref())?;
+
+        // Création du résultat
+        let mut resultat = Vec::new();
+        resultat.extend_from_slice(&nonce);
+        resultat.extend_from_slice(&contenu_chiffre);
+
+        Ok(resultat)
+    }
+
+    /// Déchiffre `contenu` avec AES-256-GCM et une clé fournie directement.
+    ///
+    /// Attendu au format `nonce (12 octets) || ciphertext || auth tag (16 octets)`.
+    /// Réciproque de [`chiffrement_generique_avec_cle`](Self::chiffrement_generique_avec_cle).
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la vérification de l'auth tag AES-GCM échoue
+    /// (clé incorrecte ou données corrompues).
+    pub(super) fn dechiffrement_generique_avec_cle(
+        cle_chiffrement: &[u8; 32],
+        contenu: &[u8],
+    ) -> ResultCryptographe<Vec<u8>> {
+        // Conversion de la clé éphémère brute en Key<Aes256Gcm>
+        let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
+
+        // Création du cipher à partir de key
+        let cipher = Aes256Gcm::new(key);
+
+        // Déchiffrement de la clé
+        let contenu_dechiffre =
+            cipher.decrypt(Nonce::from_slice(&contenu[0..12]), &contenu[12..])?;
+
+        Ok(contenu_dechiffre)
+    }
+
+    /// Calcule le secret partagé X25519 entre la clé privée du foyer et la clé éphémère publique.
+    ///
+    /// Effectue le ECDH : `secret_partagé = clé_privée_foyer × clé_éphémère_publique`.
+    /// Le secret est extrait dans un [`SecretBox<[u8; 32]>`] immédiatement —
+    /// le [`SharedSecret`] sort de scope sans persistance.
+    ///
+    /// Utilisé dans le schéma ECIES pour le déchiffrement asymétrique.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le foyer à `index_foyer` est absent du trousseau.
+    pub(super) fn recuperation_secret_partage(
+        &self,
+        index_foyer: usize,
+        cle_ephemere_publique: &[u8; 32],
+    ) -> ResultCryptographe<SecretBox<[u8; 32]>> {
+        let cle_publique = PublicKey::from(*cle_ephemere_publique);
+
+        let secret_partage = SecretBox::new(Box::new(
+            *self
+                .donne_cle_privee_chiffrement_foyer(index_foyer)?
+                .expose_secret()
+                .diffie_hellman(&cle_publique)
+                .as_bytes(),
+        ));
+
+        Ok(secret_partage)
+    }
+
+    // ── Trousseaux publics ────────────────────────────────────────────────────
+
     /// Chiffre l'ensemble des secrets du trousseau et produit le [`TrousseauPublicComplet`] persistable.
     ///
     /// Construit d'abord un [`TrousseauPublicNoeud`] avec les clés du nœud, puis délègue
@@ -823,17 +888,10 @@ impl Trousseau {
 
                 Ok(trousseau_public_complet)
             }
-            (_, _) => Err(ErreurCryptographe::Interne(String::from(
-                "Problème génération du trousseau public.",
-            ))),
+            (_, _) => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_009))),
         }
     }
-}
 
-//
-// Import — chargement depuis le trousseau public
-//
-impl Trousseau {
     /// Reconstruit la paire de signature du nœud à partir d'un [`TrousseauPublicNoeud`].
     ///
     /// Déchiffre la clé privée de signature du nœud et reconstitue la paire Ed25519
@@ -862,9 +920,8 @@ impl Trousseau {
 
         self.paire_signature_noeud = Some(PaireClesSignature {
             privee: SigningKey::from_bytes(cle_dechiffree.expose_secret()),
-            publique: VerifyingKey::from_bytes(&cle_pub).map_err(|_| {
-                ErreurCryptographe::Interne(String::from("Erreur récupération de clé."))
-            })?,
+            publique: VerifyingKey::from_bytes(&cle_pub)
+                .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_010)))?,
         });
         Ok(())
     }
@@ -897,9 +954,8 @@ impl Trousseau {
 
         let paire_signature = PaireClesSignature {
             privee: SigningKey::from_bytes(cle_sig_priv.expose_secret()),
-            publique: VerifyingKey::from_bytes(&cle_sig_pub).map_err(|_| {
-                ErreurCryptographe::Interne(String::from("Erreur récupération de clé."))
-            })?,
+            publique: VerifyingKey::from_bytes(&cle_sig_pub)
+                .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_010)))?,
         };
 
         let cle_chiff_priv =
@@ -930,77 +986,85 @@ impl Trousseau {
         Ok(())
     }
 
-    /// Chiffre un flux de données du foyer à la position `index`.
-    ///
-    /// Récupère la clé symétrique du foyer dans le trousseau et délègue
-    /// le chiffrement à [`chiffre_avec_cle`](Self::chiffre_avec_cle).
-    ///
-    /// # Prérequis
-    ///
-    /// Le foyer à l'`index` donné doit être présent dans le trousseau —
-    /// c'est-à-dire que le foyer doit être ouvert.
+    // ── Utilitaires privés ────────────────────────────────────────────────────
+
+    /// Retourne la clé de chiffrement AES-256-GCM du classeur `index_classeur` du foyer `index_foyer`.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si aucun foyer n'est chargé à cet index,
-    /// ou si le chiffrement AES-GCM-stream échoue.
-    pub(super) fn chiffre_avec_cle_foyer(
+    /// Retourne une erreur si le foyer ou le classeur est absent du trousseau.
+    fn donne_cle_chiffrement_classeur(
         &self,
-        index: usize,
-        source: &mut impl Read,
-        destination: &mut impl Write,
-    ) -> ResultCryptographe<()> {
-        if let Some(trousseau_foyer) = &self.trousseaux_foyers[index] {
-            self.chiffre_avec_cle(
-                trousseau_foyer.donne_cle_chiffrement().expose_secret(),
-                source,
-                destination,
-            )?;
-            return Ok(());
-        }
-        Err(ErreurCryptographe::Interne(String::from(
-            "Pas de trousseau pour cet index",
-        )))
+        index_foyer: usize,
+        index_classeur: usize,
+    ) -> ResultCryptographe<&SecretBox<[u8; 32]>> {
+        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
+            return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_011)));
+        };
+
+        let Some(cle_classeur) = &trousseau_foyer.cles_chiffrement_classeurs[index_classeur] else {
+            return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_012)));
+        };
+        Ok(cle_classeur)
     }
 
-    /// Déchiffre un flux de données d'un foyer à partir de sa clé symétrique chiffrée.
-    ///
-    /// `cle_chiffree` est la clé symétrique du foyer telle que lue sur disque
-    /// (`nonce || ciphertext || tag`, 60 octets). Elle est déchiffrée avec la
-    /// clé éphémère du trousseau, puis utilisée pour déchiffrer le flux
-    /// AES-256-GCM-stream depuis `source` vers `destination`.
-    ///
-    /// # Prérequis
-    ///
-    /// La clé éphémère doit être présente dans le trousseau —
-    /// dérivée via [`derive_cle_ephemere`](Self::derive_cle_ephemere).
-    /// Cette méthode est conçue pour l'ouverture d'un foyer : le foyer
-    /// n'a pas besoin d'être dans le trousseau.
+    /// Retourne la clé privée X25519 du foyer à la position `index_foyer`.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la clé éphémère est absente, si le déchiffrement
-    /// de `cle_chiffree` échoue (auth tag invalide — mot de passe incorrect),
-    /// ou si le déchiffrement du flux AES-GCM-stream échoue.
-    pub(super) fn dechiffre_avec_cle_foyer(
+    /// Retourne une erreur si le foyer est absent du trousseau.
+    fn donne_cle_privee_chiffrement_foyer(
         &self,
-        cle_chiffree: &[u8; 60],
-        source: &mut impl Read,
-        destination: &mut impl Write,
-    ) -> ResultCryptographe<()> {
-        self.dechiffre_avec_cle(
-            self.dechiffre_cle(cle_chiffree)?.expose_secret(),
-            source,
-            destination,
-        )?;
-        Ok(())
-    }
-}
+        index_foyer: usize,
+    ) -> ResultCryptographe<&SecretBox<StaticSecret>> {
+        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
+            return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_011)));
+        };
 
-//
-// Chiffrement de flux
-//
-impl Trousseau {
+        Ok(trousseau_foyer.donne_cle_privee_chiffrement())
+    }
+
+    fn donne_cle_privee_signature_foyer(
+        &self,
+        index_foyer: usize,
+    ) -> ResultCryptographe<&SigningKey> {
+        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
+            return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_011)));
+        };
+
+        Ok(trousseau_foyer.donne_cle_privee_signature())
+    }
+
+    fn donne_cle_privee_signature_noeud(&self) -> ResultCryptographe<&SigningKey> {
+        let Some(paire_signature_noeud) = &self.paire_signature_noeud else {
+            return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_013)));
+        };
+
+        Ok(&paire_signature_noeud.privee)
+    }
+
+    /// Dérive 32 octets de matière clé à partir d'une signature Ed25519.
+    ///
+    /// Signe `texte` avec `cle_privee`, soumet la signature à HKDF-SHA3-256
+    /// et retourne les 32 octets résultants. La signature intermédiaire
+    /// est zéroïsée immédiatement après l'étape d'extraction.
+    fn genere_cle_brute_from_signature(
+        cle_privee: &SigningKey,
+        texte: &str,
+    ) -> ResultCryptographe<SecretBox<[u8; 32]>> {
+        let mut sig = SecretBox::new(Box::new(cle_privee.sign(texte.as_bytes()).to_bytes()));
+        let hkdf = Hkdf::<Sha3_256>::new(None, sig.expose_secret_mut());
+
+        let mut cle_brute = SecretBox::new(Box::new([0u8; 32]));
+        hkdf.expand(b"", cle_brute.expose_secret_mut())?;
+
+        Ok(cle_brute)
+    }
+
+    fn signature_generique_ed25519(cle_privee: &SigningKey, octets_a_signer: &[u8]) -> [u8; 64] {
+        cle_privee.sign(octets_a_signer).to_bytes()
+    }
+
     /// Chiffre un flux d'octets avec AES-256-GCM-stream.
     ///
     /// Génère un nonce aléatoire de 7 octets (écrit en tête de `destination`),
@@ -1124,103 +1188,5 @@ impl Trousseau {
         }
 
         Ok(())
-    }
-
-    /// Chiffre `contenu` avec AES-256-GCM et une clé fournie directement.
-    ///
-    /// Utilisé pour les cas où la clé est dérivée à l'extérieur du trousseau
-    /// (ECIES, chiffrement de blobs). Pour les clés du trousseau, préférer
-    /// [`chiffre_cle`](Self::chiffre_cle) ou [`chiffre_blob`](Self::chiffre_blob).
-    ///
-    /// Un nonce aléatoire de 12 octets est généré via [`OsRng`] à chaque appel.
-    ///
-    /// # Format de sortie
-    ///
-    /// ```text
-    /// [0..12]  nonce (12 octets)
-    /// [12..]   ciphertext + auth tag (16 octets)
-    /// ```
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si le chiffrement AES-256-GCM échoue.
-    pub(super) fn chiffrement_generique_avec_cle(
-        cle_chiffrement: &[u8; 32],
-        contenu: &[u8],
-    ) -> ResultCryptographe<Vec<u8>> {
-        // Conversion de la clé de chiffrement brute en Key<Aes256Gcm>
-        let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
-
-        // Création du cipher à partir de key
-        let cipher = Aes256Gcm::new(key);
-
-        // Génération aléatoire du nonce de 12 octets
-        let mut nonce = [0u8; 12];
-        OsRng.fill_bytes(&mut nonce);
-
-        // Chiffrement du contenu
-        let contenu_chiffre = cipher.encrypt(Nonce::from_slice(&nonce), contenu.as_ref())?;
-
-        // Création du résultat
-        let mut resultat = Vec::new();
-        resultat.extend_from_slice(&nonce);
-        resultat.extend_from_slice(&contenu_chiffre);
-
-        Ok(resultat)
-    }
-
-    /// Déchiffre `contenu` avec AES-256-GCM et une clé fournie directement.
-    ///
-    /// Attendu au format `nonce (12 octets) || ciphertext || auth tag (16 octets)`.
-    /// Réciproque de [`chiffrement_generique_avec_cle`](Self::chiffrement_generique_avec_cle).
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la vérification de l'auth tag AES-GCM échoue
-    /// (clé incorrecte ou données corrompues).
-    pub(super) fn dechiffrement_generique_avec_cle(
-        cle_chiffrement: &[u8; 32],
-        contenu: &[u8],
-    ) -> ResultCryptographe<Vec<u8>> {
-        // Conversion de la clé éphémère brute en Key<Aes256Gcm>
-        let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
-
-        // Création du cipher à partir de key
-        let cipher = Aes256Gcm::new(key);
-
-        // Déchiffrement de la clé
-        let contenu_dechiffre =
-            cipher.decrypt(Nonce::from_slice(&contenu[0..12]), &contenu[12..])?;
-
-        Ok(contenu_dechiffre)
-    }
-
-    /// Calcule le secret partagé X25519 entre la clé privée du foyer et la clé éphémère publique.
-    ///
-    /// Effectue le ECDH : `secret_partagé = clé_privée_foyer × clé_éphémère_publique`.
-    /// Le secret est extrait dans un [`SecretBox<[u8; 32]>`] immédiatement —
-    /// le [`SharedSecret`] sort de scope sans persistance.
-    ///
-    /// Utilisé dans le schéma ECIES pour le déchiffrement asymétrique.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si le foyer à `index_foyer` est absent du trousseau.
-    pub(super) fn recuperation_secret_partage(
-        &self,
-        index_foyer: usize,
-        cle_ephemere_publique: &[u8; 32],
-    ) -> ResultCryptographe<SecretBox<[u8; 32]>> {
-        let cle_publique = PublicKey::from(*cle_ephemere_publique);
-
-        let secret_partage = SecretBox::new(Box::new(
-            *self
-                .donne_cle_privee_chiffrement_foyer(index_foyer)?
-                .expose_secret()
-                .diffie_hellman(&cle_publique)
-                .as_bytes(),
-        ));
-
-        Ok(secret_partage)
     }
 }

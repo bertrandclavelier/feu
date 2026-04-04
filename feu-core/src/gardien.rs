@@ -17,15 +17,6 @@
 //! disque, écrit en dernière étape de chaque opération structurante.
 //! Cette centralisation est un invariant de sécurité et de cohérence
 //! du protocole.
-//!
-//! # Convention de nommage
-//!
-//! Les méthodes suivent une convention grammaticale liée au niveau d'exécution :
-//!
-//! - **Nom** (`enregistrement_`, `ajout_`…) — méthode d'orchestration : prépare
-//!   et délègue à un outil de niveau inférieur.
-//! - **Verbe** (`cree_`, `ecrire_`, `ajoute_`…) — méthode d'exécution directe :
-//!   réalise elle-même l'opération sans déléguer.
 
 mod carnet;
 pub(super) mod erreur;
@@ -41,6 +32,10 @@ use std::fs::File;
 use std::path::PathBuf;
 
 const VERSION_CONFIGURATION: u32 = 1;
+
+const ERR_GAR_001: &str = "GAR-001 > Aucune arborescence du nœud trouvée";
+const ERR_GAR_002: &str = "GAR-002 > Une arborescence existe déjà";
+const ERR_GAR_003: &str = "GAR-003 > Suppression du dossier impossible s'il n'est pas archivé";
 
 /// Configuration globale du nœud — miroir de `config.feu` en mémoire.
 ///
@@ -133,10 +128,6 @@ impl Gardien {
         })
     }
 
-    pub(super) fn donne_chemin_onion(&self, onion: &str) -> PathBuf {
-        self.carnet.donne_chemin_onion(onion)
-    }
-
     /// Ouvre un nœud Feu existant en chargeant sa configuration depuis `config.feu`.
     ///
     /// Crée le carnet à partir de `HOME`, vérifie que l'arborescence `~/.feu`
@@ -150,14 +141,19 @@ impl Gardien {
     pub(super) fn ouvre_nouveau() -> ResultGardien<Self> {
         let carnet = Carnet::new()?;
         if !carnet.existe_arborescence_noeud() {
-            return Err(ErreurGardien::Interne(String::from(
-                "Aucune arborescence du nœud trouvée",
-            )));
+            return Err(ErreurGardien::Interne(String::from(ERR_GAR_001)));
         }
         Ok(Self {
             configuration: Configuration::new_from_string(&carnet.ouvre_configuration()?)?,
             carnet,
         })
+    }
+
+    // ── Arborescence ─────────────────────────────────────────────────────────
+
+    /// Indique si l'arborescence `~/.feu` existe sur le système de fichiers.
+    pub(super) fn existence_arborescence(&self) -> bool {
+        self.carnet.existe_arborescence_noeud()
     }
 
     /// Construit le tableau de session des foyers depuis la configuration en mémoire.
@@ -174,15 +170,11 @@ impl Gardien {
 
         t
     }
-}
 
-// ── Opérations disque ────────────────────────────────────────────────────────
-
-impl Gardien {
-    /// Indique si l'arborescence `~/.feu` existe sur le système de fichiers.
-    pub(super) fn existence_arborescence(&self) -> bool {
-        self.carnet.existe_arborescence_noeud()
+    pub(super) fn donne_chemin_onion(&self, onion: &str) -> PathBuf {
+        self.carnet.donne_chemin_onion(onion)
     }
+
     /// Ancre le nœud vierge sur le disque à partir du trousseau public.
     ///
     /// Délègue à [`Carnet::ecrire_trousseau_public`] la création de l'arborescence
@@ -198,9 +190,7 @@ impl Gardien {
         trousseau_public_complet: &TrousseauPublicComplet,
     ) -> ResultGardien<()> {
         match self.carnet.existe_arborescence_noeud() {
-            true => Err(ErreurGardien::Interne(String::from(
-                "Une arborescence existe déjà.",
-            ))),
+            true => Err(ErreurGardien::Interne(String::from(ERR_GAR_002))),
             false => {
                 // Écriture du trousseau public sur le disque
                 self.carnet
@@ -210,6 +200,60 @@ impl Gardien {
             }
         }
     }
+
+    /// Supprime le dossier clair `<onion>` après vérification que l'archive existe.
+    ///
+    /// Contrôle l'existence de `<onion>.feu` avant toute suppression —
+    /// garantit qu'on ne supprime pas un dossier non archivé.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si l'archive `<onion>.feu` est absente
+    /// ou si la suppression récursive du dossier échoue.
+    pub(super) fn suppression_dossier_onion(&self, onion: &str) -> ResultGardien<()> {
+        // Vérification que l'archive existe avant de supprimer le dossier. Sinon impossible
+        if self.carnet.donne_chemin_archive_chiffree(onion).exists() {
+            self.carnet.supprime_dossier_onion(onion)?;
+            Ok(())
+        } else {
+            Err(ErreurGardien::Interne(String::from(ERR_GAR_003)))
+        }
+    }
+
+    // ── Configuration ─────────────────────────────────────────────────────────
+
+    /// Orchestre la persistance de `config.feu` sur le disque.
+    ///
+    /// Exporte la configuration en mémoire via [`Configuration::exporte_en_texte`]
+    /// puis délègue l'écriture à [`Carnet::enregistre_configuration`].
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si l'écriture échoue.
+    pub(super) fn enregistrement_configuration(&self) -> ResultGardien<()> {
+        self.carnet
+            .enregistre_configuration(self.configuration.exporte_en_texte())?;
+
+        Ok(())
+    }
+
+    /// Enregistre l'adresse `.onion` d'un foyer dans la [`Configuration`] en mémoire.
+    ///
+    /// Écrit l'adresse fournie par le cryptographe à la position `position`
+    /// dans le tableau `adresses_onion`.
+    ///
+    /// Cette méthode n'écrit rien sur le disque — appeler ensuite
+    /// [`Gardien::enregistrement_configuration`] pour persister l'état.
+    pub(super) fn ajout_nouveau_foyer_dans_configuration(
+        &mut self,
+        onion: String,
+        position: usize,
+    ) {
+        self.configuration.adresses_onion[position] = onion;
+        self.configuration.prochain_index += 1;
+    }
+
+    // ── Trousseaux ────────────────────────────────────────────────────────────
 
     /// Réécrit le trousseau public complet sur le disque.
     ///
@@ -229,20 +273,40 @@ impl Gardien {
         Ok(())
     }
 
-    /// Orchestre la persistance de `config.feu` sur le disque.
+    /// Lit les clés du nœud sur le disque et construit un [`TrousseauPublicNoeud`].
     ///
-    /// Exporte la configuration en mémoire via [`Configuration::exporte_en_texte`]
-    /// puis délègue l'écriture à [`Carnet::enregistre_configuration`].
+    /// Lit le sel, la clé privée et la clé publique de signature du nœud.
+    /// Les foyers sont gérés séparément dans [`TrousseauPublicComplet`].
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si l'écriture échoue.
-    pub(super) fn enregistrement_configuration(&self) -> ResultGardien<()> {
-        self.carnet
-            .enregistre_configuration(self.configuration.exporte_en_texte())?;
-
-        Ok(())
+    /// Retourne une erreur si un fichier est absent, illisible ou de taille incorrecte.
+    pub(super) fn lecture_pour_creation_trousseau_public_noeud(
+        &self,
+    ) -> ResultGardien<TrousseauPublicNoeud> {
+        Ok(TrousseauPublicNoeud::new(
+            self.carnet.lire_pour_donner_sel()?,
+            self.carnet.lire_pour_donner_cle_sig_privee()?,
+            self.carnet.lire_pour_donner_cle_sig_pub()?,
+        ))
     }
+
+    /// Lit les clés chiffrées d'un foyer sur le disque et construit un [`TrousseauPublicFoyer`].
+    ///
+    /// Délègue la lecture au carnet. Les clés lues sont toujours chiffrées —
+    /// elles seront déchiffrées par le cryptographe.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si un fichier de clé est absent, illisible ou de taille incorrecte.
+    pub(super) fn creation_trousseau_foyer_public(
+        &self,
+        onion: &str,
+    ) -> ResultGardien<TrousseauPublicFoyer> {
+        self.carnet.creer_trousseau_public_foyer(onion)
+    }
+
+    // ── Archives ──────────────────────────────────────────────────────────────
 
     /// Prépare les deux flux nécessaires à l'archivage chiffré d'un foyer.
     ///
@@ -320,27 +384,6 @@ impl Gardien {
         Ok(())
     }
 
-    /// Supprime le dossier clair `<onion>` après vérification que l'archive existe.
-    ///
-    /// Contrôle l'existence de `<onion>.feu` avant toute suppression —
-    /// garantit qu'on ne supprime pas un dossier non archivé.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si l'archive `<onion>.feu` est absente
-    /// ou si la suppression récursive du dossier échoue.
-    pub(super) fn suppression_dossier_onion(&self, onion: &str) -> ResultGardien<()> {
-        // Vérification que l'archive existe avant de supprimer le dossier. Sinon impossible
-        if self.carnet.donne_chemin_archive_chiffree(onion).exists() {
-            self.carnet.supprime_dossier_onion(onion)?;
-            Ok(())
-        } else {
-            Err(ErreurGardien::Interne(String::from(
-                "Le gardien ne supprimera pas le dossier s'il n'est pas archivé.",
-            )))
-        }
-    }
-
     /// Supprime l'archive tar intermédiaire `<onion>.tar` après chiffrement.
     ///
     /// Doit être appelé immédiatement après [`preparation_archivage_chiffre_foyer`](Self::preparation_archivage_chiffre_foyer)
@@ -356,38 +399,7 @@ impl Gardien {
         Ok(())
     }
 
-    /// Lit les clés du nœud sur le disque et construit un [`TrousseauPublicNoeud`].
-    ///
-    /// Lit le sel, la clé privée et la clé publique de signature du nœud.
-    /// Les foyers sont gérés séparément dans [`TrousseauPublicComplet`].
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si un fichier est absent, illisible ou de taille incorrecte.
-    pub(super) fn lecture_pour_creation_trousseau_public_noeud(
-        &self,
-    ) -> ResultGardien<TrousseauPublicNoeud> {
-        Ok(TrousseauPublicNoeud::new(
-            self.carnet.lire_pour_donner_sel()?,
-            self.carnet.lire_pour_donner_cle_sig_privee()?,
-            self.carnet.lire_pour_donner_cle_sig_pub()?,
-        ))
-    }
-
-    /// Lit les clés chiffrées d'un foyer sur le disque et construit un [`TrousseauPublicFoyer`].
-    ///
-    /// Délègue la lecture au carnet. Les clés lues sont toujours chiffrées —
-    /// elles seront déchiffrées par le cryptographe.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si un fichier de clé est absent, illisible ou de taille incorrecte.
-    pub(super) fn creation_trousseau_foyer_public(
-        &self,
-        onion: &str,
-    ) -> ResultGardien<TrousseauPublicFoyer> {
-        self.carnet.creer_trousseau_public_foyer(onion)
-    }
+    // ── Check-up ──────────────────────────────────────────────────────────────
 
     /// Orchestre le diagnostic complet du nœud.
     ///
@@ -443,25 +455,5 @@ impl Gardien {
 
     pub(super) fn check_up_foyer(&self, onion: &str) -> Vec<Anomalie> {
         self.carnet.verifier_arborescence_foyer(onion)
-    }
-}
-
-// ── Opérations mémoire ───────────────────────────────────────────────────────
-
-impl Gardien {
-    /// Enregistre l'adresse `.onion` d'un foyer dans la [`Configuration`] en mémoire.
-    ///
-    /// Écrit l'adresse fournie par le cryptographe à la position `position`
-    /// dans le tableau `adresses_onion`.
-    ///
-    /// Cette méthode n'écrit rien sur le disque — appeler ensuite
-    /// [`Gardien::enregistrement_configuration`] pour persister l'état.
-    pub(super) fn ajout_nouveau_foyer_dans_configuration(
-        &mut self,
-        onion: String,
-        position: usize,
-    ) {
-        self.configuration.adresses_onion[position] = onion;
-        self.configuration.prochain_index += 1;
     }
 }

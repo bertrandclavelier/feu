@@ -373,23 +373,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
         }
     }
 
-    /// Indique si le nœud est prêt à être quitté.
-    ///
-    /// Retourne `true` si le nœud est éteint, `false` s'il est encore allumé.
-    /// C'est à l'interface d'interpréter ce retour — quitter la boucle REPL,
-    /// afficher un message d'erreur, etc.
-    pub fn commande_quitter_feu(&self) -> bool {
-        !self.session.noeud
-    }
-
-    /// Affiche la version de `feu-core` via l'interface.
-    pub fn commande_affiche_version(&self) {
-        self.interface_feu_core.afficher(&format!(
-            "{} version {}",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION")
-        ));
-    }
+    // ── Nœud ─────────────────────────────────────────────────────────────────
 
     /// Initialise un nœud Feu vierge.
     ///
@@ -555,6 +539,64 @@ impl<I: InterfaceFeuCore> Feu<I> {
         Ok(())
     }
 
+    /// Indique si le nœud est prêt à être quitté.
+    ///
+    /// Retourne `true` si le nœud est éteint, `false` s'il est encore allumé.
+    /// C'est à l'interface d'interpréter ce retour — quitter la boucle REPL,
+    /// afficher un message d'erreur, etc.
+    pub fn commande_quitter_feu(&self) -> bool {
+        !self.session.noeud
+    }
+
+    /// Affiche la version de `feu-core` via l'interface.
+    pub fn commande_affiche_version(&self) {
+        self.interface_feu_core.afficher(&format!(
+            "{} version {}",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
+
+    /// Change le mot de passe du nœud et rechiffre l'intégralité du trousseau.
+    ///
+    /// Tous les foyers doivent être ouverts — leurs clés doivent être en mémoire
+    /// pour être rechiffrées avec le nouveau mot de passe.
+    ///
+    /// **Phase mémoire — cryptographe**
+    /// 1. Collecte le nouveau mot de passe (deux saisies avec vérification).
+    /// 2. Dérive une nouvelle clé éphémère Argon2id avec le sel existant.
+    /// 3. Rechiffre toutes les clés (nœud + foyers) avec la nouvelle clé éphémère.
+    /// 4. Efface le mot de passe et la clé éphémère de la mémoire.
+    ///
+    /// **Phase disque — gardien**
+    /// 5. Réécrit atomiquement tous les fichiers de clés sur le disque.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si un foyer n'est pas ouvert, si le gardien ou le
+    /// cryptographe est absent, ou si une opération disque échoue.
+    pub fn commande_changement_mdp(&mut self) -> ResultFeu<()> {
+        if !self.session.est_tout_ouvert() {
+            return Err(ErreurFeu::Standard(String::from(
+                "Tous les foyers doivent être ouverts.",
+            )));
+        }
+
+        match (&mut self.gardien, &mut self.cryptographe) {
+            (Some(gardien), Some(cryptographe)) => {
+                let trousseau_public_complet =
+                    cryptographe.changement_mdp(&self.interface_feu_core)?;
+                gardien.ecriture_trousseau_public_complet(&trousseau_public_complet)?;
+                Ok(())
+            }
+            (_, _) => Err(ErreurFeu::Standard(String::from(
+                "Le gardien et/ou le cryptographe est absent.",
+            ))),
+        }
+    }
+
+    // ── Foyers ───────────────────────────────────────────────────────────────
+
     /// Ouvre un foyer Feu existant : déchiffre l'archive, charge les clés en mémoire
     /// et initialise l'Archiviste du foyer.
     ///
@@ -651,20 +693,6 @@ impl<I: InterfaceFeuCore> Feu<I> {
         }
     }
 
-    /// Ferme un foyer à partir de son index dans la session.
-    ///
-    /// Résout l'index en adresse `.onion` puis délègue à
-    /// [`commande_fermeture_foyer`](Self::commande_fermeture_foyer).
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si `index >= MAX_FOYERS` ou si la fermeture échoue.
-    pub fn commande_fermeture_foyer_index(&mut self, index: usize) -> ResultFeu<()> {
-        let onion = String::from(self.session.index_vers_onion(index)?);
-        self.commande_fermeture_foyer(&onion)?;
-        Ok(())
-    }
-
     /// Archive et chiffre le dossier d'un foyer, détruit l'Archiviste, puis supprime
     /// le dossier clair.
     ///
@@ -717,42 +745,18 @@ impl<I: InterfaceFeuCore> Feu<I> {
         }
     }
 
-    /// Change le mot de passe du nœud et rechiffre l'intégralité du trousseau.
+    /// Ferme un foyer à partir de son index dans la session.
     ///
-    /// Tous les foyers doivent être ouverts — leurs clés doivent être en mémoire
-    /// pour être rechiffrées avec le nouveau mot de passe.
-    ///
-    /// **Phase mémoire — cryptographe**
-    /// 1. Collecte le nouveau mot de passe (deux saisies avec vérification).
-    /// 2. Dérive une nouvelle clé éphémère Argon2id avec le sel existant.
-    /// 3. Rechiffre toutes les clés (nœud + foyers) avec la nouvelle clé éphémère.
-    /// 4. Efface le mot de passe et la clé éphémère de la mémoire.
-    ///
-    /// **Phase disque — gardien**
-    /// 5. Réécrit atomiquement tous les fichiers de clés sur le disque.
+    /// Résout l'index en adresse `.onion` puis délègue à
+    /// [`commande_fermeture_foyer`](Self::commande_fermeture_foyer).
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si un foyer n'est pas ouvert, si le gardien ou le
-    /// cryptographe est absent, ou si une opération disque échoue.
-    pub fn commande_changement_mdp(&mut self) -> ResultFeu<()> {
-        if !self.session.est_tout_ouvert() {
-            return Err(ErreurFeu::Standard(String::from(
-                "Tous les foyers doivent être ouverts.",
-            )));
-        }
-
-        match (&mut self.gardien, &mut self.cryptographe) {
-            (Some(gardien), Some(cryptographe)) => {
-                let trousseau_public_complet =
-                    cryptographe.changement_mdp(&self.interface_feu_core)?;
-                gardien.ecriture_trousseau_public_complet(&trousseau_public_complet)?;
-                Ok(())
-            }
-            (_, _) => Err(ErreurFeu::Standard(String::from(
-                "Le gardien et/ou le cryptographe est absent.",
-            ))),
-        }
+    /// Retourne une erreur si `index >= MAX_FOYERS` ou si la fermeture échoue.
+    pub fn commande_fermeture_foyer_index(&mut self, index: usize) -> ResultFeu<()> {
+        let onion = String::from(self.session.index_vers_onion(index)?);
+        self.commande_fermeture_foyer(&onion)?;
+        Ok(())
     }
 
     /// Retourne l'état courant des foyers de la session.
@@ -765,6 +769,8 @@ impl<I: InterfaceFeuCore> Feu<I> {
     pub fn commande_liste_foyers(&self) -> ResultFeu<[(bool, String); MAX_FOYERS]> {
         self.session.donne_liste_foyers()
     }
+
+    // ── Données ──────────────────────────────────────────────────────────────
 
     /// Stocke un blob dans un classeur d'un foyer ouvert.
     ///
@@ -995,6 +1001,44 @@ impl<I: InterfaceFeuCore> Feu<I> {
         Ok(archiviste.existe_blob(index_classeur, hash))
     }
 
+    /// Retourne les métadonnées système d'un blob.
+    ///
+    /// Délègue à l'Archiviste du foyer désigné — voir [`DonneesBlob`] pour le détail des champs.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le nœud n'est pas allumé, si les index sont hors bornes,
+    /// si le foyer n'est pas ouvert, ou si le blob est introuvable.
+    pub fn commande_informations_blob(
+        &self,
+        index_foyer: usize,
+        index_classeur: usize,
+        hash: &str,
+    ) -> ResultFeu<DonneesBlob> {
+        if !self.session.noeud {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le nœud doit être allumé.",
+            )));
+        }
+        if index_foyer >= MAX_FOYERS || index_classeur >= MAX_CLASSEURS {
+            return Err(ErreurFeu::Standard(String::from("Index incorrect")));
+        }
+        if !self.session.foyers[index_foyer].est_ouvert {
+            return Err(ErreurFeu::Standard(String::from(
+                "Le foyer doit être ouvert",
+            )));
+        }
+        let Some(archiviste) = &self.archivistes[index_foyer] else {
+            return Err(ErreurFeu::Standard(String::from(
+                "Impossible de trouver l'archiviste.",
+            )));
+        };
+
+        Ok(archiviste.donne_informations_blob(index_classeur, hash)?)
+    }
+
+    // ── Chiffrement asymétrique ───────────────────────────────────────────────
+
     /// Chiffre des octets à destination d'un nœud identifié par sa clé publique X25519.
     ///
     /// Délègue au cryptographe qui implémente le schéma ECIES X25519 + AES-256-GCM.
@@ -1082,6 +1126,8 @@ impl<I: InterfaceFeuCore> Feu<I> {
 
         Ok(cryptographe.dechiffrement_asymetrique(index_foyer, octets_a_dechiffrer)?)
     }
+
+    // ── Signature ────────────────────────────────────────────────────────────
 
     /// Signe des octets avec la clé privée de signature Ed25519 du nœud.
     ///
@@ -1191,41 +1237,7 @@ impl<I: InterfaceFeuCore> Feu<I> {
         ))
     }
 
-    /// Retourne les métadonnées système d'un blob.
-    ///
-    /// Délègue à l'Archiviste du foyer désigné — voir [`DonneesBlob`] pour le détail des champs.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si le nœud n'est pas allumé, si les index sont hors bornes,
-    /// si le foyer n'est pas ouvert, ou si le blob est introuvable.
-    pub fn commande_informations_blob(
-        &self,
-        index_foyer: usize,
-        index_classeur: usize,
-        hash: &str,
-    ) -> ResultFeu<DonneesBlob> {
-        if !self.session.noeud {
-            return Err(ErreurFeu::Standard(String::from(
-                "Le nœud doit être allumé.",
-            )));
-        }
-        if index_foyer >= MAX_FOYERS || index_classeur >= MAX_CLASSEURS {
-            return Err(ErreurFeu::Standard(String::from("Index incorrect")));
-        }
-        if !self.session.foyers[index_foyer].est_ouvert {
-            return Err(ErreurFeu::Standard(String::from(
-                "Le foyer doit être ouvert",
-            )));
-        }
-        let Some(archiviste) = &self.archivistes[index_foyer] else {
-            return Err(ErreurFeu::Standard(String::from(
-                "Impossible de trouver l'archiviste.",
-            )));
-        };
-
-        Ok(archiviste.donne_informations_blob(index_classeur, hash)?)
-    }
+    // ── Check-up ─────────────────────────────────────────────────────────────
 
     /// Diagnostique l'état du nœud sans modifier quoi que ce soit.
     ///

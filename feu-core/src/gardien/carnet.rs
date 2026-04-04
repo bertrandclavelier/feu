@@ -69,14 +69,11 @@ impl Carnet {
         })
     }
 
+    // ── Arborescence ─────────────────────────────────────────────────────────
+
     /// Retourne le chemin racine du nœud `~/.feu`.
     pub(super) fn donne_chemin_feu(&self) -> PathBuf {
         self.chemin_feu.clone()
-    }
-
-    /// Indique si le dossier `~/.feu` existe sur le système de fichiers.
-    pub(super) fn existe_arborescence_noeud(&self) -> bool {
-        self.chemin_feu.exists()
     }
 
     /// Donne le chemin du dossier `~/.feu/adresse.onion`
@@ -94,6 +91,97 @@ impl Carnet {
         self.chemin_feu.join(format!("{}.tar", onion))
     }
 
+    /// Indique si le dossier `~/.feu` existe sur le système de fichiers.
+    pub(super) fn existe_arborescence_noeud(&self) -> bool {
+        self.chemin_feu.exists()
+    }
+
+    /// Vérifie la présence des fichiers fixes du nœud.
+    ///
+    /// Contrôle `~/.feu/`, `.cles/`, `config.feu` et les trois clés du nœud.
+    /// N'inspecte pas les foyers — leurs fichiers dépendent de la config,
+    /// lue séparément par [`Gardien::check_up_noeud`].
+    pub(super) fn verifier_arborescence_noeud(&self) -> ResultGardien<Vec<Anomalie>> {
+        let mut resultat: Vec<Anomalie> = Vec::new();
+        if !self.chemin_feu.exists() {
+            resultat.push(Anomalie::ElementAbsent(self.chemin_feu.clone()));
+        }
+        if !self.chemin_feu.join(".cles").exists() {
+            resultat.push(Anomalie::ElementAbsent(self.chemin_feu.join(".cles")));
+        }
+        if !self.chemin_feu.join(".cles").join(FEU_SEL).exists() {
+            resultat.push(Anomalie::ElementAbsent(
+                self.chemin_feu.join(".cles").join(FEU_SEL),
+            ));
+        }
+        if !self
+            .chemin_feu
+            .join(".cles")
+            .join(CLE_NOEUD_SIG_PRIV)
+            .exists()
+        {
+            resultat.push(Anomalie::ElementAbsent(
+                self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV),
+            ));
+        }
+        if !self
+            .chemin_feu
+            .join(".cles")
+            .join(CLE_NOEUD_SIG_PUB)
+            .exists()
+        {
+            resultat.push(Anomalie::ElementAbsent(
+                self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB),
+            ));
+        }
+        if !self.chemin_feu.join(FEU_CONFIGURATION).exists() {
+            resultat.push(Anomalie::ElementAbsent(
+                self.chemin_feu.join(FEU_CONFIGURATION),
+            ));
+        }
+
+        Ok(resultat)
+    }
+
+    pub(super) fn verifier_arborescence_foyer(&self, onion: &str) -> Vec<Anomalie> {
+        let mut resultat: Vec<Anomalie> = Vec::new();
+
+        let chemin_cles = self.donne_chemin_onion(onion).join(".cles/");
+
+        if !chemin_cles.exists() {
+            resultat.push(Anomalie::ElementAbsent(chemin_cles.clone()));
+        }
+        if !chemin_cles.join(CLE_FOYER_SIG_PRIV).exists() {
+            resultat.push(Anomalie::ElementAbsent(
+                chemin_cles.join(CLE_FOYER_SIG_PRIV),
+            ));
+        }
+        if !chemin_cles.join(CLE_FOYER_SIG_PUB).exists() {
+            resultat.push(Anomalie::ElementAbsent(chemin_cles.join(CLE_FOYER_SIG_PUB)));
+        }
+        if !chemin_cles.join(CLE_FOYER_CHIF_PRIV).exists() {
+            resultat.push(Anomalie::ElementAbsent(
+                chemin_cles.join(CLE_FOYER_CHIF_PRIV),
+            ));
+        }
+        if !chemin_cles.join(CLE_FOYER_CHIF_PUB).exists() {
+            resultat.push(Anomalie::ElementAbsent(
+                chemin_cles.join(CLE_FOYER_CHIF_PUB),
+            ));
+        }
+
+        // Pour chaque classeur
+        for j in 0..MAX_CLASSEURS {
+            let chemin_cle_classeur = chemin_cles.join(format!("classeur{j}.cle"));
+
+            if !chemin_cle_classeur.exists() {
+                resultat.push(Anomalie::ElementAbsent(chemin_cle_classeur));
+            }
+        }
+
+        resultat
+    }
+
     /// Supprime le dossier `~/.feu/<onion>` et tout son contenu.
     ///
     /// # Erreurs
@@ -104,25 +192,34 @@ impl Carnet {
         Ok(())
     }
 
-    /// Supprime l'archive chiffrée `~/.feu/<onion>.feu` après extraction.
+    // ── Configuration ─────────────────────────────────────────────────────────
+
+    /// Écrit le contenu de `config.feu` sur le disque.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
-    pub(super) fn supprime_archive_foyer_chiffree(&self, onion: &str) -> ResultGardien<()> {
-        fs::remove_file(self.donne_chemin_archive_chiffree(onion))?;
+    /// Retourne une erreur si l'écriture échoue.
+    pub(super) fn enregistre_configuration(&self, configuration: String) -> ResultGardien<()> {
+        Self::ecrire_fichier_600(
+            &self.chemin_feu.join(FEU_CONFIGURATION),
+            configuration.as_bytes(),
+        )?;
+
         Ok(())
     }
 
-    /// Supprime l'archive tar intermédiaire `~/.feu/<onion>.tar`.
+    /// Lit le contenu de `config.feu` depuis le disque et le retourne en `String`.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
-    pub(super) fn supprime_archive_foyer_tar(&self, onion: &str) -> ResultGardien<()> {
-        fs::remove_file(self.donne_chemin_archive_tar(onion))?;
-        Ok(())
+    /// Retourne une erreur si le fichier est absent ou illisible.
+    pub(super) fn ouvre_configuration(&self) -> ResultGardien<String> {
+        Ok(std::fs::read_to_string(
+            self.chemin_feu.join(FEU_CONFIGURATION),
+        )?)
     }
+
+    // ── Trousseaux ────────────────────────────────────────────────────────────
 
     /// Écrit l'intégralité du trousseau public sur le disque.
     ///
@@ -236,92 +333,6 @@ impl Carnet {
         }
 
         Ok(())
-    }
-
-    /// Vérifie la présence des fichiers fixes du nœud.
-    ///
-    /// Contrôle `~/.feu/`, `.cles/`, `config.feu` et les trois clés du nœud.
-    /// N'inspecte pas les foyers — leurs fichiers dépendent de la config,
-    /// lue séparément par [`Gardien::check_up_noeud`].
-    pub(super) fn verifier_arborescence_noeud(&self) -> ResultGardien<Vec<Anomalie>> {
-        let mut resultat: Vec<Anomalie> = Vec::new();
-        if !self.chemin_feu.exists() {
-            resultat.push(Anomalie::ElementAbsent(self.chemin_feu.clone()));
-        }
-        if !self.chemin_feu.join(".cles").exists() {
-            resultat.push(Anomalie::ElementAbsent(self.chemin_feu.join(".cles")));
-        }
-        if !self.chemin_feu.join(".cles").join(FEU_SEL).exists() {
-            resultat.push(Anomalie::ElementAbsent(
-                self.chemin_feu.join(".cles").join(FEU_SEL),
-            ));
-        }
-        if !self
-            .chemin_feu
-            .join(".cles")
-            .join(CLE_NOEUD_SIG_PRIV)
-            .exists()
-        {
-            resultat.push(Anomalie::ElementAbsent(
-                self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV),
-            ));
-        }
-        if !self
-            .chemin_feu
-            .join(".cles")
-            .join(CLE_NOEUD_SIG_PUB)
-            .exists()
-        {
-            resultat.push(Anomalie::ElementAbsent(
-                self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB),
-            ));
-        }
-        if !self.chemin_feu.join(FEU_CONFIGURATION).exists() {
-            resultat.push(Anomalie::ElementAbsent(
-                self.chemin_feu.join(FEU_CONFIGURATION),
-            ));
-        }
-
-        Ok(resultat)
-    }
-
-    pub(super) fn verifier_arborescence_foyer(&self, onion: &str) -> Vec<Anomalie> {
-        let mut resultat: Vec<Anomalie> = Vec::new();
-
-        let chemin_cles = self.donne_chemin_onion(onion).join(".cles/");
-
-        if !chemin_cles.exists() {
-            resultat.push(Anomalie::ElementAbsent(chemin_cles.clone()));
-        }
-        if !chemin_cles.join(CLE_FOYER_SIG_PRIV).exists() {
-            resultat.push(Anomalie::ElementAbsent(
-                chemin_cles.join(CLE_FOYER_SIG_PRIV),
-            ));
-        }
-        if !chemin_cles.join(CLE_FOYER_SIG_PUB).exists() {
-            resultat.push(Anomalie::ElementAbsent(chemin_cles.join(CLE_FOYER_SIG_PUB)));
-        }
-        if !chemin_cles.join(CLE_FOYER_CHIF_PRIV).exists() {
-            resultat.push(Anomalie::ElementAbsent(
-                chemin_cles.join(CLE_FOYER_CHIF_PRIV),
-            ));
-        }
-        if !chemin_cles.join(CLE_FOYER_CHIF_PUB).exists() {
-            resultat.push(Anomalie::ElementAbsent(
-                chemin_cles.join(CLE_FOYER_CHIF_PUB),
-            ));
-        }
-
-        // Pour chaque classeur
-        for j in 0..MAX_CLASSEURS {
-            let chemin_cle_classeur = chemin_cles.join(format!("classeur{j}.cle"));
-
-            if !chemin_cle_classeur.exists() {
-                resultat.push(Anomalie::ElementAbsent(chemin_cle_classeur));
-            }
-        }
-
-        resultat
     }
 
     /// Lit toutes les clés chiffrées d'un foyer depuis le disque.
@@ -443,30 +454,7 @@ impl Carnet {
         .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))
     }
 
-    /// Écrit le contenu de `config.feu` sur le disque.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si l'écriture échoue.
-    pub(super) fn enregistre_configuration(&self, configuration: String) -> ResultGardien<()> {
-        Self::ecrire_fichier_600(
-            &self.chemin_feu.join(FEU_CONFIGURATION),
-            configuration.as_bytes(),
-        )?;
-
-        Ok(())
-    }
-
-    /// Lit le contenu de `config.feu` depuis le disque et le retourne en `String`.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si le fichier est absent ou illisible.
-    pub(super) fn ouvre_configuration(&self) -> ResultGardien<String> {
-        Ok(std::fs::read_to_string(
-            self.chemin_feu.join(FEU_CONFIGURATION),
-        )?)
-    }
+    // ── Archives ──────────────────────────────────────────────────────────────
 
     /// Ouvre le fichier `<onion>.feu` en écriture exclusive avec les permissions `rw-------` (0o600).
     ///
@@ -567,13 +555,35 @@ impl Carnet {
         Ok(())
     }
 
+    /// Supprime l'archive chiffrée `~/.feu/<onion>.feu` après extraction.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
+    pub(super) fn supprime_archive_foyer_chiffree(&self, onion: &str) -> ResultGardien<()> {
+        fs::remove_file(self.donne_chemin_archive_chiffree(onion))?;
+        Ok(())
+    }
+
+    /// Supprime l'archive tar intermédiaire `~/.feu/<onion>.tar`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
+    pub(super) fn supprime_archive_foyer_tar(&self, onion: &str) -> ResultGardien<()> {
+        fs::remove_file(self.donne_chemin_archive_tar(onion))?;
+        Ok(())
+    }
+
+    // ── Utilitaires privés ────────────────────────────────────────────────────
+
     /// Crée un dossier avec les permissions `rwx------` (0o700).
     ///
     /// Crée les dossiers intermédiaires si nécessaire (`recursive`).
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la création échoue — permissions
+    /// tourne une erreur si la création échoue — permissions
     /// insuffisantes, chemin invalide ou erreur d'entrée/sortie.
     fn creer_dossier(path: &Path) -> ResultGardien<()> {
         DirBuilder::new().mode(0o700).recursive(true).create(path)?;
