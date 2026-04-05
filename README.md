@@ -8,7 +8,9 @@ Feu est un protocole de souveraineté numérique personnelle. Depuis une unique 
 
 ## Statut
 
-Projet en phase de conception et de développement initial.
+Projet en développement actif. Fonctionnel localement, sans réseau.
+
+**v0.0.2** — Stockage chiffré de données structuré en classeurs, signatures Ed25519 du nœud et des foyers, vérification de signatures, dépôt idempotent, diagnostics de présence des fichiers. Toujours aucun réseau.
 
 **v0.0.1** — Fondations cryptographiques et cycle de vie local. Interface CLI persistante, initialisation d'un nœud depuis une seed, dérivation hiérarchique SLIP-0010, ouverture et fermeture de foyers sous forme d'archives chiffrées. Aucun réseau, aucune donnée utilisateur.
 
@@ -26,7 +28,7 @@ Projet en phase de conception et de développement initial.
 
 ```sh
 git clone https://github.com/bertrandclavelier/feu.git
-cd workspace
+cd feu
 cargo build --release
 cargo run --release -p feu-cli
 ```
@@ -42,7 +44,8 @@ Linux et macOS uniquement.
 ## Documentation
 
 - [Livre blanc](documentation/livre_blanc.md) — vision et architecture du protocole
-- [Release v0.0.1](documentation/releases/v0_0_1_release.md) — détails techniques de la version courante
+- [Release v0.0.2](documentation/releases/v0_0_2_release.md) — détails techniques de la version courante
+- [Release v0.0.1](documentation/releases/v0_0_1_release.md)
 
 ---
 

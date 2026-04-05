@@ -6,6 +6,16 @@
 // Feu is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 // You should have received a copy of the GNU General Public License along with Feu. If not, see <https://www.gnu.org/licenses/>.
 
+//! Objet de transfert éphémère entre l'Archiviste et le Cryptographe.
+//!
+//! [`Tiroir`] transporte un blob depuis sa source jusqu'à son classeur en
+//! passant par le Cryptographe. Il est créé vide par l'Archiviste, rempli
+//! en clair par [`Feu`](crate::Feu), chiffré par le Cryptographe, puis
+//! retourné à l'Archiviste pour écriture sur disque.
+//!
+//! Le blob en clair est zéroïsé dès qu'il est remplacé par le blob chiffré —
+//! aucun octet sensible ne subsiste en mémoire après chiffrement.
+
 use super::{ErreurArchiviste, ResultArchiviste};
 use crate::MAX_TAILLE_BLOB;
 use crate::TAILLE_CHUNK;
@@ -45,6 +55,9 @@ pub(crate) struct Tiroir {
 }
 
 impl Tiroir {
+    /// Crée un [`Tiroir`] vide pour le classeur à `index_classeur`.
+    ///
+    /// Le blob est vide et le hash absent — prêt à être rempli via [`remplir`](Self::remplir).
     pub(super) fn new(index_classeur: usize) -> Self {
         Self {
             index_classeur,

@@ -10,10 +10,9 @@
 //! entre l'utilisateur et [`feu_core`].
 //!
 //! **Interface temporaire de test.** Ce module n'est pas destiné à rester.
-//! Il sert à exercer les primitives du noyau en cours de développement de
-//! v0.0.2. L'implémentation de [`InterfaceFeuCore`] est délibérément minimale
-//! (affichage debug, saisie stdin brute). La CLI définitive sera construite
-//! en v0.0.3+ avec `feu-app`.
+//! Il sert à exercer les primitives du noyau en cours de développement.
+//! L'implémentation de [`InterfaceFeuCore`] est délibérément minimale
+//! (affichage debug, saisie stdin brute).
 //!
 //! Ce module remplit deux rôles distincts :
 //!

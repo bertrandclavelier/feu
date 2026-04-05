@@ -40,15 +40,17 @@ mod cryptographe;
 mod erreur;
 mod gardien;
 
-/// Nombre maximum de foyers dans le nœud
+/// Nombre maximum de foyers dans le nœud.
 pub const MAX_FOYERS: usize = 3;
 /// Nombre maximum de classeurs par foyer.
 pub const MAX_CLASSEURS: usize = 5;
-/// Taille maximum d'un blob
+/// Taille maximum d'un blob — 512 Mio.
 pub const MAX_TAILLE_BLOB: usize = 512 * 1024 * 1024;
 
+/// Taille maximum d'un message à chiffrer via ECIES X25519 — 1 Mio.
 pub const MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE: usize = 1024 * 1024;
 
+/// Taille maximum d'un message à signer via Ed25519 — 64 Kio.
 pub const MAX_TAILLE_SIGNATURE: usize = 64 * 1024;
 
 pub(crate) const TAILLE_CHUNK: usize = 8 * 1024;
@@ -69,9 +71,9 @@ pub(crate) const TAILLE_CHUNK: usize = 8 * 1024;
 /// L'interface fait ce qu'elle veut de ces informations — les stocker, les
 /// afficher, les transmettre au réseau.
 ///
-/// `afficher` et `afficher_erreur` sont présentes pour la phase de test
-/// (v0.0.2) et ont vocation à disparaître du trait — la couche de présentation
-/// n'a pas à dépendre du noyau pour ses messages.
+/// `afficher` et `afficher_erreur` sont provisoires — afficher depuis le noyau
+/// est conceptuellement incorrect : la couche de présentation ne devrait pas
+/// dépendre du noyau pour ses messages.
 pub trait InterfaceFeuCore {
     /// Affiche un message informatif.
     fn afficher(&self, message: &str);
@@ -91,7 +93,7 @@ pub trait InterfaceFeuCore {
     ///
     /// Appelée à l'allumage du nœud, après lecture du trousseau public
     /// depuis le disque. Cette clé Ed25519 est l'identité cryptographique
-    /// du nœud — socle de l'IdNU à venir.
+    /// du nœud.
     fn recevoir_cle_publique_noeud(&self, cle_publique_sig_noeud: [u8; 32]);
 
     /// Notifie l'interface des clés publiques d'un foyer à son ouverture.

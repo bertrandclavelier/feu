@@ -3,7 +3,7 @@
 ### 12 mots, un nœud, tout son numérique.
 
 **Livre blanc**
-**Date : 15 mars 2026**
+**Date : 5 avril 2026**
 
 *Le 17 février 2026, nouvel an chinois marquant le début de l'année du Cheval de Feu, naît le projet Feu.*
 
@@ -148,10 +148,12 @@ Le foyer est l'espace souverain de l'utilisateur. Il contient les classeurs (don
 
 ```
 ~/.feu/<onion>/
-    classeur_0/
+    classeur0/
         <hash>.dat              ← blob chiffré
-    classeur_1/
-        ...
+    classeur1/
+    classeur2/
+    classeur3/
+    classeur4/
     registre/
         <hash_donnée>.N  →  <hash_condition>
     enu/

@@ -52,6 +52,11 @@ struct Configuration {
 }
 
 impl Configuration {
+    /// Crée une configuration vide avec les valeurs initiales.
+    ///
+    /// `version` est `VERSION_CONFIGURATION`, `prochain_index` est `1` —
+    /// la dérivation BIP32 du premier foyer commence à l'index `1` (`m/1'`).
+    /// Les adresses `.onion` sont toutes vides.
     fn new() -> Self {
         Self {
             version: VERSION_CONFIGURATION,
@@ -99,6 +104,7 @@ impl Configuration {
         resultat
     }
 
+    /// Retourne le tableau des adresses `.onion` des foyers.
     fn donne_adresses_onion(&self) -> &[String] {
         &self.adresses_onion
     }
@@ -171,6 +177,7 @@ impl Gardien {
         t
     }
 
+    /// Retourne le chemin du dossier `~/.feu/<onion>`.
     pub(super) fn donne_chemin_onion(&self, onion: &str) -> PathBuf {
         self.carnet.donne_chemin_onion(onion)
     }
@@ -453,6 +460,9 @@ impl Gardien {
         Ok(resultat)
     }
 
+    /// Vérifie la présence des fichiers d'un foyer ouvert.
+    ///
+    /// Délègue la vérification de l'arborescence interne au carnet.
     pub(super) fn check_up_foyer(&self, onion: &str) -> Vec<Anomalie> {
         self.carnet.verifier_arborescence_foyer(onion)
     }

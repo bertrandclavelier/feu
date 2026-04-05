@@ -239,6 +239,11 @@ impl Archiviste {
 
     // ── Check-up ──────────────────────────────────────────────────────────────
 
+    /// Vérifie la présence des éléments structurels du foyer ouvert.
+    ///
+    /// Contrôle `registre/` et les `MAX_CLASSEURS` liens symboliques
+    /// `registre/classeur.N`, ainsi que l'existence des cibles de ces liens.
+    /// N'inspecte pas le contenu des classeurs — seule la structure est vérifiée.
     pub(super) fn verifier_arborescence_classeurs(&self) -> ResultArchiviste<Vec<Anomalie>> {
         let mut resultat: Vec<Anomalie> = Vec::new();
 
@@ -260,6 +265,7 @@ impl Archiviste {
 
     // ── Utilitaires privés ────────────────────────────────────────────────────
 
+    /// Retourne le chemin du dossier `registre/` du foyer.
     fn donne_chemin_registre(&self) -> PathBuf {
         self.racine.join(REGISTRE)
     }

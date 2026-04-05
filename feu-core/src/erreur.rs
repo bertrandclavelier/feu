@@ -36,6 +36,8 @@ pub enum ErreurFeu {
     #[error("NOY > {0}")]
     Cryptographe(String),
 
+    /// Erreur remontée depuis l'archiviste — opération sur l'arborescence d'un foyer échouée.
+    /// Le message textuel provient de [`ErreurArchiviste`] via `.to_string()`.
     #[error("NOY > {0}")]
     Archiviste(String),
 
@@ -66,6 +68,10 @@ impl From<ErreurCryptographe> for ErreurFeu {
 }
 
 impl From<ErreurArchiviste> for ErreurFeu {
+    /// Convertit [`ErreurArchiviste`] en [`ErreurFeu::Archiviste`].
+    ///
+    /// Le type interne est perdu — seul le message textuel est propagé,
+    /// préservant l'encapsulation des détails d'implémentation de l'archiviste.
     fn from(e: ErreurArchiviste) -> Self {
         ErreurFeu::Archiviste(e.to_string())
     }

@@ -143,6 +143,11 @@ impl Carnet {
         Ok(resultat)
     }
 
+    /// Vérifie la présence des fichiers de clés d'un foyer.
+    ///
+    /// Contrôle `.cles/`, les paires de signature et de chiffrement,
+    /// et les `MAX_CLASSEURS` clés de classeurs.
+    /// N'inspecte pas le contenu des classeurs eux-mêmes — seules les clés sont vérifiées.
     pub(super) fn verifier_arborescence_foyer(&self, onion: &str) -> Vec<Anomalie> {
         let mut resultat: Vec<Anomalie> = Vec::new();
 
@@ -583,7 +588,7 @@ impl Carnet {
     ///
     /// # Erreurs
     ///
-    /// tourne une erreur si la création échoue — permissions
+    /// Retourne une erreur si la création échoue — permissions
     /// insuffisantes, chemin invalide ou erreur d'entrée/sortie.
     fn creer_dossier(path: &Path) -> ResultGardien<()> {
         DirBuilder::new().mode(0o700).recursive(true).create(path)?;
@@ -598,7 +603,9 @@ impl Carnet {
     /// comme au changement de mot de passe (fichier existant).
     ///
     /// # Erreurs
-    /// si l'écriture échoue, ou si le renommage échoue.
+    ///
+    /// Retourne une erreur si l'écriture du fichier temporaire échoue,
+    /// ou si le renommage vers la cible échoue.
     fn ecrire_fichier_600(chemin: &Path, contenu: &[u8]) -> ResultGardien<()> {
         let nouveau_chemin = chemin.with_added_extension("tmp");
 

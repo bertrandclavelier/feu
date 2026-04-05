@@ -39,13 +39,6 @@
 //! sont utilisés pour forcer la destruction anticipée dès qu'une clé n'est
 //! plus nécessaire.
 //!
-//! # Évolution envisagée
-//!
-//! Pour une version production, remplacer [`SecretBox`] par la crate `secrets`
-//! qui ajoute le memory locking (`mlock`) — empêche l'OS de paginer les secrets
-//! vers le disque (swap). L'interface est proche, la migration serait localisée
-//! à ce module.
-//!
 //! # État initial
 //!
 //! À l'instanciation, le trousseau est vide : `mdp` et
@@ -276,6 +269,7 @@ impl TrousseauFoyer {
         &self.paire_chiffrement.privee
     }
 
+    /// Retourne une référence à la clé privée Ed25519 de signature du foyer.
     fn donne_cle_privee_signature(&self) -> &SigningKey {
         &self.paire_signature.privee
     }
@@ -514,8 +508,6 @@ impl Trousseau {
     /// Utilise Argon2id (RFC 9106) avec les paramètres par défaut de la crate
     /// `argon2` (conformes aux recommandations minimales de la RFC 9106) :
     /// mémoire = 19 456 Kio (19 MiB), itérations = 2, parallélisme = 1.
-    /// Ces paramètres sont intentionnellement conservateurs pour v0.0.1 —
-    /// ils seront réévalués dans une version ultérieure.
     /// Produit 32 octets de matière clé à partir du mot de passe et du sel. La clé
     /// résultante est encapsulée dans [`SecretBox`] et stockée dans `cle_ephemere`.
     ///
@@ -555,6 +547,11 @@ impl Trousseau {
 
     // ── Signature ────────────────────────────────────────────────────────────
 
+    /// Signe des octets avec la clé privée Ed25519 du nœud.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé de signature du nœud est absente du trousseau.
     pub(super) fn signe_avec_cle_noeud(
         &self,
         octets_a_signer: &[u8],
@@ -565,6 +562,11 @@ impl Trousseau {
         ))
     }
 
+    /// Signe des octets avec la clé privée Ed25519 du foyer à la position `index_foyer`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le foyer est absent du trousseau.
     pub(super) fn signe_avec_cle_foyer(
         &self,
         index_foyer: usize,

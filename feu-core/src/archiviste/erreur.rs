@@ -6,6 +6,17 @@
 // Feu is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 // You should have received a copy of the GNU General Public License along with Feu. If not, see <https://www.gnu.org/licenses/>.
 
+//! Définit les types d'erreurs de l'archiviste.
+//!
+//! [`ErreurArchiviste`] couvre les erreurs pouvant survenir lors des
+//! opérations sur l'arborescence d'un foyer — lecture, écriture, suppression
+//! de blobs, vérification de l'arborescence.
+//!
+//! Ce type est interne à `feu-core` — il n'est jamais exposé directement
+//! à l'extérieur du crate. Il remonte vers [`ErreurFeu`] via une conversion
+//! explicite en message textuel, préservant ainsi l'encapsulation des détails
+//! d'implémentation de l'archiviste.
+
 use thiserror::Error;
 
 pub(crate) type ResultArchiviste<T> = Result<T, ErreurArchiviste>;
