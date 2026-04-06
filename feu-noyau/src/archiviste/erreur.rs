@@ -1,10 +1,10 @@
 // Copyright (C) 2026 Bertrand CLAVELIER
 //
-// This file is part of Feu.
+// This file is part of FeuNoyau.
 //
-// Feu is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-// Feu is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-// You should have received a copy of the GNU General Public License along with Feu. If not, see <https://www.gnu.org/licenses/>.
+// FeuNoyau is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+// FeuNoyau is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+// You should have received a copy of the GNU General Public License along with FeuNoyau. If not, see <https://www.gnu.org/licenses/>.
 
 //! Définit les types d'erreurs de l'archiviste.
 //!
@@ -12,8 +12,8 @@
 //! opérations sur l'arborescence d'un foyer — lecture, écriture, suppression
 //! de blobs, vérification de l'arborescence.
 //!
-//! Ce type est interne à `feu-core` — il n'est jamais exposé directement
-//! à l'extérieur du crate. Il remonte vers [`ErreurFeu`] via une conversion
+//! Ce type est interne à `feu-noyau` — il n'est jamais exposé directement
+//! à l'extérieur du crate. Il remonte vers [`ErreurFeuNoyau`] via une conversion
 //! explicite en message textuel, préservant ainsi l'encapsulation des détails
 //! d'implémentation de l'archiviste.
 

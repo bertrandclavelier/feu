@@ -1,14 +1,14 @@
 // Copyright (C) 2026 Bertrand CLAVELIER
 //
-// This file is part of Feu.
+// This file is part of FeuNoyau.
 //
-// Feu is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-// Feu is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-// You should have received a copy of the GNU General Public License along with Feu. If not, see <https://www.gnu.org/licenses/>.
+// FeuNoyau is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+// FeuNoyau is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+// You should have received a copy of the GNU General Public License along with FeuNoyau. If not, see <https://www.gnu.org/licenses/>.
 
-//! Archiviste d'un foyer Feu.
+//! Archiviste d'un foyer FeuNoyau.
 //!
-//! L'Archiviste est instancié par [`Feu`](crate::Feu) à l'ouverture d'un foyer
+//! L'Archiviste est instancié par [`FeuNoyau`](crate::FeuNoyau) à l'ouverture d'un foyer
 //! et détruit à sa fermeture. Un Archiviste par foyer ouvert.
 //!
 //! Il est responsable de :
@@ -69,7 +69,7 @@ const CLASSEUR: &str = "classeur";
 /// Archiviste d'un foyer ouvert.
 ///
 /// Maintient le chemin racine du foyer (`~/.feu/<onion>/`). Instancié par
-/// [`Feu`](crate::Feu) à l'ouverture du foyer, détruit à la fermeture.
+/// [`FeuNoyau`](crate::FeuNoyau) à l'ouverture du foyer, détruit à la fermeture.
 pub(super) struct Archiviste {
     /// Chemin racine du foyer — `~/.feu/<onion>/`.
     racine: PathBuf,
@@ -106,7 +106,7 @@ impl Archiviste {
     /// Crée et retourne un [`Tiroir`] vide pour le classeur à `index_classeur`.
     ///
     /// Le tiroir est un objet éphémère de transfert — il est destiné à être
-    /// rempli par [`Feu`](crate::Feu) puis transmis au Cryptographe pour chiffrement,
+    /// rempli par [`FeuNoyau`](crate::FeuNoyau) puis transmis au Cryptographe pour chiffrement,
     /// avant d'être retourné à l'Archiviste via [`ecrire_blob`](Self::ecrire_blob).
     pub(super) fn donne_tiroir_vide(&self, index_classeur: usize) -> Tiroir {
         Tiroir::new(index_classeur)
@@ -151,7 +151,7 @@ impl Archiviste {
     ///
     /// Le tiroir doit contenir un blob **chiffré** à ce stade. L'Archiviste ne
     /// vérifie pas cet invariant — c'est la responsabilité de l'orchestrateur
-    /// [`Feu`](crate::Feu).
+    /// [`FeuNoyau`](crate::FeuNoyau).
     ///
     /// # Erreurs
     ///

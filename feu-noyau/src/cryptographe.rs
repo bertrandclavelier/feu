@@ -1,12 +1,12 @@
 // Copyright (C) 2026 Bertrand CLAVELIER
 //
-// This file is part of Feu.
+// This file is part of FeuNoyau.
 //
-// Feu is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-// Feu is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-// You should have received a copy of the GNU General Public License along with Feu. If not, see <https://www.gnu.org/licenses/>.
+// FeuNoyau is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+// FeuNoyau is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+// You should have received a copy of the GNU General Public License along with FeuNoyau. If not, see <https://www.gnu.org/licenses/>.
 
-//! Le cryptographe est le gardien de la sécurité cryptographique de Feu.
+//! Le cryptographe est le gardien de la sécurité cryptographique de FeuNoyau.
 //!
 //! Il est l'unique composant autorisé à manipuler des données en clair —
 //! toute opération de chiffrement, de déchiffrement ou de dérivation de
@@ -34,13 +34,13 @@
 //!
 //! # Invariant de sécurité
 //!
-//! Aucun autre composant de Feu n'accède directement aux clés ou aux
+//! Aucun autre composant de FeuNoyau n'accède directement aux clés ou aux
 //! données en clair. Cette centralisation est un invariant fondamental
 //! du protocole.
 
 use crate::MAX_FOYERS;
 
-use super::InterfaceFeuCore;
+use super::InterfaceFeuNoyau;
 use bip39::{Language, Mnemonic};
 use data_encoding::HEXLOWER;
 use ed25519_dalek::VerifyingKey;
@@ -69,7 +69,7 @@ pub(super) struct Cryptographe {
 }
 
 impl Cryptographe {
-    /// Crée le cryptographe de [`Feu`].
+    /// Crée le cryptographe de [`FeuNoyau`].
     pub(super) fn new() -> Self {
         Cryptographe {
             trousseau: Trousseau::new(),
@@ -96,7 +96,7 @@ impl Cryptographe {
     /// la dérivation des clés d'un foyer échoue.
     pub(super) fn initialise_noeud_from_nouvelle_seed(
         &mut self,
-        interface: &impl InterfaceFeuCore,
+        interface: &impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<()> {
         self.initialisation_nouveau_mdp(interface);
 
@@ -122,19 +122,11 @@ impl Cryptographe {
 
             // Ajoute la paire de clés du nœud au trousseau à partir de la seed
             self.trousseau.ajouter_paire_noeud(&seed_bytes);
-            interface.afficher(
-                "Cryptographe ›› La paire de clés signature du nœud Feu a été générée et mise
-            dans mon trousseau.",
-            );
 
             // Ajoute les trousseaux des MAX_FOYERS
             for i in 0..MAX_FOYERS {
                 self.trousseau.ajouter_trousseau_foyer(&seed_bytes, i)?;
             }
-            interface.afficher(&format!(
-                "Cryptographe ›› Toutes les clés nécessaires au fonctionnement des {} foyers ont été générées et mises dans mon trousseau.",
-                MAX_FOYERS
-            ));
 
             // Génère le sel et le met dans le trousseau
             self.trousseau.genere_sel()?;
@@ -162,7 +154,7 @@ impl Cryptographe {
     pub(super) fn recoit_trousseau_public_noeud(
         &mut self,
         trousseau_public_noeud: &TrousseauPublicNoeud,
-        interface: &impl InterfaceFeuCore,
+        interface: &impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<()> {
         self.demande_mdp(interface);
         self.trousseau
@@ -248,7 +240,7 @@ impl Cryptographe {
     /// Retourne une erreur si la dérivation ou le chiffrement échoue.
     pub(super) fn changement_mdp(
         &mut self,
-        interface: &impl InterfaceFeuCore,
+        interface: &impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<TrousseauPublicComplet> {
         self.initialisation_nouveau_mdp(interface);
         self.trousseau.derive_cle_ephemere()?;
@@ -310,7 +302,7 @@ impl Cryptographe {
         cle_chiffree: &[u8; 60],
         source: &mut impl Read,
         destination: &mut impl Write,
-        interface: &impl InterfaceFeuCore,
+        interface: &impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<()> {
         self.demande_mdp(interface);
         self.derivation_cle_ephemere()?;
@@ -543,7 +535,7 @@ impl Cryptographe {
     /// Le mot de passe est encapsulé dans [`SecretBox`] dès réception et
     /// remplace tout mot de passe précédemment défini (l'ancien est zéroïsé
     /// automatiquement au remplacement).
-    fn initialisation_nouveau_mdp(&mut self, interface: &impl InterfaceFeuCore) {
+    fn initialisation_nouveau_mdp(&mut self, interface: &impl InterfaceFeuNoyau) {
         loop {
             let mdp = SecretBox::new(Box::new(
                 interface.demander_mdp("Entrez un nouveau mot de passe :"),
@@ -566,7 +558,7 @@ impl Cryptographe {
     /// Le mot de passe est encapsulé dans [`SecretBox`] dès réception.
     /// Il doit être effacé via [`efface_mdp_et_cle_ephemere`](Self::efface_mdp_et_cle_ephemere)
     /// dès qu'il n'est plus nécessaire.
-    fn demande_mdp(&mut self, interface: &impl InterfaceFeuCore) {
+    fn demande_mdp(&mut self, interface: &impl InterfaceFeuNoyau) {
         let mdp = SecretBox::new(Box::new(interface.demander_mdp("Entrez le mot de passe :")));
 
         self.trousseau.definit_mdp(mdp);

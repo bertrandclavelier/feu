@@ -1,20 +1,20 @@
 // Copyright (C) 2026 Bertrand CLAVELIER
 //
-// This file is part of Feu.
+// This file is part of FeuNoyau.
 //
-// Feu is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-// Feu is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-// You should have received a copy of the GNU General Public License along with Feu. If not, see <https://www.gnu.org/licenses/>.
+// FeuNoyau is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+// FeuNoyau is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+// You should have received a copy of the GNU General Public License along with FeuNoyau. If not, see <https://www.gnu.org/licenses/>.
 
-//! Définit les types d'erreurs de `feu-core`.
+//! Définit les types d'erreurs de `feu-noyau`.
 //!
-//! [`ErreurFeu`] est l'unique type d'erreur exposé à l'extérieur du crate.
+//! [`ErreurFeuNoyau`] est l'unique type d'erreur exposé à l'extérieur du crate.
 //! Il agrège les erreurs de chaque composant interne — chacun souverain
 //! dans la définition de ses propres erreurs — et les fait remonter de
 //! manière transparente vers l'appelant.
 //!
-//! [`ResultFeu<T>`] est l'alias de [`Result<T, ErreurFeu>`] utilisé dans
-//! toutes les fonctions publiques de `feu-core`.
+//! [`ResultFeuNoyau<T>`] est l'alias de [`Result<T, ErreurFeuNoyau>`] utilisé dans
+//! toutes les fonctions publiques de `feu-noyau`.
 
 use crate::{
     archiviste::erreur::ErreurArchiviste, cryptographe::erreur::ErreurCryptographe,
@@ -22,10 +22,10 @@ use crate::{
 };
 use thiserror::Error;
 
-pub type ResultFeu<T> = Result<T, ErreurFeu>;
+pub type ResultFeuNoyau<T> = Result<T, ErreurFeuNoyau>;
 
 #[derive(Error, Debug)]
-pub enum ErreurFeu {
+pub enum ErreurFeuNoyau {
     /// Erreur remontée depuis le gardien — opération disque ou parsing échoué.
     /// Le message textuel provient de [`ErreurGardien`] via `.to_string()`.
     #[error("NOY > {0}")]
@@ -41,38 +41,38 @@ pub enum ErreurFeu {
     #[error("NOY > {0}")]
     Archiviste(String),
 
-    /// Erreur liée à l'état de [`Feu`](crate::Feu) lui-même — état invalide,
+    /// Erreur liée à l'état de [`FeuNoyau`](crate::FeuNoyau) lui-même — état invalide,
     /// précondition non respectée. Indépendante du gardien et du cryptographe.
     #[error("NOY > {0}")]
     Standard(String),
 }
 
-impl From<ErreurGardien> for ErreurFeu {
-    /// Convertit [`ErreurGardien`] en [`ErreurFeu::Gardien`].
+impl From<ErreurGardien> for ErreurFeuNoyau {
+    /// Convertit [`ErreurGardien`] en [`ErreurFeuNoyau::Gardien`].
     ///
     /// Le type interne est perdu — seul le message textuel est propagé,
     /// préservant l'encapsulation des détails d'implémentation du gardien.
     fn from(e: ErreurGardien) -> Self {
-        ErreurFeu::Gardien(e.to_string())
+        ErreurFeuNoyau::Gardien(e.to_string())
     }
 }
 
-impl From<ErreurCryptographe> for ErreurFeu {
-    /// Convertit [`ErreurCryptographe`] en [`ErreurFeu::Cryptographe`].
+impl From<ErreurCryptographe> for ErreurFeuNoyau {
+    /// Convertit [`ErreurCryptographe`] en [`ErreurFeuNoyau::Cryptographe`].
     ///
     /// Le type interne est perdu — seul le message textuel est propagé,
     /// préservant l'encapsulation des détails d'implémentation du cryptographe.
     fn from(e: ErreurCryptographe) -> Self {
-        ErreurFeu::Cryptographe(e.to_string())
+        ErreurFeuNoyau::Cryptographe(e.to_string())
     }
 }
 
-impl From<ErreurArchiviste> for ErreurFeu {
-    /// Convertit [`ErreurArchiviste`] en [`ErreurFeu::Archiviste`].
+impl From<ErreurArchiviste> for ErreurFeuNoyau {
+    /// Convertit [`ErreurArchiviste`] en [`ErreurFeuNoyau::Archiviste`].
     ///
     /// Le type interne est perdu — seul le message textuel est propagé,
     /// préservant l'encapsulation des détails d'implémentation de l'archiviste.
     fn from(e: ErreurArchiviste) -> Self {
-        ErreurFeu::Archiviste(e.to_string())
+        ErreurFeuNoyau::Archiviste(e.to_string())
     }
 }

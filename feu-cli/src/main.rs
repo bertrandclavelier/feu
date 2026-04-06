@@ -1,3 +1,6 @@
+// DEPRECATED — feu-cli n'est plus maintenu.
+// Conservé temporairement pour tests avant suppression définitive.
+//
 // Copyright (C) 2026 Bertrand CLAVELIER
 //
 // This file is part of Feu.

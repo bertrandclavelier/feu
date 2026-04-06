@@ -1,16 +1,16 @@
 // Copyright (C) 2026 Bertrand CLAVELIER
 //
-// This file is part of Feu.
+// This file is part of FeuNoyau.
 //
-// Feu is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-// Feu is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-// You should have received a copy of the GNU General Public License along with Feu. If not, see <https://www.gnu.org/licenses/>.
+// FeuNoyau is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+// FeuNoyau is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+// You should have received a copy of the GNU General Public License along with FeuNoyau. If not, see <https://www.gnu.org/licenses/>.
 
 //! Objet de transfert éphémère entre l'Archiviste et le Cryptographe.
 //!
 //! [`Tiroir`] transporte un blob depuis sa source jusqu'à son classeur en
 //! passant par le Cryptographe. Il est créé vide par l'Archiviste, rempli
-//! en clair par [`Feu`](crate::Feu), chiffré par le Cryptographe, puis
+//! en clair par [`FeuNoyau`](crate::FeuNoyau), chiffré par le Cryptographe, puis
 //! retourné à l'Archiviste pour écriture sur disque.
 //!
 //! Le blob en clair est zéroïsé dès qu'il est remplacé par le blob chiffré —
@@ -29,18 +29,18 @@ const ERR_TIR_002: &str = "Dépassement MAX_TAILLE_BLOB";
 ///
 /// Le tiroir transporte un blob depuis la source jusqu'au classeur en passant
 /// par le Cryptographe. Il est créé vide par l'Archiviste, rempli en clair par
-/// [`Feu`](crate::Feu), chiffré par le Cryptographe, puis retourné à l'Archiviste
+/// [`FeuNoyau`](crate::FeuNoyau), chiffré par le Cryptographe, puis retourné à l'Archiviste
 /// pour écriture sur disque.
 ///
 /// # Cycle de vie
 ///
 /// ```text
-/// Archiviste → Feu : tiroir vide
-/// Feu : remplir_tiroir(source)        ← blob en clair
-/// Feu → Cryptographe : lire_blob()
-/// Cryptographe → Feu : blob chiffré + hash
-/// Feu : remplace_blob() + definit_hash()
-/// Feu → Archiviste : ecrire_blob(tiroir)  ← blob chiffré
+/// Archiviste → FeuNoyau : tiroir vide
+/// FeuNoyau : remplir_tiroir(source)        ← blob en clair
+/// FeuNoyau → Cryptographe : lire_blob()
+/// Cryptographe → FeuNoyau : blob chiffré + hash
+/// FeuNoyau : remplace_blob() + definit_hash()
+/// FeuNoyau → Archiviste : ecrire_blob(tiroir)  ← blob chiffré
 /// ```
 ///
 /// # Invariants
@@ -114,7 +114,7 @@ impl Tiroir {
 
     /// Zéroïse le blob courant puis le remplace par `nouveau_blob`.
     ///
-    /// Utilisé par [`Feu`](crate::Feu) pour substituer le blob en clair par
+    /// Utilisé par [`FeuNoyau`](crate::FeuNoyau) pour substituer le blob en clair par
     /// le blob chiffré retourné par le Cryptographe. Le blob en clair est
     /// zéroïsé avant remplacement — aucun octet sensible ne subsiste en mémoire.
     pub(crate) fn remplace_blob(&mut self, nouveau_blob: Vec<u8>) {

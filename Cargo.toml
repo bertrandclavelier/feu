@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "feu-core",
+    "feu-noyau",
     "feu-cli"
-]
+, "feu-application"]
 
 [workspace.package]
-version = "0.0.2"
+version = "0.0.3"
 license = "GPL-3.0-or-later"

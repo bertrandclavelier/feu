@@ -1,5 +1,5 @@
 [package]
-name = "feu-core"
+name = "feu-noyau"
 edition = "2024"
 license.workspace = true
 version.workspace = true
