@@ -301,6 +301,7 @@ name = "feu-application"
 version = "0.0.3"
 dependencies = [
  "feu-noyau",
+ "thiserror",
 ]
 
 [[package]]

@@ -95,7 +95,7 @@ impl InterfaceCli {
         );
 
         let interface_cli = Self {};
-        let mut feu = FeuApplication::new(interface_cli);
+        let mut feu = FeuApplication::new(interface_cli).unwrap();
 
         let mut rustyline = match DefaultEditor::new() {
             Ok(valeur) => valeur,

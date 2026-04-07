@@ -32,8 +32,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-pub use erreur::ErreurFeuNoyau;
-pub use erreur::ResultFeuNoyau;
+pub use erreur::{ErreurFeuNoyau, ResultFeuNoyau};
 
 mod archiviste;
 mod cryptographe;
@@ -131,7 +130,7 @@ pub struct DonneesBlob {
 
 /// Anomalie détectée lors d'un check-up du nœud.
 ///
-/// Retournée dans un [`Vec`] par [`FeuNoyau::commande_check_up_noeud`] —
+/// Retournée dans un [`Vec`] par [`FeuNoyau::check_up_noeud`] —
 /// un vecteur vide signifie que le nœud est dans un état nominal.
 pub enum Anomalie {
     /// Un fichier ou dossier attendu est absent du système de fichiers.
@@ -198,18 +197,15 @@ impl Foyer {
 /// position. L'index est partagé avec `Configuration::adresses_onion`
 /// et le trousseau cryptographique — c'est le point de vérité unique
 /// pour relier un foyer à son adresse et à son état d'ouverture.
-struct Session {
-    /// `true` si le nœud est allumé (trousseau déverrouillé), `false` sinon.
-    noeud: bool,
+struct SessionFoyers {
     /// État et adresse de chaque foyer — `(ouvert, adresse_onion)`.
     foyers: [Foyer; MAX_FOYERS],
 }
 
-impl Session {
+impl SessionFoyers {
     /// Crée une session vide : tous les foyers sont fermés et sans adresse.
     fn new() -> Self {
         Self {
-            noeud: false,
             foyers: std::array::from_fn(|_| Foyer {
                 onion: String::from(""),
                 est_ouvert: false,
@@ -221,15 +217,9 @@ impl Session {
     ///
     /// Chaque élément est un tuple `(ouvert, adresse_onion)`.
     ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si le nœud n'est pas allumé.
+    /// Retourne toujours `Ok` — le `Result` est conservé pour la cohérence
+    /// de l'API publique exposée via [`FeuNoyau::liste_foyers`].
     fn donne_liste_foyers(&self) -> ResultFeuNoyau<[(bool, String); MAX_FOYERS]> {
-        if !self.noeud {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Le nœud doit être allumé.",
-            )));
-        }
         let mut tableau: [(bool, String); MAX_FOYERS] =
             std::array::from_fn(|_| (false, String::from("")));
         for (i, e) in tableau.iter_mut().enumerate() {
@@ -316,11 +306,6 @@ impl Session {
 
         Ok(())
     }
-
-    /// Modifie le statut d'allumage du nœud.
-    fn change_statut_noeud(&mut self, etat: bool) {
-        self.noeud = etat;
-    }
 }
 
 /// Point d'entrée unique du protocole FeuNoyau.
@@ -334,16 +319,15 @@ pub struct FeuNoyau<I: InterfaceFeuNoyau> {
     /// Canal de communication avec l'interface utilisateur.
     interface_feu_noyau: I,
 
-    /// État de la session — foyers ouverts et leurs adresses `.onion`.
-    session: Session,
-
+    /// État de la session courante — foyers et statut d'allumage du nœud.
+    session: SessionFoyers,
     /// Gardien des données locales — fichiers, foyers, configuration.
-    /// `None` tant que le nœud n'a pas été initialisé.
-    gardien: Option<Gardien>,
+    /// Présent et actif pour toute la durée de vie du nœud.
+    gardien: Gardien,
 
-    /// Gardien de la sécurité cryptographique — clés, chiffrement, seed.
-    /// `None` tant que le nœud n'a pas été initialisé.
-    cryptographe: Option<Cryptographe>,
+    /// Garant de la sécurité cryptographique — clés, chiffrement, seed.
+    /// Présent et actif pour toute la durée de vie du nœud.
+    cryptographe: Cryptographe,
 
     /// Un Archiviste par foyer ouvert — `None` si le foyer est fermé.
     /// Instancié à l'ouverture du foyer, détruit à la fermeture.
@@ -351,221 +335,134 @@ pub struct FeuNoyau<I: InterfaceFeuNoyau> {
 }
 
 impl<I: InterfaceFeuNoyau> Drop for FeuNoyau<I> {
-    /// Filet de sécurité : panic si le nœud n'a pas été éteint proprement.
+    /// Filet de sécurité : panic si des foyers sont encore ouverts à la destruction.
     ///
-    /// Le chemin normal d'arrêt est [`FeuNoyau::commande_extinction_noeud`] suivi
-    /// de [`FeuNoyau::commande_quitter_feu`]. Ce `drop` ne fait pas de cleanup —
-    /// il garantit uniquement qu'une sortie silencieuse avec des foyers ouverts
-    /// est impossible.
+    /// Le chemin normal est que la couche de présentation ferme tous les foyers
+    /// avant de quitter. Ce `drop` ne fait pas de cleanup — il garantit uniquement
+    /// qu'une sortie silencieuse avec des foyers ouverts est impossible.
+    ///
+    /// # Dette technique
+    ///
+    /// Si le programme s'est terminé anormalement avec des foyers ouverts, les
+    /// dossiers clairs restent sur le disque et les archives `.feu` sont absentes.
+    /// Le nœud reste utilisable au redémarrage, mais l'ouverture de ces foyers
+    /// échouera. [`FeuNoyau::check_up_noeud`] permet de détecter cet état.
     fn drop(&mut self) {
-        if self.session.noeud {
-            panic!("Le noeud n'était pas éteint avant de quitter");
+        if !self.session.est_tout_ferme() {
+            panic!("Les foyers n'étaient pas tous fermés avant de quitter");
         }
     }
 }
 
 impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
-    /// Crée une instance de [`FeuNoyau`] prête à l'emploi.
+    /// Crée une instance de [`FeuNoyau`] prête à l'emploi — nœud allumé, foyers fermés.
     ///
-    /// Le gardien et le cryptographe ne sont pas encore actifs à ce stade —
-    /// ils sont initialisés lors d'un appel ultérieur à
-    /// [`commande_initialise_noeud_vierge`](Self::commande_initialise_noeud_vierge)
-    /// ou [`commande_allumage_noeud`](Self::commande_allumage_noeud).
-    /// L'interface fournie sera utilisée pour toutes les interactions
-    /// utilisateur ultérieures.
-    pub fn new(interface_feu_noyau: I) -> Self {
-        Self {
-            interface_feu_noyau,
-            session: Session::new(),
-            gardien: None,
-            cryptographe: None,
-            archivistes: std::array::from_fn(|_| None),
+    /// Détecte automatiquement l'état du nœud en vérifiant l'existence de l'arborescence
+    /// `~/.feu`. Selon le cas, exécute l'initialisation ou l'allumage. Dans les deux cas,
+    /// retourne un [`FeuNoyau`] pleinement opérationnel avec le nœud allumé et tous les
+    /// foyers fermés.
+    ///
+    /// # Initialisation (première utilisation — arborescence absente)
+    ///
+    /// **Phase mémoire — cryptographe**
+    /// 1. Génère la seed BIP39 et dérive les clés du nœud et des `MAX_FOYERS` foyers.
+    /// 2. Produit le trousseau public complet.
+    ///
+    /// **Phase disque — gardien**
+    /// 3. Crée l'arborescence globale `~/.feu` et les arborescences de chaque foyer.
+    /// 4. Enregistre les `MAX_FOYERS` adresses `.onion` dans `config.feu`.
+    ///
+    /// **Fermeture**
+    /// 5. Ferme chaque foyer — archive, chiffre et supprime le dossier clair.
+    ///
+    /// # Allumage (utilisations suivantes — arborescence présente)
+    ///
+    /// **Phase disque — gardien**
+    /// 1. Charge `config.feu` et lit le trousseau public du nœud depuis `~/.feu/.cles/`.
+    ///
+    /// **Phase mémoire — cryptographe**
+    /// 2. Collecte le mot de passe via l'interface.
+    /// 3. Dérive la clé éphémère Argon2id et déchiffre la clé privée du nœud.
+    /// 4. Notifie l'interface de la clé publique de signature du nœud.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une [`ErreurFeuNoyau`] si `HOME` est absente, si `config.feu` est
+    /// illisible, si un fichier de clé est absent ou corrompu, ou si le mot de passe
+    /// est incorrect.
+    pub fn new(interface_feu_noyau: I) -> ResultFeuNoyau<Self> {
+        let mut gardien = Gardien::new()?;
+
+        if gardien.existence_arborescence() {
+            let gardien = Gardien::ouvre_nouveau()?;
+            let mut cryptographe = Cryptographe::new();
+
+            let trousseau_public_noeud = &gardien.lecture_pour_creation_trousseau_public_noeud()?;
+
+            interface_feu_noyau
+                .recevoir_cle_publique_noeud(trousseau_public_noeud.donne_cle_sig_pub());
+
+            cryptographe
+                .recoit_trousseau_public_noeud(trousseau_public_noeud, &interface_feu_noyau)?;
+
+            let mut session = SessionFoyers::new();
+            session.definition_foyers(gardien.creation_tableau_session_foyers());
+            Ok(Self {
+                interface_feu_noyau,
+                session,
+                gardien,
+                cryptographe,
+                archivistes: std::array::from_fn(|_| None),
+            })
+        } else {
+            let mut cryptographe = Cryptographe::new();
+
+            // 1- LE CRYPTOGRAPHE TRAVAILLE EN MÉMOIRE
+
+            // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
+            cryptographe.initialise_noeud_from_nouvelle_seed(&interface_feu_noyau)?;
+
+            // Le cryptographe génère le trousseau public pour le gardien
+            let trousseau_public_complet = cryptographe.donne_trousseau_public_complet()?;
+
+            // 2- LE GARDIEN TRAVAILLE SUR LE DISQUE
+
+            gardien.cree_premiere_arborescence(&trousseau_public_complet)?;
+
+            let mut session = SessionFoyers::new();
+
+            // Ajout des MAX_FOYERS foyers dans la configuration
+            for i in 0..MAX_FOYERS {
+                let onion = String::from(
+                    trousseau_public_complet
+                        .donne_trousseau_public_foyer(i)?
+                        .donne_onion(),
+                );
+                gardien.ajout_nouveau_foyer_dans_configuration(onion.clone(), i);
+                session.foyers[i] = Foyer::new(onion, true);
+            }
+
+            // Enregistrement de config.feu
+            gardien.enregistrement_configuration()?;
+
+            let mut noyau = Self {
+                interface_feu_noyau,
+                session,
+                gardien,
+                cryptographe,
+                archivistes: std::array::from_fn(|_| None),
+            };
+
+            // Fermeture des foyers
+            for i in 0..MAX_FOYERS {
+                noyau.fermeture_foyer(&noyau.session.foyers[i].onion.clone())?;
+            }
+
+            Ok(noyau)
         }
     }
 
     // ── Nœud ─────────────────────────────────────────────────────────────────
-
-    /// Initialise un nœud FeuNoyau vierge.
-    ///
-    /// Enchaîne deux phases séquentielles. Tout le travail cryptographique
-    /// est achevé en mémoire avant le premier accès disque — aucune donnée
-    /// n'est écrite en cas d'erreur dans la phase mémoire.
-    ///
-    /// **Phase mémoire — cryptographe**
-    /// 1. Collecte le mot de passe FeuNoyau.
-    /// 2. Génère la seed BIP39 et dérive les clés du nœud et des `MAX_FOYERS` foyers.
-    /// 3. Dérive le sel Argon2id et chiffre les clés — produit le trousseau public.
-    ///
-    /// **Phase disque — gardien**
-    /// 4. Crée l'arborescence globale `~/.feu` et `~/.feu/.cles`.
-    /// 5. Crée l'arborescence de chaque foyer `~/.feu/<onion>/.cles`.
-    /// 6. Enregistre les `MAX_FOYERS` foyers dans `config.feu` et écrit sur le disque.
-    /// 7. Peuple la session avec les adresses `.onion` et marque chaque foyer comme ouvert.
-    /// 8. Pour chaque foyer : archive et chiffre le dossier — produit `<onion>.feu`.
-    /// 9. Supprime chaque dossier clair `<onion>` après vérification de l'archive.
-    /// 10. Droppe le gardien et le cryptographe — le nœud est éteint à l'issue.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une [`ErreurFeuNoyau`] à la première étape qui échoue.
-    /// Le gardien et le cryptographe sont intégrés à `self` avant l'étape 7 —
-    /// un échec à cette étape laisse `self` dans un état partiellement initialisé.
-    ///
-    /// # Dette technique
-    ///
-    /// Si [`commande_fermeture_foyer`](Self::commande_fermeture_foyer) échoue,
-    /// `self.gardien` et `self.cryptographe` sont déjà assignés et `config.feu`
-    /// est écrit sur le disque. Un mécanisme de rollback est nécessaire pour
-    /// garantir l'atomicité complète de l'initialisation.
-    pub fn commande_initialise_noeud_vierge(&mut self) -> ResultFeuNoyau<()> {
-        // Création du gardien et du cryptographe
-        let mut gardien = Gardien::new()?;
-        let mut cryptographe = Cryptographe::new();
-
-        if gardien.existence_arborescence() {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Une arborescence existe déjà.",
-            )));
-        }
-
-        // 1- LE CRYPTOGRAPHE TRAVAILLE EN MÉMOIRE
-
-        // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
-        cryptographe.initialise_noeud_from_nouvelle_seed(&self.interface_feu_noyau)?;
-
-        // Le cryptographe génère le trousseau public pour le gardien
-        let trousseau_public_complet = cryptographe.donne_trousseau_public_complet()?;
-
-        // 2- LE GARDIEN TRAVAILLE SUR LE DISQUE
-
-        gardien.cree_premiere_arborescence(&trousseau_public_complet)?;
-
-        // Ajout des MAX_FOYERS foyers dans la configuration
-        for i in 0..MAX_FOYERS {
-            let onion = String::from(
-                trousseau_public_complet
-                    .donne_trousseau_public_foyer(i)?
-                    .donne_onion(),
-            );
-            gardien.ajout_nouveau_foyer_dans_configuration(onion.clone(), i);
-            self.session.foyers[i] = Foyer::new(onion, true);
-        }
-
-        // Enregistrement de config.feu
-        gardien.enregistrement_configuration()?;
-
-        // Toutes les étapes ont réussi : on les intègre à la structure
-        // pour une utilisation lors de la fermeture du foyer.
-        self.gardien = Some(gardien);
-        self.cryptographe = Some(cryptographe);
-
-        // Fermeture des foyers
-        for i in 0..MAX_FOYERS {
-            self.commande_fermeture_foyer(&self.session.foyers[i].onion.clone())?;
-        }
-
-        // On remercie le gardien et le cryptographe
-        self.gardien = None;
-        self.cryptographe = None;
-        Ok(())
-    }
-
-    /// Allume un nœud FeuNoyau existant et déverrouille le trousseau cryptographique.
-    ///
-    /// Enchaîne deux phases séquentielles :
-    ///
-    /// **Phase disque — gardien**
-    /// 1. Vérifie l'existence de l'arborescence `~/.feu` et charge `config.feu`.
-    /// 2. Lit le sel et la clé de signature du nœud depuis `~/.feu/.cles/`.
-    ///
-    /// **Phase mémoire — cryptographe**
-    /// 3. Collecte le mot de passe FeuNoyau via l'interface.
-    /// 4. Dérive la clé éphémère AES-256-GCM via Argon2id(mot de passe, sel).
-    /// 5. Tente de déchiffrer la clé privée de signature du nœud — si le mot
-    ///    de passe est incorrect, le déchiffrement AES-GCM échoue et l'erreur
-    ///    est propagée. C'est le mécanisme de vérification du mot de passe.
-    /// 6. Efface le mot de passe et la clé éphémère de la mémoire.
-    /// 7. Peuple la session avec les adresses `.onion` des foyers lues depuis
-    ///    `config.feu` — tous les foyers sont marqués éteints à ce stade.
-    /// 8. Marque le nœud comme actif dans la session.
-    ///
-    /// Les foyers ne sont pas déchiffrés à cette étape — chaque foyer est
-    /// allumé explicitement via une commande dédiée.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une [`ErreurFeuNoyau`] si le nœud est déjà allumé, si l'arborescence
-    /// `~/.feu` est introuvable, si `config.feu` est absent ou illisible, si un
-    /// fichier de clé est absent ou de taille incorrecte, ou si le mot de passe
-    /// est incorrect.
-    pub fn commande_allumage_noeud(&mut self) -> ResultFeuNoyau<()> {
-        if self.session.noeud {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Le nœud est déjà allumé.",
-            )));
-        }
-
-        let gardien = Gardien::ouvre_nouveau()?;
-        let mut cryptographe = Cryptographe::new();
-
-        let trousseau_public_noeud = &gardien.lecture_pour_creation_trousseau_public_noeud()?;
-
-        self.interface_feu_noyau
-            .recevoir_cle_publique_noeud(trousseau_public_noeud.donne_cle_sig_pub());
-
-        cryptographe
-            .recoit_trousseau_public_noeud(trousseau_public_noeud, &self.interface_feu_noyau)?;
-
-        self.session
-            .definition_foyers(gardien.creation_tableau_session_foyers());
-
-        self.gardien = Some(gardien);
-        self.cryptographe = Some(cryptographe);
-
-        self.session.change_statut_noeud(true);
-        Ok(())
-    }
-
-    /// Éteint le nœud FeuNoyau et libère le gardien et le cryptographe.
-    ///
-    /// Toutes les clés en mémoire sont supprimées avec le drop du cryptographe.
-    /// La session est marquée comme inactive.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si au moins un foyer est encore ouvert — tous les
-    /// foyers doivent être fermés avant d'éteindre le nœud.
-    pub fn commande_extinction_noeud(&mut self) -> ResultFeuNoyau<()> {
-        if !self.session.est_tout_ferme() {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Tous les foyers doivent être fermés.",
-            )));
-        }
-        self.gardien = None;
-        self.cryptographe = None;
-
-        self.session.change_statut_noeud(false);
-
-        Ok(())
-    }
-
-    /// Indique si le nœud est prêt à être quitté.
-    ///
-    /// Retourne `true` si le nœud est éteint, `false` s'il est encore allumé.
-    /// C'est à l'interface d'interpréter ce retour — quitter la boucle REPL,
-    /// afficher un message d'erreur, etc.
-    pub fn commande_quitter_feu(&self) -> bool {
-        !self.session.noeud
-    }
-
-    /// Affiche la version de `feu-noyau` via l'interface.
-    pub fn commande_affiche_version(&self) {
-        println!(
-            "{} version {}",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION")
-        );
-    }
 
     /// Change le mot de passe du nœud et rechiffre l'intégralité du trousseau.
     ///
@@ -583,26 +480,20 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si un foyer n'est pas ouvert, si le gardien ou le
-    /// cryptographe est absent, ou si une opération disque échoue.
-    pub fn commande_changement_mdp(&mut self) -> ResultFeuNoyau<()> {
+    /// Retourne une erreur si un foyer n'est pas ouvert ou si une opération disque échoue.
+    pub fn changement_mdp(&mut self) -> ResultFeuNoyau<()> {
         if !self.session.est_tout_ouvert() {
             return Err(ErreurFeuNoyau::Standard(String::from(
                 "Tous les foyers doivent être ouverts.",
             )));
         }
 
-        match (&mut self.gardien, &mut self.cryptographe) {
-            (Some(gardien), Some(cryptographe)) => {
-                let trousseau_public_complet =
-                    cryptographe.changement_mdp(&self.interface_feu_noyau)?;
-                gardien.ecriture_trousseau_public_complet(&trousseau_public_complet)?;
-                Ok(())
-            }
-            (_, _) => Err(ErreurFeuNoyau::Standard(String::from(
-                "Le gardien et/ou le cryptographe est absent.",
-            ))),
-        }
+        let trousseau_public_complet = self
+            .cryptographe
+            .changement_mdp(&self.interface_feu_noyau)?;
+        self.gardien
+            .ecriture_trousseau_public_complet(&trousseau_public_complet)?;
+        Ok(())
     }
 
     // ── Foyers ───────────────────────────────────────────────────────────────
@@ -634,14 +525,13 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     ///    `registre/` et `classeur0/` à `classeur4/`. Lors des ouvertures suivantes,
     ///    l'Archiviste détecte la présence de `registre/` et ne fait rien.
     ///
-    /// **Session**
+    /// **SessionFoyers**
     /// 10. Marque le foyer comme ouvert.
     ///
     /// # Erreurs
     ///
     /// Retourne une [`ErreurFeuNoyau`] si l'index est invalide, si le foyer est déjà
-    /// ouvert, si le gardien ou le cryptographe est absent, si le mot de passe est
-    /// incorrect, ou si une opération disque échoue.
+    /// ouvert, si le mot de passe est incorrect, ou si une opération disque échoue.
     ///
     /// # Avertissement sécurité
     ///
@@ -649,13 +539,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// son effacement (étape 8), le mot de passe et la clé éphémère restent en
     /// mémoire. Un mécanisme de drop guard sera introduit pour garantir l'effacement
     /// sur tous les chemins d'erreur.
-    pub fn commande_ouverture_foyer(&mut self, index_foyer: usize) -> ResultFeuNoyau<()> {
-        if !self.session.noeud {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Le nœud doit être allumé.",
-            )));
-        }
-
+    pub fn ouverture_foyer(&mut self, index_foyer: usize) -> ResultFeuNoyau<()> {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::Standard(String::from(
                 "Index foyer trop élevé.",
@@ -669,40 +553,35 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
             )));
         }
 
-        match (&mut self.gardien, &mut self.cryptographe) {
-            (Some(g), Some(c)) => {
-                let (cle, mut source, mut destination) =
-                    g.preparation_desarchivage_chiffre_foyer(onion)?;
+        let (cle, mut source, mut destination) =
+            self.gardien.preparation_desarchivage_chiffre_foyer(onion)?;
 
-                c.donne_flux_dechiffrement_foyer(
-                    &cle,
-                    &mut source,
-                    &mut destination,
-                    &self.interface_feu_noyau,
-                )?;
+        self.cryptographe.donne_flux_dechiffrement_foyer(
+            &cle,
+            &mut source,
+            &mut destination,
+            &self.interface_feu_noyau,
+        )?;
 
-                g.desarchivage_chiffre_foyer(onion)?;
-                let trousseau_public_foyer = g.creation_trousseau_foyer_public(onion)?;
+        self.gardien.desarchivage_chiffre_foyer(onion)?;
+        let trousseau_public_foyer = self.gardien.creation_trousseau_foyer_public(onion)?;
 
-                self.interface_feu_noyau.recevoir_cles_publiques_foyer(
-                    index_foyer,
-                    trousseau_public_foyer.donne_cle_sig_pub(),
-                    trousseau_public_foyer.donne_cle_chiff_pub(),
-                );
+        self.interface_feu_noyau.recevoir_cles_publiques_foyer(
+            index_foyer,
+            trousseau_public_foyer.donne_cle_sig_pub(),
+            trousseau_public_foyer.donne_cle_chiff_pub(),
+        );
 
-                c.recoit_trousseau_public_foyer(trousseau_public_foyer, index_foyer)?;
+        self.cryptographe
+            .recoit_trousseau_public_foyer(trousseau_public_foyer, index_foyer)?;
 
-                // Instanciation de l'archiviste — crée l'arborescence classeurs/registre
-                // à la première ouverture, ne fait rien lors des ouvertures suivantes.
-                self.archivistes[index_foyer] = Some(Archiviste::new(g.donne_chemin_onion(onion))?);
+        // Instanciation de l'archiviste — crée l'arborescence classeurs/registre
+        // à la première ouverture, ne fait rien lors des ouvertures suivantes.
+        self.archivistes[index_foyer] =
+            Some(Archiviste::new(self.gardien.donne_chemin_onion(onion))?);
 
-                self.session.foyers[index_foyer].est_ouvert = true;
-                Ok(())
-            }
-            (_, _) => Err(ErreurFeuNoyau::Standard(String::from(
-                "Gardien et/ou cryptographe absent",
-            ))),
-        }
+        self.session.foyers[index_foyer].est_ouvert = true;
+        Ok(())
     }
 
     /// Archive et chiffre le dossier d'un foyer, détruit l'Archiviste, puis supprime
@@ -715,59 +594,48 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// 3. Supprime le dossier clair `<onion>` après vérification que l'archive existe.
     /// 4. Détruit l'Archiviste du foyer.
     ///
-    /// # Prérequis
-    ///
-    /// Le gardien et le cryptographe doivent être initialisés dans `self`.
-    ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le gardien ou le cryptographe est absent,
-    /// si la création de l'archive échoue, ou si la suppression du dossier échoue.
-    pub fn commande_fermeture_foyer(&mut self, onion: &str) -> ResultFeuNoyau<()> {
+    /// Retourne une erreur si la création de l'archive échoue ou si la suppression
+    /// du dossier échoue.
+    pub fn fermeture_foyer(&mut self, onion: &str) -> ResultFeuNoyau<()> {
         if !self.session.onion_est_ouvert(onion)? {
             return Err(ErreurFeuNoyau::Standard(String::from(
                 "Le foyer n'est pas ouvert.",
             )));
         }
 
-        match (&self.gardien, &self.cryptographe) {
-            (Some(gardien), Some(cryptographe)) => {
-                let (mut source, mut destination) =
-                    gardien.preparation_archivage_chiffre_foyer(onion)?;
+        let (mut source, mut destination) =
+            self.gardien.preparation_archivage_chiffre_foyer(onion)?;
 
-                cryptographe.donne_flux_chiffrement_foyer(
-                    self.session.onion_vers_index(onion)?,
-                    &mut source,
-                    &mut destination,
-                )?;
+        self.cryptographe.donne_flux_chiffrement_foyer(
+            self.session.onion_vers_index(onion)?,
+            &mut source,
+            &mut destination,
+        )?;
 
-                gardien.suppression_archive_foyer_tar(onion)?;
-                gardien.suppression_dossier_onion(onion)?;
+        self.gardien.suppression_archive_foyer_tar(onion)?;
+        self.gardien.suppression_dossier_onion(onion)?;
 
-                // Destruction de l'archiviste — le dossier du foyer est déjà supprimé.
-                self.archivistes[self.session.onion_vers_index(onion)?] = None;
+        // Destruction de l'archiviste — le dossier du foyer est déjà supprimé.
+        self.archivistes[self.session.onion_vers_index(onion)?] = None;
 
-                self.session.change_statut_onion(onion, false)?;
+        self.session.change_statut_onion(onion, false)?;
 
-                Ok(())
-            }
-            (_, _) => Err(ErreurFeuNoyau::Standard(String::from(
-                "Le gardien et/ou le cryptographe est absent.",
-            ))),
-        }
+        Ok(())
     }
 
     /// Ferme un foyer à partir de son index dans la session.
     ///
     /// Résout l'index en adresse `.onion` puis délègue à
-    /// [`commande_fermeture_foyer`](Self::commande_fermeture_foyer).
+    /// [`fermeture_foyer`](Self::fermeture_foyer).
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si `index >= MAX_FOYERS` ou si la fermeture échoue.
-    pub fn commande_fermeture_foyer_index(&mut self, index: usize) -> ResultFeuNoyau<()> {
+    pub fn fermeture_foyer_index(&mut self, index: usize) -> ResultFeuNoyau<()> {
         let onion = String::from(self.session.index_vers_onion(index)?);
-        self.commande_fermeture_foyer(&onion)?;
+        self.fermeture_foyer(&onion)?;
         Ok(())
     }
 
@@ -778,7 +646,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// # Erreurs
     ///
     /// Retourne une erreur si le nœud n'est pas allumé.
-    pub fn commande_liste_foyers(&self) -> ResultFeuNoyau<[(bool, String); MAX_FOYERS]> {
+    pub fn liste_foyers(&self) -> ResultFeuNoyau<[(bool, String); MAX_FOYERS]> {
         self.session.donne_liste_foyers()
     }
 
@@ -806,7 +674,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// # Retour
     ///
     /// Retourne le hash SHA3-256 du blob en clair — identifiant content-addressable
-    /// à conserver pour relire la donnée via [`commande_lecture_donnees`](Self::commande_lecture_donnees).
+    /// à conserver pour relire la donnée via [`lecture_donnees`](Self::lecture_donnees).
     ///
     /// # Erreurs
     ///
@@ -814,7 +682,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// ouvert, si le Cryptographe ou l'Archiviste est absent, si la lecture de
     /// `source` échoue, si la taille dépasse [`MAX_TAILLE_BLOB`], si le chiffrement
     /// échoue, ou si l'écriture disque échoue.
-    pub fn commande_depot_donnees(
+    pub fn depot_donnees(
         &mut self,
         index_foyer: usize,
         index_classeur: usize,
@@ -828,11 +696,6 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
                 "Le foyer doit être ouvert",
             )));
         }
-        let Some(cryptographe) = &self.cryptographe else {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Impossible de trouver le cryptographe.",
-            )));
-        };
         let Some(archiviste) = &self.archivistes[index_foyer] else {
             return Err(ErreurFeuNoyau::Standard(String::from(
                 "Impossible de trouver l'archiviste.",
@@ -842,7 +705,8 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
         let mut tiroir = archiviste.donne_tiroir_vide(index_classeur);
         tiroir.remplir(source)?;
         let (blob_chiffre, hash) =
-            cryptographe.chiffrement_blob(index_foyer, index_classeur, tiroir.lire_blob())?;
+            self.cryptographe
+                .chiffrement_blob(index_foyer, index_classeur, tiroir.lire_blob())?;
 
         if archiviste.existe_blob(index_classeur, &hash) {
             return Ok(hash);
@@ -874,7 +738,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// ouvert, si le Cryptographe ou l'Archiviste est absent, si aucun fichier
     /// ne correspond au `hash`, si le déchiffrement ou la vérification d'intégrité
     /// échoue, ou si l'écriture dans `destination` échoue.
-    pub fn commande_lecture_donnees(
+    pub fn lecture_donnees(
         &mut self,
         index_foyer: usize,
         index_classeur: usize,
@@ -889,11 +753,6 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
                 "Le foyer doit être ouvert",
             )));
         }
-        let Some(cryptographe) = &self.cryptographe else {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Impossible de trouver le cryptographe.",
-            )));
-        };
         let Some(archiviste) = &self.archivistes[index_foyer] else {
             return Err(ErreurFeuNoyau::Standard(String::from(
                 "Impossible de trouver l'archiviste.",
@@ -902,7 +761,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
 
         let mut tiroir = archiviste.donne_tiroir_plein(index_classeur, hash)?;
 
-        tiroir.remplace_blob(cryptographe.dechiffrement_blob(
+        tiroir.remplace_blob(self.cryptographe.dechiffrement_blob(
             index_foyer,
             index_classeur,
             hash,
@@ -923,7 +782,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
     /// ouvert, si l'Archiviste est absent, ou si aucun fichier ne correspond
     /// au `hash` dans le classeur.
-    pub fn commande_suppression_donnees(
+    pub fn suppression_donnees(
         &self,
         index_foyer: usize,
         index_classeur: usize,
@@ -958,7 +817,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     ///
     /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
     /// ouvert, si l'Archiviste est absent, ou si la lecture du dossier échoue.
-    pub fn commande_liste_blobs(
+    pub fn liste_blobs(
         &self,
         index_foyer: usize,
         index_classeur: usize,
@@ -990,7 +849,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     ///
     /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
     /// ouvert, ou si l'Archiviste est absent.
-    pub fn commande_blob_existe(
+    pub fn blob_existe(
         &self,
         index_foyer: usize,
         index_classeur: usize,
@@ -1021,17 +880,12 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     ///
     /// Retourne une erreur si le nœud n'est pas allumé, si les index sont hors bornes,
     /// si le foyer n'est pas ouvert, ou si le blob est introuvable.
-    pub fn commande_informations_blob(
+    pub fn informations_blob(
         &self,
         index_foyer: usize,
         index_classeur: usize,
         hash: &str,
     ) -> ResultFeuNoyau<DonneesBlob> {
-        if !self.session.noeud {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Le nœud doit être allumé.",
-            )));
-        }
         if index_foyer >= MAX_FOYERS || index_classeur >= MAX_CLASSEURS {
             return Err(ErreurFeuNoyau::Standard(String::from("Index incorrect")));
         }
@@ -1068,33 +922,25 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     ///
     /// Retourne une erreur si le nœud n'est pas allumé, si la taille dépasse
     /// [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`], ou si le chiffrement échoue.
-    pub fn commande_chiffrement_asymetrique(
+    pub fn chiffrement_asymetrique(
         &self,
         cle_publique_destinataire: &[u8; 32],
         octets_a_chiffrer: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
-        if !self.session.noeud {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Le nœud doit être allumé.",
-            )));
-        }
         if octets_a_chiffrer.len() >= MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE {
             return Err(ErreurFeuNoyau::Standard(String::from(
                 "Dépassement taille pour chiffrement asymétrique",
             )));
         }
-        let Some(cryptographe) = &self.cryptographe else {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Impossible de trouver le cryptographe.",
-            )));
-        };
 
-        Ok(cryptographe.chiffrement_asymetrique(cle_publique_destinataire, octets_a_chiffrer)?)
+        Ok(self
+            .cryptographe
+            .chiffrement_asymetrique(cle_publique_destinataire, octets_a_chiffrer)?)
     }
 
     /// Déchiffre un message chiffré à destination de ce foyer.
     ///
-    /// Réciproque de [`commande_chiffrement_asymetrique`](Self::commande_chiffrement_asymetrique) —
+    /// Réciproque de [`chiffrement_asymetrique`](Self::chiffrement_asymetrique) —
     /// délègue au cryptographe qui effectue le ECDH X25519 + HKDF + AES-256-GCM.
     /// La clé privée X25519 du foyer doit être présente dans le trousseau,
     /// ce qui requiert que le foyer soit ouvert.
@@ -1107,16 +953,11 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// Retourne une erreur si le nœud n'est pas allumé, si l'index est invalide,
     /// si le foyer n'est pas ouvert, si la taille dépasse la limite,
     /// ou si le déchiffrement échoue.
-    pub fn commande_dechiffrement_asymetrique(
+    pub fn dechiffrement_asymetrique(
         &self,
         index_foyer: usize,
         octets_a_dechiffrer: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
-        if !self.session.noeud {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Le nœud doit être allumé.",
-            )));
-        }
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::Standard(String::from(
                 "Index foyer incorrect",
@@ -1132,13 +973,10 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
                 "Dépassement taille pour déchiffrement asymétrique",
             )));
         }
-        let Some(cryptographe) = &self.cryptographe else {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Impossible de trouver le cryptographe.",
-            )));
-        };
 
-        Ok(cryptographe.dechiffrement_asymetrique(index_foyer, octets_a_dechiffrer)?)
+        Ok(self
+            .cryptographe
+            .dechiffrement_asymetrique(index_foyer, octets_a_dechiffrer)?)
     }
 
     // ── Signature ────────────────────────────────────────────────────────────
@@ -1156,25 +994,15 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// # Erreurs
     ///
     /// Retourne une erreur si le nœud n'est pas allumé, si la taille
-    /// dépasse [`MAX_TAILLE_SIGNATURE`], ou si le cryptographe est absent.
-    pub fn commande_signature_noeud(&self, octets_a_signer: &[u8]) -> ResultFeuNoyau<[u8; 64]> {
-        if !self.session.noeud {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Le nœud doit être allumé.",
-            )));
-        }
+    /// dépasse [`MAX_TAILLE_SIGNATURE`], ou si la signature échoue.
+    pub fn signature_noeud(&self, octets_a_signer: &[u8]) -> ResultFeuNoyau<[u8; 64]> {
         if octets_a_signer.len() >= MAX_TAILLE_SIGNATURE {
             return Err(ErreurFeuNoyau::Standard(String::from(
                 "Dépassement taille pour signature",
             )));
         }
-        let Some(cryptographe) = &self.cryptographe else {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Impossible de trouver le cryptographe.",
-            )));
-        };
 
-        Ok(cryptographe.signature_noeud(octets_a_signer)?)
+        Ok(self.cryptographe.signature_noeud(octets_a_signer)?)
     }
 
     /// Signe des octets avec la clé privée de signature Ed25519 du foyer.
@@ -1191,17 +1019,12 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     ///
     /// Retourne une erreur si le nœud n'est pas allumé, si l'index est invalide,
     /// si le foyer n'est pas ouvert, si la taille dépasse [`MAX_TAILLE_SIGNATURE`],
-    /// ou si le cryptographe est absent.
-    pub fn commande_signature_foyer(
+    /// ou si la signature échoue.
+    pub fn signature_foyer(
         &self,
         index_foyer: usize,
         octets_a_signer: &[u8],
     ) -> ResultFeuNoyau<[u8; 64]> {
-        if !self.session.noeud {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Le nœud doit être allumé.",
-            )));
-        }
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::Standard(String::from(
                 "Index foyer incorrect",
@@ -1217,13 +1040,10 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
                 "Dépassement taille pour signature",
             )));
         }
-        let Some(cryptographe) = &self.cryptographe else {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Impossible de trouver le cryptographe.",
-            )));
-        };
 
-        Ok(cryptographe.signature_foyer(index_foyer, octets_a_signer)?)
+        Ok(self
+            .cryptographe
+            .signature_foyer(index_foyer, octets_a_signer)?)
     }
 
     /// Vérifie une signature Ed25519.
@@ -1234,18 +1054,12 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// # Erreurs
     ///
     /// Retourne une erreur si le nœud n'est pas allumé.
-    pub fn commande_verification_signature(
+    pub fn verification_signature(
         &self,
         cle_publique: VerifyingKey,
         signature: [u8; 64],
         octets_signes: &[u8],
     ) -> ResultFeuNoyau<bool> {
-        if !self.session.noeud {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Le nœud doit être allumé.",
-            )));
-        }
-
         Ok(Cryptographe::verification_signature(
             cle_publique,
             signature,
@@ -1262,7 +1076,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// clés du nœud, archives et clés de chaque foyer connu.
     ///
     /// Fonction associée — utilisable sans nœud allumé, notamment pour
-    /// diagnostiquer pourquoi [`FeuNoyau::commande_allumer`] échoue.
+    /// diagnostiquer pourquoi [`FeuNoyau::new`] échoue.
     ///
     /// # Retour
     ///
@@ -1272,7 +1086,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// # Erreurs
     ///
     /// Retourne une erreur si la variable d'environnement `HOME` est absente.
-    pub fn commande_check_up_noeud() -> ResultFeuNoyau<Vec<Anomalie>> {
+    pub fn check_up_noeud() -> ResultFeuNoyau<Vec<Anomalie>> {
         let gardien = Gardien::new()?;
 
         Ok(gardien.check_up_noeud()?)
@@ -1284,7 +1098,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     /// ainsi que l'arborescence interne : dossier `registre/` et liens symboliques
     /// vers les classeurs.
     ///
-    /// Complète [`FeuNoyau::commande_check_up_noeud`] qui couvre l'état du foyer fermé
+    /// Complète [`FeuNoyau::check_up_noeud`] qui couvre l'état du foyer fermé
     /// (archive et clés). Cette commande requiert le foyer ouvert pour accéder
     /// à l'arborescence interne.
     ///
@@ -1297,12 +1111,7 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
     ///
     /// Retourne une erreur si le nœud n'est pas allumé, si l'index est invalide,
     /// ou si le foyer n'est pas ouvert.
-    pub fn commande_check_up_foyer(&self, index_foyer: usize) -> ResultFeuNoyau<Vec<Anomalie>> {
-        if !self.session.noeud {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Le nœud doit être allumé.",
-            )));
-        }
+    pub fn check_up_foyer(&self, index_foyer: usize) -> ResultFeuNoyau<Vec<Anomalie>> {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::Standard(String::from("Index incorrect")));
         }
@@ -1311,18 +1120,15 @@ impl<I: InterfaceFeuNoyau> FeuNoyau<I> {
                 "Le foyer doit être ouvert",
             )));
         }
-        let Some(gardien) = &self.gardien else {
-            return Err(ErreurFeuNoyau::Standard(String::from(
-                "Impossible de trouver le gardien.",
-            )));
-        };
         let Some(archiviste) = &self.archivistes[index_foyer] else {
             return Err(ErreurFeuNoyau::Standard(String::from(
                 "Impossible de trouver l'archiviste.",
             )));
         };
 
-        let mut resultat = gardien.check_up_foyer(self.session.index_vers_onion(index_foyer)?);
+        let mut resultat = self
+            .gardien
+            .check_up_foyer(self.session.index_vers_onion(index_foyer)?);
 
         resultat.extend(archiviste.verifier_arborescence_classeurs()?);
 
