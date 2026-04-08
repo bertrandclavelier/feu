@@ -6,23 +6,27 @@
 //!
 //! # Architecture
 //!
-//! `feu-noyau` communique avec l'extérieur via `InterfaceFeuNoyau` — il
-//! délègue les interactions utilisateur (`demander`, `demander_mdp`) et émet
-//! des notifications d'état (clés publiques). Pour brancher `feu-noyau` sur
-//! une interface applicative sans créer de dépendance circulaire, un
-//! `AdaptateurNoyau` privé implémente `InterfaceFeuNoyau` et délègue à une
-//! copie de l'interface fournie par l'appelant.
+//! `feu-noyau` communique avec l'extérieur via `InterfaceFeuNoyau` — passée
+//! en paramètre à chaque commande, jamais stockée dans la struct. Ce choix
+//! évite toute dépendance circulaire et supprime le besoin de cloner l'interface.
+//!
+//! Le pont entre les deux couches est [`RecepteurNoyau`] : une struct éphémère,
+//! créée pour la durée d'un appel noyau, qui implémente `InterfaceFeuNoyau` en
+//! déléguant les interactions à l'interface applicative et en écrivant les
+//! notifications directement dans [`SessionApplication`].
 //!
 //! [`FeuApplication`] possède :
-//! - `feu_noyau` — instance du noyau, avec l'adaptateur comme interface
-//! - `interface_feu_application` — accès direct à l'interface pour les
-//!   notifications et mises à jour de session après chaque commande
+//! - `feu_noyau` — instance du noyau
+//! - `interface_feu_application` — canal vers la couche de présentation
+//! - `session` — état applicatif mis à jour à chaque commande noyau
 
 pub use erreur::{ErreurFeuApplication, ResultFeuApplication};
 use feu_noyau::{FeuNoyau, InterfaceFeuNoyau};
+pub use session::SessionApplication;
 
 mod commandes;
-mod erreur;
+pub mod erreur;
+mod session;
 
 /// Contrat entre `feu-application` et la couche de présentation.
 ///
@@ -44,26 +48,33 @@ pub trait InterfaceFeuApplication {
     fn demander_mdp(&self, question: &str) -> String;
 }
 
-/// Pont entre [`FeuNoyau`] et [`InterfaceFeuApplication`].
+/// Pont éphémère entre [`FeuNoyau`] et la couche applicative.
 ///
-/// Implémente [`InterfaceFeuNoyau`] en déléguant chaque appel à l'interface
-/// applicative qu'il possède. Privé — la couche de présentation n'en a pas connaissance.
-#[derive(Clone)]
-struct AdaptateurNoyau<I: InterfaceFeuApplication> {
-    /// Interface applicative — délégation de toutes les interactions noyau.
-    interface_feu_application: I,
+/// Créé pour la durée d'un seul appel noyau, puis droppé. Remplit deux rôles :
+/// - délègue les interactions bloquantes (`demander`, `demander_mdp`, `afficher`)
+///   à l'interface applicative
+/// - écrit les notifications d'état (clés publiques, état des foyers) directement
+///   dans [`SessionApplication`]
+///
+/// Privé — la couche de présentation n'en a pas connaissance.
+struct RecepteurNoyau<'a, 'b> {
+    session_application: &'a mut SessionApplication,
+    interface_feu_application: &'b mut dyn InterfaceFeuApplication,
 }
 
-impl<I: InterfaceFeuApplication> AdaptateurNoyau<I> {
-    /// Crée un adaptateur à partir d'une instance de [`InterfaceFeuApplication`].
-    fn new(interface_feu_application: I) -> Self {
+impl<'a, 'b> RecepteurNoyau<'a, 'b> {
+    fn new(
+        session_application: &'a mut SessionApplication,
+        interface_feu_application: &'b mut dyn InterfaceFeuApplication,
+    ) -> Self {
         Self {
+            session_application,
             interface_feu_application,
         }
     }
 }
 
-impl<I: InterfaceFeuApplication> InterfaceFeuNoyau for AdaptateurNoyau<I> {
+impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
     fn afficher(&self, message: &str) {
         self.interface_feu_application.afficher(message);
     }
@@ -75,21 +86,37 @@ impl<I: InterfaceFeuApplication> InterfaceFeuNoyau for AdaptateurNoyau<I> {
         self.interface_feu_application.demander_mdp(question)
     }
 
-    /// Reçoit la clé publique de signature du nœud.
-    /// À implémenter : transmettre via [`InterfaceFeuApplication`].
-    fn recevoir_cle_publique_noeud(&self, _cle_publique_sig_noeud: [u8; 32]) {
-        todo!();
+    fn recevoir_onion_foyer(&mut self, index_foyer: usize, onion: &str) {
+        self.session_application
+            .definit_onion_foyer(index_foyer, String::from(onion));
     }
 
-    /// Reçoit les clés publiques de signature et de chiffrement d'un foyer.
-    /// À implémenter : transmettre via [`InterfaceFeuApplication`].
+    fn recevoir_etat_foyer(&mut self, index_foyer: usize, etat: bool) {
+        self.session_application
+            .definit_etat_foyer(index_foyer, etat);
+    }
+
+    /// Stocke la clé publique de signature du nœud dans la session.
+    ///
+    /// Appelée par le noyau à l'allumage, après lecture du trousseau public.
+    fn recevoir_cle_publique_noeud(&mut self, cle_publique_sig_noeud: [u8; 32]) {
+        self.session_application
+            .definit_cle_publique_sig_noeud(cle_publique_sig_noeud);
+    }
+
+    /// Stocke les clés publiques de signature et de chiffrement d'un foyer dans la session.
+    ///
+    /// Appelée par le noyau à l'ouverture du foyer, après lecture du trousseau public.
     fn recevoir_cles_publiques_foyer(
-        &self,
-        _index_foyer: usize,
-        _cle_publique_sig: [u8; 32],
-        _cle_publique_chif: [u8; 32],
+        &mut self,
+        index_foyer: usize,
+        cle_publique_sig: [u8; 32],
+        cle_publique_chif: [u8; 32],
     ) {
-        todo!();
+        self.session_application
+            .definit_cle_publique_sig_foyer(index_foyer, cle_publique_sig);
+        self.session_application
+            .definit_cle_publique_chif_foyer(index_foyer, cle_publique_chif);
     }
 }
 
@@ -99,34 +126,37 @@ impl<I: InterfaceFeuApplication> InterfaceFeuNoyau for AdaptateurNoyau<I> {
 /// stable vers la couche de présentation. Toute interaction avec `feu-noyau` passe par cette
 /// structure — jamais directement depuis la couche de présentation.
 pub struct FeuApplication<I: InterfaceFeuApplication> {
-    /// Instance du noyau — l'adaptateur fait le pont entre noyau et interface.
-    feu_noyau: FeuNoyau<AdaptateurNoyau<I>>,
+    /// Instance du noyau — les commandes reçoivent un [`RecepteurNoyau`] éphémère à chaque appel.
+    feu_noyau: FeuNoyau,
 
     /// Accès direct à l'interface pour les notifications post-commande.
     interface_feu_application: I,
+
+    session: SessionApplication,
 }
 
-impl<I: InterfaceFeuApplication + Clone> FeuApplication<I> {
+impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// Crée une instance de [`FeuApplication`] prête à l'emploi.
     ///
-    /// `interface_feu_application` est clonée : une copie est donnée à
-    /// l'adaptateur (utilisée par le noyau pour les interactions bloquantes),
-    /// l'originale est conservée par [`FeuApplication`] pour les notifications
-    /// post-commande.
-    /// Crée une instance de [`FeuApplication`] prête à l'emploi.
+    /// Crée la session, construit un [`RecepteurNoyau`] éphémère le temps de
+    /// l'appel à [`FeuNoyau::new`], puis le droppe — libérant les emprunts
+    /// sur `session` et `interface_feu_application` avant la construction de `Self`.
     ///
-    /// `interface_feu_application` est clonée : une copie est donnée à
-    /// l'adaptateur (utilisée par le noyau pour les interactions bloquantes),
-    /// l'originale est conservée par [`FeuApplication`] pour les notifications
-    /// post-commande.
-    ///
-    /// Délègue à [`FeuNoyau::new`] qui détecte automatiquement si le nœud
-    /// doit être initialisé ou allumé. Les erreurs noyau sont propagées
-    /// via [`ErreurFeuApplication::FeuNoyau`].
-    pub fn new(interface_feu_application: I) -> ResultFeuApplication<Self> {
+    /// [`FeuNoyau::new`] détecte automatiquement si le nœud doit être initialisé
+    /// ou allumé. Les erreurs noyau sont propagées via [`ErreurFeuApplication::FeuNoyau`].
+    pub fn new(mut interface_feu_application: I) -> ResultFeuApplication<Self> {
+        let mut session = SessionApplication::new();
+
+        let feu_noyau = {
+            let mut recepteur_noyau =
+                RecepteurNoyau::new(&mut session, &mut interface_feu_application);
+            FeuNoyau::new(&mut recepteur_noyau)?
+        };
+
         Ok(Self {
-            feu_noyau: FeuNoyau::new(AdaptateurNoyau::new(interface_feu_application.clone()))?,
+            feu_noyau,
             interface_feu_application,
+            session,
         })
     }
 }
