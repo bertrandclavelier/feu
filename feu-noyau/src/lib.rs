@@ -613,7 +613,7 @@ impl FeuNoyau {
     ///
     /// Retourne une erreur si la création de l'archive échoue ou si la suppression
     /// du dossier échoue.
-    pub fn fermeture_foyer(
+    fn fermeture_foyer(
         &mut self,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
         onion: &str,
@@ -660,17 +660,6 @@ impl FeuNoyau {
         let onion = String::from(self.session.index_vers_onion(index)?);
         self.fermeture_foyer(interface_feu_noyau, &onion)?;
         Ok(())
-    }
-
-    /// Retourne l'état courant des foyers de la session.
-    ///
-    /// Chaque élément du tableau est un tuple `(ouvert, adresse_onion)`.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si le nœud n'est pas allumé.
-    pub fn liste_foyers(&self) -> ResultFeuNoyau<[(bool, String); MAX_FOYERS]> {
-        self.session.donne_liste_foyers()
     }
 
     // ── Données ──────────────────────────────────────────────────────────────

@@ -300,6 +300,7 @@ dependencies = [
 name = "feu-application"
 version = "0.0.3"
 dependencies = [
+ "ed25519-dalek",
  "feu-noyau",
  "thiserror",
 ]
