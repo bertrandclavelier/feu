@@ -187,12 +187,41 @@ impl Cryptographe {
     pub(super) fn recoit_trousseau_public_foyer(
         &mut self,
         trousseau_public_foyer: TrousseauPublicFoyer,
-        index: usize,
+        index_foyer: usize,
     ) -> ResultCryptographe<()> {
         self.trousseau
-            .trousseau_public_foyer_vers_trousseau_foyer(&trousseau_public_foyer, index)?;
+            .trousseau_public_foyer_vers_trousseau_foyer(&trousseau_public_foyer, index_foyer)?;
 
         self.efface_mdp_et_cle_ephemere();
+
+        Ok(())
+    }
+
+    /// Déchiffre et charge les clés d'un foyer sans session ouverte préalable.
+    ///
+    /// Variante de [`recoit_trousseau_public_foyer`](Self::recoit_trousseau_public_foyer)
+    /// pour le mode secours : collecte le mot de passe et dérive la clé éphémère
+    /// avant le déchiffrement, car aucun allumage de foyer n'a eu lieu.
+    ///
+    /// Enchaîne trois opérations séquentielles :
+    ///
+    /// 1. Collecte le mot de passe et dérive la clé éphémère Argon2id.
+    /// 2. Déchiffre les clés du foyer via `recoit_trousseau_public_foyer`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la dérivation de la clé éphémère échoue ou si
+    /// le déchiffrement d'une clé échoue (mot de passe incorrect).
+    pub(super) fn secours_recoit_trousseau_public_foyer(
+        &mut self,
+        trousseau_public_foyer: TrousseauPublicFoyer,
+        index_foyer: usize,
+        interface: &impl InterfaceFeuNoyau,
+    ) -> ResultCryptographe<()> {
+        self.demande_mdp(interface);
+        self.derivation_cle_ephemere()?;
+
+        self.recoit_trousseau_public_foyer(trousseau_public_foyer, index_foyer)?;
 
         Ok(())
     }

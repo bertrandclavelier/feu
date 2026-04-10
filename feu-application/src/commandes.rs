@@ -88,6 +88,30 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         Ok(())
     }
 
+    /// Ferme en mode secours le foyer désigné par `index_foyer`.
+    ///
+    /// À utiliser lorsque Feu s'est terminé anormalement avec un foyer ouvert :
+    /// le dossier clair est toujours sur disque mais le trousseau a été perdu.
+    /// Collecte le mot de passe, recharge les clés depuis le dossier clair,
+    /// puis archive et chiffre le foyer comme une fermeture normale.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si l'index est invalide, si le check-up du foyer
+    /// détecte une anomalie, si le mot de passe est incorrect, ou si une
+    /// opération disque échoue.
+    pub fn commande_secours_fermeture_foyer(
+        &mut self,
+        index_foyer: usize,
+    ) -> ResultFeuApplication<()> {
+        let mut recepteur =
+            RecepteurNoyau::new(&mut self.session, &mut self.interface_feu_application);
+        self.feu_noyau
+            .secours_fermeture_foyer_index(&mut recepteur, index_foyer)?;
+
+        Ok(())
+    }
+
     /// Dépose un blob dans le classeur désigné d'un foyer ouvert.
     ///
     /// Lit `source`, chiffre le contenu avec la clé du classeur (AES-256-GCM)

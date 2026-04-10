@@ -655,10 +655,71 @@ impl FeuNoyau {
     pub fn fermeture_foyer_index(
         &mut self,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
-        index: usize,
+        index_foyer: usize,
     ) -> ResultFeuNoyau<()> {
-        let onion = String::from(self.session.index_vers_onion(index)?);
+        if index_foyer >= MAX_FOYERS {
+            return Err(ErreurFeuNoyau::Standard(String::from(
+                "Index foyer trop élevé.",
+            )));
+        }
+        let onion = String::from(self.session.index_vers_onion(index_foyer)?);
         self.fermeture_foyer(interface_feu_noyau, &onion)?;
+        Ok(())
+    }
+
+    /// Ferme un foyer en mode secours — sans que ses clés soient en mémoire.
+    ///
+    /// Utilisé lorsque Feu s'est terminé anormalement alors qu'un foyer était
+    /// ouvert : le dossier clair du foyer est toujours sur disque mais le
+    /// trousseau a été perdu. Sans ce mécanisme, le foyer serait inutilisable —
+    /// `ouverture_foyer` attend une archive `.feu` qui n'existe pas, et
+    /// `fermeture_foyer` requiert les clés en mémoire.
+    ///
+    /// Enchaîne cinq étapes séquentielles :
+    ///
+    /// 1. Valide l'index du foyer.
+    /// 2. Effectue un check-up de l'arborescence — rejette si une anomalie est détectée.
+    /// 3. Collecte le mot de passe, dérive la clé éphémère et déchiffre les clés
+    ///    du foyer depuis le dossier clair (via `secours_recoit_trousseau_public_foyer`).
+    /// 4. Marque le foyer comme ouvert dans la session — prérequis de `fermeture_foyer`.
+    /// 5. Délègue à [`fermeture_foyer`](Self::fermeture_foyer) pour l'archivage,
+    ///    le chiffrement et la suppression du dossier clair.
+    ///
+    /// # Prérequis
+    ///
+    /// Le dossier clair `<onion>/` doit exister sur disque et être intact —
+    /// le check-up vérifie la présence de toutes les clés nécessaires.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si l'index est invalide, si le check-up détecte une
+    /// anomalie, si le mot de passe est incorrect, ou si une opération disque échoue.
+    pub fn secours_fermeture_foyer_index(
+        &mut self,
+        interface_feu_noyau: &mut impl InterfaceFeuNoyau,
+        index_foyer: usize,
+    ) -> ResultFeuNoyau<()> {
+        if index_foyer >= MAX_FOYERS {
+            return Err(ErreurFeuNoyau::Standard(String::from(
+                "Index foyer trop élevé.",
+            )));
+        }
+        let onion = String::from(self.session.index_vers_onion(index_foyer)?);
+        if self.gardien.check_up_foyer(&onion).len() > 0 {
+            return Err(ErreurFeuNoyau::Standard(String::from(
+                "Le check-up du foyer ne permet pas sa fermeture.",
+            )));
+        }
+
+        self.cryptographe.secours_recoit_trousseau_public_foyer(
+            self.gardien.creation_trousseau_foyer_public(&onion)?,
+            index_foyer,
+            interface_feu_noyau,
+        )?;
+
+        self.session.change_statut_onion(&onion, true)?;
+        self.fermeture_foyer(interface_feu_noyau, &onion)?;
+
         Ok(())
     }
 
