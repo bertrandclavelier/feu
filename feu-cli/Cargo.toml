@@ -11,3 +11,4 @@ feu-noyau = { path = "../feu-noyau" }
 feu-application = { path = "../feu-application" }
 rpassword = "7"
 rustyline = "17"
+secrecy = "0"

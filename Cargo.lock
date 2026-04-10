@@ -302,6 +302,7 @@ version = "0.0.3"
 dependencies = [
  "ed25519-dalek",
  "feu-noyau",
+ "secrecy",
  "thiserror",
 ]
 
@@ -315,6 +316,7 @@ dependencies = [
  "feu-noyau",
  "rpassword",
  "rustyline",
+ "secrecy",
 ]
 
 [[package]]

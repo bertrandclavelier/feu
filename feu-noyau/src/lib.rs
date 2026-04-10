@@ -28,6 +28,7 @@ use archiviste::Archiviste;
 use cryptographe::Cryptographe;
 use ed25519_dalek::VerifyingKey;
 use gardien::Gardien;
+use secrecy::SecretString;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -60,41 +61,42 @@ pub(crate) const TAILLE_CHUNK: usize = 8 * 1024;
 /// couche de présentation — CLI, TUI ou application. Il remplit deux rôles :
 ///
 /// **Entrées** — le noyau collecte ce dont il a besoin pour opérer :
-/// `demander` pour les réponses interactives, `demander_mdp` pour les mots
-/// de passe (masqués). La collecte du mot de passe est une responsabilité
-/// du noyau : il est le seul à savoir quand et pourquoi en avoir besoin.
+/// `demander_mdp` pour les mots de passe. La collecte du mot de passe est
+/// une responsabilité du noyau : il est le seul à savoir quand et pourquoi
+/// en avoir besoin, ce qui minimise la fenêtre d'exposition en mémoire.
 ///
 /// **Notifications d'état** — le noyau informe l'interface des changements
-/// d'état significatifs qu'elle ne peut pas observer autrement : clé publique
-/// du nœud à l'allumage, clés publiques des foyers à leur ouverture.
+/// d'état significatifs qu'elle ne peut pas observer autrement : seed
+/// mnémotechnique à l'initialisation, clé publique du nœud à l'allumage,
+/// clés publiques des foyers à leur ouverture.
 /// L'interface fait ce qu'elle veut de ces informations — les stocker, les
 /// afficher, les transmettre au réseau.
-///
-/// `afficher` est un cas particulier délibéré : elle sert à transmettre la
-/// seed mnémotechnique à l'interface au moment exact où elle existe en mémoire,
-/// avant zéroïsation. Passer par une couche intermédiaire créerait un risque
-/// de rétention — le noyau est le seul à contrôler ce timing.
 pub trait InterfaceFeuNoyau {
-    /// Transmet un message à afficher immédiatement sans intermédiaire.
+    /// Collecte le mot de passe Feu en masquant la saisie.
     ///
-    /// Deux usages : la seed mnémotechnique (transmise avant zéroïsation —
-    /// le noyau est le seul à contrôler ce timing) et les erreurs de saisie
-    /// de mot de passe (feedback pendant la collecte, sans couche applicative).
+    /// Retourne `None` en cas d'erreur de lecture (stdin fermé, terminal
+    /// non interactif). Le noyau retourne une erreur immédiatement — la
+    /// politique de retry est à la charge de la couche appelante.
     ///
-    /// # Dette technique
-    ///
-    /// Le texte des messages est actuellement en dur dans le noyau. À terme,
-    /// le noyau devrait émettre des types structurés — l'interface décide
-    /// du rendu.
-    fn afficher(&self, message: &str);
+    /// Le mot de passe est encapsulé dans [`SecretString`] dès réception
+    /// et zéroïsé automatiquement au drop.
+    fn demander_mdp(&self) -> Option<SecretString>;
 
-    /// Collecte une réponse de l'utilisateur.
-    /// Retourne une chaîne vide en cas d'erreur de lecture.
-    fn demander(&self, question: &str) -> String;
+    /// Transmet les mots de la seed mnémotechnique BIP39 à l'interface.
+    ///
+    /// Appelée une seule fois à l'initialisation du nœud, avant zéroïsation
+    /// de la seed. Les `&str` empruntent directement la mémoire de la
+    /// [`Mnemonic`](bip39::Mnemonic) — aucune copie n'est effectuée par le noyau.
+    /// L'interface est responsable de l'affichage et de toute copie temporaire.
+    fn recevoir_seed(&mut self, mots: &[&str]);
 
-    /// Collecte un mot de passe en masquant la saisie.
-    /// Retourne une chaîne vide en cas d'erreur de lecture.
-    fn demander_mdp(&self, question: &str) -> String;
+    /// Demande à l'interface de confirmer que la seed a bien été enregistrée.
+    ///
+    /// Appelée immédiatement après [`recevoir_seed`](Self::recevoir_seed),
+    /// tant que la seed est encore en mémoire. Si `false`, le noyau interrompt
+    /// l'initialisation. L'interface décide du mode de confirmation — ressaisie,
+    /// case à cocher, ou autre.
+    fn confirmer_enregistrement_seed(&self) -> bool;
 
     fn recevoir_onion_foyer(&mut self, index_foyer: usize, onion: &str);
 
@@ -215,21 +217,6 @@ impl SessionFoyers {
                 est_ouvert: false,
             }),
         }
-    }
-
-    /// Retourne l'état et l'adresse de chaque foyer sous forme de tableau.
-    ///
-    /// Chaque élément est un tuple `(ouvert, adresse_onion)`.
-    ///
-    /// Retourne toujours `Ok` — le `Result` est conservé pour la cohérence
-    /// de l'API publique exposée via [`FeuNoyau::liste_foyers`].
-    fn donne_liste_foyers(&self) -> ResultFeuNoyau<[(bool, String); MAX_FOYERS]> {
-        let mut tableau: [(bool, String); MAX_FOYERS] =
-            std::array::from_fn(|_| (false, String::from("")));
-        for (i, e) in tableau.iter_mut().enumerate() {
-            *e = (self.foyers[i].est_ouvert, self.foyers[i].onion.clone());
-        }
-        Ok(tableau)
     }
 
     /// Retourne `true` si aucun foyer n'est ouvert.

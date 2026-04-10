@@ -22,6 +22,7 @@
 
 pub use erreur::{ErreurFeuApplication, ResultFeuApplication};
 use feu_noyau::{FeuNoyau, InterfaceFeuNoyau};
+use secrecy::SecretString;
 pub use session::SessionApplication;
 
 mod commandes;
@@ -30,29 +31,34 @@ mod session;
 
 /// Contrat entre `feu-application` et la couche de présentation.
 ///
-/// Trois catégories de méthodes :
-/// - **Sorties** — `afficher` : cas délibéré pour la seed mnémotechnique, transmise
-///   directement avant zéroïsation sans passer par une couche intermédiaire.
-/// - **Entrées** — collecte bloquante d'une saisie utilisateur (`demander`, `demander_mdp`).
-/// - **Notifications** — à venir : clés publiques, état de session, etc.
+/// Sous-ensemble de [`InterfaceFeuNoyau`](feu_noyau::InterfaceFeuNoyau) exposé
+/// à la couche de présentation. Le [`RecepteurNoyau`] délègue ces trois méthodes
+/// à l'interface applicative ; les notifications d'état (clés publiques, foyers)
+/// sont écrites directement dans [`SessionApplication`] sans passer par ce trait.
 pub trait InterfaceFeuApplication {
-    /// Transmet un message à afficher immédiatement — usage réservé à la seed
-    /// mnémotechnique, transmise avant zéroïsation sans intermédiaire.
-    fn afficher(&self, message: &str);
-    /// Collecte une réponse de l'utilisateur.
-    /// Retourne une chaîne vide en cas d'erreur de lecture.
-    fn demander(&self, question: &str) -> String;
+    /// Collecte le mot de passe Feu en masquant la saisie.
+    ///
+    /// Retourne `None` en cas d'erreur de lecture. Le mot de passe est
+    /// encapsulé dans [`SecretString`] dès réception et zéroïsé au drop.
+    fn demander_mdp(&self) -> Option<SecretString>;
 
-    /// Collecte un mot de passe en masquant la saisie.
-    /// Retourne une chaîne vide en cas d'erreur de lecture.
-    fn demander_mdp(&self, question: &str) -> String;
+    /// Transmet les mots de la seed mnémotechnique BIP39 à afficher.
+    ///
+    /// Appelée une seule fois à l'initialisation. Les `&str` empruntent
+    /// la mémoire du noyau — toute copie est à la charge de l'interface.
+    fn recevoir_seed(&mut self, mots: &[&str]);
+
+    /// Demande confirmation que la seed a bien été enregistrée.
+    ///
+    /// Retourne `false` pour interrompre l'initialisation.
+    fn confirmer_enregistrement_seed(&self) -> bool;
 }
 
 /// Pont éphémère entre [`FeuNoyau`] et la couche applicative.
 ///
 /// Créé pour la durée d'un seul appel noyau, puis droppé. Remplit deux rôles :
-/// - délègue les interactions bloquantes (`demander`, `demander_mdp`, `afficher`)
-///   à l'interface applicative
+/// - délègue les interactions bloquantes (`demander_mdp`, `recevoir_seed`,
+///   `confirmer_enregistrement_seed`) à l'interface applicative
 /// - écrit les notifications d'état (clés publiques, état des foyers) directement
 ///   dans [`SessionApplication`]
 ///
@@ -75,15 +81,17 @@ impl<'a, 'b> RecepteurNoyau<'a, 'b> {
 }
 
 impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
-    fn afficher(&self, message: &str) {
-        self.interface_feu_application.afficher(message);
-    }
-    fn demander(&self, question: &str) -> String {
-        self.interface_feu_application.demander(question)
+    fn demander_mdp(&self) -> Option<SecretString> {
+        self.interface_feu_application.demander_mdp()
     }
 
-    fn demander_mdp(&self, question: &str) -> String {
-        self.interface_feu_application.demander_mdp(question)
+    fn recevoir_seed(&mut self, mots: &[&str]) {
+        self.interface_feu_application.recevoir_seed(mots);
+    }
+
+    fn confirmer_enregistrement_seed(&self) -> bool {
+        self.interface_feu_application
+            .confirmer_enregistrement_seed()
     }
 
     fn recevoir_onion_foyer(&mut self, index_foyer: usize, onion: &str) {

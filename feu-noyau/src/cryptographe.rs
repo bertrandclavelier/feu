@@ -54,10 +54,13 @@ use trousseau::Trousseau;
 use trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
+const NOMBRE_MOTS_SEED: usize = 12;
 const INFO_HKDF_CHIFFREMENT_ASYMETRIQUE: &str = "feu-chiffrement-asymetrique";
 
 const ERR_CRY_001: &str = "CRY-001 > Données corrompues après déchiffrement";
 const ERR_CRY_002: &str = "CRY-002 > Erreur déchiffrement";
+const ERR_CRY_003: &str = "CRY-003 > Erreur définition mot de passe";
+const ERR_CRY_004: &str = "CRY-004 > Problème enregistrement seed";
 
 mod trousseau;
 pub(crate) mod trousseaux_publics;
@@ -96,9 +99,9 @@ impl Cryptographe {
     /// la dérivation des clés d'un foyer échoue.
     pub(super) fn initialise_noeud_from_nouvelle_seed(
         &mut self,
-        interface: &impl InterfaceFeuNoyau,
+        interface: &mut impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<()> {
-        self.initialisation_nouveau_mdp(interface);
+        self.initialisation_nouveau_mdp(interface)?;
 
         // Bloc encadrant la portée de seed_bytes
         {
@@ -106,17 +109,17 @@ impl Cryptographe {
 
             // Bloc encadrant la portée de mnemonic
             {
-                let mnemonic =
-                    SecretBox::new(Box::new(Mnemonic::generate_in(Language::French, 12)?));
+                let mnemonic = SecretBox::new(Box::new(Mnemonic::generate_in(
+                    Language::French,
+                    NOMBRE_MOTS_SEED,
+                )?));
 
-                interface.afficher(
-                    "Cryptographe ›› ATTENTION ! La seed ci-après ne sera affichée qu'une
-        seule fois avant d'être détruite. Elle doit impérativement être notée et mise en sécurité.",
-                );
-                for (i, mot) in mnemonic.expose_secret().words().enumerate() {
-                    interface.afficher(&format!("{i:<2}- {mot}"));
+                let mots: Vec<&str> = mnemonic.expose_secret().words().collect();
+                interface.recevoir_seed(&mots);
+
+                if !interface.confirmer_enregistrement_seed() {
+                    return Err(ErreurCryptographe::Interne(String::from(ERR_CRY_004)));
                 }
-
                 seed_bytes = SecretBox::new(Box::new(mnemonic.expose_secret().to_seed(""))); // passphrase vide
             }
 
@@ -156,7 +159,7 @@ impl Cryptographe {
         trousseau_public_noeud: &TrousseauPublicNoeud,
         interface: &impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<()> {
-        self.demande_mdp(interface);
+        self.demande_mdp(interface)?;
         self.trousseau
             .definit_sel(trousseau_public_noeud.donne_sel());
         self.derivation_cle_ephemere()?;
@@ -218,7 +221,7 @@ impl Cryptographe {
         index_foyer: usize,
         interface: &impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<()> {
-        self.demande_mdp(interface);
+        self.demande_mdp(interface)?;
         self.derivation_cle_ephemere()?;
 
         self.recoit_trousseau_public_foyer(trousseau_public_foyer, index_foyer)?;
@@ -271,7 +274,7 @@ impl Cryptographe {
         &mut self,
         interface: &impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<TrousseauPublicComplet> {
-        self.initialisation_nouveau_mdp(interface);
+        self.initialisation_nouveau_mdp(interface)?;
         self.trousseau.derive_cle_ephemere()?;
         let trousseau_public_complet = self.trousseau.genere_trousseau_public_complet()?;
         self.trousseau.efface_cle_ephemere();
@@ -333,7 +336,7 @@ impl Cryptographe {
         destination: &mut impl Write,
         interface: &impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<()> {
-        self.demande_mdp(interface);
+        self.demande_mdp(interface)?;
         self.derivation_cle_ephemere()?;
         self.trousseau
             .dechiffre_avec_cle_foyer(cle_chiffree, source, destination)?;
@@ -564,22 +567,18 @@ impl Cryptographe {
     /// Le mot de passe est encapsulé dans [`SecretBox`] dès réception et
     /// remplace tout mot de passe précédemment défini (l'ancien est zéroïsé
     /// automatiquement au remplacement).
-    fn initialisation_nouveau_mdp(&mut self, interface: &impl InterfaceFeuNoyau) {
-        loop {
-            let mdp = SecretBox::new(Box::new(
-                interface.demander_mdp("Entrez un nouveau mot de passe :"),
-            ));
-            let mdp2 = SecretBox::new(Box::new(
-                interface.demander_mdp("Entrez de nouveau le mot de passe :"),
-            ));
-
-            if mdp.expose_secret() == mdp2.expose_secret() {
+    fn initialisation_nouveau_mdp(
+        &mut self,
+        interface: &impl InterfaceFeuNoyau,
+    ) -> ResultCryptographe<()> {
+        if let (Some(mdp), Some(mdp2)) = (interface.demander_mdp(), interface.demander_mdp()) {
+            if mdp.expose_secret() == mdp2.expose_secret() && mdp.expose_secret().len() >= 12 {
                 self.trousseau.definit_mdp(mdp);
-                break;
-            } else {
-                interface.afficher("Les deux entrées sont différentes. Recommencez...");
+                return Ok(());
             }
         }
+
+        return Err(ErreurCryptographe::Interne(String::from(ERR_CRY_003)));
     }
 
     /// Collecte le mot de passe Feu via l'interface et le stocke dans le trousseau.
@@ -587,10 +586,13 @@ impl Cryptographe {
     /// Le mot de passe est encapsulé dans [`SecretBox`] dès réception.
     /// Il doit être effacé via [`efface_mdp_et_cle_ephemere`](Self::efface_mdp_et_cle_ephemere)
     /// dès qu'il n'est plus nécessaire.
-    fn demande_mdp(&mut self, interface: &impl InterfaceFeuNoyau) {
-        let mdp = SecretBox::new(Box::new(interface.demander_mdp("Entrez le mot de passe :")));
+    fn demande_mdp(&mut self, interface: &impl InterfaceFeuNoyau) -> ResultCryptographe<()> {
+        if let Some(mdp) = interface.demander_mdp() {
+            self.trousseau.definit_mdp(mdp);
+            return Ok(());
+        }
 
-        self.trousseau.definit_mdp(mdp);
+        return Err(ErreurCryptographe::Interne(String::from(ERR_CRY_003)));
     }
 
     /// Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel du trousseau.

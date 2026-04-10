@@ -42,8 +42,7 @@ use feu_application::{FeuApplication, InterfaceFeuApplication};
 use rpassword::read_password;
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
-use std::io;
-use std::io::BufRead;
+use secrecy::SecretString;
 use std::process;
 
 /// Canal d'entrée/sortie de FeuNoyau en mode CLI.
@@ -146,35 +145,26 @@ impl InterfaceCli {
 }
 
 impl InterfaceFeuApplication for InterfaceCli {
-    fn afficher(&self, message: &str) {
-        println!("{message}");
-    }
-
-    fn demander(&self, question: &str) -> String {
-        println!("{question}");
-        let stdin = io::stdin();
-        let mut entree = String::new();
-
-        match stdin.lock().read_line(&mut entree) {
-            Ok(_) => entree.trim().to_string(),
-            Err(e) => {
-                eprintln!("[FEU-CLI] erreur d'entrée utilisateur : {}", e);
-                String::new()
-            }
-        }
-    }
-
-    fn demander_mdp(&self, question: &str) -> String {
-        println!("{question}");
+    fn demander_mdp(&self) -> Option<SecretString> {
+        println!("Mot de passe :");
         match read_password() {
-            Ok(mdp) => mdp,
+            Ok(mdp) => Some(SecretString::from(mdp)),
             Err(e) => {
                 eprintln!(
                     "[FEU-CLI] erreur d'entrée du mot de passe par l'utilisateur : {}",
                     e
                 );
-                String::new()
+                None
             }
         }
+    }
+    fn recevoir_seed(&mut self, mots: &[&str]) {
+        for e in mots {
+            println!("{e}");
+        }
+    }
+
+    fn confirmer_enregistrement_seed(&self) -> bool {
+        true
     }
 }

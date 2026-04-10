@@ -84,6 +84,7 @@ use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
 use rand::RngCore;
 use rand::rngs::OsRng;
+use secrecy::SecretString;
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use sha3::{Digest, Sha3_256};
 use slip10_ed25519::derive_ed25519_private_key;
@@ -282,7 +283,7 @@ impl TrousseauFoyer {
 /// Toutes les clés privées et symétriques sont encapsulées dans [`SecretBox`]
 /// ou protégées par `ZeroizeOnDrop`.
 pub(super) struct Trousseau {
-    mdp: Option<SecretBox<String>>,
+    mdp: Option<SecretString>,
     cle_ephemere: Option<SecretBox<[u8; 32]>>,
     sel: Option<[u8; 16]>,
     paire_signature_noeud: Option<PaireClesSignature>,
@@ -483,7 +484,7 @@ impl Trousseau {
     /// `mot` est un [`SecretBox<String>`] déjà construit par l'appelant —
     /// la méthode se contente de le stocker. Tout mot de passe précédemment
     /// défini est remplacé et zéroïsé au drop.
-    pub(super) fn definit_mdp(&mut self, mot: SecretBox<String>) {
+    pub(super) fn definit_mdp(&mut self, mot: SecretString) {
         self.mdp = Some(mot);
     }
 
