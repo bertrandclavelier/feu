@@ -10,7 +10,7 @@
 //! en paramètre à chaque commande, jamais stockée dans la struct. Ce choix
 //! évite toute dépendance circulaire et supprime le besoin de cloner l'interface.
 //!
-//! Le pont entre les deux couches est [`RecepteurNoyau`] : une struct éphémère,
+//! Le pont entre les deux couches est une struct interne éphémère (`RecepteurNoyau`),
 //! créée pour la durée d'un appel noyau, qui implémente `InterfaceFeuNoyau` en
 //! déléguant les interactions à l'interface applicative et en écrivant les
 //! notifications directement dans [`SessionApplication`].
@@ -31,10 +31,10 @@ mod session;
 
 /// Contrat entre `feu-application` et la couche de présentation.
 ///
-/// Sous-ensemble de [`InterfaceFeuNoyau`](feu_noyau::InterfaceFeuNoyau) exposé
-/// à la couche de présentation. Le [`RecepteurNoyau`] délègue ces trois méthodes
-/// à l'interface applicative ; les notifications d'état (clés publiques, foyers)
-/// sont écrites directement dans [`SessionApplication`] sans passer par ce trait.
+/// Sous-ensemble de [`InterfaceFeuNoyau`] exposé à la couche de présentation.
+/// Le pont interne délègue ces trois méthodes à l'interface applicative ; les
+/// notifications d'état (clés publiques, foyers) sont écrites directement dans
+/// [`SessionApplication`] sans passer par ce trait.
 pub trait InterfaceFeuApplication {
     /// Collecte le mot de passe Feu en masquant la saisie.
     ///
@@ -94,11 +94,18 @@ impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
             .confirmer_enregistrement_seed()
     }
 
+    /// Enregistre l'adresse `.onion` d'un foyer dans la session applicative.
+    ///
+    /// Appelée par le noyau à l'allumage pour chaque foyer connu, et à
+    /// l'initialisation pour chaque foyer créé.
     fn recevoir_onion_foyer(&mut self, index_foyer: usize, onion: &str) {
         self.session_application
             .definit_onion_foyer(index_foyer, String::from(onion));
     }
 
+    /// Met à jour l'état d'ouverture d'un foyer dans la session applicative.
+    ///
+    /// Appelée par le noyau à la fin d'une ouverture ou d'une fermeture réussie.
     fn recevoir_etat_foyer(&mut self, index_foyer: usize, etat: bool) {
         self.session_application
             .definit_etat_foyer(index_foyer, etat);
@@ -146,9 +153,9 @@ pub struct FeuApplication<I: InterfaceFeuApplication> {
 impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// Crée une instance de [`FeuApplication`] prête à l'emploi.
     ///
-    /// Crée la session, construit un [`RecepteurNoyau`] éphémère le temps de
-    /// l'appel à [`FeuNoyau::new`], puis le droppe — libérant les emprunts
-    /// sur `session` et `interface_feu_application` avant la construction de `Self`.
+    /// Crée la session, construit le pont interne éphémère le temps de l'appel
+    /// à [`FeuNoyau::new`], puis le droppe — libérant les emprunts sur `session`
+    /// et `interface_feu_application` avant la construction de `Self`.
     ///
     /// [`FeuNoyau::new`] détecte automatiquement si le nœud doit être initialisé
     /// ou allumé. Les erreurs noyau sont propagées via [`ErreurFeuApplication::FeuNoyau`].

@@ -14,12 +14,11 @@
 //! [`ErreurFeuApplication`].
 //!
 //! Les commandes qui ne modifient pas l'état du noyau (`blob_existe`,
-//! `informations_blob`, signatures, check-up…) prennent `&self` ;
+//! `informations_blob`, signatures, diagnostic…) prennent `&self` ;
 //! les autres prennent `&mut self`.
 
 use std::io::{Read, Write};
 
-use ed25519_dalek::VerifyingKey;
 use feu_noyau::{Anomalie, DonneesBlob};
 
 use super::*;
@@ -54,7 +53,7 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     ///
     /// Déchiffre l'archive du foyer, charge les clés en mémoire et instancie
     /// l'Archiviste. Les clés publiques du foyer sont transmises à la session
-    /// via le [`RecepteurNoyau`].
+    /// via le pont interne vers le noyau.
     ///
     /// # Erreurs
     ///
@@ -97,7 +96,7 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si l'index est invalide, si le check-up du foyer
+    /// Retourne une erreur si l'index est invalide, si le diagnostic du foyer
     /// détecte une anomalie, si le mot de passe est incorrect, ou si une
     /// opération disque échoue.
     pub fn commande_secours_fermeture_foyer(
@@ -203,7 +202,7 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// # Erreurs
     ///
     /// Retourne une erreur si les index sont invalides ou si le foyer n'est pas ouvert.
-    pub fn commande_blob_existe(
+    pub fn commande_existence_blob(
         &self,
         index_foyer: usize,
         index_classeur: usize,
@@ -211,7 +210,7 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     ) -> ResultFeuApplication<bool> {
         Ok(self
             .feu_noyau
-            .blob_existe(index_foyer, index_classeur, hash)?)
+            .existence_blob(index_foyer, index_classeur, hash)?)
     }
 
     /// Retourne les métadonnées système d'un blob (taille, dates d'accès et de modification).
@@ -316,7 +315,7 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// un échec de vérification cryptographique retourne `false`, pas une erreur.
     pub fn commande_verification_signature(
         &self,
-        cle_publique: VerifyingKey,
+        cle_publique: [u8; 32],
         signature: [u8; 64],
         octets_signes: &[u8],
     ) -> ResultFeuApplication<bool> {
@@ -333,8 +332,8 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// # Erreurs
     ///
     /// Retourne une erreur si le diagnostic ne peut pas être conduit.
-    pub fn commande_check_up_noeud() -> ResultFeuApplication<Vec<Anomalie>> {
-        Ok(FeuNoyau::check_up_noeud()?)
+    pub fn commande_diagnostic_noeud() -> ResultFeuApplication<Vec<Anomalie>> {
+        Ok(FeuNoyau::diagnostic_noeud()?)
     }
 
     /// Diagnostique la présence et la cohérence des fichiers d'un foyer.
@@ -345,10 +344,10 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// # Erreurs
     ///
     /// Retourne une erreur si l'index est invalide ou si le diagnostic échoue.
-    pub fn commande_check_up_foyer(
+    pub fn commande_diagnostic_foyer(
         &self,
         index_foyer: usize,
     ) -> ResultFeuApplication<Vec<Anomalie>> {
-        Ok(self.feu_noyau.check_up_foyer(index_foyer)?)
+        Ok(self.feu_noyau.diagnostic_foyer(index_foyer)?)
     }
 }

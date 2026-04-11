@@ -124,7 +124,7 @@ impl Tiroir {
 
     /// Enregistre le hash SHA3-256 du blob en clair dans le tiroir.
     ///
-    /// Doit être appelé après chiffrement, avant [`ecrire_blob`](super::Archiviste::ecrire_blob).
+    /// Doit être appelé après chiffrement, avant [`ecrit_blob`](super::Archiviste::ecrit_blob).
     /// Le hash est calculé sur le clair — il sert de nom de fichier dans le classeur.
     pub(crate) fn definit_hash(&mut self, hash: &str) {
         self.hash = Some(String::from(hash));

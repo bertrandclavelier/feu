@@ -100,7 +100,7 @@ impl Carnet {
     ///
     /// Contrôle `~/.feu/`, `.cles/`, `config.feu` et les trois clés du nœud.
     /// N'inspecte pas les foyers — leurs fichiers dépendent de la config,
-    /// lue séparément par [`Gardien::check_up_noeud`].
+    /// lue séparément par [`super::Gardien::diagnostic_noeud`].
     pub(super) fn verifier_arborescence_noeud(&self) -> ResultGardien<Vec<Anomalie>> {
         let mut resultat: Vec<Anomalie> = Vec::new();
         if !self.chemin_feu.exists() {

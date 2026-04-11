@@ -22,33 +22,85 @@ use crate::{
 };
 use thiserror::Error;
 
+/// Alias de [`Result`] utilisé par toutes les fonctions publiques de `feu-noyau`.
 pub type ResultFeuNoyau<T> = Result<T, ErreurFeuNoyau>;
 
+/// Type d'erreur unique exposé par `feu-noyau`.
+///
+/// Agrège deux familles de variantes :
+///
+/// - **Erreurs remontées d'un composant interne** (`Gardien`, `Cryptographe`,
+///   `Archiviste`) — le type interne est encapsulé dans une `String` via
+///   `.to_string()`, ce qui préserve l'encapsulation des détails
+///   d'implémentation et évite toute fuite de type privé à travers l'API.
+/// - **Erreurs propres à l'orchestration du noyau** — préconditions non
+///   satisfaites, index hors bornes, état de session incohérent.
+///
+/// Le préfixe `NOY >` dans chaque message sert de marqueur de couche lorsque
+/// les messages sont encapsulés par la couche applicative (`feu-application`).
 #[derive(Error, Debug)]
 pub enum ErreurFeuNoyau {
     /// Erreur remontée depuis le gardien — opération disque ou parsing échoué.
-    /// Le message textuel provient de [`ErreurGardien`] via `.to_string()`.
+    /// Le message textuel provient du type d'erreur interne du gardien via `.to_string()`.
     #[error("NOY > {0}")]
     Gardien(String),
 
     /// Erreur remontée depuis le cryptographe — opération cryptographique échouée.
-    /// Le message textuel provient de [`ErreurCryptographe`] via `.to_string()`.
+    /// Le message textuel provient du type d'erreur interne du cryptographe via `.to_string()`.
     #[error("NOY > {0}")]
     Cryptographe(String),
 
     /// Erreur remontée depuis l'archiviste — opération sur l'arborescence d'un foyer échouée.
-    /// Le message textuel provient de [`ErreurArchiviste`] via `.to_string()`.
+    /// Le message textuel provient du type d'erreur interne de l'archiviste via `.to_string()`.
     #[error("NOY > {0}")]
     Archiviste(String),
 
-    /// Erreur liée à l'état de [`FeuNoyau`](crate::FeuNoyau) lui-même — état invalide,
-    /// précondition non respectée. Indépendante du gardien et du cryptographe.
-    #[error("NOY > {0}")]
-    Standard(String),
+    /// Un index de foyer ou de classeur fourni par l'appelant est hors bornes
+    /// (`>= MAX_FOYERS` ou `>= MAX_CLASSEURS`).
+    #[error("NOY > Index foyer ou classeur invalide")]
+    IndexInvalide,
+
+    /// Tentative d'ouvrir un foyer déjà marqué comme ouvert dans la session.
+    #[error("NOY > Impossible d'ouvrir un foyer déjà ouvert")]
+    FoyerDejaOuvert,
+
+    /// Opération nécessitant un foyer ouvert appelée sur un foyer fermé —
+    /// les clés du trousseau ne sont pas disponibles en mémoire.
+    #[error("NOY > Opération impossible sur foyer fermé")]
+    FoyerFerme,
+
+    /// Opération requérant que **tous** les foyers soient ouverts — typiquement
+    /// un changement de mot de passe qui rechiffre l'intégralité du trousseau.
+    #[error("NOY > Tous les foyers doivent être ouverts pour cette opération")]
+    TousFoyersNonOuverts,
+
+    /// État interne incohérent : un foyer est marqué ouvert dans la session
+    /// mais l'emplacement correspondant d'`archivistes` est `None`. Ne devrait
+    /// jamais se produire — signale un bug d'orchestration.
+    #[error("NOY > Foyer ouvert sans archiviste (état interne incohérent)")]
+    ArchivisteIndisponible,
+
+    /// Taille de message dépassée pour une opération bornée :
+    /// [`MAX_TAILLE_BLOB`](crate::MAX_TAILLE_BLOB),
+    /// [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`](crate::MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE)
+    /// ou [`MAX_TAILLE_SIGNATURE`](crate::MAX_TAILLE_SIGNATURE).
+    #[error("NOY > Dépassement taille autorisée pour cette opération")]
+    TailleMaxDepassee,
+
+    /// Le diagnostic préalable à une fermeture en secours a détecté une
+    /// anomalie — le dossier clair du foyer n'est pas dans un état suffisant
+    /// pour que la reconstruction du trousseau puisse aboutir.
+    #[error("NOY > Check-up négatif pour fermeture en secours du foyer")]
+    FermetureSecoursFoyerImpossible,
+
+    /// L'adresse `.onion` fournie ou résolue depuis un index ne correspond
+    /// à aucun foyer connu de la session.
+    #[error("NOY > Adresse onion inconnue")]
+    OnionIntrouvable,
 }
 
 impl From<ErreurGardien> for ErreurFeuNoyau {
-    /// Convertit [`ErreurGardien`] en [`ErreurFeuNoyau::Gardien`].
+    /// Convertit une erreur interne du gardien en [`ErreurFeuNoyau::Gardien`].
     ///
     /// Le type interne est perdu — seul le message textuel est propagé,
     /// préservant l'encapsulation des détails d'implémentation du gardien.
@@ -58,7 +110,7 @@ impl From<ErreurGardien> for ErreurFeuNoyau {
 }
 
 impl From<ErreurCryptographe> for ErreurFeuNoyau {
-    /// Convertit [`ErreurCryptographe`] en [`ErreurFeuNoyau::Cryptographe`].
+    /// Convertit une erreur interne du cryptographe en [`ErreurFeuNoyau::Cryptographe`].
     ///
     /// Le type interne est perdu — seul le message textuel est propagé,
     /// préservant l'encapsulation des détails d'implémentation du cryptographe.
@@ -68,7 +120,7 @@ impl From<ErreurCryptographe> for ErreurFeuNoyau {
 }
 
 impl From<ErreurArchiviste> for ErreurFeuNoyau {
-    /// Convertit [`ErreurArchiviste`] en [`ErreurFeuNoyau::Archiviste`].
+    /// Convertit une erreur interne de l'archiviste en [`ErreurFeuNoyau::Archiviste`].
     ///
     /// Le type interne est perdu — seul le message textuel est propagé,
     /// préservant l'encapsulation des détails d'implémentation de l'archiviste.

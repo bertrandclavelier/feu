@@ -36,6 +36,7 @@ const VERSION_CONFIGURATION: u32 = 1;
 const ERR_GAR_001: &str = "GAR-001 > Aucune arborescence du nœud trouvée";
 const ERR_GAR_002: &str = "GAR-002 > Une arborescence existe déjà";
 const ERR_GAR_003: &str = "GAR-003 > Suppression du dossier impossible s'il n'est pas archivé";
+const ERR_GAR_004: &str = "GAR-004 > Manque au moins un élément dans config.feu";
 
 /// Configuration globale du nœud — miroir de `config.feu` en mémoire.
 ///
@@ -76,6 +77,9 @@ impl Configuration {
     /// entiers valides. Panique si le fichier contient moins de lignes qu'attendu.
     fn new_from_string(contenu: &str) -> ResultGardien<Self> {
         let mut lignes: Vec<&str> = contenu.lines().collect();
+        if lignes.len() < 2 + MAX_FOYERS {
+            return Err(ErreurGardien::Interne(String::from(ERR_GAR_004)));
+        }
         let version = lignes.remove(0).parse::<u32>()?;
         let prochain_index = lignes.remove(0).parse::<u32>()?;
 
@@ -196,16 +200,14 @@ impl Gardien {
         &self,
         trousseau_public_complet: &TrousseauPublicComplet,
     ) -> ResultGardien<()> {
-        match self.carnet.existe_arborescence_noeud() {
-            true => Err(ErreurGardien::Interne(String::from(ERR_GAR_002))),
-            false => {
-                // Écriture du trousseau public sur le disque
-                self.carnet
-                    .ecrire_trousseau_public_complet(trousseau_public_complet)?;
-
-                Ok(())
-            }
+        if self.carnet.existe_arborescence_noeud() {
+            return Err(ErreurGardien::Interne(String::from(ERR_GAR_002)));
         }
+        // Écriture du trousseau public sur le disque
+        self.carnet
+            .ecrire_trousseau_public_complet(trousseau_public_complet)?;
+
+        Ok(())
     }
 
     /// Supprime le dossier clair `<onion>` après vérification que l'archive existe.
@@ -352,7 +354,7 @@ impl Gardien {
     /// 2. L'archive chiffrée `<onion>.feu` en lecture — source du déchiffrement.
     /// 3. Un fichier `<onion>.tar` vide en écriture — destination du déchiffrement.
     ///
-    /// Après déchiffrement, appeler [`extraction_dechiffree_foyer`](Self::extraction_dechiffree_foyer)
+    /// Après déchiffrement, appeler [`desarchivage_chiffre_foyer`](Self::desarchivage_chiffre_foyer)
     /// pour extraire le tar et nettoyer les fichiers intermédiaires.
     ///
     /// # Erreurs
@@ -414,7 +416,7 @@ impl Gardien {
     /// et parser `config.feu` pour vérifier les fichiers de chaque foyer connu.
     /// Si la config est illisible, les foyers ne peuvent pas être vérifiés —
     /// `ConfigurationIllisible` est ajoutée et la boucle foyers est ignorée.
-    pub(super) fn check_up_noeud(&self) -> ResultGardien<Vec<Anomalie>> {
+    pub(super) fn diagnostic_noeud(&self) -> ResultGardien<Vec<Anomalie>> {
         let mut resultat = self.carnet.verifier_arborescence_noeud()?;
 
         match self.carnet.ouvre_configuration() {
@@ -463,7 +465,7 @@ impl Gardien {
     /// Vérifie la présence des fichiers d'un foyer ouvert.
     ///
     /// Délègue la vérification de l'arborescence interne au carnet.
-    pub(super) fn check_up_foyer(&self, onion: &str) -> Vec<Anomalie> {
+    pub(super) fn diagnostic_foyer(&self, onion: &str) -> Vec<Anomalie> {
         self.carnet.verifier_arborescence_foyer(onion)
     }
 }

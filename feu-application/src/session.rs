@@ -10,10 +10,11 @@
 //!
 //! [`SessionApplication`] centralise tout ce que `feu-application` doit
 //! mémoriser entre les commandes : capacités du noyau, adresses et états
-//! des foyers, clés publiques reçues via [`InterfaceFeuNoyau`].
+//! des foyers, clés publiques reçues via l'interface du noyau.
 //!
-//! Cette struct est peuplée par [`RecepteurNoyau`] pendant l'exécution de
-//! chaque commande noyau — jamais directement par la couche de présentation.
+//! Cette struct est peuplée par le pont interne vers le noyau pendant
+//! l'exécution de chaque commande — jamais directement par la couche de
+//! présentation.
 
 use crate::erreur::{ErreurFeuApplication, ResultFeuApplication};
 use feu_noyau::{
@@ -58,8 +59,8 @@ pub struct SessionApplication {
 
 impl SessionApplication {
     /// Crée une session vide : capacités initialisées depuis les constantes noyau,
-    /// foyers fermés, clés à zéro. Les clés sont peuplées par [`RecepteurNoyau`]
-    /// lors du premier appel à [`FeuNoyau::new`].
+    /// foyers fermés, clés à zéro. Les clés sont peuplées par le pont interne
+    /// vers le noyau lors de la construction de `FeuApplication`.
     pub fn new() -> Self {
         Self {
             nombre_foyers: MAX_FOYERS,
@@ -80,7 +81,7 @@ impl SessionApplication {
     /// # Erreurs
     ///
     /// Retourne une erreur si `index_foyer >= MAX_FOYERS`.
-    pub fn donne_onion_foyer(&self, index_foyer: usize) -> ResultFeuApplication<&str> {
+    pub fn onion_foyer(&self, index_foyer: usize) -> ResultFeuApplication<&str> {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuApplication::Standard(String::from(
                 "index_foyer trop élevé",
@@ -101,7 +102,7 @@ impl SessionApplication {
     /// # Erreurs
     ///
     /// Retourne une erreur si `index_foyer >= MAX_FOYERS`.
-    pub fn donne_etat_foyer(&self, index_foyer: usize) -> ResultFeuApplication<bool> {
+    pub fn etat_foyer(&self, index_foyer: usize) -> ResultFeuApplication<bool> {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuApplication::Standard(String::from(
                 "index_foyer trop élevé",
@@ -125,7 +126,7 @@ impl SessionApplication {
     }
 
     /// Retourne la clé publique de signature Ed25519 du nœud.
-    pub fn donne_cle_publique_sig_noeud(&self) -> [u8; 32] {
+    pub fn cle_publique_sig_noeud(&self) -> [u8; 32] {
         self.cle_publique_sig_noeud
     }
 
@@ -134,10 +135,7 @@ impl SessionApplication {
     /// # Erreurs
     ///
     /// Retourne une erreur si `index_foyer >= MAX_FOYERS`.
-    pub fn donne_cle_publique_sig_foyer(
-        &self,
-        index_foyer: usize,
-    ) -> ResultFeuApplication<[u8; 32]> {
+    pub fn cle_publique_sig_foyer(&self, index_foyer: usize) -> ResultFeuApplication<[u8; 32]> {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuApplication::Standard(String::from(
                 "index_foyer trop élevé",
@@ -158,10 +156,7 @@ impl SessionApplication {
     /// # Erreurs
     ///
     /// Retourne une erreur si `index_foyer >= MAX_FOYERS`.
-    pub fn donne_cle_publique_chif_foyer(
-        &self,
-        index_foyer: usize,
-    ) -> ResultFeuApplication<[u8; 32]> {
+    pub fn cle_publique_chif_foyer(&self, index_foyer: usize) -> ResultFeuApplication<[u8; 32]> {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuApplication::Standard(String::from(
                 "index_foyer trop élevé",

@@ -67,7 +67,15 @@ pub(crate) mod trousseaux_publics;
 
 pub(super) mod erreur;
 
+/// Gardien de la sécurité cryptographique du nœud.
+///
+/// Encapsule l'unique [`Trousseau`] qui contient les clés en clair. Toutes les
+/// opérations de chiffrement, de déchiffrement, de dérivation et de signature
+/// passent par ce composant — c'est l'unique frontière entre les secrets et le
+/// reste du code.
 pub(super) struct Cryptographe {
+    /// Trousseau en mémoire — contient les clés en clair protégées par
+    /// [`SecretBox`]/[`ZeroizeOnDrop`](zeroize::ZeroizeOnDrop).
     trousseau: Trousseau,
 }
 
@@ -97,7 +105,7 @@ impl Cryptographe {
     ///
     /// Retourne une erreur si la génération du mnémonique BIP39 échoue ou si
     /// la dérivation des clés d'un foyer échoue.
-    pub(super) fn initialise_noeud_from_nouvelle_seed(
+    pub(super) fn initialise_noeud_a_partir_nouvelle_seed(
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<()> {
@@ -240,7 +248,7 @@ impl Cryptographe {
     /// # Prérequis
     ///
     /// Le mot de passe et le sel doivent être présents dans le trousseau —
-    /// définis au cours de [`initialise_noeud_from_nouvelle_seed`](Self::initialise_noeud_from_nouvelle_seed).
+    /// définis au cours de [`initialise_noeud_a_partir_nouvelle_seed`](Self::initialise_noeud_a_partir_nouvelle_seed).
     ///
     /// # Erreurs
     ///
@@ -264,7 +272,7 @@ impl Cryptographe {
     ///
     /// 1. Collecte le nouveau mot de passe (deux saisies avec vérification).
     /// 2. Dérive une nouvelle clé éphémère Argon2id avec le sel existant.
-    /// 3. Rechiffre toutes les clés (nœud + foyers) — produit un nouveau trousseau public.
+    /// 3. Rechiffre toutes les clés (nœud + foyers) et produit un nouveau trousseau public.
     /// 4. Efface le mot de passe et la clé éphémère de la mémoire.
     ///
     /// # Erreurs
@@ -319,7 +327,7 @@ impl Cryptographe {
     /// 3. Déchiffre `cle_chiffree` (clé symétrique du foyer, 60 octets lus sur disque)
     ///    avec la clé éphémère, puis déchiffre le flux AES-256-GCM-stream.
     ///
-    // La clé éphémère **n'est pas effacée** à l'issue de cette méthode —
+    /// La clé éphémère **n'est pas effacée** à l'issue de cette méthode —
     /// elle reste disponible pour le chargement des clés du foyer via
     /// [`recoit_trousseau_public_foyer`](Self::recoit_trousseau_public_foyer),
     /// qui l'effacera en fin d'opération.
@@ -546,14 +554,15 @@ impl Cryptographe {
     ///
     /// Utilise `verify_strict` pour résister aux attaques par malléabilité de signature.
     pub(super) fn verification_signature(
-        cle_publique: VerifyingKey,
+        cle_publique: [u8; 32],
         signature: [u8; 64],
         octets_signes: &[u8],
-    ) -> bool {
+    ) -> ResultCryptographe<bool> {
         let signature_reconstruite = ed25519_dalek::Signature::from_bytes(&signature);
-        cle_publique
+        let cle = VerifyingKey::from_bytes(&cle_publique)?;
+        Ok(cle
             .verify_strict(octets_signes, &signature_reconstruite)
-            .is_ok()
+            .is_ok())
     }
 
     // ── Utilitaires privés ────────────────────────────────────────────────────

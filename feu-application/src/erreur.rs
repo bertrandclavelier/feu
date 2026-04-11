@@ -18,8 +18,21 @@
 use feu_noyau::ErreurFeuNoyau;
 use thiserror::Error;
 
+/// Alias de [`Result`] utilisé par toutes les fonctions publiques de `feu-application`.
 pub type ResultFeuApplication<T> = Result<T, ErreurFeuApplication>;
 
+/// Type d'erreur unique exposé par `feu-application`.
+///
+/// Agrège deux familles de variantes :
+///
+/// - **Erreurs remontées depuis `feu-noyau`** — encapsulées dans une `String`
+///   via `.to_string()`, ce qui préserve l'encapsulation et évite toute fuite
+///   de type privé à travers l'API applicative.
+/// - **Erreurs propres à la couche applicative** — arguments invalides,
+///   préconditions non satisfaites, états internes incohérents.
+///
+/// Le préfixe `APP >` dans chaque message sert de marqueur de couche lorsque
+/// les messages sont encapsulés par la couche de présentation.
 #[derive(Error, Debug)]
 pub enum ErreurFeuApplication {
     /// Erreur remontée depuis `feu-noyau`.
