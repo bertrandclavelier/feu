@@ -302,6 +302,14 @@ impl Trousseau {
         }
     }
 
+    /// Indique si un mot de passe est actuellement présent dans le trousseau.
+    ///
+    /// Utilisé par [`Cryptographe::genere_trousseau_a_partir_seed`] pour déterminer
+    /// si la collecte du mot de passe doit être déclenchée ou non.
+    pub(super) fn mdp_existe(&self) -> bool {
+        self.mdp.is_some()
+    }
+
     // ── Initialisation ───────────────────────────────────────────────────────
 
     /// Dérive et enregistre dans le trousseau la paire de clés de signature du nœud.

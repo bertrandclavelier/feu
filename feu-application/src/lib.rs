@@ -22,7 +22,7 @@
 
 pub use erreur::{ErreurFeuApplication, ResultFeuApplication};
 use feu_noyau::{FeuNoyau, InterfaceFeuNoyau};
-use secrecy::SecretString;
+use secrecy::{SecretBox, SecretString};
 pub use session::SessionApplication;
 
 mod commandes;
@@ -157,15 +157,22 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// à [`FeuNoyau::new`], puis le droppe — libérant les emprunts sur `session`
     /// et `interface_feu_application` avant la construction de `Self`.
     ///
+    /// `seed_bytes` est transmis directement à [`FeuNoyau::new`] : passer `None`
+    /// génère une nouvelle seed (comportement par défaut), passer `Some(seed)` initialise
+    /// le nœud depuis une seed existante. Voir [`FeuNoyau::new`] pour les contraintes.
+    ///
     /// [`FeuNoyau::new`] détecte automatiquement si le nœud doit être initialisé
     /// ou allumé. Les erreurs noyau sont propagées via [`ErreurFeuApplication::FeuNoyau`].
-    pub fn new(mut interface_feu_application: I) -> ResultFeuApplication<Self> {
+    pub fn new(
+        seed_bytes: Option<SecretBox<[u8; 64]>>,
+        mut interface_feu_application: I,
+    ) -> ResultFeuApplication<Self> {
         let mut session = SessionApplication::new();
 
         let feu_noyau = {
             let mut recepteur_noyau =
                 RecepteurNoyau::new(&mut session, &mut interface_feu_application);
-            FeuNoyau::new(&mut recepteur_noyau)?
+            FeuNoyau::new(seed_bytes, &mut recepteur_noyau)?
         };
 
         Ok(Self {

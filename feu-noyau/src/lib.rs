@@ -34,7 +34,7 @@ compile_error!("feu-noyau only supports Linux and macOS.");
 use archiviste::Archiviste;
 use cryptographe::Cryptographe;
 use gardien::Gardien;
-use secrecy::SecretString;
+use secrecy::{SecretBox, SecretString};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -377,7 +377,8 @@ impl FeuNoyau {
     /// # Initialisation (première utilisation — arborescence absente)
     ///
     /// **Phase mémoire — cryptographe**
-    /// 1. Génère la seed BIP39 et dérive les clés du nœud et des `MAX_FOYERS` foyers.
+    /// 1. Génère une nouvelle seed BIP39 (si `seed_bytes` est `None`) ou utilise la seed
+    ///    fournie, collecte le mot de passe et dérive les clés du nœud, des foyers et le sel.
     /// 2. Produit le trousseau public complet.
     ///
     /// **Phase disque — gardien**
@@ -401,11 +402,19 @@ impl FeuNoyau {
     ///
     /// Retourne une [`ErreurFeuNoyau`] si `HOME` est absente, si `config.feu` est
     /// illisible, si un fichier de clé est absent ou corrompu, ou si le mot de passe
-    /// est incorrect.
-    pub fn new(interface_feu_noyau: &mut impl InterfaceFeuNoyau) -> ResultFeuNoyau<Self> {
+    /// est incorrect. Retourne [`ErreurFeuNoyau::InitialisationNoeudImpossible`] si
+    /// `seed_bytes` est fournie alors que l'arborescence existe déjà.
+    pub fn new(
+        seed_bytes: Option<SecretBox<[u8; 64]>>,
+        interface_feu_noyau: &mut impl InterfaceFeuNoyau,
+    ) -> ResultFeuNoyau<Self> {
         let mut gardien = Gardien::new()?;
 
         if gardien.existence_arborescence() {
+            if seed_bytes.is_some() {
+                return Err(ErreurFeuNoyau::InitialisationNoeudImpossible);
+            }
+
             let gardien = Gardien::ouvre_nouveau()?;
             let mut cryptographe = Cryptographe::new();
 
@@ -434,8 +443,15 @@ impl FeuNoyau {
             // 1- LE CRYPTOGRAPHE TRAVAILLE EN MÉMOIRE
 
             // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
-            cryptographe.initialise_noeud_a_partir_nouvelle_seed(interface_feu_noyau)?;
-
+            match seed_bytes {
+                None => {
+                    cryptographe.initialise_noeud_a_partir_nouvelle_seed(interface_feu_noyau)?;
+                }
+                Some(valeur) => {
+                    cryptographe
+                        .initialise_noeud_a_partir_seed_existante(interface_feu_noyau, valeur)?;
+                }
+            }
             // Le cryptographe génère le trousseau public pour le gardien
             let trousseau_public_complet = cryptographe.donne_trousseau_public_complet()?;
 
@@ -475,6 +491,101 @@ impl FeuNoyau {
 
             Ok(noyau)
         }
+    }
+
+    /// Répare l'arborescence d'un nœud existant en régénérant toutes ses clés depuis
+    /// une seed BIP39 fournie.
+    ///
+    /// À utiliser quand des fichiers de clés ont été supprimés ou corrompus mais que
+    /// les archives `.feu` des foyers sont intactes. La dérivation des clés est
+    /// déterministe — la même seed produit exactement les mêmes clés, le même sel et
+    /// les mêmes adresses `.onion`.
+    ///
+    /// Le mot de passe original est demandé à plusieurs reprises : une première fois
+    /// pour chiffrer les fichiers de clés, puis une fois par foyer pour désarchiver
+    /// (comportement identique à [`ouverture_foyer`](Self::ouverture_foyer) standard).
+    /// Il doit correspondre à celui utilisé lors de la dernière fermeture des foyers,
+    /// car les archives ont été chiffrées avec ce mot de passe.
+    ///
+    /// Enchaîne les opérations suivantes :
+    ///
+    /// 1. Régénère toutes les clés en mémoire, collecte le mot de passe original et dérive
+    ///    le sel via [`genere_trousseau_a_partir_seed`](Cryptographe::genere_trousseau_a_partir_seed).
+    /// 2. Produit le trousseau public chiffré (efface mot de passe et clé éphémère).
+    /// 3. Recrée `config.feu` avec les adresses `.onion` dérivées.
+    /// 4. **Première passe** — écrit les fichiers root `~/.feu/.cles/` (dont `<onion>.cle`)
+    ///    nécessaires à l'ouverture des foyers. Les erreurs sont ignorées — les répertoires
+    ///    `<onion>/` n'existent pas encore, les clés de classeurs seront écrites à la passe suivante.
+    /// 5. Ouvre chaque foyer — désarchive et charge les clés en mémoire.
+    /// 6. **Deuxième passe** — écrit l'intégralité du trousseau public, y compris les
+    ///    clés de classeurs dans `~/.feu/<onion>/.cles/`.
+    /// 7. Ferme chaque foyer — archive le dossier clair (avec les nouvelles `.cles/`) et
+    ///    supprime le dossier clair.
+    ///
+    /// Retourne `()` — la fonction répare le disque et rend la main. L'appelant doit
+    /// ensuite invoquer [`FeuNoyau::new`] pour démarrer normalement.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la régénération des clés échoue, si une opération disque
+    /// échoue, ou si l'ouverture ou la fermeture d'un foyer échoue. En cas d'erreur
+    /// en cours de traitement, certains foyers peuvent rester désarchivés sur le disque.
+    pub fn demarrage_secours(
+        seed_bytes: SecretBox<[u8; 64]>,
+        interface_feu_noyau: &mut impl InterfaceFeuNoyau,
+    ) -> ResultFeuNoyau<()> {
+        let mut gardien = Gardien::new()?;
+
+        let mut cryptographe = Cryptographe::new();
+
+        cryptographe.genere_trousseau_a_partir_seed(interface_feu_noyau, seed_bytes)?;
+
+        let trousseau_public_complet = cryptographe.donne_trousseau_public_complet()?;
+
+        let mut session = SessionFoyers::new();
+
+        // Ajout des MAX_FOYERS foyers dans la configuration
+        for i in 0..MAX_FOYERS {
+            let onion = String::from(
+                trousseau_public_complet
+                    .donne_trousseau_public_foyer(i)?
+                    .donne_onion(),
+            );
+            gardien.ajout_nouveau_foyer_dans_configuration(onion.clone(), i);
+            session.foyers[i] = Foyer::new(onion.clone(), false);
+        }
+
+        // Enregistrement de config.feu
+        gardien.enregistrement_configuration()?;
+
+        let mut noyau = Self {
+            session,
+            gardien,
+            cryptographe,
+            archivistes: std::array::from_fn(|_| None),
+        };
+
+        // Première passe : écrit les fichiers root .cles/ (dont <onion>.cle) nécessaires
+        // à l'ouverture des foyers. L'échec partiel est ignoré — <onion>/ n'existe pas
+        // encore, les clés de classeurs seront écrites par la deuxième passe.
+        let _ = noyau
+            .gardien
+            .ecriture_trousseau_public_complet(&trousseau_public_complet);
+
+        for i in 0..MAX_FOYERS {
+            noyau.ouverture_foyer(interface_feu_noyau, i)?;
+        }
+
+        noyau
+            .gardien
+            .ecriture_trousseau_public_complet(&trousseau_public_complet)?;
+
+        // Fermeture des foyers
+        for i in 0..MAX_FOYERS {
+            noyau.fermeture_foyer(interface_feu_noyau, &noyau.session.foyers[i].onion.clone())?;
+        }
+
+        Ok(())
     }
 
     // ── Nœud ─────────────────────────────────────────────────────────────────
@@ -1058,7 +1169,7 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le nœud n'est pas allumé.
+    /// Retourne une erreur si `cle_publique` ne forme pas un point Ed25519 valide.
     pub fn verification_signature(
         &self,
         cle_publique: [u8; 32],

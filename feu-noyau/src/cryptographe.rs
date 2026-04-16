@@ -91,26 +91,26 @@ impl Cryptographe {
 
     /// Génère une nouvelle seed BIP39 et initialise le trousseau pour un nouveau nœud.
     ///
-    /// La seed mnémonique (12 mots, français) est affichée via `interface` une seule
-    /// fois — l'utilisateur doit la noter avant de continuer.
+    /// Enchaîne les opérations suivantes :
     ///
-    /// À partir de la seed, dérive et enregistre dans le trousseau de manière déterministe :
-    /// - la paire de clés de signature du nœud (`m/0'`)
-    /// - l'ensemble des clés de chaque foyer (`m/1'` à `m/MAX_FOYERS'`)
+    /// 1. Génère la seed mnémonique (12 mots, français) et la transmet à `interface`.
+    /// 2. Demande confirmation que la seed a bien été notée — interrompt si refus.
+    /// 3. Collecte et vérifie un nouveau mot de passe (deux saisies concordantes, ≥ 12 caractères).
+    /// 4. Dérive et enregistre dans le trousseau de manière déterministe les clés du nœud,
+    ///    des foyers et le sel Argon2id via [`genere_trousseau_a_partir_seed`](Self::genere_trousseau_a_partir_seed).
     ///
     /// La seed est zéroïsée avant le retour. Rien n'est écrit sur le disque —
     /// c'est le rôle du gardien.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la génération du mnémonique BIP39 échoue ou si
-    /// la dérivation des clés d'un foyer échoue.
+    /// Retourne une erreur si la génération du mnémonique BIP39 échoue, si la
+    /// confirmation de la seed est refusée, si la saisie du mot de passe échoue,
+    /// ou si la dérivation des clés d'un foyer échoue.
     pub(super) fn initialise_noeud_a_partir_nouvelle_seed(
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<()> {
-        self.initialisation_nouveau_mdp(interface)?;
-
         // Bloc encadrant la portée de seed_bytes
         {
             let seed_bytes: SecretBox<[u8; 64]>;
@@ -131,17 +131,83 @@ impl Cryptographe {
                 seed_bytes = SecretBox::new(Box::new(mnemonic.expose_secret().to_seed(""))); // passphrase vide
             }
 
-            // Ajoute la paire de clés du nœud au trousseau à partir de la seed
-            self.trousseau.ajouter_paire_noeud(&seed_bytes);
-
-            // Ajoute les trousseaux des MAX_FOYERS
-            for i in 0..MAX_FOYERS {
-                self.trousseau.ajouter_trousseau_foyer(&seed_bytes, i)?;
-            }
-
-            // Génère le sel et le met dans le trousseau
-            self.trousseau.genere_sel()?;
+            self.initialise_noeud_a_partir_seed_existante(interface, seed_bytes)?;
         }
+        Ok(())
+    }
+
+    /// Initialise le trousseau pour un nœud vierge à partir d'une seed BIP39 fournie.
+    ///
+    /// Variante de [`initialise_noeud_a_partir_nouvelle_seed`](Self::initialise_noeud_a_partir_nouvelle_seed)
+    /// pour le cas où la seed est déjà connue de l'appelant (restauration depuis seed existante).
+    ///
+    /// Enchaîne deux opérations séquentielles :
+    ///
+    /// 1. Collecte et vérifie le nouveau mot de passe (deux saisies concordantes, ≥ 12 caractères).
+    /// 2. Dérive et enregistre dans le trousseau les clés du nœud, des foyers et le sel Argon2id via
+    ///    [`genere_trousseau_a_partir_seed`](Self::genere_trousseau_a_partir_seed).
+    ///
+    /// `seed_bytes` est consommé par la fonction — il est zéroïsé à son retour.
+    /// Rien n'est écrit sur le disque — c'est le rôle du gardien.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la saisie du mot de passe échoue, si la dérivation
+    /// des clés d'un foyer échoue, ou si la dérivation du sel échoue.
+    pub(super) fn initialise_noeud_a_partir_seed_existante(
+        &mut self,
+        interface: &mut impl InterfaceFeuNoyau,
+        seed_bytes: SecretBox<[u8; 64]>,
+    ) -> ResultCryptographe<()> {
+        self.initialisation_nouveau_mdp(interface)?;
+
+        self.genere_trousseau_a_partir_seed(interface, seed_bytes)?;
+
+        Ok(())
+    }
+
+    /// Dérive et enregistre dans le trousseau toutes les clés du nœud et des foyers.
+    ///
+    /// À partir de `seed_bytes`, dérive de manière déterministe et enregistre dans
+    /// le trousseau :
+    /// - la paire de clés de signature du nœud (`m/0'`)
+    /// - les clés de signature, de chiffrement, symétriques et de classeurs de chaque
+    ///   foyer (`m/1'` à `m/MAX_FOYERS'`)
+    ///
+    /// Si aucun mot de passe n'est présent dans le trousseau, en collecte un via
+    /// `interface` (saisie unique, sans confirmation) — c'est le cas de
+    /// [`demarrage_secours`](super::FeuNoyau::demarrage_secours). Si un mot de passe est déjà
+    /// présent (positionné au préalable par l'appelant), la saisie est ignorée.
+    ///
+    /// Génère également le sel Argon2id de manière déterministe depuis la clé privée du nœud.
+    ///
+    /// `seed_bytes` est consommé par la fonction — il est zéroïsé à son retour.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la collecte du mot de passe échoue, si la dérivation
+    /// des clés d'un foyer échoue, ou si la génération du sel échoue.
+    pub(super) fn genere_trousseau_a_partir_seed(
+        &mut self,
+        interface: &mut impl InterfaceFeuNoyau,
+        seed_bytes: SecretBox<[u8; 64]>,
+    ) -> ResultCryptographe<()> {
+        if !self.trousseau.mdp_existe() {
+            self.demande_mdp(interface)?;
+        }
+
+        // Ajoute la paire de clés du nœud au trousseau à partir de la seed
+
+        self.trousseau.ajouter_paire_noeud(&seed_bytes);
+
+        // Ajoute les trousseaux des MAX_FOYERS
+        for i in 0..MAX_FOYERS {
+            self.trousseau.ajouter_trousseau_foyer(&seed_bytes, i)?;
+        }
+
+        // Génère le sel et le met dans le trousseau
+        self.trousseau.genere_sel()?;
+
         Ok(())
     }
 
@@ -248,7 +314,9 @@ impl Cryptographe {
     /// # Prérequis
     ///
     /// Le mot de passe et le sel doivent être présents dans le trousseau —
-    /// définis au cours de [`initialise_noeud_a_partir_nouvelle_seed`](Self::initialise_noeud_a_partir_nouvelle_seed).
+    /// définis par [`initialise_noeud_a_partir_nouvelle_seed`](Self::initialise_noeud_a_partir_nouvelle_seed),
+    /// [`initialise_noeud_a_partir_seed_existante`](Self::initialise_noeud_a_partir_seed_existante),
+    /// ou [`genere_trousseau_a_partir_seed`](Self::genere_trousseau_a_partir_seed).
     ///
     /// # Erreurs
     ///
@@ -553,6 +621,10 @@ impl Cryptographe {
     /// produite par la clé privée correspondant à `cle_publique`, `false` sinon.
     ///
     /// Utilise `verify_strict` pour résister aux attaques par malléabilité de signature.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si `cle_publique` ne forme pas un point Ed25519 valide.
     pub(super) fn verification_signature(
         cle_publique: [u8; 32],
         signature: [u8; 64],

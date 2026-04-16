@@ -60,6 +60,11 @@ pub enum ErreurFeuNoyau {
     #[error("NOY > Index foyer ou classeur invalide")]
     IndexInvalide,
 
+    /// Le nœud est déjà initialisé — une seed ne peut pas être fournie à [`FeuNoyau::new`]
+    /// quand l'arborescence existe déjà.
+    #[error("NOY > Nœud déjà initialisé — fourniture d'une seed impossible")]
+    InitialisationNoeudImpossible,
+
     /// Tentative d'ouvrir un foyer déjà marqué comme ouvert dans la session.
     #[error("NOY > Impossible d'ouvrir un foyer déjà ouvert")]
     FoyerDejaOuvert,
