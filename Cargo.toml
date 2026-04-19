@@ -2,8 +2,8 @@
 resolver = "2"
 members = [
     "feu-noyau",
-    "feu-cli"
-, "feu-application"]
+    "feu-application",
+    "feu-tui"]
 
 [workspace.package]
 version = "0.0.3"

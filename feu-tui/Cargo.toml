@@ -1,0 +1,10 @@
+[package]
+name = "feu-tui"
+edition = "2024"
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+crossterm = "0"
+ratatui = "0"
+
