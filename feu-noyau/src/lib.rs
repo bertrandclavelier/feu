@@ -34,7 +34,7 @@ compile_error!("feu-noyau only supports Linux and macOS.");
 use archiviste::Archiviste;
 use cryptographe::Cryptographe;
 use gardien::Gardien;
-use secrecy::{SecretBox, SecretString};
+use secrecy::SecretString;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -377,8 +377,8 @@ impl FeuNoyau {
     /// # Initialisation (première utilisation — arborescence absente)
     ///
     /// **Phase mémoire — cryptographe**
-    /// 1. Génère une nouvelle seed BIP39 (si `seed_bytes` est `None`) ou utilise la seed
-    ///    fournie, collecte le mot de passe et dérive les clés du nœud, des foyers et le sel.
+    /// 1. Génère une nouvelle seed BIP39 (si `phrase_seed` est `None`) ou utilise la phrase
+    ///    mnémotechnique fournie, collecte le mot de passe et dérive les clés du nœud, des foyers et le sel.
     /// 2. Produit le trousseau public complet.
     ///
     /// **Phase disque — gardien**
@@ -398,20 +398,29 @@ impl FeuNoyau {
     /// 3. Dérive la clé éphémère Argon2id et déchiffre la clé privée du nœud.
     /// 4. Notifie l'interface de la clé publique de signature du nœud.
     ///
+    /// # Format de `phrase_seed`
+    ///
+    /// `phrase_seed` est une phrase mnémotechnique BIP39 : mots en minuscules séparés
+    /// par des espaces (tout blanc accepté — espaces multiples tolérés). Comptes
+    /// valides : 12, 15, 18, 21 ou 24 mots. Feu génère des seeds de 12 mots.
+    /// La normalisation NFKD est appliquée automatiquement avant validation.
+    ///
     /// # Erreurs
     ///
     /// Retourne une [`ErreurFeuNoyau`] si `HOME` est absente, si `config.feu` est
     /// illisible, si un fichier de clé est absent ou corrompu, ou si le mot de passe
     /// est incorrect. Retourne [`ErreurFeuNoyau::InitialisationNoeudImpossible`] si
-    /// `seed_bytes` est fournie alors que l'arborescence existe déjà.
+    /// `phrase_seed` est fournie alors que l'arborescence existe déjà. Si `phrase_seed`
+    /// est fournie, retourne une erreur si le compte de mots est invalide, si un mot
+    /// est absent du dictionnaire BIP39 français, ou si le checksum est incorrect.
     pub fn new(
-        seed_bytes: Option<SecretBox<[u8; 64]>>,
+        phrase_seed: Option<SecretString>,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
     ) -> ResultFeuNoyau<Self> {
         let mut gardien = Gardien::new()?;
 
         if gardien.existence_arborescence() {
-            if seed_bytes.is_some() {
+            if phrase_seed.is_some() {
                 return Err(ErreurFeuNoyau::InitialisationNoeudImpossible);
             }
 
@@ -443,7 +452,7 @@ impl FeuNoyau {
             // 1- LE CRYPTOGRAPHE TRAVAILLE EN MÉMOIRE
 
             // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
-            match seed_bytes {
+            match phrase_seed {
                 None => {
                     cryptographe.initialise_noeud_a_partir_nouvelle_seed(interface_feu_noyau)?;
                 }
@@ -525,20 +534,29 @@ impl FeuNoyau {
     /// Retourne `()` — la fonction répare le disque et rend la main. L'appelant doit
     /// ensuite invoquer [`FeuNoyau::new`] pour démarrer normalement.
     ///
+    /// # Format de `phrase_seed`
+    ///
+    /// `phrase_seed` est une phrase mnémotechnique BIP39 : mots en minuscules séparés
+    /// par des espaces (tout blanc accepté — espaces multiples tolérés). Comptes
+    /// valides : 12, 15, 18, 21 ou 24 mots. Feu génère des seeds de 12 mots.
+    /// La normalisation NFKD est appliquée automatiquement avant validation.
+    ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la régénération des clés échoue, si une opération disque
-    /// échoue, ou si l'ouverture ou la fermeture d'un foyer échoue. En cas d'erreur
-    /// en cours de traitement, certains foyers peuvent rester désarchivés sur le disque.
+    /// Retourne une erreur si le compte de mots est invalide, si un mot est absent
+    /// du dictionnaire BIP39 français, si le checksum est incorrect, si une opération
+    /// disque échoue, ou si l'ouverture ou la fermeture d'un foyer échoue. En cas
+    /// d'erreur en cours de traitement, certains foyers peuvent rester désarchivés
+    /// sur le disque.
     pub fn demarrage_secours(
-        seed_bytes: SecretBox<[u8; 64]>,
+        phrase_seed: SecretString,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
     ) -> ResultFeuNoyau<()> {
         let mut gardien = Gardien::new()?;
 
         let mut cryptographe = Cryptographe::new();
 
-        cryptographe.genere_trousseau_a_partir_seed(interface_feu_noyau, seed_bytes)?;
+        cryptographe.genere_trousseau_a_partir_seed(interface_feu_noyau, phrase_seed)?;
 
         let trousseau_public_complet = cryptographe.donne_trousseau_public_complet()?;
 

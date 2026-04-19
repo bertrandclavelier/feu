@@ -20,14 +20,14 @@
 //!
 //! # Cycle de vie des secrets
 //!
-//! Les données sensibles transitant dans ce module (`Mnemonic`, `seed_bytes`)
-//! sont encapsulées dans [`SecretBox`] dès leur création. L'accès au contenu
+//! Les données sensibles transitant dans ce module (`Mnemonic`, `phrase_seed`)
+//! sont encapsulées dans [`SecretBox`] / [`SecretString`] dès leur création. L'accès au contenu
 //! est explicitement contraint à [`expose_secret()`], rendant toute
 //! manipulation visible à la lecture du code.
 //!
 //! Des blocs de scope `{ }` limitent la durée de vie de chaque secret au
-//! strict nécessaire — la destruction du [`SecretBox`] déclenche la
-//! zéroïsation automatique de la mémoire.
+//! strict nécessaire — la destruction du [`SecretBox`] ou de la [`SecretString`]
+//! déclenche la zéroïsation automatique de la mémoire.
 //!
 //! Rien n'est écrit sur le disque depuis ce module — c'est le rôle du
 //! gardien.
@@ -47,7 +47,7 @@ use ed25519_dalek::VerifyingKey;
 use erreur::{ErreurCryptographe, ResultCryptographe};
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
-use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
+use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use sha3::{Digest, Sha3_256};
 use std::io::{Read, Write};
 use trousseau::Trousseau;
@@ -111,9 +111,9 @@ impl Cryptographe {
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<()> {
-        // Bloc encadrant la portée de seed_bytes
+        // Bloc encadrant la portée de phrase_seed
         {
-            let seed_bytes: SecretBox<[u8; 64]>;
+            let phrase_seed: SecretString;
 
             // Bloc encadrant la portée de mnemonic
             {
@@ -128,10 +128,10 @@ impl Cryptographe {
                 if !interface.confirmer_enregistrement_seed() {
                     return Err(ErreurCryptographe::Interne(String::from(ERR_CRY_004)));
                 }
-                seed_bytes = SecretBox::new(Box::new(mnemonic.expose_secret().to_seed(""))); // passphrase vide
+                phrase_seed = SecretString::from(mnemonic.expose_secret().to_string());
             }
 
-            self.initialise_noeud_a_partir_seed_existante(interface, seed_bytes)?;
+            self.initialise_noeud_a_partir_seed_existante(interface, phrase_seed)?;
         }
         Ok(())
     }
@@ -147,29 +147,30 @@ impl Cryptographe {
     /// 2. Dérive et enregistre dans le trousseau les clés du nœud, des foyers et le sel Argon2id via
     ///    [`genere_trousseau_a_partir_seed`](Self::genere_trousseau_a_partir_seed).
     ///
-    /// `seed_bytes` est consommé par la fonction — il est zéroïsé à son retour.
+    /// `phrase_seed` est consommée par la fonction — elle est zéroïsée à son retour.
     /// Rien n'est écrit sur le disque — c'est le rôle du gardien.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la saisie du mot de passe échoue, si la dérivation
-    /// des clés d'un foyer échoue, ou si la dérivation du sel échoue.
+    /// Retourne une erreur si la saisie du mot de passe échoue, si le parsing de
+    /// la phrase BIP39 échoue, si la dérivation des clés d'un foyer échoue, ou si
+    /// la dérivation du sel échoue.
     pub(super) fn initialise_noeud_a_partir_seed_existante(
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
-        seed_bytes: SecretBox<[u8; 64]>,
+        phrase_seed: SecretString,
     ) -> ResultCryptographe<()> {
         self.initialisation_nouveau_mdp(interface)?;
 
-        self.genere_trousseau_a_partir_seed(interface, seed_bytes)?;
+        self.genere_trousseau_a_partir_seed(interface, phrase_seed)?;
 
         Ok(())
     }
 
     /// Dérive et enregistre dans le trousseau toutes les clés du nœud et des foyers.
     ///
-    /// À partir de `seed_bytes`, dérive de manière déterministe et enregistre dans
-    /// le trousseau :
+    /// À partir de `phrase_seed`, parse la phrase mnémotechnique BIP39, puis dérive
+    /// de manière déterministe et enregistre dans le trousseau :
     /// - la paire de clés de signature du nœud (`m/0'`)
     /// - les clés de signature, de chiffrement, symétriques et de classeurs de chaque
     ///   foyer (`m/1'` à `m/MAX_FOYERS'`)
@@ -181,20 +182,24 @@ impl Cryptographe {
     ///
     /// Génère également le sel Argon2id de manière déterministe depuis la clé privée du nœud.
     ///
-    /// `seed_bytes` est consommé par la fonction — il est zéroïsé à son retour.
+    /// `phrase_seed` est consommée par la fonction — elle est zéroïsée à son retour.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la collecte du mot de passe échoue, si la dérivation
-    /// des clés d'un foyer échoue, ou si la génération du sel échoue.
+    /// Retourne une erreur si la collecte du mot de passe échoue, si le parsing de
+    /// la phrase BIP39 échoue, si la dérivation des clés d'un foyer échoue, ou si
+    /// la génération du sel échoue.
     pub(super) fn genere_trousseau_a_partir_seed(
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
-        seed_bytes: SecretBox<[u8; 64]>,
+        phrase_seed: SecretString,
     ) -> ResultCryptographe<()> {
         if !self.trousseau.mdp_existe() {
             self.demande_mdp(interface)?;
         }
+
+        let mnemonic = Mnemonic::parse_in(Language::French, phrase_seed.expose_secret())?;
+        let seed_bytes = SecretBox::new(Box::new(mnemonic.to_seed(""))); // passphrase vide
 
         // Ajoute la paire de clés du nœud au trousseau à partir de la seed
 
