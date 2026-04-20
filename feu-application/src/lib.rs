@@ -15,8 +15,16 @@
 //! déléguant les interactions à l'interface applicative et en écrivant les
 //! notifications directement dans [`SessionApplication`].
 //!
+//! # Cycle de vie
+//!
+//! [`FeuApplication`] suit un cycle en deux phases :
+//! 1. **Construction** — [`FeuApplication::new`] crée la struct avec le noyau absent (`None`).
+//! 2. **Allumage** — [`commande_allumage_noeud`](crate::commandes) initialise ou allume le noyau.
+//!    Toutes les autres commandes retournent [`ErreurFeuApplication::NoeudEteint`] si cette
+//!    étape n'a pas été franchie.
+//!
 //! [`FeuApplication`] possède :
-//! - `feu_noyau` — instance du noyau
+//! - `feu_noyau` — `Option<FeuNoyau>` : `None` jusqu'à `commande_allumage_noeud`
 //! - `interface_feu_application` — canal vers la couche de présentation
 //! - `session` — état applicatif mis à jour à chaque commande noyau
 
@@ -141,8 +149,10 @@ impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
 /// stable vers la couche de présentation. Toute interaction avec `feu-noyau` passe par cette
 /// structure — jamais directement depuis la couche de présentation.
 pub struct FeuApplication<I: InterfaceFeuApplication> {
-    /// Instance du noyau — les commandes reçoivent un [`RecepteurNoyau`] éphémère à chaque appel.
-    feu_noyau: FeuNoyau,
+    /// Instance du noyau — `None` jusqu'à [`commande_allumage_noeud`](FeuApplication::commande_allumage_noeud).
+    /// Les commandes reçoivent un [`RecepteurNoyau`] éphémère à chaque appel ; elles retournent
+    /// [`ErreurFeuApplication::NoeudEteint`] si le noyau n'est pas encore allumé.
+    feu_noyau: Option<FeuNoyau>,
 
     /// Accès direct à l'interface pour les notifications post-commande.
     interface_feu_application: I,
@@ -151,34 +161,18 @@ pub struct FeuApplication<I: InterfaceFeuApplication> {
 }
 
 impl<I: InterfaceFeuApplication> FeuApplication<I> {
-    /// Crée une instance de [`FeuApplication`] prête à l'emploi.
+    /// Crée une instance de [`FeuApplication`] sans noyau.
     ///
-    /// Crée la session, construit le pont interne éphémère le temps de l'appel
-    /// à [`FeuNoyau::new`], puis le droppe — libérant les emprunts sur `session`
-    /// et `interface_feu_application` avant la construction de `Self`.
-    ///
-    /// `phrase_seed` est transmise directement à [`FeuNoyau::new`] : passer `None`
-    /// génère une nouvelle seed (comportement par défaut), passer `Some(phrase)` initialise
-    /// le nœud depuis une phrase mnémotechnique existante. Voir [`FeuNoyau::new`] pour les contraintes.
-    ///
-    /// [`FeuNoyau::new`] détecte automatiquement si le nœud doit être initialisé
-    /// ou allumé. Les erreurs noyau sont propagées via [`ErreurFeuApplication::FeuNoyau`].
-    pub fn new(
-        phrase_seed: Option<SecretString>,
-        mut interface_feu_application: I,
-    ) -> ResultFeuApplication<Self> {
-        let mut session = SessionApplication::new();
+    /// Initialise la session et stocke l'interface. Le noyau est absent (`None`) —
+    /// appeler [`commande_allumage_noeud`](Self::commande_allumage_noeud) est nécessaire
+    /// avant toute autre commande.
+    pub fn new(interface_feu_application: I) -> Self {
+        let session = SessionApplication::new();
 
-        let feu_noyau = {
-            let mut recepteur_noyau =
-                RecepteurNoyau::new(&mut session, &mut interface_feu_application);
-            FeuNoyau::new(phrase_seed, &mut recepteur_noyau)?
-        };
-
-        Ok(Self {
-            feu_noyau,
+        Self {
+            feu_noyau: None,
             interface_feu_application,
             session,
-        })
+        }
     }
 }

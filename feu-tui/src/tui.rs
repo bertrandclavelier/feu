@@ -11,9 +11,32 @@
 //! Ce module centralise l'état entre deux frames ([`EtatTui`]) et orchestre
 //! la boucle dessin → événement → mise à jour via [`Tui::lancer`].
 //! Le rendu est entièrement délégué à [`crate::rendu`].
+//! [`FeuApplication`] est instancié ici et alimenté à mesure que l'interface
+//! progresse dans son cycle de vie.
 
 use crate::rendu;
-use ratatui::DefaultTerminal;
+use feu_application::{FeuApplication, InterfaceFeuApplication};
+use ratatui::{DefaultTerminal, style::Color};
+use secrecy::SecretString;
+
+pub(crate) const COULEUR_ACCENT: Color = Color::Rgb(255, 90, 31);
+
+struct RecepteurApplication();
+
+impl InterfaceFeuApplication for RecepteurApplication {
+    fn demander_mdp(&self) -> Option<SecretString> {
+        None
+    }
+
+    #[allow(unused_variables)]
+    fn recevoir_seed(&mut self, mots: &[&str]) {
+        todo!();
+    }
+
+    fn confirmer_enregistrement_seed(&self) -> bool {
+        true
+    }
+}
 
 /// Écran actif de l'interface.
 ///
@@ -45,11 +68,13 @@ impl EtatTui {
 
 /// Orchestre la boucle principale et le rendu.
 ///
-/// Possède l'état de l'interface et coordonne les deux opérations répétées
-/// à chaque frame : dessin via [`crate::rendu::dessiner`], puis lecture
-/// de l'événement clavier suivant.
+/// Possède l'état de l'interface ([`EtatTui`]) et l'instance applicative
+/// ([`FeuApplication`]). Coordonne les deux opérations répétées à chaque
+/// frame : dessin via [`crate::rendu::dessiner`], puis lecture de l'événement
+/// clavier suivant.
 pub(super) struct Tui {
     etat_tui: EtatTui,
+    _feu_application: FeuApplication<RecepteurApplication>,
 }
 
 impl Tui {
@@ -57,6 +82,7 @@ impl Tui {
     pub(super) fn new() -> Self {
         Self {
             etat_tui: EtatTui::new(),
+            _feu_application: FeuApplication::new(RecepteurApplication()),
         }
     }
 

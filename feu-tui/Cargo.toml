@@ -6,5 +6,7 @@ license.workspace = true
 
 [dependencies]
 crossterm = "0"
+feu-application = { path = "../feu-application/" }
 ratatui = "0"
+secrecy = "0"
 

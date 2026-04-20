@@ -33,6 +33,33 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         );
     }
 
+    /// Initialise ou allume le nœud et stocke l'instance dans [`FeuApplication`].
+    ///
+    /// Délègue à [`FeuNoyau::new`] qui détecte automatiquement l'état du nœud :
+    /// initialisation si `~/.feu` est absent, allumage sinon.
+    ///
+    /// `phrase_seed` : `None` génère une nouvelle seed BIP39 à l'initialisation ;
+    /// `Some(phrase)` restaure un nœud depuis une phrase existante. Sans effet à l'allumage —
+    /// retourne une erreur si fournie alors que l'arborescence existe déjà.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si `HOME` est absente, si les fichiers de clés sont absents
+    /// ou corrompus, si le mot de passe est incorrect, ou si `phrase_seed` est fournie
+    /// alors que le nœud existe déjà.
+    pub fn commande_allumage_noeud(
+        &mut self,
+        phrase_seed: Option<SecretString>,
+    ) -> ResultFeuApplication<()> {
+        self.feu_noyau = Some({
+            let mut recepteur_noyau =
+                RecepteurNoyau::new(&mut self.session, &mut self.interface_feu_application);
+            FeuNoyau::new(phrase_seed, &mut recepteur_noyau)?
+        });
+
+        Ok(())
+    }
+
     /// Change le mot de passe FeuNoyau et réécrit le trousseau public chiffré.
     ///
     /// Prérequis noyau : tous les foyers doivent être ouverts.
@@ -42,9 +69,13 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// Retourne une erreur si un foyer est fermé, si la saisie échoue,
     /// ou si l'écriture du trousseau public échoue.
     pub fn commande_changement_mdp(&mut self) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_mut()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
         let mut recepteur =
             RecepteurNoyau::new(&mut self.session, &mut self.interface_feu_application);
-        self.feu_noyau.changement_mdp(&mut recepteur)?;
+        noyau.changement_mdp(&mut recepteur)?;
 
         Ok(())
     }
@@ -60,11 +91,15 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// Retourne une erreur si l'index est invalide, si le foyer est déjà ouvert,
     /// si le mot de passe est incorrect, ou si une opération disque échoue.
     pub fn commande_ouverture_foyer(&mut self, index_foyer: usize) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_mut()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
         let mut recepteur =
             RecepteurNoyau::new(&mut self.session, &mut self.interface_feu_application);
 
-        self.feu_noyau
-            .ouverture_foyer(&mut recepteur, index_foyer)?;
+        noyau.ouverture_foyer(&mut recepteur, index_foyer)?;
 
         Ok(())
     }
@@ -79,10 +114,14 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// Retourne une erreur si l'index est invalide, si le foyer n'est pas ouvert,
     /// ou si une opération disque échoue.
     pub fn commande_fermeture_foyer(&mut self, index_foyer: usize) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_mut()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
         let mut recepteur =
             RecepteurNoyau::new(&mut self.session, &mut self.interface_feu_application);
-        self.feu_noyau
-            .fermeture_foyer_index(&mut recepteur, index_foyer)?;
+        noyau.fermeture_foyer_index(&mut recepteur, index_foyer)?;
 
         Ok(())
     }
@@ -103,10 +142,14 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         &mut self,
         index_foyer: usize,
     ) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_mut()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
         let mut recepteur =
             RecepteurNoyau::new(&mut self.session, &mut self.interface_feu_application);
-        self.feu_noyau
-            .secours_fermeture_foyer_index(&mut recepteur, index_foyer)?;
+        noyau.secours_fermeture_foyer_index(&mut recepteur, index_foyer)?;
 
         Ok(())
     }
@@ -132,9 +175,12 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         index_classeur: usize,
         source: impl Read,
     ) -> ResultFeuApplication<String> {
-        Ok(self
+        let noyau = self
             .feu_noyau
-            .depot_donnees(index_foyer, index_classeur, source)?)
+            .as_mut()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.depot_donnees(index_foyer, index_classeur, source)?)
     }
 
     /// Lit et déchiffre un blob depuis un classeur d'un foyer ouvert.
@@ -154,8 +200,12 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         hash: &str,
         destination: impl Write,
     ) -> ResultFeuApplication<()> {
-        self.feu_noyau
-            .lecture_donnees(index_foyer, index_classeur, hash, destination)?;
+        let noyau = self
+            .feu_noyau
+            .as_mut()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        noyau.lecture_donnees(index_foyer, index_classeur, hash, destination)?;
         Ok(())
     }
 
@@ -173,8 +223,12 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         index_classeur: usize,
         hash: &str,
     ) -> ResultFeuApplication<()> {
-        self.feu_noyau
-            .suppression_donnees(index_foyer, index_classeur, hash)?;
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        noyau.suppression_donnees(index_foyer, index_classeur, hash)?;
 
         Ok(())
     }
@@ -192,7 +246,12 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         index_foyer: usize,
         index_classeur: usize,
     ) -> ResultFeuApplication<Vec<String>> {
-        Ok(self.feu_noyau.liste_blobs(index_foyer, index_classeur)?)
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.liste_blobs(index_foyer, index_classeur)?)
     }
 
     /// Indique si un blob est présent dans un classeur d'un foyer ouvert.
@@ -208,9 +267,12 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         index_classeur: usize,
         hash: &str,
     ) -> ResultFeuApplication<bool> {
-        Ok(self
+        let noyau = self
             .feu_noyau
-            .existence_blob(index_foyer, index_classeur, hash)?)
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.existence_blob(index_foyer, index_classeur, hash)?)
     }
 
     /// Retourne les métadonnées système d'un blob (taille, dates d'accès et de modification).
@@ -227,9 +289,12 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         index_classeur: usize,
         hash: &str,
     ) -> ResultFeuApplication<DonneesBlob> {
-        Ok(self
+        let noyau = self
             .feu_noyau
-            .informations_blob(index_foyer, index_classeur, hash)?)
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.informations_blob(index_foyer, index_classeur, hash)?)
     }
 
     /// Chiffre des octets à destination d'un nœud identifié par sa clé publique X25519.
@@ -246,9 +311,12 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         cle_publique_destinataire: &[u8; 32],
         octets_a_chiffrer: &[u8],
     ) -> ResultFeuApplication<Vec<u8>> {
-        Ok(self
+        let noyau = self
             .feu_noyau
-            .chiffrement_asymetrique(cle_publique_destinataire, octets_a_chiffrer)?)
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.chiffrement_asymetrique(cle_publique_destinataire, octets_a_chiffrer)?)
     }
 
     /// Déchiffre un message chiffré à destination du foyer désigné.
@@ -265,9 +333,12 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         index_foyer: usize,
         octets_a_dechiffrer: &[u8],
     ) -> ResultFeuApplication<Vec<u8>> {
-        Ok(self
+        let noyau = self
             .feu_noyau
-            .dechiffrement_asymetrique(index_foyer, octets_a_dechiffrer)?)
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.dechiffrement_asymetrique(index_foyer, octets_a_dechiffrer)?)
     }
 
     /// Signe des octets avec la clé privée Ed25519 du nœud.
@@ -282,7 +353,12 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         &self,
         octets_a_signer: &[u8],
     ) -> ResultFeuApplication<[u8; 64]> {
-        Ok(self.feu_noyau.signature_noeud(octets_a_signer)?)
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.signature_noeud(octets_a_signer)?)
     }
 
     /// Signe des octets avec la clé privée Ed25519 du foyer désigné.
@@ -299,9 +375,12 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         index_foyer: usize,
         octets_a_signer: &[u8],
     ) -> ResultFeuApplication<[u8; 64]> {
-        Ok(self
+        let noyau = self
             .feu_noyau
-            .signature_foyer(index_foyer, octets_a_signer)?)
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.signature_foyer(index_foyer, octets_a_signer)?)
     }
 
     /// Vérifie une signature Ed25519.
@@ -319,9 +398,12 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         signature: [u8; 64],
         octets_signes: &[u8],
     ) -> ResultFeuApplication<bool> {
-        Ok(self
+        let noyau = self
             .feu_noyau
-            .verification_signature(cle_publique, signature, octets_signes)?)
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.verification_signature(cle_publique, signature, octets_signes)?)
     }
 
     /// Diagnostique la présence et la cohérence des fichiers du nœud.
@@ -348,6 +430,11 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
         &self,
         index_foyer: usize,
     ) -> ResultFeuApplication<Vec<Anomalie>> {
-        Ok(self.feu_noyau.diagnostic_foyer(index_foyer)?)
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.diagnostic_foyer(index_foyer)?)
     }
 }

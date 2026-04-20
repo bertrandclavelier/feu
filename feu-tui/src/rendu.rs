@@ -18,7 +18,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Block;
 
-use crate::tui::{Ecran, EtatTui};
+use crate::tui::{COULEUR_ACCENT, Ecran, EtatTui};
 
 /// Dessine le frame courant en fonction de l'écran actif.
 ///
@@ -36,47 +36,89 @@ pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &EtatTui) {
 /// des cellules terminal pour obtenir un rendu visuellement carré.
 fn dessiner_ecran_normal(frame: &mut Frame) {
     // Carré centré : 62×31 pour compenser le ratio largeur/hauteur des cellules terminal.
-    let vertical = Layout::vertical([
+    let lignes = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(31),
+        Constraint::Length(31), // carré
         Constraint::Fill(1),
     ])
     .split(frame.area());
 
-    let horizontal = Layout::horizontal([
+    let colonnes = Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Length(62),
+        Constraint::Length(62), // carré
         Constraint::Fill(1),
     ])
-    .split(vertical[1]);
+    .split(lignes[1]);
 
-    frame.render_widget(Block::bordered(), horizontal[1]);
+    frame.render_widget(Block::bordered(), colonnes[1]);
 
     // Découpage à l'intérieur de la bordure pour ne pas l'écraser.
-    let carre = horizontal[1].inner(Margin {
+    let carre = colonnes[1].inner(Margin {
         horizontal: 1,
         vertical: 1,
     });
 
-    let carre_decoupage_vertical = Layout::vertical([
+    let carre_lignes = Layout::vertical([
+        Constraint::Length(1), // ligne de pastilles
         Constraint::Fill(1),
-        Constraint::Length(1),
+        Constraint::Length(1), // Espace affichage erreur
+        Constraint::Length(2), // Espace vide
+        Constraint::Length(1), // invite
+        Constraint::Length(3), // Espace vide
         Constraint::Fill(1),
     ])
     .split(carre);
 
+    let ligne_pastilles = Layout::horizontal([
+        Constraint::Length(10),
+        Constraint::Fill(1),
+        Constraint::Length(10),
+    ])
+    .split(carre_lignes[0]);
+
+    frame.render_widget(
+        Span::styled("●", Style::default().fg(COULEUR_ACCENT)),
+        ligne_pastilles[0].inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        }),
+    );
+
+    let pastilles_foyers = Line::from(vec![
+        Span::styled("●", Style::default().fg(COULEUR_ACCENT)),
+        Span::raw(" "),
+        Span::raw("○"),
+        Span::raw(" "),
+        Span::raw("○"),
+    ])
+    .right_aligned();
+
+    frame.render_widget(
+        pastilles_foyers,
+        ligne_pastilles[2].inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        }),
+    );
+
+    let affichage_erreur = Line::from(vec![Span::styled(
+        "NOY > APP > Ceci est un essai d'affichage d'erreur",
+        Style::default().fg(COULEUR_ACCENT),
+    )])
+    .centered();
+
+    frame.render_widget(affichage_erreur, carre_lignes[2]);
+
     let invite = Line::from(vec![
         Span::raw("feu "),
-        Span::styled(
-            "›",
-            Style::default().fg(ratatui::style::Color::Rgb(255, 90, 31)),
-        ),
+        Span::styled("›", Style::default().fg(COULEUR_ACCENT)),
     ]);
 
-    // Marge horizontale pour positionner l'invite visuellement au centre du carré.
-    let zone_invite = carre_decoupage_vertical[1].inner(Margin {
-        horizontal: 10,
-        vertical: 0,
-    });
-    frame.render_widget(invite, zone_invite);
+    frame.render_widget(
+        invite,
+        carre_lignes[4].inner(Margin {
+            horizontal: 10,
+            vertical: 0,
+        }),
+    );
 }

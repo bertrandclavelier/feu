@@ -545,7 +545,9 @@ name = "feu-tui"
 version = "0.0.3"
 dependencies = [
  "crossterm",
+ "feu-application",
  "ratatui",
+ "secrecy",
 ]
 
 [[package]]

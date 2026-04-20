@@ -44,6 +44,10 @@ pub enum ErreurFeuApplication {
     /// satisfaite ou état interne incohérent. Indépendante de `feu-noyau`.
     #[error("APP > {0}")]
     Standard(String),
+
+    /// Le noyau n'a pas encore été allumé via [`commande_allumage_noeud`](crate::FeuApplication::commande_allumage_noeud).
+    #[error("APP > Le nœud doit être allumé")]
+    NoeudEteint,
 }
 
 impl From<ErreurFeuNoyau> for ErreurFeuApplication {
