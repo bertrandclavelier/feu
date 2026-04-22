@@ -29,8 +29,8 @@ use std::thread::{JoinHandle, spawn};
 
 /// Messages envoyés du thread cœur vers le thread TUI.
 pub(super) enum MessageCoeurTui {
-    /// Le cœur a besoin du mot de passe — la TUI doit basculer en saisie.
-    DemandeMdp,
+    /// Une commande a échoué — la TUI doit afficher le message d'erreur.
+    AffichageErreur(String),
 }
 
 /// Messages envoyés du thread TUI vers le thread cœur.
@@ -67,6 +67,14 @@ impl ConnecteurVersTui {
         }
     }
 
+    /// Envoie un message au thread TUI.
+    ///
+    /// L'erreur est ignorée volontairement : si le canal est déjà fermé,
+    /// le thread TUI est déjà terminé — l'objectif est atteint.
+    pub(super) fn envoyer_message_coeur_tui(&self, message_coeur_tui: MessageCoeurTui) {
+        let _ = self.emetteur.send(message_coeur_tui);
+    }
+
     /// Spawne le thread cœur et retourne sa poignée.
     ///
     /// Crée [`FeuApplication`], consomme le connecteur (`self`) et transfère
@@ -81,9 +89,13 @@ impl ConnecteurVersTui {
         spawn(move || {
             loop {
                 match self.recepteur.recv() {
-                    Ok(MessageTuiCoeur::AllumerNoeud) => feu_application
-                        .commande_allumage_noeud(&mut self, None)
-                        .unwrap(),
+                    Ok(MessageTuiCoeur::AllumerNoeud) => {
+                        if let Err(e) = feu_application.commande_allumage_noeud(&mut self, None) {
+                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
+                                e.to_string(),
+                            ));
+                        }
+                    }
                     Ok(MessageTuiCoeur::Quitter) => break,
                     Err(_) => break,
                 }
@@ -127,6 +139,13 @@ impl ConnecteurVersCoeur {
             emetteur,
             recepteur,
         }
+    }
+
+    /// Retourne une référence au récepteur cœur→TUI pour lecture non bloquante.
+    ///
+    /// Utilisé par la boucle ratatui via [`try_recv`](Receiver::try_recv) à chaque frame.
+    pub(super) fn recepteur(&self) -> &Receiver<MessageCoeurTui> {
+        &self.recepteur
     }
 
     /// Envoie un message au thread cœur.

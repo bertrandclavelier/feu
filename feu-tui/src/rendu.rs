@@ -26,15 +26,17 @@ use crate::tui::{COULEUR_ACCENT, Ecran, EtatTui};
 /// principale. Délègue à une fonction spécialisée selon [`EtatTui::ecran`].
 pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &EtatTui) {
     match etat_tui.ecran {
-        Ecran::Normal => dessiner_ecran_normal(frame),
+        Ecran::Normal => dessiner_ecran_normal(frame, etat_tui),
     }
 }
 
-/// Dessine le carré normal : cadre à angles droits, invite centrée.
+/// Dessine l'écran normal : cadre à angles droits, pastilles, invite et erreur éventuelle.
 ///
 /// Largeur nominale 62 cellules, hauteur 31 — ratio compensant la hauteur
 /// des cellules terminal pour obtenir un rendu visuellement carré.
-fn dessiner_ecran_normal(frame: &mut Frame) {
+/// Affiche [`EtatTui::message_erreur`] centré s'il est `Some`.
+/// Les pastilles nœud et foyers sont provisoirement hardcodées.
+fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
     // Carré centré : 62×31 pour compenser le ratio largeur/hauteur des cellules terminal.
     let lignes = Layout::vertical([
         Constraint::Fill(1),
@@ -101,13 +103,15 @@ fn dessiner_ecran_normal(frame: &mut Frame) {
         }),
     );
 
-    let affichage_erreur = Line::from(vec![Span::styled(
-        "NOY > APP > Ceci est un essai d'affichage d'erreur",
-        Style::default().fg(COULEUR_ACCENT),
-    )])
-    .centered();
+    if let Some(message) = &etat_tui.message_erreur {
+        let affichage_erreur = Line::from(vec![Span::styled(
+            message,
+            Style::default().fg(COULEUR_ACCENT),
+        )])
+        .centered();
 
-    frame.render_widget(affichage_erreur, carre_lignes[2]);
+        frame.render_widget(affichage_erreur, carre_lignes[2]);
+    }
 
     let invite = Line::from(vec![
         Span::raw("feu "),

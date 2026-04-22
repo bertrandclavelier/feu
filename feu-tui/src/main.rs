@@ -8,10 +8,14 @@
 
 //! Point d'entrée du binaire `feu-tui`.
 //!
-//! Initialise le terminal via [`ratatui::run`], instancie [`tui::Tui`]
-//! et délègue l'intégralité de la boucle événementielle à [`tui::Tui::lancer`].
-//! Toute la logique réside dans [`tui`] et [`rendu`] — ce fichier ne fait
-//! qu'amorcer l'exécution.
+//! Monte l'architecture à deux threads :
+//! - le thread principal exécute la boucle TUI via [`tui::Tui::lancer`] ;
+//! - le thread cœur est spawné par [`connecteurs::ConnecteurVersTui::lancer_thread_coeur`]
+//!   et pilote [`feu_application::FeuApplication`].
+//!
+//! Les deux threads communiquent via deux canaux `mpsc` typés, créés ici et
+//! distribués aux connecteurs. Ce fichier ne fait qu'amorcer l'exécution —
+//! toute la logique réside dans [`connecteurs`], [`tui`] et [`rendu`].
 
 use std::io::Error;
 use std::sync::mpsc::channel;
@@ -41,7 +45,7 @@ fn main() -> Result<(), Error> {
     let mut tui = Tui::new(connecteur_vers_coeur);
     ratatui::run(|terminal| tui.lancer(terminal))?;
 
-    // Empêcher que le thread coeur soit tué avaznt d'avoir fini
+    // Garantit que le thread cœur termine proprement avant la sortie du processus.
     let _ = poignee_thread_coeur.join();
 
     Ok(())

@@ -11,10 +11,19 @@
 //! Ce module centralise l'état entre deux frames ([`EtatTui`]) et orchestre
 //! la boucle dessin → événement → mise à jour via [`Tui::lancer`].
 //! Le rendu est entièrement délégué à [`crate::rendu`].
+//!
+//! La boucle tourne en continu via `poll(50ms)` : elle ne bloque jamais plus de
+//! 50 ms, ce qui permet de consulter le canal cœur→TUI à chaque itération via
+//! `try_recv`. Les événements clavier et les messages du cœur sont traités de
+//! façon désynchronisée — la TUI ne attend aucune réponse du cœur.
+//!
 //! La communication avec le thread cœur passe par [`crate::connecteurs::ConnecteurVersCoeur`],
 //! dont [`Tui`] est propriétaire.
 
-use crate::{connecteurs::ConnecteurVersCoeur, rendu};
+use std::{sync::mpsc::TryRecvError, time::Duration};
+
+use crate::{MessageCoeurTui, MessageTuiCoeur, connecteurs::ConnecteurVersCoeur, rendu};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{DefaultTerminal, style::Color};
 
 pub(crate) const COULEUR_ACCENT: Color = Color::Rgb(255, 90, 31);
@@ -31,6 +40,9 @@ pub(crate) enum Ecran {
 pub(crate) struct EtatTui {
     /// Écran actuellement affiché — détermine la fonction de rendu appelée.
     pub(crate) ecran: Ecran,
+    /// Dernier message d'erreur reçu du thread cœur. `None` si aucune erreur.
+    /// Affiché à chaque frame tant qu'il est `Some` — non effacé automatiquement.
+    pub(crate) message_erreur: Option<String>,
 }
 
 impl EtatTui {
@@ -38,6 +50,7 @@ impl EtatTui {
     fn new() -> Self {
         Self {
             ecran: Ecran::Normal,
+            message_erreur: None,
         }
     }
 }
@@ -62,18 +75,54 @@ impl Tui {
         }
     }
 
-    /// Boucle principale : dessine puis attend un événement clavier.
+    /// Boucle principale : dessine, traite les événements clavier, lit le canal cœur.
     ///
-    /// À chaque touche pressée, envoie [`MessageTuiCoeur::Quitter`] au thread
-    /// cœur et sort. Le dessin précède systématiquement l'attente — le terminal
-    /// affiche toujours un état cohérent avant de bloquer.
+    /// Chaque itération :
+    /// 1. Dessin du frame courant.
+    /// 2. `poll(50ms)` — si un événement clavier est disponible, dispatch selon
+    ///    l'écran actif : `a` envoie [`MessageTuiCoeur::AllumerNoeud`], `q` envoie
+    ///    [`MessageTuiCoeur::Quitter`] et sort.
+    /// 3. `try_recv` non bloquant sur le canal cœur→TUI : met à jour
+    ///    [`EtatTui::message_erreur`] sur [`MessageCoeurTui::AffichageErreur`],
+    ///    ou signale la déconnexion du thread cœur.
     pub(super) fn lancer(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         loop {
             terminal.draw(|frame| rendu::dessiner(frame, &self.etat_tui))?;
-            if crossterm::event::read()?.is_key_press() {
-                self.connecteur_vers_coeur
-                    .envoyer_message_tui_coeur(crate::MessageTuiCoeur::Quitter);
-                break;
+            if crossterm::event::poll(Duration::from_millis(50))? {
+                match crossterm::event::read()? {
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char('a'),
+                        kind: KeyEventKind::Press,
+                        ..
+                    }) => {
+                        self.connecteur_vers_coeur
+                            .envoyer_message_tui_coeur(MessageTuiCoeur::AllumerNoeud);
+                    }
+
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char('q'),
+                        kind: KeyEventKind::Press,
+                        ..
+                    }) => {
+                        self.connecteur_vers_coeur
+                            .envoyer_message_tui_coeur(crate::MessageTuiCoeur::Quitter);
+                        break;
+                    }
+
+                    _ => {}
+                }
+            }
+
+            match self.connecteur_vers_coeur.recepteur().try_recv() {
+                Err(TryRecvError::Empty) => {}
+
+                Err(TryRecvError::Disconnected) => {
+                    self.etat_tui.message_erreur = Some(String::from("Thread déconnecté"))
+                }
+
+                Ok(message) => match message {
+                    MessageCoeurTui::AffichageErreur(m) => self.etat_tui.message_erreur = Some(m),
+                },
             }
         }
         Ok(())
