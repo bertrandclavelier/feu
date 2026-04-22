@@ -11,35 +11,14 @@
 //! Ce module centralise l'état entre deux frames ([`EtatTui`]) et orchestre
 //! la boucle dessin → événement → mise à jour via [`Tui::lancer`].
 //! Le rendu est entièrement délégué à [`crate::rendu`].
-//! [`FeuApplication`] est instancié ici et alimenté à mesure que l'interface
-//! progresse dans son cycle de vie.
+//! La communication avec le thread cœur passe par [`crate::connecteurs::ConnecteurVersCoeur`],
+//! dont [`Tui`] est propriétaire.
 
-use crate::rendu;
-use feu_application::{FeuApplication, InterfaceFeuApplication};
+use crate::{connecteurs::ConnecteurVersCoeur, rendu};
 use ratatui::{DefaultTerminal, style::Color};
-use secrecy::SecretString;
 
 pub(crate) const COULEUR_ACCENT: Color = Color::Rgb(255, 90, 31);
 
-struct RecepteurApplication();
-
-impl InterfaceFeuApplication for RecepteurApplication {
-    fn demander_mdp(&self) -> Option<SecretString> {
-        None
-    }
-
-    #[allow(unused_variables)]
-    fn recevoir_seed(&mut self, mots: &[&str]) {
-        todo!();
-    }
-
-    fn confirmer_enregistrement_seed(&self) -> bool {
-        true
-    }
-}
-
-/// Écran actif de l'interface.
-///
 /// Détermine quelle famille visuelle est rendue à chaque frame.
 /// [`Ecran::Normal`] correspond au carré à angles droits ; les variantes
 /// à venir déclenchent l'écran noyau à cadre arrondi orange.
@@ -68,21 +47,21 @@ impl EtatTui {
 
 /// Orchestre la boucle principale et le rendu.
 ///
-/// Possède l'état de l'interface ([`EtatTui`]) et l'instance applicative
-/// ([`FeuApplication`]). Coordonne les deux opérations répétées à chaque
-/// frame : dessin via [`crate::rendu::dessiner`], puis lecture de l'événement
-/// clavier suivant.
+/// Possède l'état de l'interface ([`EtatTui`]) et le connecteur vers le
+/// thread cœur ([`crate::connecteurs::ConnecteurVersCoeur`]). Coordonne
+/// les deux opérations répétées à chaque frame : dessin via
+/// [`crate::rendu::dessiner`], puis lecture de l'événement clavier suivant.
 pub(super) struct Tui {
     etat_tui: EtatTui,
-    _feu_application: FeuApplication<RecepteurApplication>,
+    connecteur_vers_coeur: ConnecteurVersCoeur,
 }
 
 impl Tui {
     /// Crée une instance de [`Tui`] avec l'état initial.
-    pub(super) fn new() -> Self {
+    pub(super) fn new(connecteur_vers_coeur: ConnecteurVersCoeur) -> Self {
         Self {
             etat_tui: EtatTui::new(),
-            _feu_application: FeuApplication::new(RecepteurApplication()),
+            connecteur_vers_coeur,
         }
     }
 
@@ -99,6 +78,7 @@ impl Tui {
             }
 
             if self.etat_tui.quitter {
+                self.connecteur_vers_coeur.arreter_thread_coeur();
                 break;
             }
         }
