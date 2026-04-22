@@ -29,17 +29,14 @@ pub(crate) enum Ecran {
 
 /// État courant de l'interface entre deux frames.
 pub(crate) struct EtatTui {
-    /// Indique si la boucle principale doit se terminer à la prochaine itération.
-    quitter: bool,
     /// Écran actuellement affiché — détermine la fonction de rendu appelée.
     pub(crate) ecran: Ecran,
 }
 
 impl EtatTui {
-    /// Crée un [`EtatTui`] en état initial : écran normal, sortie non demandée.
+    /// Crée un [`EtatTui`] en état initial : écran normal.
     fn new() -> Self {
         Self {
-            quitter: false,
             ecran: Ecran::Normal,
         }
     }
@@ -65,20 +62,17 @@ impl Tui {
         }
     }
 
-    /// Boucle principale : dessine, attend un événement clavier, met à jour l'état.
+    /// Boucle principale : dessine puis attend un événement clavier.
     ///
-    /// Tourne jusqu'à ce que [`EtatTui::quitter`] soit `true`. Le dessin précède
-    /// systématiquement l'attente — le terminal affiche toujours un état cohérent
-    /// avant de bloquer.
+    /// À chaque touche pressée, envoie [`MessageTuiCoeur::Quitter`] au thread
+    /// cœur et sort. Le dessin précède systématiquement l'attente — le terminal
+    /// affiche toujours un état cohérent avant de bloquer.
     pub(super) fn lancer(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         loop {
             terminal.draw(|frame| rendu::dessiner(frame, &self.etat_tui))?;
             if crossterm::event::read()?.is_key_press() {
-                self.etat_tui.quitter = true;
-            }
-
-            if self.etat_tui.quitter {
-                self.connecteur_vers_coeur.arreter_thread_coeur();
+                self.connecteur_vers_coeur
+                    .envoyer_message_tui_coeur(crate::MessageTuiCoeur::Quitter);
                 break;
             }
         }

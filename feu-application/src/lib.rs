@@ -6,26 +6,29 @@
 //!
 //! # Architecture
 //!
-//! `feu-noyau` communique avec l'extérieur via `InterfaceFeuNoyau` — passée
-//! en paramètre à chaque commande, jamais stockée dans la struct. Ce choix
-//! évite toute dépendance circulaire et supprime le besoin de cloner l'interface.
+//! Les deux interfaces suivent le même principe : passée en paramètre à chaque
+//! commande qui en a besoin, jamais stockée dans une struct. Ce choix supprime
+//! tout problème de propriété et aligne `feu-application` sur le modèle de
+//! `feu-noyau`.
 //!
-//! Le pont entre les deux couches est une struct interne éphémère (`RecepteurNoyau`),
-//! créée pour la durée d'un appel noyau, qui implémente `InterfaceFeuNoyau` en
-//! déléguant les interactions à l'interface applicative et en écrivant les
-//! notifications directement dans [`SessionApplication`].
+//! - [`InterfaceFeuNoyau`] est implémentée par [`RecepteurNoyau`], pont éphémère
+//!   créé pour la durée d'un appel noyau. Il délègue les interactions bloquantes
+//!   à [`InterfaceFeuApplication`] et écrit les notifications d'état directement
+//!   dans [`SessionApplication`].
+//! - [`InterfaceFeuApplication`] est fournie par la couche de présentation à
+//!   chaque commande qui nécessite une interaction utilisateur
+//!   (`commande_allumage_noeud`, `commande_ouverture_foyer`, etc.).
 //!
 //! # Cycle de vie
 //!
 //! [`FeuApplication`] suit un cycle en deux phases :
 //! 1. **Construction** — [`FeuApplication::new`] crée la struct avec le noyau absent (`None`).
-//! 2. **Allumage** — [`commande_allumage_noeud`](crate::commandes) initialise ou allume le noyau.
-//!    Toutes les autres commandes retournent [`ErreurFeuApplication::NoeudEteint`] si cette
-//!    étape n'a pas été franchie.
+//! 2. **Allumage** — [`commande_allumage_noeud`](FeuApplication::commande_allumage_noeud)
+//!    initialise ou allume le noyau. Toutes les autres commandes retournent
+//!    [`ErreurFeuApplication::NoeudEteint`] si cette étape n'a pas été franchie.
 //!
 //! [`FeuApplication`] possède :
 //! - `feu_noyau` — `Option<FeuNoyau>` : `None` jusqu'à `commande_allumage_noeud`
-//! - `interface_feu_application` — canal vers la couche de présentation
 //! - `session` — état applicatif mis à jour à chaque commande noyau
 
 pub use erreur::{ErreurFeuApplication, ResultFeuApplication};
@@ -148,30 +151,26 @@ impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
 /// Orchestre les commandes du noyau, valide les préconditions et expose une API
 /// stable vers la couche de présentation. Toute interaction avec `feu-noyau` passe par cette
 /// structure — jamais directement depuis la couche de présentation.
-pub struct FeuApplication<I: InterfaceFeuApplication> {
+pub struct FeuApplication {
     /// Instance du noyau — `None` jusqu'à [`commande_allumage_noeud`](FeuApplication::commande_allumage_noeud).
     /// Les commandes reçoivent un [`RecepteurNoyau`] éphémère à chaque appel ; elles retournent
     /// [`ErreurFeuApplication::NoeudEteint`] si le noyau n'est pas encore allumé.
     feu_noyau: Option<FeuNoyau>,
 
-    /// Accès direct à l'interface pour les notifications post-commande.
-    interface_feu_application: I,
-
     session: SessionApplication,
 }
 
-impl<I: InterfaceFeuApplication> FeuApplication<I> {
+impl FeuApplication {
     /// Crée une instance de [`FeuApplication`] sans noyau.
     ///
-    /// Initialise la session et stocke l'interface. Le noyau est absent (`None`) —
+    /// Initialise la session. Le noyau est absent (`None`) —
     /// appeler [`commande_allumage_noeud`](Self::commande_allumage_noeud) est nécessaire
     /// avant toute autre commande.
-    pub fn new(interface_feu_application: I) -> Self {
+    pub fn new() -> Self {
         let session = SessionApplication::new();
 
         Self {
             feu_noyau: None,
-            interface_feu_application,
             session,
         }
     }

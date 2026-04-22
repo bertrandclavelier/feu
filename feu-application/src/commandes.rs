@@ -13,6 +13,12 @@
 //! noyau en a besoin, délègue à [`FeuNoyau`] et propage les erreurs via
 //! [`ErreurFeuApplication`].
 //!
+//! Les commandes qui nécessitent une interaction utilisateur (saisie du mot de
+//! passe, affichage de la seed) reçoivent `interface_feu_application : &mut impl
+//! InterfaceFeuApplication` en paramètre — l'interface n'est pas stockée dans
+//! [`FeuApplication`], elle est fournie à l'appel, comme [`InterfaceFeuNoyau`]
+//! l'est dans `feu-noyau`.
+//!
 //! Les commandes qui ne modifient pas l'état du noyau (`blob_existe`,
 //! `informations_blob`, signatures, diagnostic…) prennent `&self` ;
 //! les autres prennent `&mut self`.
@@ -23,7 +29,7 @@ use feu_noyau::{Anomalie, DonneesBlob};
 
 use super::*;
 
-impl<I: InterfaceFeuApplication> FeuApplication<I> {
+impl FeuApplication {
     /// Affiche la version de la crate `feu-application` sur la sortie standard.
     pub fn affiche_version() {
         println!(
@@ -38,6 +44,9 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// Délègue à [`FeuNoyau::new`] qui détecte automatiquement l'état du nœud :
     /// initialisation si `~/.feu` est absent, allumage sinon.
     ///
+    /// `interface_feu_application` est utilisée pour collecter le mot de passe et,
+    /// à l'initialisation, transmettre et confirmer la seed mnémotechnique.
+    ///
     /// `phrase_seed` : `None` génère une nouvelle seed BIP39 à l'initialisation ;
     /// `Some(phrase)` restaure un nœud depuis une phrase existante. Sans effet à l'allumage —
     /// retourne une erreur si fournie alors que l'arborescence existe déjà.
@@ -49,11 +58,12 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// alors que le nœud existe déjà.
     pub fn commande_allumage_noeud(
         &mut self,
+        interface_feu_application: &mut impl InterfaceFeuApplication,
         phrase_seed: Option<SecretString>,
     ) -> ResultFeuApplication<()> {
         self.feu_noyau = Some({
             let mut recepteur_noyau =
-                RecepteurNoyau::new(&mut self.session, &mut self.interface_feu_application);
+                RecepteurNoyau::new(&mut self.session, interface_feu_application);
             FeuNoyau::new(phrase_seed, &mut recepteur_noyau)?
         });
 
@@ -64,17 +74,22 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     ///
     /// Prérequis noyau : tous les foyers doivent être ouverts.
     ///
+    /// `interface_feu_application` est utilisée pour collecter l'ancien et le
+    /// nouveau mot de passe.
+    ///
     /// # Erreurs
     ///
     /// Retourne une erreur si un foyer est fermé, si la saisie échoue,
     /// ou si l'écriture du trousseau public échoue.
-    pub fn commande_changement_mdp(&mut self) -> ResultFeuApplication<()> {
+    pub fn commande_changement_mdp(
+        &mut self,
+        interface_feu_application: &mut impl InterfaceFeuApplication,
+    ) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
             .as_mut()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
-        let mut recepteur =
-            RecepteurNoyau::new(&mut self.session, &mut self.interface_feu_application);
+        let mut recepteur = RecepteurNoyau::new(&mut self.session, interface_feu_application);
         noyau.changement_mdp(&mut recepteur)?;
 
         Ok(())
@@ -86,18 +101,23 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// l'Archiviste. Les clés publiques du foyer sont transmises à la session
     /// via le pont interne vers le noyau.
     ///
+    /// `interface_feu_application` est utilisée pour collecter le mot de passe.
+    ///
     /// # Erreurs
     ///
     /// Retourne une erreur si l'index est invalide, si le foyer est déjà ouvert,
     /// si le mot de passe est incorrect, ou si une opération disque échoue.
-    pub fn commande_ouverture_foyer(&mut self, index_foyer: usize) -> ResultFeuApplication<()> {
+    pub fn commande_ouverture_foyer(
+        &mut self,
+        interface_feu_application: &mut impl InterfaceFeuApplication,
+        index_foyer: usize,
+    ) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
             .as_mut()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        let mut recepteur =
-            RecepteurNoyau::new(&mut self.session, &mut self.interface_feu_application);
+        let mut recepteur = RecepteurNoyau::new(&mut self.session, interface_feu_application);
 
         noyau.ouverture_foyer(&mut recepteur, index_foyer)?;
 
@@ -109,18 +129,23 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// Chiffre et archive les données du foyer, efface les clés du trousseau
     /// en mémoire et marque le foyer comme fermé dans la session.
     ///
+    /// `interface_feu_application` est utilisée pour collecter le mot de passe.
+    ///
     /// # Erreurs
     ///
     /// Retourne une erreur si l'index est invalide, si le foyer n'est pas ouvert,
     /// ou si une opération disque échoue.
-    pub fn commande_fermeture_foyer(&mut self, index_foyer: usize) -> ResultFeuApplication<()> {
+    pub fn commande_fermeture_foyer(
+        &mut self,
+        interface_feu_application: &mut impl InterfaceFeuApplication,
+        index_foyer: usize,
+    ) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
             .as_mut()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        let mut recepteur =
-            RecepteurNoyau::new(&mut self.session, &mut self.interface_feu_application);
+        let mut recepteur = RecepteurNoyau::new(&mut self.session, interface_feu_application);
         noyau.fermeture_foyer_index(&mut recepteur, index_foyer)?;
 
         Ok(())
@@ -130,8 +155,10 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     ///
     /// À utiliser lorsque Feu s'est terminé anormalement avec un foyer ouvert :
     /// le dossier clair est toujours sur disque mais le trousseau a été perdu.
-    /// Collecte le mot de passe, recharge les clés depuis le dossier clair,
-    /// puis archive et chiffre le foyer comme une fermeture normale.
+    /// Recharge les clés depuis le dossier clair, puis archive et chiffre le
+    /// foyer comme une fermeture normale.
+    ///
+    /// `interface_feu_application` est utilisée pour collecter le mot de passe.
     ///
     /// # Erreurs
     ///
@@ -140,6 +167,7 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
     /// opération disque échoue.
     pub fn commande_secours_fermeture_foyer(
         &mut self,
+        interface_feu_application: &mut impl InterfaceFeuApplication,
         index_foyer: usize,
     ) -> ResultFeuApplication<()> {
         let noyau = self
@@ -147,8 +175,7 @@ impl<I: InterfaceFeuApplication> FeuApplication<I> {
             .as_mut()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        let mut recepteur =
-            RecepteurNoyau::new(&mut self.session, &mut self.interface_feu_application);
+        let mut recepteur = RecepteurNoyau::new(&mut self.session, interface_feu_application);
         noyau.secours_fermeture_foyer_index(&mut recepteur, index_foyer)?;
 
         Ok(())
