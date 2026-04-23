@@ -25,6 +25,7 @@ use std::{sync::mpsc::TryRecvError, time::Duration};
 use crate::{MessageCoeurTui, MessageTuiCoeur, connecteurs::ConnecteurVersCoeur, rendu};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{DefaultTerminal, style::Color};
+use secrecy::SecretString;
 
 pub(crate) const COULEUR_ACCENT: Color = Color::Rgb(255, 90, 31);
 
@@ -34,15 +35,48 @@ pub(crate) const COULEUR_ACCENT: Color = Color::Rgb(255, 90, 31);
 pub(crate) enum Ecran {
     /// Carré centré à angles droits — état par défaut de l'interface.
     Normal,
+    /// Cadre arrondi orange centré — affiché quand le cœur demande un mot de passe.
+    SaisieMdp,
+}
+
+/// Mode de saisie clavier courant.
+///
+/// Orthogonal à [`Ecran`] : l'écran normal peut être en mode `Normal` (raccourcis)
+/// ou `Insertion` (saisie de commande). [`Ecran::SaisieMdp`] est toujours en `Insertion`.
+pub(crate) enum ModeSaisie {
+    /// Touches interprétées comme raccourcis (`a`, `q`, …).
+    Normal,
+    /// Touches accumulées dans [`EtatTui::buffer_saisie`].
+    Insertion,
+}
+
+/// Destination du contenu de [`EtatTui::buffer_saisie`] à la validation (Entrée).
+///
+/// Permet à [`Tui::saisie_mode_insertion`] d'agir sans connaître l'écran courant.
+pub(crate) enum UtilisationBufferSaisie {
+    /// Aucune action sur le canal — saisie locale sans interaction cœur.
+    Rien,
+    /// Envoie [`MessageTuiCoeur::EnvoieMdp`] au thread cœur.
+    EnvoiMdp,
 }
 
 /// État courant de l'interface entre deux frames.
 pub(crate) struct EtatTui {
     /// Écran actuellement affiché — détermine la fonction de rendu appelée.
     pub(crate) ecran: Ecran,
+
+    /// Mode de saisie courant — détermine l'interprétation des touches.
+    pub(crate) mode_saisie: ModeSaisie,
+
+    /// Ce que l'on fait du buffer à la validation — positionné avant de passer en `Insertion`.
+    pub(crate) utilisation_buffer_saisie: UtilisationBufferSaisie,
+
     /// Dernier message d'erreur reçu du thread cœur. `None` si aucune erreur.
     /// Affiché à chaque frame tant qu'il est `Some` — non effacé automatiquement.
     pub(crate) message_erreur: Option<String>,
+
+    /// Accumulateur de la saisie en mode `Insertion`. Vidé après chaque validation ou annulation.
+    pub(crate) buffer_saisie: String,
 }
 
 impl EtatTui {
@@ -50,7 +84,10 @@ impl EtatTui {
     fn new() -> Self {
         Self {
             ecran: Ecran::Normal,
+            mode_saisie: ModeSaisie::Normal,
+            utilisation_buffer_saisie: UtilisationBufferSaisie::Rien,
             message_erreur: None,
+            buffer_saisie: String::new(),
         }
     }
 }
@@ -80,36 +117,25 @@ impl Tui {
     /// Chaque itération :
     /// 1. Dessin du frame courant.
     /// 2. `poll(50ms)` — si un événement clavier est disponible, dispatch selon
-    ///    l'écran actif : `a` envoie [`MessageTuiCoeur::AllumerNoeud`], `q` envoie
-    ///    [`MessageTuiCoeur::Quitter`] et sort.
+    ///    [`EtatTui::mode_saisie`] : mode normal (`a` → [`MessageTuiCoeur::AllumageNoeud`],
+    ///    `q` → [`MessageTuiCoeur::Quitter`]) ou insertion (accumulation dans le buffer,
+    ///    Entrée → validation, Échap → annulation).
     /// 3. `try_recv` non bloquant sur le canal cœur→TUI : met à jour
     ///    [`EtatTui::message_erreur`] sur [`MessageCoeurTui::AffichageErreur`],
+    ///    bascule sur [`Ecran::SaisieMdp`] sur [`MessageCoeurTui::AttenteMdp`],
     ///    ou signale la déconnexion du thread cœur.
     pub(super) fn lancer(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         loop {
             terminal.draw(|frame| rendu::dessiner(frame, &self.etat_tui))?;
+
             if crossterm::event::poll(Duration::from_millis(50))? {
-                match crossterm::event::read()? {
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Char('a'),
-                        kind: KeyEventKind::Press,
-                        ..
-                    }) => {
-                        self.connecteur_vers_coeur
-                            .envoyer_message_tui_coeur(MessageTuiCoeur::AllumerNoeud);
+                match self.etat_tui.mode_saisie {
+                    ModeSaisie::Normal => {
+                        if !self.saisie_mode_normal()? {
+                            break;
+                        }
                     }
-
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Char('q'),
-                        kind: KeyEventKind::Press,
-                        ..
-                    }) => {
-                        self.connecteur_vers_coeur
-                            .envoyer_message_tui_coeur(crate::MessageTuiCoeur::Quitter);
-                        break;
-                    }
-
-                    _ => {}
+                    ModeSaisie::Insertion => self.saisie_mode_insertion()?,
                 }
             }
 
@@ -122,8 +148,81 @@ impl Tui {
 
                 Ok(message) => match message {
                     MessageCoeurTui::AffichageErreur(m) => self.etat_tui.message_erreur = Some(m),
+                    MessageCoeurTui::AttenteMdp => {
+                        self.etat_tui.ecran = Ecran::SaisieMdp;
+                        self.etat_tui.mode_saisie = ModeSaisie::Insertion;
+                        self.etat_tui.utilisation_buffer_saisie = UtilisationBufferSaisie::EnvoiMdp;
+                    }
                 },
             }
+        }
+        Ok(())
+    }
+
+    fn saisie_mode_normal(&mut self) -> std::io::Result<bool> {
+        match crossterm::event::read()? {
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('a'),
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                self.connecteur_vers_coeur
+                    .envoyer_message_tui_coeur(MessageTuiCoeur::AllumageNoeud);
+            }
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('q'),
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                self.connecteur_vers_coeur
+                    .envoyer_message_tui_coeur(crate::MessageTuiCoeur::Quitter);
+                return Ok(false);
+            }
+
+            _ => {}
+        }
+        Ok(true)
+    }
+
+    fn saisie_mode_insertion(&mut self) -> std::io::Result<()> {
+        match crossterm::event::read()? {
+            Event::Key(KeyEvent {
+                code,
+                kind: KeyEventKind::Press,
+                ..
+            }) => match code {
+                KeyCode::Char(c) => {
+                    self.etat_tui.buffer_saisie.push(c);
+                }
+                KeyCode::Backspace => {
+                    self.etat_tui.buffer_saisie.pop();
+                }
+                KeyCode::Enter => {
+                    self.etat_tui.ecran = Ecran::Normal;
+                    self.etat_tui.mode_saisie = ModeSaisie::Normal;
+                    match self.etat_tui.utilisation_buffer_saisie {
+                        UtilisationBufferSaisie::EnvoiMdp => {
+                            self.connecteur_vers_coeur.envoyer_message_tui_coeur(
+                                MessageTuiCoeur::EnvoieMdp(SecretString::from(
+                                    self.etat_tui.buffer_saisie.clone(),
+                                )),
+                            );
+                        }
+                        UtilisationBufferSaisie::Rien => {}
+                    }
+                    self.etat_tui.buffer_saisie.clear();
+                }
+                KeyCode::Esc => {
+                    self.etat_tui.buffer_saisie.clear();
+                    self.etat_tui.ecran = Ecran::Normal;
+                    self.etat_tui.mode_saisie = ModeSaisie::Normal;
+                    self.connecteur_vers_coeur
+                        .envoyer_message_tui_coeur(MessageTuiCoeur::Annulation);
+                }
+                _ => {}
+            },
+            _ => {}
         }
         Ok(())
     }

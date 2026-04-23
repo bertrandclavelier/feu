@@ -31,12 +31,22 @@ use std::thread::{JoinHandle, spawn};
 pub(super) enum MessageCoeurTui {
     /// Une commande a échoué — la TUI doit afficher le message d'erreur.
     AffichageErreur(String),
+
+    /// Le cœur a besoin du mot de passe — la TUI doit basculer sur l'écran de saisie.
+    AttenteMdp,
 }
 
 /// Messages envoyés du thread TUI vers le thread cœur.
 pub(super) enum MessageTuiCoeur {
     /// Lance l'initialisation ou l'allumage du nœud via [`FeuApplication`].
-    AllumerNoeud,
+    AllumageNoeud,
+
+    /// Mot de passe saisi par l'utilisateur, en réponse à [`MessageCoeurTui::AttenteMdp`].
+    EnvoieMdp(SecretString),
+
+    /// L'utilisateur a annulé la saisie en cours (Échap). Débloque le thread cœur en attente.
+    Annulation,
+
     /// Demande d'arrêt propre : le thread cœur doit terminer sa boucle.
     Quitter,
 }
@@ -89,7 +99,7 @@ impl ConnecteurVersTui {
         spawn(move || {
             loop {
                 match self.recepteur.recv() {
-                    Ok(MessageTuiCoeur::AllumerNoeud) => {
+                    Ok(MessageTuiCoeur::AllumageNoeud) => {
                         if let Err(e) = feu_application.commande_allumage_noeud(&mut self, None) {
                             self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
                                 e.to_string(),
@@ -97,6 +107,7 @@ impl ConnecteurVersTui {
                         }
                     }
                     Ok(MessageTuiCoeur::Quitter) => break,
+                    Ok(_) => {}
                     Err(_) => break,
                 }
             }
@@ -106,7 +117,19 @@ impl ConnecteurVersTui {
 
 impl InterfaceFeuApplication for ConnecteurVersTui {
     fn demander_mdp(&self) -> Option<SecretString> {
-        None
+        self.envoyer_message_coeur_tui(MessageCoeurTui::AttenteMdp);
+
+        loop {
+            match self.recepteur.recv() {
+                Ok(MessageTuiCoeur::EnvoieMdp(mdp)) => {
+                    return Some(mdp);
+                }
+                Ok(MessageTuiCoeur::Annulation) => {
+                    return None;
+                }
+                _ => {}
+            }
+        }
     }
 
     fn recevoir_seed(&mut self, mots: &[&str]) {
