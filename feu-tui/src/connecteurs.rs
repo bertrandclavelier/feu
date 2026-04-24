@@ -34,6 +34,9 @@ pub(super) enum MessageCoeurTui {
 
     /// Le cœur a besoin du mot de passe — la TUI doit basculer sur l'écran de saisie.
     AttenteMdp,
+
+    /// La seed vient d'être générée — la TUI doit basculer sur l'écran d'affichage.
+    EnvoiSeed(Vec<SecretString>),
 }
 
 /// Messages envoyés du thread TUI vers le thread cœur.
@@ -43,6 +46,9 @@ pub(super) enum MessageTuiCoeur {
 
     /// Mot de passe saisi par l'utilisateur, en réponse à [`MessageCoeurTui::AttenteMdp`].
     EnvoieMdp(SecretString),
+
+    /// L'utilisateur a confirmé l'enregistrement de la seed — débloque le thread cœur en attente.
+    SeedBienRecue,
 
     /// L'utilisateur a annulé la saisie en cours (Échap). Débloque le thread cœur en attente.
     Annulation,
@@ -133,8 +139,19 @@ impl InterfaceFeuApplication for ConnecteurVersTui {
     }
 
     fn recevoir_seed(&mut self, mots: &[&str]) {
-        let _ = mots;
-        todo!();
+        self.envoyer_message_coeur_tui(MessageCoeurTui::EnvoiSeed(
+            mots.iter()
+                .map(|s| SecretString::from(s.to_string()))
+                .collect(),
+        ));
+        loop {
+            match self.recepteur.recv() {
+                Ok(MessageTuiCoeur::SeedBienRecue) => {
+                    return ();
+                }
+                _ => {}
+            }
+        }
     }
 
     fn confirmer_enregistrement_seed(&self) -> bool {

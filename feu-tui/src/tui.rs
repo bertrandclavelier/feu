@@ -37,6 +37,13 @@ pub(crate) enum Ecran {
     Normal,
     /// Cadre arrondi orange centré — affiché quand le cœur demande un mot de passe.
     SaisieMdp,
+
+    /// Cadre arrondi orange centré — affiché après génération de la seed.
+    /// `rappel` passe à `true` à la première frappe pour afficher le message de confirmation.
+    AffichageSeed {
+        seed: Vec<SecretString>,
+        rappel: bool,
+    },
 }
 
 /// Mode de saisie clavier courant.
@@ -48,6 +55,9 @@ pub(crate) enum ModeSaisie {
     Normal,
     /// Touches accumulées dans [`EtatTui::buffer_saisie`].
     Insertion,
+
+    /// Toute touche avance l'état de l'écran courant — aucune action sur le canal.
+    Information,
 }
 
 /// Destination du contenu de [`EtatTui::buffer_saisie`] à la validation (Entrée).
@@ -136,6 +146,7 @@ impl Tui {
                         }
                     }
                     ModeSaisie::Insertion => self.saisie_mode_insertion()?,
+                    ModeSaisie::Information => self.saisie_mode_information()?,
                 }
             }
 
@@ -152,6 +163,13 @@ impl Tui {
                         self.etat_tui.ecran = Ecran::SaisieMdp;
                         self.etat_tui.mode_saisie = ModeSaisie::Insertion;
                         self.etat_tui.utilisation_buffer_saisie = UtilisationBufferSaisie::EnvoiMdp;
+                    }
+                    MessageCoeurTui::EnvoiSeed(seed) => {
+                        self.etat_tui.ecran = Ecran::AffichageSeed {
+                            seed,
+                            rappel: false,
+                        };
+                        self.etat_tui.mode_saisie = ModeSaisie::Information;
                     }
                 },
             }
@@ -223,6 +241,24 @@ impl Tui {
                 _ => {}
             },
             _ => {}
+        }
+        Ok(())
+    }
+
+    fn saisie_mode_information(&mut self) -> std::io::Result<()> {
+        match crossterm::event::read()? {
+            _ => {
+                if let Ecran::AffichageSeed { seed: _, rappel } = &mut self.etat_tui.ecran {
+                    if *rappel {
+                        self.etat_tui.ecran = Ecran::Normal;
+                        self.etat_tui.mode_saisie = ModeSaisie::Normal;
+                        self.connecteur_vers_coeur
+                            .envoyer_message_tui_coeur(MessageTuiCoeur::SeedBienRecue);
+                    } else {
+                        *rappel = true;
+                    }
+                }
+            }
         }
         Ok(())
     }
