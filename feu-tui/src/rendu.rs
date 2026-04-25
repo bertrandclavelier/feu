@@ -11,6 +11,12 @@
 //! Seul responsable du dessin — aucune logique d'état n'y réside.
 //! [`dessiner`] est le point d'entrée unique, appelé à chaque frame ;
 //! il délègue à une fonction spécialisée selon l'[`crate::tui::Ecran`] actif.
+//!
+//! [`dessiner`] est une fonction libre plutôt qu'une méthode `impl Ecran` pour
+//! séparer la définition de l'état (dans [`crate::tui`]) des opérations sur cet
+//! état. Cette séparation permet d'envisager d'autres opérations sur
+//! [`crate::tui::EtatTui`] — capture pour tests, inspection — sans alourdir le
+//! module d'état.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin};
@@ -25,6 +31,12 @@ use crate::tui::{COULEUR_ACCENT, Ecran, EtatTui};
 ///
 /// Point d'entrée unique du rendu — appelé à chaque itération de la boucle
 /// principale. Délègue à une fonction spécialisée selon [`EtatTui::ecran`].
+///
+/// Fonction libre plutôt que méthode de [`Ecran`] : certains écrans lisent
+/// des champs transversaux de [`EtatTui`] (ex. [`crate::tui::EtatTui::message_erreur`],
+/// [`crate::tui::EtatTui::buffer_saisie`]) que seule cette fonction reçoit en entier.
+/// Maintenir [`crate::tui`] comme module d'état pur requiert que les opérations
+/// de rendu vivent ici.
 pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &EtatTui) {
     match &etat_tui.ecran {
         Ecran::Normal => dessiner_ecran_normal(frame, etat_tui),
@@ -37,12 +49,19 @@ pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &EtatTui) {
 
 /// Dessine l'écran normal : cadre à angles droits, pastilles, invite et erreur éventuelle.
 ///
-/// Largeur nominale 62 cellules, hauteur 31 — ratio compensant la hauteur
+/// Déclenché par [`Ecran::Normal`]. Lit [`crate::tui::EtatTui::message_erreur`]
+/// — champ transversal survivant aux transitions d'écran — et l'affiche centré
+/// s'il est `Some`.
+///
+/// Actuellement toujours appelé avec [`crate::tui::ModeSaisie::Normal`] ;
+/// accueillera le prompt de commande lorsque [`crate::tui::ModeSaisie::Insertion`]
+/// sera utilisé sur cet écran.
+///
+/// Largeur nominale 70 cellules, hauteur 35 — ratio compensant la hauteur
 /// des cellules terminal pour obtenir un rendu visuellement carré.
-/// Affiche [`EtatTui::message_erreur`] centré s'il est `Some`.
 /// Les pastilles nœud et foyers sont provisoirement hardcodées.
 fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
-    // Carré centré : 62×31 pour compenser le ratio largeur/hauteur des cellules terminal.
+    // Carré centré : 70×35 pour compenser le ratio largeur/hauteur des cellules terminal.
     let lignes = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(35), // carré
@@ -108,7 +127,7 @@ fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
         }),
     );
 
-    if let Some(message) = &etat_tui.message_erreur {
+    if let Some(message) = etat_tui.message_erreur() {
         let affichage_erreur = Line::from(vec![Span::styled(
             message,
             Style::default().fg(COULEUR_ACCENT),
@@ -134,8 +153,9 @@ fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
 
 /// Dessine l'écran de saisie du mot de passe : cadre arrondi orange, points de masquage et aide.
 ///
-/// Affiché quand [`EtatTui::ecran`] est [`Ecran::SaisieMdp`]. Largeur 55, hauteur 11.
-/// Chaque caractère du buffer est représenté par `•` — le contenu réel n'est jamais affiché.
+/// Déclenché par [`Ecran::SaisieMdp`], toujours associé à [`crate::tui::ModeSaisie::Insertion`].
+/// Lit la longueur de [`crate::tui::EtatTui::buffer_saisie`] pour afficher les points `•` —
+/// le contenu réel n'est jamais rendu. Largeur 55, hauteur 11.
 fn dessiner_ecran_saisie_mdp(frame: &mut Frame, etat_tui: &EtatTui) {
     let lignes = Layout::vertical([
         Constraint::Fill(1),
@@ -188,8 +208,10 @@ fn dessiner_ecran_saisie_mdp(frame: &mut Frame, etat_tui: &EtatTui) {
 
 /// Dessine l'écran d'affichage de la seed : cadre arrondi orange, mots en 3 colonnes, rappel et aide.
 ///
-/// Affiché quand [`EtatTui::ecran`] est [`Ecran::AffichageSeed`]. Largeur 55, hauteur variable.
-/// Quand `rappel` est `true`, affiche un message de confirmation en orange.
+/// Déclenché par [`Ecran::AffichageSeed`], toujours associé à [`crate::tui::ModeSaisie::Information`].
+/// Hauteur variable selon le nombre de mots (`n` lignes de 3 colonnes).
+/// Quand `rappel` est `true`, affiche en orange un message invitant à confirmer
+/// la copie des mots avant de poursuivre.
 fn dessiner_ecran_affichage_seed(frame: &mut Frame, seed: &Vec<SecretString>, rappel: bool) {
     let n = seed.len().div_ceil(3) as u16;
 
@@ -267,8 +289,7 @@ fn dessiner_ecran_affichage_seed(frame: &mut Frame, seed: &Vec<SecretString>, ra
         frame.render_widget(affichage_rappel, zone_interieure_lignes[5]);
     }
 
-    let texte_aide =
-        Line::from(vec![Span::raw("Appuyer sur une touche pour continuer")]).centered();
+    let texte_aide = Line::from(vec![Span::raw("Appuyer sur Entrée pour continuer")]).centered();
 
     frame.render_widget(texte_aide, zone_interieure_lignes[6]);
 }
