@@ -14,7 +14,8 @@
 //! - [`ConnecteurVersTui`] vit dans le thread cœur. Il possède [`FeuApplication`]
 //!   et la boucle de dispatch des commandes reçues depuis la TUI. Il implémente
 //!   [`feu_application::InterfaceFeuApplication`] pour les interactions bloquantes
-//!   (saisie du mot de passe, affichage de la seed).
+//!   (saisie du mot de passe, affichage de la seed) et la notification de session
+//!   après chaque commande mutante ([`MessageCoeurTui::EnvoiSessionApplication`]).
 //! - [`ConnecteurVersCoeur`] vit dans le thread TUI. Il expose les méthodes de
 //!   haut niveau à la boucle ratatui : envoyer une commande au thread cœur,
 //!   recevoir un événement cœur de façon non bloquante.
@@ -22,7 +23,7 @@
 //! Aucun état n'est partagé entre les deux threads — toute communication
 //! transite par ces canaux typés.
 
-use feu_application::{FeuApplication, InterfaceFeuApplication};
+use feu_application::{FeuApplication, InterfaceFeuApplication, SessionApplication};
 use secrecy::SecretString;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{JoinHandle, spawn};
@@ -48,6 +49,14 @@ pub(super) enum MessageCoeurTui {
     /// Émis par [`ConnecteurVersTui::recevoir_seed`] ; déclenche le basculement vers
     /// [`crate::tui::Ecran::AffichageSeed`] et [`crate::tui::ModeSaisie::Information`].
     EnvoiSeed(Vec<SecretString>),
+
+    /// Session applicative mise à jour — la TUI doit rafraîchir son état.
+    ///
+    /// Émis par [`ConnecteurVersTui::recevoir_session_application`] après chaque
+    /// commande de [`feu_application::FeuApplication`] qui mute la session ;
+    /// consommé par la boucle [`crate::tui::Tui::lancer`] qui pose
+    /// [`crate::tui::EtatTui::session_application`].
+    EnvoiSessionApplication(SessionApplication),
 }
 
 /// Messages envoyés du thread TUI vers le thread cœur.
@@ -215,6 +224,19 @@ impl InterfaceFeuApplication for ConnecteurVersTui {
     /// Toujours `true` — la confirmation est gérée via l'écran [`crate::tui::Ecran::AffichageSeed`].
     fn confirmer_enregistrement_seed(&self) -> bool {
         true
+    }
+
+    /// Encapsule la session dans [`MessageCoeurTui::EnvoiSessionApplication`] et l'envoie sur le canal.
+    ///
+    /// Appelée par [`feu_application::FeuApplication`] après chaque commande mutante réussie.
+    /// L'erreur d'envoi est ignorée : canal fermé = TUI déjà terminée.
+    fn recevoir_session_application(
+        &self,
+        session_application: feu_application::SessionApplication,
+    ) {
+        self.envoyer_message_coeur_tui(MessageCoeurTui::EnvoiSessionApplication(
+            session_application,
+        ));
     }
 }
 

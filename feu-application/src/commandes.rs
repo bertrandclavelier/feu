@@ -30,15 +30,6 @@ use feu_noyau::{Anomalie, DonneesBlob};
 use super::*;
 
 impl FeuApplication {
-    /// Affiche la version de la crate `feu-application` sur la sortie standard.
-    pub fn affiche_version() {
-        println!(
-            "{} version {}",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION")
-        );
-    }
-
     /// Initialise ou allume le nœud et stocke l'instance dans [`FeuApplication`].
     ///
     /// Délègue à [`FeuNoyau::new`] qui détecte automatiquement l'état du nœud :
@@ -66,6 +57,8 @@ impl FeuApplication {
                 RecepteurNoyau::new(&mut self.session, interface_feu_application);
             FeuNoyau::new(phrase_seed, &mut recepteur_noyau)?
         });
+
+        interface_feu_application.recevoir_session_application(self.session.clone());
 
         Ok(())
     }
@@ -121,6 +114,8 @@ impl FeuApplication {
 
         noyau.ouverture_foyer(&mut recepteur, index_foyer)?;
 
+        interface_feu_application.recevoir_session_application(self.session.clone());
+
         Ok(())
     }
 
@@ -147,6 +142,8 @@ impl FeuApplication {
 
         let mut recepteur = RecepteurNoyau::new(&mut self.session, interface_feu_application);
         noyau.fermeture_foyer_index(&mut recepteur, index_foyer)?;
+
+        interface_feu_application.recevoir_session_application(self.session.clone());
 
         Ok(())
     }
@@ -177,6 +174,8 @@ impl FeuApplication {
 
         let mut recepteur = RecepteurNoyau::new(&mut self.session, interface_feu_application);
         noyau.secours_fermeture_foyer_index(&mut recepteur, index_foyer)?;
+
+        interface_feu_application.recevoir_session_application(self.session.clone());
 
         Ok(())
     }

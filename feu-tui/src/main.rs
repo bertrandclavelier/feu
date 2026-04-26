@@ -16,6 +16,10 @@
 //! Les deux threads communiquent via deux canaux `mpsc` typés, créés ici et
 //! distribués aux connecteurs. Ce fichier ne fait qu'amorcer l'exécution —
 //! toute la logique réside dans [`connecteurs`], [`tui`] et [`rendu`].
+//!
+//! En cas de panique du thread cœur, le processus sort avec le code 1.
+//! Le terminal est restauré automatiquement par le guard de [`ratatui::run`]
+//! même si la TUI panique avant ce point.
 
 use std::io::Error;
 use std::sync::mpsc::channel;
@@ -45,8 +49,11 @@ fn main() -> Result<(), Error> {
     let mut tui = Tui::new(connecteur_vers_coeur);
     ratatui::run(|terminal| tui.lancer(terminal))?;
 
-    // Garantit que le thread cœur termine proprement avant la sortie du processus.
-    let _ = poignee_thread_coeur.join();
+    // join() retourne Err si le thread cœur a paniqué.
+    // Dans ce cas on sort en erreur plutôt qu'en succès silencieux.
+    if poignee_thread_coeur.join().is_err() {
+        std::process::exit(1);
+    }
 
     Ok(())
 }

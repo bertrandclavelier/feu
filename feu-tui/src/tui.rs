@@ -27,6 +27,7 @@ use std::{
 
 use crate::{MessageCoeurTui, MessageTuiCoeur, connecteurs::ConnecteurVersCoeur, rendu};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use feu_application::SessionApplication;
 use ratatui::{DefaultTerminal, style::Color};
 use secrecy::SecretString;
 
@@ -108,8 +109,9 @@ pub(crate) enum ValidationBufferSaisie {
 
 /// État courant de l'interface entre deux frames.
 ///
-/// Regroupe cinq dimensions orthogonales dont aucune ne peut être absorbée
+/// Regroupe six dimensions orthogonales dont aucune ne peut être absorbée
 /// par une autre :
+/// - `session_application` : clone de la session reçu après chaque commande mutante ;
 /// - [`Ecran`] : quoi dessiner ;
 /// - [`ModeSaisie`] : comment interpréter les touches ;
 /// - [`ValidationBufferSaisie`] : quoi émettre lors de la validation du buffer ;
@@ -117,6 +119,14 @@ pub(crate) enum ValidationBufferSaisie {
 /// - `message_erreur` : transversal aux écrans, porte le texte et son compte
 ///   à rebours d'effacement automatique (cf. [`EtatTui::decremente_temps`]).
 pub(crate) struct EtatTui {
+    /// Session applicative courante — `None` tant que le nœud n'a pas été allumé.
+    ///
+    /// Peuplé par [`crate::connecteurs::MessageCoeurTui::EnvoiSessionApplication`]
+    /// dans la boucle principale. `None` signifie nœud éteint (pastilles éteintes) ;
+    /// `Some(_)` signifie nœud allumé. Pas de booléen séparé — la présence du clone
+    /// est la preuve que l'allumage a réussi.
+    pub(crate) session_application: Option<SessionApplication>,
+
     /// Écran actuellement affiché — détermine la fonction de rendu appelée.
     pub(crate) ecran: Ecran,
 
@@ -148,6 +158,7 @@ impl EtatTui {
     /// Crée un [`EtatTui`] en état initial : écran normal.
     fn new() -> Self {
         Self {
+            session_application: None,
             ecran: Ecran::Normal,
             mode_saisie: ModeSaisie::Normal,
             validation_buffer_saisie: ValidationBufferSaisie::Rien,
@@ -238,6 +249,7 @@ impl Tui {
     ///    [`EtatTui::message_erreur`] sur [`MessageCoeurTui::AffichageErreur`],
     ///    bascule sur [`Ecran::SaisieMdp`] sur [`MessageCoeurTui::AttenteMdp`],
     ///    bascule sur [`Ecran::AffichageSeed`] sur [`MessageCoeurTui::EnvoiSeed`],
+    ///    met à jour [`EtatTui::session_application`] sur [`MessageCoeurTui::EnvoiSessionApplication`],
     ///    ou signale la déconnexion du thread cœur.
     pub(super) fn lancer(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         let mut horloge = Instant::now();
@@ -284,6 +296,9 @@ impl Tui {
                             rappel: false,
                         };
                         self.etat_tui.mode_saisie = ModeSaisie::Information;
+                    }
+                    MessageCoeurTui::EnvoiSessionApplication(session_application) => {
+                        self.etat_tui.session_application = Some(session_application);
                     }
                 },
             }

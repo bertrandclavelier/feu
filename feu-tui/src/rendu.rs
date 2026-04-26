@@ -102,30 +102,46 @@ fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
     ])
     .split(carre_lignes[0]);
 
+    // Pastille du noeud
+    let span: Span;
+    if etat_tui.session_application.is_some() {
+        span = Span::styled("●", Style::default().fg(COULEUR_ACCENT));
+    } else {
+        span = Span::raw("○");
+    }
     frame.render_widget(
-        Span::styled("●", Style::default().fg(COULEUR_ACCENT)),
+        span,
         ligne_pastilles[0].inner(Margin {
             horizontal: 1,
             vertical: 0,
         }),
     );
 
-    let pastilles_foyers = Line::from(vec![
-        Span::styled("●", Style::default().fg(COULEUR_ACCENT)),
-        Span::raw(" "),
-        Span::raw("○"),
-        Span::raw(" "),
-        Span::raw("○"),
-    ])
-    .right_aligned();
+    // Pastilles des foyers
 
-    frame.render_widget(
-        pastilles_foyers,
-        ligne_pastilles[2].inner(Margin {
-            horizontal: 1,
-            vertical: 0,
-        }),
-    );
+    if let Some(session) = &etat_tui.session_application {
+        let donne_span_foyer = |i| -> Span {
+            if session.etat_foyer(i).unwrap() {
+                Span::styled("●", Style::default().fg(COULEUR_ACCENT))
+            } else {
+                Span::raw("○ ")
+            }
+        };
+        let mut vecteur_span = Vec::<Span>::new();
+        for i in 0..session.nombre_foyers {
+            vecteur_span.push(donne_span_foyer(i));
+        }
+
+        let pastilles_foyers = Line::from(vecteur_span).right_aligned();
+
+        frame.render_widget(
+            pastilles_foyers,
+            ligne_pastilles[2].inner(Margin {
+                horizontal: 1,
+                vertical: 0,
+            }),
+        );
+    }
 
     if let Some(message) = etat_tui.message_erreur() {
         let affichage_erreur = Line::from(vec![Span::styled(

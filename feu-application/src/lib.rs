@@ -42,9 +42,13 @@ mod session;
 
 /// Contrat entre `feu-application` et la couche de présentation.
 ///
-/// Sous-ensemble de [`InterfaceFeuNoyau`] exposé à la couche de présentation.
-/// Le pont interne délègue ces trois méthodes à l'interface applicative ; les
-/// notifications d'état (clés publiques, foyers) sont écrites directement dans
+/// Contrat entre [`FeuApplication`] et la couche de présentation.
+///
+/// Regroupe les interactions bloquantes déléguées par le pont interne
+/// (`demander_mdp`, `recevoir_seed`, `confirmer_enregistrement_seed`) et la
+/// notification d'état émise après chaque commande mutante
+/// (`recevoir_session_application`). Les notifications d'état internes au noyau
+/// (clés publiques, adresses `.onion`) sont écrites directement dans
 /// [`SessionApplication`] sans passer par ce trait.
 pub trait InterfaceFeuApplication {
     /// Collecte le mot de passe Feu en masquant la saisie.
@@ -63,6 +67,17 @@ pub trait InterfaceFeuApplication {
     ///
     /// Retourne `false` pour interrompre l'initialisation.
     fn confirmer_enregistrement_seed(&self) -> bool;
+
+    /// Reçoit un clone de la session applicative après une commande réussie.
+    ///
+    /// Appelée par [`FeuApplication`] à la fin de chaque commande qui mute
+    /// [`SessionApplication`], une fois la session dans un état cohérent.
+    /// Un seul appel par commande — jamais en cours de mutation, jamais depuis
+    /// les setters de session.
+    ///
+    /// La couche de présentation est libre d'en faire ce qu'elle veut :
+    /// l'envoyer sur un canal, le stocker, l'ignorer.
+    fn recevoir_session_application(&self, session_application: SessionApplication);
 }
 
 /// Pont éphémère entre [`FeuNoyau`] et la couche applicative.
