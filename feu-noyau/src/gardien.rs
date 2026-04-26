@@ -21,15 +21,16 @@
 mod carnet;
 pub(super) mod erreur;
 
-use super::cryptographe::trousseaux_publics::{
-    TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
-};
-use crate::Anomalie;
-use crate::MAX_FOYERS;
-use carnet::Carnet;
-use erreur::{ErreurGardien, ResultGardien};
 use std::fs::File;
 use std::path::PathBuf;
+
+use crate::Anomalie;
+use crate::MAX_FOYERS;
+use crate::cryptographe::trousseaux_publics::{
+    TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
+};
+use crate::gardien::carnet::Carnet;
+use crate::gardien::erreur::{ErreurGardien, ResultGardien};
 
 const VERSION_CONFIGURATION: u32 = 1;
 

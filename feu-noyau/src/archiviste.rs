@@ -44,23 +44,23 @@
 //!     classeur4/
 //! ```
 
-use erreur::{ErreurArchiviste, ResultArchiviste};
+pub(super) mod erreur;
+pub(crate) mod tiroir;
+
 use std::fs;
 use std::fs::DirBuilder;
 use std::fs::OpenOptions;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use tiroir::Tiroir;
 
 use crate::Anomalie;
 use crate::DonneesBlob;
 use crate::MAX_CLASSEURS;
+use crate::archiviste::erreur::{ErreurArchiviste, ResultArchiviste};
+use crate::archiviste::tiroir::Tiroir;
 
 const ERR_ARC_001: &str = "Le fichier n'existe pas";
-
-pub(super) mod erreur;
-pub(crate) mod tiroir;
 
 /// Noms des sous-dossiers de l'arborescence d'un foyer.
 const REGISTRE: &str = "registre";

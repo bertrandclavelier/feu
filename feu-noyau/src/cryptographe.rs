@@ -38,21 +38,27 @@
 //! données en clair. Cette centralisation est un invariant fondamental
 //! du protocole.
 
-use crate::MAX_FOYERS;
+pub(super) mod erreur;
+mod trousseau;
+pub(crate) mod trousseaux_publics;
 
-use super::InterfaceFeuNoyau;
 use bip39::{Language, Mnemonic};
 use data_encoding::HEXLOWER;
 use ed25519_dalek::VerifyingKey;
-use erreur::{ErreurCryptographe, ResultCryptographe};
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use sha3::{Digest, Sha3_256};
 use std::io::{Read, Write};
-use trousseau::Trousseau;
-use trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud};
 use x25519_dalek::{EphemeralSecret, PublicKey};
+
+use crate::InterfaceFeuNoyau;
+use crate::MAX_FOYERS;
+use crate::cryptographe::erreur::{ErreurCryptographe, ResultCryptographe};
+use crate::cryptographe::trousseau::Trousseau;
+use crate::cryptographe::trousseaux_publics::{
+    TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
+};
 
 const NOMBRE_MOTS_SEED: usize = 12;
 const INFO_HKDF_CHIFFREMENT_ASYMETRIQUE: &str = "feu-chiffrement-asymetrique";
@@ -61,11 +67,6 @@ const ERR_CRY_001: &str = "CRY-001 > Données corrompues après déchiffrement";
 const ERR_CRY_002: &str = "CRY-002 > Erreur déchiffrement";
 const ERR_CRY_003: &str = "CRY-003 > Erreur définition mot de passe";
 const ERR_CRY_004: &str = "CRY-004 > Problème enregistrement seed";
-
-mod trousseau;
-pub(crate) mod trousseaux_publics;
-
-pub(super) mod erreur;
 
 /// Gardien de la sécurité cryptographique du nœud.
 ///
@@ -657,14 +658,15 @@ impl Cryptographe {
         &mut self,
         interface: &impl InterfaceFeuNoyau,
     ) -> ResultCryptographe<()> {
-        if let (Some(mdp), Some(mdp2)) = (interface.demander_mdp(), interface.demander_mdp()) {
-            if mdp.expose_secret() == mdp2.expose_secret() && mdp.expose_secret().len() >= 12 {
-                self.trousseau.definit_mdp(mdp);
-                return Ok(());
-            }
+        if let (Some(mdp), Some(mdp2)) = (interface.demander_mdp(), interface.demander_mdp())
+            && mdp.expose_secret() == mdp2.expose_secret()
+            && mdp.expose_secret().len() >= 12
+        {
+            self.trousseau.definit_mdp(mdp);
+            return Ok(());
         }
 
-        return Err(ErreurCryptographe::Interne(String::from(ERR_CRY_003)));
+        Err(ErreurCryptographe::Interne(String::from(ERR_CRY_003)))
     }
 
     /// Collecte le mot de passe Feu via l'interface et le stocke dans le trousseau.
@@ -678,7 +680,7 @@ impl Cryptographe {
             return Ok(());
         }
 
-        return Err(ErreurCryptographe::Interne(String::from(ERR_CRY_003)));
+        Err(ErreurCryptographe::Interne(String::from(ERR_CRY_003)))
     }
 
     /// Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel du trousseau.

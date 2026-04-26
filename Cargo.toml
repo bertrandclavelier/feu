@@ -8,3 +8,6 @@ members = [
 [workspace.package]
 version = "0.0.3"
 license = "GPL-3.0-or-later"
+
+[workspace.lints.rust]
+missing_docs = "warn"

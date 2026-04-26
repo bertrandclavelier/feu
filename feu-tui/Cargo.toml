@@ -5,8 +5,10 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
-crossterm = "0"
+crossterm = "0.29"
 feu-application = { path = "../feu-application/" }
-ratatui = "0"
-secrecy = "0"
+ratatui = "0.30"
+secrecy = "0.10"
 
+[lints]
+workspace = true

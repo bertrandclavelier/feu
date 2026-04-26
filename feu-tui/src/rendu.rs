@@ -20,12 +20,67 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin};
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType};
 use secrecy::{ExposeSecret, SecretString};
 
-use crate::tui::{COULEUR_ACCENT, Ecran, EtatTui};
+use crate::tui::{Ecran, EtatTui};
+
+/// Couleur d'accent unique de l'interface — orange `#FF5A1F`.
+///
+/// Utilisée pour le chevron de l'invite, les pastilles allumées, les cadres
+/// des écrans noyau et les messages d'erreur. Aucune autre couleur n'est
+/// introduite : la hiérarchie visuelle repose sur la casse et le gras.
+pub(crate) const COULEUR_ACCENT: Color = Color::Rgb(255, 90, 31);
+
+/// Paire largeur/hauteur en cellules terminal, utilisée pour dimensionner
+/// les zones rectangulaires centrées dans le frame.
+///
+/// Une cellule terminal n'est pas carrée : elle est typiquement deux fois
+/// plus haute que large. Les valeurs concrètes sont donc choisies pour
+/// donner un rendu *visuellement* équilibré, pas un ratio géométrique 1:1.
+struct Dimensions {
+    largeur: u16,
+    hauteur: u16,
+}
+
+/// Dimensions nominales du carré principal de l'écran normal.
+///
+/// Ratio 70 × 35 choisi pour compenser la hauteur des cellules terminal et
+/// obtenir un rendu visuellement carré.
+const DIMENSIONS_ECRAN_NORMAL: Dimensions = Dimensions {
+    largeur: 70,
+    hauteur: 35,
+};
+
+/// Dimensions nominales du cadre arrondi de l'écran de saisie du mot de passe.
+///
+/// Plus étroit et beaucoup moins haut que l'écran normal : la rupture
+/// visuelle (taille + cadre arrondi orange) marque qu'un écran piloté par
+/// le noyau a pris la main.
+const DIMENSIONS_ECRAN_SAISIE_MDP: Dimensions = Dimensions {
+    largeur: 55,
+    hauteur: 11,
+};
+
+/// Dimensions de base du cadre arrondi de l'écran d'affichage de la seed.
+///
+/// La `hauteur` ici est une hauteur *fixe* (titre, espaces, rappel, aide)
+/// à laquelle s'ajoute dynamiquement le nombre de lignes nécessaires pour
+/// afficher la seed sur trois colonnes — soit `ceil(seed.len() / 3)`. La
+/// hauteur réelle de l'écran est donc `hauteur + n`, calculée au rendu.
+const DIMENSIONS_ECRAN_AFFICHAGE_SEED: Dimensions = Dimensions {
+    largeur: 55,
+    hauteur: 10,
+};
+
+/// Nombre de colonnes sur lesquelles la seed est affichée.
+///
+/// Utilisé à la fois pour le découpage `Constraint::Ratio(1, 3)` et pour
+/// les index `i * NOMBRE_COLONNES_SEED`, `+ 1`, `+ 2` dans la boucle de rendu,
+/// garantissant que les deux restent cohérents si on change le nombre de colonnes.
+const NOMBRE_COLONNES_SEED: usize = 3;
 
 /// Dessine le frame courant en fonction de l'écran actif.
 ///
@@ -57,21 +112,19 @@ pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &EtatTui) {
 /// accueillera le prompt de commande lorsque [`crate::tui::ModeSaisie::Insertion`]
 /// sera utilisé sur cet écran.
 ///
-/// Largeur nominale 70 cellules, hauteur 35 — ratio compensant la hauteur
-/// des cellules terminal pour obtenir un rendu visuellement carré.
-/// Les pastilles nœud et foyers sont provisoirement hardcodées.
+/// Les pastilles reflètent l'état réel : nœud via `session_application`,
+/// foyers via `etat_foyer`.
 fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
-    // Carré centré : 70×35 pour compenser le ratio largeur/hauteur des cellules terminal.
     let lignes = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(35), // carré
+        Constraint::Length(DIMENSIONS_ECRAN_NORMAL.hauteur),
         Constraint::Fill(1),
     ])
     .split(frame.area());
 
     let colonnes = Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Length(70), // carré
+        Constraint::Length(DIMENSIONS_ECRAN_NORMAL.largeur),
         Constraint::Fill(1),
     ])
     .split(lignes[1]);
@@ -87,10 +140,10 @@ fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
     let carre_lignes = Layout::vertical([
         Constraint::Length(1), // ligne de pastilles
         Constraint::Fill(1),
-        Constraint::Length(1), // Espace affichage erreur
-        Constraint::Length(2), // Espace vide
+        Constraint::Length(1), // espace affichage erreur
+        Constraint::Length(2), // espace vide
         Constraint::Length(1), // invite
-        Constraint::Length(3), // Espace vide
+        Constraint::Length(3), // espace vide
         Constraint::Fill(1),
     ])
     .split(carre);
@@ -103,12 +156,11 @@ fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
     .split(carre_lignes[0]);
 
     // Pastille du noeud
-    let span: Span;
-    if etat_tui.session_application.is_some() {
-        span = Span::styled("●", Style::default().fg(COULEUR_ACCENT));
+    let span = if etat_tui.session_application.is_some() {
+        Span::styled("●", Style::default().fg(COULEUR_ACCENT))
     } else {
-        span = Span::raw("○");
-    }
+        Span::raw("○")
+    };
     frame.render_widget(
         span,
         ligne_pastilles[0].inner(Margin {
@@ -121,16 +173,13 @@ fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
 
     if let Some(session) = &etat_tui.session_application {
         let donne_span_foyer = |i| -> Span {
-            if session.etat_foyer(i).unwrap() {
-                Span::styled("●", Style::default().fg(COULEUR_ACCENT))
+            if session.etat_foyer(i).unwrap_or(false) {
+                Span::styled("● ", Style::default().fg(COULEUR_ACCENT))
             } else {
                 Span::raw("○ ")
             }
         };
-        let mut vecteur_span = Vec::<Span>::new();
-        for i in 0..session.nombre_foyers {
-            vecteur_span.push(donne_span_foyer(i));
-        }
+        let vecteur_span: Vec<Span> = (0..session.nombre_foyers).map(donne_span_foyer).collect();
 
         let pastilles_foyers = Line::from(vecteur_span).right_aligned();
 
@@ -171,18 +220,18 @@ fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
 ///
 /// Déclenché par [`Ecran::SaisieMdp`], toujours associé à [`crate::tui::ModeSaisie::Insertion`].
 /// Lit la longueur de [`crate::tui::EtatTui::buffer_saisie`] pour afficher les points `•` —
-/// le contenu réel n'est jamais rendu. Largeur 55, hauteur 11.
+/// le contenu réel n'est jamais rendu.
 fn dessiner_ecran_saisie_mdp(frame: &mut Frame, etat_tui: &EtatTui) {
     let lignes = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(11),
+        Constraint::Length(DIMENSIONS_ECRAN_SAISIE_MDP.hauteur),
         Constraint::Fill(1),
     ])
     .split(frame.area());
 
     let colonnes = Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Length(55),
+        Constraint::Length(DIMENSIONS_ECRAN_SAISIE_MDP.largeur),
         Constraint::Fill(1),
     ])
     .split(lignes[1]);
@@ -199,11 +248,11 @@ fn dessiner_ecran_saisie_mdp(frame: &mut Frame, etat_tui: &EtatTui) {
 
     let zone_interieure_lignes = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(1), // Titre
-        Constraint::Length(1), // Espace vide
-        Constraint::Length(1), // Saisie
-        Constraint::Length(1), // Espace vide
-        Constraint::Length(1), // Texte aide
+        Constraint::Length(1), // titre
+        Constraint::Length(1), // espace vide
+        Constraint::Length(1), // saisie
+        Constraint::Length(1), // espace vide
+        Constraint::Length(1), // texte aide
         Constraint::Fill(1),
     ])
     .split(zone_interieure);
@@ -228,19 +277,19 @@ fn dessiner_ecran_saisie_mdp(frame: &mut Frame, etat_tui: &EtatTui) {
 /// Hauteur variable selon le nombre de mots (`n` lignes de 3 colonnes).
 /// Quand `rappel` est `true`, affiche en orange un message invitant à confirmer
 /// la copie des mots avant de poursuivre.
-fn dessiner_ecran_affichage_seed(frame: &mut Frame, seed: &Vec<SecretString>, rappel: bool) {
-    let n = seed.len().div_ceil(3) as u16;
+fn dessiner_ecran_affichage_seed(frame: &mut Frame, seed: &[SecretString], rappel: bool) {
+    let n = seed.len().div_ceil(NOMBRE_COLONNES_SEED) as u16;
 
     let lignes = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(n + 10),
+        Constraint::Length(n + DIMENSIONS_ECRAN_AFFICHAGE_SEED.hauteur),
         Constraint::Fill(1),
     ])
     .split(frame.area());
 
     let colonnes = Layout::horizontal([
         Constraint::Fill(1),
-        Constraint::Length(55),
+        Constraint::Length(DIMENSIONS_ECRAN_AFFICHAGE_SEED.largeur),
         Constraint::Fill(1),
     ])
     .split(lignes[1]);
@@ -257,12 +306,12 @@ fn dessiner_ecran_affichage_seed(frame: &mut Frame, seed: &Vec<SecretString>, ra
 
     let zone_interieure_lignes = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(1), // Titre
-        Constraint::Length(2), // Espace vide
-        Constraint::Length(n), // Seed
-        Constraint::Length(1), // Espace vide
-        Constraint::Length(1), // Texte rappel
-        Constraint::Length(1), // Texte aide
+        Constraint::Length(1), // titre
+        Constraint::Length(2), // espace vide
+        Constraint::Length(n), // seed
+        Constraint::Length(1), // espace vide
+        Constraint::Length(1), // texte rappel
+        Constraint::Length(1), // texte aide
         Constraint::Fill(1),
     ])
     .split(zone_interieure);
@@ -286,14 +335,19 @@ fn dessiner_ecran_affichage_seed(frame: &mut Frame, seed: &Vec<SecretString>, ra
             Line::from(vec![Span::raw(seed[i * 3].expose_secret())]),
             colonnes_seed[0],
         );
-        frame.render_widget(
-            Line::from(vec![Span::raw(seed[(i * 3) + 1].expose_secret())]),
-            colonnes_seed[1],
-        );
-        frame.render_widget(
-            Line::from(vec![Span::raw(seed[(i * 3) + 2].expose_secret())]),
-            colonnes_seed[2],
-        );
+
+        if (i * 3) + 1 < seed.len() {
+            frame.render_widget(
+                Line::from(vec![Span::raw(seed[(i * 3) + 1].expose_secret())]),
+                colonnes_seed[1],
+            );
+        }
+        if (i * 3) + 2 < seed.len() {
+            frame.render_widget(
+                Line::from(vec![Span::raw(seed[(i * 3) + 2].expose_secret())]),
+                colonnes_seed[2],
+            );
+        }
     }
 
     if rappel {

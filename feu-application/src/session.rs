@@ -173,3 +173,10 @@ impl SessionApplication {
         self.cle_publique_chif_foyers[index_foyer] = cle;
     }
 }
+
+impl Default for SessionApplication {
+    /// Délègue à [`SessionApplication::new`].
+    fn default() -> Self {
+        Self::new()
+    }
+}

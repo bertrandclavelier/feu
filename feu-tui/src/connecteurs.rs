@@ -23,13 +23,14 @@
 //! Aucun état n'est partagé entre les deux threads — toute communication
 //! transite par ces canaux typés.
 
-use feu_application::{FeuApplication, InterfaceFeuApplication, SessionApplication};
-use secrecy::SecretString;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{JoinHandle, spawn};
 
+use feu_application::{FeuApplication, InterfaceFeuApplication, SessionApplication};
+use secrecy::SecretString;
+
 /// Messages envoyés du thread cœur vers le thread TUI.
-pub(super) enum MessageCoeurTui {
+pub(crate) enum MessageCoeurTui {
     /// Une commande a échoué — la TUI doit afficher le message d'erreur.
     ///
     /// Émis par [`ConnecteurVersTui`] sur erreur de [`FeuApplication`] ;
@@ -60,7 +61,7 @@ pub(super) enum MessageCoeurTui {
 }
 
 /// Messages envoyés du thread TUI vers le thread cœur.
-pub(super) enum MessageTuiCoeur {
+pub(crate) enum MessageTuiCoeur {
     /// Lance l'initialisation ou l'allumage du nœud via [`FeuApplication`].
     ///
     /// Émis par [`crate::tui::Tui`] sur frappe `a` en [`crate::tui::ModeSaisie::Normal`] ;
@@ -104,14 +105,14 @@ pub(super) enum MessageTuiCoeur {
 /// (mot de passe, seed) doivent être servies par le même objet qui tient les canaux,
 /// faute de quoi les appels bloquants et les envois de messages se retrouveraient
 /// dans des contextes séparés sans moyen de se synchroniser.
-pub(super) struct ConnecteurVersTui {
+pub(crate) struct ConnecteurVersTui {
     emetteur: Sender<MessageCoeurTui>,
     recepteur: Receiver<MessageTuiCoeur>,
 }
 
 impl ConnecteurVersTui {
     /// Crée un [`ConnecteurVersTui`] à partir des extrémités de canaux fournies par `main`.
-    pub(super) fn new(
+    pub(crate) fn new(
         emetteur: Sender<MessageCoeurTui>,
         recepteur: Receiver<MessageTuiCoeur>,
     ) -> Self {
@@ -125,7 +126,7 @@ impl ConnecteurVersTui {
     ///
     /// L'erreur est ignorée volontairement : si le canal est déjà fermé,
     /// le thread TUI est déjà terminé — l'objectif est atteint.
-    pub(super) fn envoyer_message_coeur_tui(&self, message_coeur_tui: MessageCoeurTui) {
+    pub(crate) fn envoyer_message_coeur_tui(&self, message_coeur_tui: MessageCoeurTui) {
         let _ = self.emetteur.send(message_coeur_tui);
     }
 
@@ -150,7 +151,7 @@ impl ConnecteurVersTui {
     /// La boucle se termine sur [`MessageTuiCoeur::Quitter`] ou fermeture du
     /// canal (`Err`). La poignée retournée permet à `main` d'attendre la fin
     /// propre du thread via `.join()` — aucun thread orphelin.
-    pub(super) fn lancer_thread_coeur(mut self) -> JoinHandle<()> {
+    pub(crate) fn lancer_thread_coeur(mut self) -> JoinHandle<()> {
         let mut feu_application = FeuApplication::new();
         spawn(move || {
             loop {
@@ -246,14 +247,14 @@ impl InterfaceFeuApplication for ConnecteurVersTui {
 /// dans son propre thread et ne partageant aucun état.
 /// Expose les commandes de haut niveau à la boucle ratatui et permet de recevoir
 /// les événements remontés par le cœur via un `try_recv` non bloquant à chaque frame.
-pub(super) struct ConnecteurVersCoeur {
+pub(crate) struct ConnecteurVersCoeur {
     emetteur: Sender<MessageTuiCoeur>,
     recepteur: Receiver<MessageCoeurTui>,
 }
 
 impl ConnecteurVersCoeur {
     /// Crée un [`ConnecteurVersCoeur`] à partir des extrémités de canaux fournies par `main`.
-    pub(super) fn new(
+    pub(crate) fn new(
         emetteur: Sender<MessageTuiCoeur>,
         recepteur: Receiver<MessageCoeurTui>,
     ) -> Self {
@@ -266,7 +267,7 @@ impl ConnecteurVersCoeur {
     /// Retourne une référence au récepteur cœur→TUI pour lecture non bloquante.
     ///
     /// Utilisé par la boucle ratatui via [`try_recv`](Receiver::try_recv) à chaque frame.
-    pub(super) fn recepteur(&self) -> &Receiver<MessageCoeurTui> {
+    pub(crate) fn recepteur(&self) -> &Receiver<MessageCoeurTui> {
         &self.recepteur
     }
 
@@ -274,7 +275,7 @@ impl ConnecteurVersCoeur {
     ///
     /// L'erreur est ignorée volontairement : si le canal est déjà fermé,
     /// le thread cœur est déjà terminé — l'objectif est atteint.
-    pub(super) fn envoyer_message_tui_coeur(&self, message_tui_coeur: MessageTuiCoeur) {
+    pub(crate) fn envoyer_message_tui_coeur(&self, message_tui_coeur: MessageTuiCoeur) {
         let _ = self.emetteur.send(message_tui_coeur);
     }
 }

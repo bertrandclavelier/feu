@@ -16,9 +16,6 @@
 //! Les noms de fichiers du protocole sont définis comme constantes privées
 //! au niveau du module — point de vérité unique pour toute l'arborescence.
 
-use super::erreur::{ErreurGardien, ResultGardien};
-use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
-use crate::{Anomalie, MAX_CLASSEURS, MAX_FOYERS};
 use std::env;
 use std::fs;
 use std::fs::DirBuilder;
@@ -28,6 +25,10 @@ use std::io::Write;
 use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+
+use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
+use crate::gardien::erreur::{ErreurGardien, ResultGardien};
+use crate::{Anomalie, MAX_CLASSEURS, MAX_FOYERS};
 
 const ERR_CAR_001: &str = "CAR-001 > Pas de trousseau public pour le foyer";
 const ERR_CAR_002: &str = "CAR-002 > Pas de clé pour le classeur";

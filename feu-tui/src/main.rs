@@ -21,17 +21,17 @@
 //! Le terminal est restauré automatiquement par le guard de [`ratatui::run`]
 //! même si la TUI panique avant ce point.
 
+mod connecteurs;
+mod rendu;
+mod tui;
+
 use std::io::Error;
 use std::sync::mpsc::channel;
-use tui::Tui;
 
 use crate::connecteurs::{
     ConnecteurVersCoeur, ConnecteurVersTui, MessageCoeurTui, MessageTuiCoeur,
 };
-
-mod connecteurs;
-mod rendu;
-mod tui;
+use crate::tui::Tui;
 
 fn main() -> Result<(), Error> {
     // Canal Tui -> Coeur

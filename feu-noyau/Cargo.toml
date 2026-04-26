@@ -5,19 +5,21 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
-aead = { version = "0", features = ["stream"] }
-aes-gcm = { version = "0", features = ["std", "zeroize"] }
-argon2 = { version = "0", features = ["std"] }
+aead = { version = "0.5", features = ["stream"] }
+aes-gcm = { version = "0.10", features = ["std", "zeroize"] }
+argon2 = { version = "0.5", features = ["std"] }
 bip39 = { version = "2", features = ["rand", "french", "zeroize"] }
 data-encoding = { version = "2", features = ["alloc"] }
 ed25519-dalek = { version = "2", features = ["zeroize"] }
-hkdf = "0"
-rand = "0"
-secrecy = "0"
-sha3 = "0"
-slip10_ed25519 = "0"
-tar = "0"
+hkdf = "0.12"
+rand = "0.8"
+secrecy = "0.10"
+sha3 = "0.10"
+slip10_ed25519 = "0.1"
+tar = "0.4"
 thiserror = "2"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = "1"
 
+[lints]
+workspace = true

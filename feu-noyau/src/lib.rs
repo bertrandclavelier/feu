@@ -31,20 +31,21 @@
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 compile_error!("feu-noyau only supports Linux and macOS.");
 
-use archiviste::Archiviste;
-use cryptographe::Cryptographe;
-use gardien::Gardien;
-use secrecy::SecretString;
-use std::io::{Read, Write};
-use std::path::PathBuf;
-use std::time::SystemTime;
-
-pub use erreur::{ErreurFeuNoyau, ResultFeuNoyau};
-
 mod archiviste;
 mod cryptographe;
 mod erreur;
 mod gardien;
+
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::time::SystemTime;
+
+use secrecy::SecretString;
+
+use crate::archiviste::Archiviste;
+use crate::cryptographe::Cryptographe;
+pub use crate::erreur::{ErreurFeuNoyau, ResultFeuNoyau};
+use crate::gardien::Gardien;
 
 /// Nombre maximum de foyers dans le nœud.
 pub const MAX_FOYERS: usize = 3;
@@ -1267,6 +1268,6 @@ impl FeuNoyau {
         let Some(archiviste) = &self.archivistes[index_foyer] else {
             return Err(ErreurFeuNoyau::ArchivisteIndisponible);
         };
-        Ok(&archiviste)
+        Ok(archiviste)
     }
 }

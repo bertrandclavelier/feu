@@ -1,4 +1,5 @@
-// Copyright (C) 2026 Bertrand CLAVELIER
+//ut-il faire pour le use de la ligne 33 de tui.res
+//Copyright (C) 2026 Bertrand CLAVELIER
 //
 // This file is part of FeuTui.
 //
@@ -25,13 +26,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{MessageCoeurTui, MessageTuiCoeur, connecteurs::ConnecteurVersCoeur, rendu};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use feu_application::SessionApplication;
-use ratatui::{DefaultTerminal, style::Color};
+use ratatui::DefaultTerminal;
 use secrecy::SecretString;
 
-pub(crate) const COULEUR_ACCENT: Color = Color::Rgb(255, 90, 31);
+use crate::connecteurs::{ConnecteurVersCoeur, MessageCoeurTui, MessageTuiCoeur};
+use crate::rendu;
 
 /// Axe de rendu : détermine quelle famille visuelle est dessinée à chaque frame.
 ///
@@ -139,7 +140,7 @@ pub(crate) struct EtatTui {
     /// Dernier message d'erreur et son compte à rebours en secondes.
     ///
     /// Champ privé — accès en lecture via [`EtatTui::message_erreur`],
-    /// écriture via [`EtatTui::ajouter_message_erreur`] ou [`EtatTui::effacer_message_erreur`].
+    /// écriture via [`EtatTui::ajouter_message_erreur`].
     /// Le tuple garantit que texte et durée sont toujours posés et effacés ensemble.
     ///
     /// À plat dans [`EtatTui`] pour survivre aux transitions d'écran : une erreur née
@@ -183,15 +184,6 @@ impl EtatTui {
         self.message_erreur.1 = 5;
     }
 
-    /// Efface immédiatement le message d'erreur et remet le compte à rebours à zéro.
-    ///
-    /// Réservé pour un effacement explicite déclenché par une action utilisateur —
-    /// non appelé aujourd'hui, mais disponible quand ce besoin se présentera.
-    pub(crate) fn effacer_message_erreur(&mut self) {
-        self.message_erreur.0 = None;
-        self.message_erreur.1 = 0;
-    }
-
     /// Décrémente d'une seconde tous les comptes à rebours des éléments éphémères.
     ///
     /// Appelé par [`Tui::lancer`] toutes les secondes via une `horloge: Instant`.
@@ -218,14 +210,14 @@ impl EtatTui {
 /// chaque itération de la boucle : rendu via [`crate::rendu::dessiner`],
 /// décrémentation périodique des éléments éphémères, traitement des
 /// événements clavier, et dépouillement non bloquant du canal cœur→TUI.
-pub(super) struct Tui {
+pub(crate) struct Tui {
     etat_tui: EtatTui,
     connecteur_vers_coeur: ConnecteurVersCoeur,
 }
 
 impl Tui {
     /// Crée une instance de [`Tui`] avec l'état initial.
-    pub(super) fn new(connecteur_vers_coeur: ConnecteurVersCoeur) -> Self {
+    pub(crate) fn new(connecteur_vers_coeur: ConnecteurVersCoeur) -> Self {
         Self {
             etat_tui: EtatTui::new(),
             connecteur_vers_coeur,
@@ -251,7 +243,7 @@ impl Tui {
     ///    bascule sur [`Ecran::AffichageSeed`] sur [`MessageCoeurTui::EnvoiSeed`],
     ///    met à jour [`EtatTui::session_application`] sur [`MessageCoeurTui::EnvoiSessionApplication`],
     ///    ou signale la déconnexion du thread cœur.
-    pub(super) fn lancer(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+    pub(crate) fn lancer(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         let mut horloge = Instant::now();
         loop {
             terminal.draw(|frame| rendu::dessiner(frame, &self.etat_tui))?;
@@ -282,9 +274,7 @@ impl Tui {
                 }
 
                 Ok(message) => match message {
-                    MessageCoeurTui::AffichageErreur(m) => {
-                        self.etat_tui.ajouter_message_erreur(String::from(m))
-                    }
+                    MessageCoeurTui::AffichageErreur(m) => self.etat_tui.ajouter_message_erreur(m),
                     MessageCoeurTui::AttenteMdp => {
                         self.etat_tui.ecran = Ecran::SaisieMdp;
                         self.etat_tui.mode_saisie = ModeSaisie::Insertion;

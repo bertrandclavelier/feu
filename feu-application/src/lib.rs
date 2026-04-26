@@ -190,3 +190,10 @@ impl FeuApplication {
         }
     }
 }
+
+impl Default for FeuApplication {
+    /// Délègue à [`FeuApplication::new`].
+    fn default() -> Self {
+        Self::new()
+    }
+}
