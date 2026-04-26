@@ -1,5 +1,4 @@
-//ut-il faire pour le use de la ligne 33 de tui.res
-//Copyright (C) 2026 Bertrand CLAVELIER
+// Copyright (C) 2026 Bertrand CLAVELIER
 //
 // This file is part of FeuTui.
 //
@@ -338,7 +337,7 @@ impl Tui {
 
             Some((KeyCode::Char('q'), KeyModifiers::NONE)) => {
                 self.connecteur_vers_coeur
-                    .envoyer_message_tui_coeur(crate::MessageTuiCoeur::Quitter);
+                    .envoyer_message_tui_coeur(MessageTuiCoeur::Quitter);
                 return Ok(false);
             }
 

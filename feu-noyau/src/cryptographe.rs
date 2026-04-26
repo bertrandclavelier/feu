@@ -660,7 +660,6 @@ impl Cryptographe {
     ) -> ResultCryptographe<()> {
         if let (Some(mdp), Some(mdp2)) = (interface.demander_mdp(), interface.demander_mdp())
             && mdp.expose_secret() == mdp2.expose_secret()
-            && mdp.expose_secret().len() >= 12
         {
             self.trousseau.definit_mdp(mdp);
             return Ok(());

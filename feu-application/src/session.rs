@@ -32,8 +32,7 @@ use feu_noyau::{
 /// # Invariant
 ///
 /// Les champs `nombre_foyers`, `nombre_classeurs` et `max_taille_*` sont des
-/// constantes dérivées de `MAX_*` du noyau. Ils ne changent pas en cours
-/// de session.
+/// constantes dérivées de `MAX_*` du noyau. Ils ne changent pas en cours de session.
 #[derive(Clone)]
 pub struct SessionApplication {
     /// Nombre maximum de foyers — dérivé de [`MAX_FOYERS`].

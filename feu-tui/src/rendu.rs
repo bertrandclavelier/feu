@@ -77,9 +77,11 @@ const DIMENSIONS_ECRAN_AFFICHAGE_SEED: Dimensions = Dimensions {
 
 /// Nombre de colonnes sur lesquelles la seed est affichée.
 ///
-/// Utilisé à la fois pour le découpage `Constraint::Ratio(1, 3)` et pour
-/// les index `i * NOMBRE_COLONNES_SEED`, `+ 1`, `+ 2` dans la boucle de rendu,
-/// garantissant que les deux restent cohérents si on change le nombre de colonnes.
+/// Sert au calcul de `n = ceil(seed.len() / NOMBRE_COLONNES_SEED)` — le nombre
+/// de lignes nécessaires pour disposer la seed — ainsi qu'à l'indexation des
+/// mots et à la borne de la boucle interne dans le rendu. Seul le découpage
+/// horizontal `Constraint::Ratio(1, 3)` × 3 reste codé en dur ; modifier cette
+/// constante impose donc d'adapter aussi le découpage.
 const NOMBRE_COLONNES_SEED: usize = 3;
 
 /// Dessine le frame courant en fonction de l'écran actif.
@@ -219,8 +221,8 @@ fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
 /// Dessine l'écran de saisie du mot de passe : cadre arrondi orange, points de masquage et aide.
 ///
 /// Déclenché par [`Ecran::SaisieMdp`], toujours associé à [`crate::tui::ModeSaisie::Insertion`].
-/// Lit la longueur de [`crate::tui::EtatTui::buffer_saisie`] pour afficher les points `•` —
-/// le contenu réel n'est jamais rendu.
+/// Lit la longueur de [`crate::tui::EtatTui::buffer_saisie`] pour afficher les points `•` et
+/// le compteur de caractères saisis dans le titre — le contenu réel du buffer n'est jamais rendu.
 fn dessiner_ecran_saisie_mdp(frame: &mut Frame, etat_tui: &EtatTui) {
     let lignes = Layout::vertical([
         Constraint::Fill(1),
@@ -257,7 +259,11 @@ fn dessiner_ecran_saisie_mdp(frame: &mut Frame, etat_tui: &EtatTui) {
     ])
     .split(zone_interieure);
 
-    let titre = Line::from(vec![Span::raw("Mot de passe Feu")]).centered();
+    let titre = Line::from(vec![Span::raw(format!(
+        "Mot de passe Feu     |{}|",
+        etat_tui.buffer_saisie.len()
+    ))])
+    .centered();
 
     frame.render_widget(titre, zone_interieure_lignes[1]);
 
@@ -331,22 +337,17 @@ fn dessiner_ecran_affichage_seed(frame: &mut Frame, seed: &[SecretString], rappe
         ])
         .split(lignes_seed[i]);
 
-        frame.render_widget(
-            Line::from(vec![Span::raw(seed[i * 3].expose_secret())]),
-            colonnes_seed[0],
-        );
-
-        if (i * 3) + 1 < seed.len() {
-            frame.render_widget(
-                Line::from(vec![Span::raw(seed[(i * 3) + 1].expose_secret())]),
-                colonnes_seed[1],
-            );
-        }
-        if (i * 3) + 2 < seed.len() {
-            frame.render_widget(
-                Line::from(vec![Span::raw(seed[(i * 3) + 2].expose_secret())]),
-                colonnes_seed[2],
-            );
+        for j in 0..NOMBRE_COLONNES_SEED {
+            if i * NOMBRE_COLONNES_SEED + j < seed.len() {
+                frame.render_widget(
+                    Line::from(vec![Span::raw(format!(
+                        "  |{:02}| {}",
+                        i * NOMBRE_COLONNES_SEED + j + 1,
+                        seed[i * NOMBRE_COLONNES_SEED + j].expose_secret()
+                    ))]),
+                    colonnes_seed[j],
+                );
+            }
         }
     }
 
