@@ -10,7 +10,7 @@
 //!
 //! Ce module centralise l'état entre deux frames ([`EtatTui`]) et orchestre
 //! la boucle dessin → événement → mise à jour via [`Tui::lancer`].
-//! Le rendu est entièrement délégué à [`crate::rendu`].
+//! Le rendu est entièrement délégué à [`rendu`].
 //!
 //! La boucle tourne en continu via `poll(50ms)` : elle ne bloque jamais plus de
 //! 50 ms, ce qui permet de consulter le canal cœur→TUI à chaque itération via
@@ -19,6 +19,13 @@
 //!
 //! La communication avec le thread cœur passe par [`crate::connecteurs::ConnecteurVersCoeur`],
 //! dont [`Tui`] est propriétaire.
+//!
+//! Les commandes accessibles à un instant donné sont filtrées par le contexte
+//! via [`commandes::CommandesActives`] — la boucle clavier ne connaît aucun
+//! raccourci hardcodé, elle dispatche ce que la table lui retourne.
+
+mod commandes;
+mod rendu;
 
 use std::{
     sync::mpsc::TryRecvError,
@@ -31,14 +38,14 @@ use ratatui::DefaultTerminal;
 use secrecy::SecretString;
 
 use crate::connecteurs::{ConnecteurVersCoeur, MessageCoeurTui, MessageTuiCoeur};
-use crate::rendu;
+use commandes::{Commande, CommandesActives};
 
 /// Axe de rendu : détermine quelle famille visuelle est dessinée à chaque frame.
 ///
 /// Chaque variante porte les données propres à son écran — [`Ecran::AffichageSeed`]
 /// embarque les mots directement, garantissant que le rendu dispose de tout ce
 /// dont il a besoin sans interroger d'autre partie de l'état. Le compilateur
-/// garantit l'exhaustivité du `match` dans [`crate::rendu::dessiner`].
+/// garantit l'exhaustivité du `match` dans [`rendu::dessiner`].
 ///
 /// Orthogonal à [`ModeSaisie`] : un même écran peut traverser plusieurs modes.
 /// [`Ecran::Normal`] sera utilisé avec les trois modes à mesure que les commandes
@@ -72,12 +79,14 @@ pub(crate) enum Ecran {
 /// Axe d'interprétation des touches clavier — indépendant de l'écran affiché.
 ///
 /// Transversal à [`Ecran`] : un même écran peut traverser plusieurs modes selon
-/// son état. [`Ecran::Normal`] sera utilisé avec les trois — raccourcis globaux
-/// en `Normal`, saisie de commande en `Insertion`, et confirmations en `Information`.
+/// son état. [`Ecran::Normal`] sera utilisé avec les trois — commandes filtrées
+/// par contexte en `Normal`, saisie de commande en `Insertion`, et confirmations
+/// en `Information`.
 /// Fusionner cet axe avec [`Ecran`] recouperait l'interprétation des touches et
 /// la logique de rendu, deux responsabilités indépendantes.
 pub(crate) enum ModeSaisie {
-    /// Touches interprétées comme raccourcis globaux (`a` → allumage, `q` → quitter).
+    /// Touches dispatchées via [`EtatTui::commandes_actives`] : la table
+    /// indique quelle commande exécuter, ou rien si la touche n'y figure pas.
     Normal,
 
     /// Touches accumulées dans [`EtatTui::buffer_saisie`] ; Entrée valide, Échap annule.
@@ -109,11 +118,12 @@ pub(crate) enum ValidationBufferSaisie {
 
 /// État courant de l'interface entre deux frames.
 ///
-/// Regroupe six dimensions orthogonales dont aucune ne peut être absorbée
+/// Regroupe sept dimensions orthogonales dont aucune ne peut être absorbée
 /// par une autre :
 /// - `session_application` : clone de la session reçu après chaque commande mutante ;
 /// - [`Ecran`] : quoi dessiner ;
 /// - [`ModeSaisie`] : comment interpréter les touches ;
+/// - `commandes_actives` : quelles touches déclenchent quelle commande dans le contexte courant ;
 /// - [`ValidationBufferSaisie`] : quoi émettre lors de la validation du buffer ;
 /// - `buffer_saisie` : accumulateur de saisie, aveugle à l'écran courant ;
 /// - `message_erreur` : transversal aux écrans, porte le texte et son compte
@@ -132,6 +142,19 @@ pub(crate) struct EtatTui {
 
     /// Mode de saisie courant — détermine l'interprétation des touches.
     pub(crate) mode_saisie: ModeSaisie,
+
+    /// Table de dispatch touche → commande, filtrée par le contexte courant.
+    ///
+    /// Source de vérité unique pour les commandes accessibles à un instant donné :
+    /// une touche absente de la table ne déclenche rien, point. Le filtrage par
+    /// contexte n'a donc aucun cas particulier à gérer dans la boucle — il suffit
+    /// d'ajouter ou retirer des entrées via [`CommandesActives::desactiver`]
+    /// au moment où le contexte change.
+    ///
+    /// Évolue par mutations incrémentales plutôt que par reconstruction : chaque
+    /// transition d'état (allumage, ouverture de foyer…) ne touche que les commandes
+    /// concernées, ce qui rend les transitions explicites et auditables.
+    commandes_actives: CommandesActives,
 
     /// Ce que l'on fait du buffer à la validation — positionné avant de passer en [`ModeSaisie::Insertion`].
     pub(crate) validation_buffer_saisie: ValidationBufferSaisie,
@@ -161,6 +184,7 @@ impl EtatTui {
             session_application: None,
             ecran: Ecran::Normal,
             mode_saisie: ModeSaisie::Normal,
+            commandes_actives: CommandesActives::new(),
             validation_buffer_saisie: ValidationBufferSaisie::Rien,
             message_erreur: (None, 0),
             buffer_saisie: String::new(),
@@ -206,7 +230,7 @@ impl EtatTui {
 ///
 /// Possède l'état de l'interface ([`EtatTui`]) et le connecteur vers le
 /// thread cœur ([`crate::connecteurs::ConnecteurVersCoeur`]). Coordonne à
-/// chaque itération de la boucle : rendu via [`crate::rendu::dessiner`],
+/// chaque itération de la boucle : rendu via [`rendu::dessiner`],
 /// décrémentation périodique des éléments éphémères, traitement des
 /// événements clavier, et dépouillement non bloquant du canal cœur→TUI.
 pub(crate) struct Tui {
@@ -232,10 +256,10 @@ impl Tui {
     ///    `horloge` est le seul `Instant` de la boucle — [`EtatTui`] ne manipule que
     ///    des entiers, pas du temps.
     /// 3. `poll(50ms)` — si un événement clavier est disponible, dispatch selon
-    ///    [`EtatTui::mode_saisie`] : mode normal (`a` → [`MessageTuiCoeur::AllumageNoeud`],
-    ///    `q` → [`MessageTuiCoeur::Quitter`]), insertion (accumulation dans le buffer,
-    ///    Entrée → validation, Échap → annulation), ou information (Entrée →
-    ///    avancement de l'écran courant).
+    ///    [`EtatTui::mode_saisie`] : mode normal (lookup dans
+    ///    [`EtatTui::commandes_actives`] et exécution de la commande retournée),
+    ///    insertion (accumulation dans le buffer, Entrée → validation,
+    ///    Échap → annulation), ou information (Entrée → avancement de l'écran courant).
     /// 4. `try_recv` non bloquant sur le canal cœur→TUI : met à jour
     ///    [`EtatTui::message_erreur`] sur [`MessageCoeurTui::AffichageErreur`],
     ///    bascule sur [`Ecran::SaisieMdp`] sur [`MessageCoeurTui::AttenteMdp`],
@@ -320,29 +344,45 @@ impl Tui {
         }
     }
 
-    /// Traite une touche en mode [`ModeSaisie::Normal`] : raccourcis globaux.
+    /// Traite une touche en mode [`ModeSaisie::Normal`] : dispatch via [`CommandesActives`].
     ///
-    /// Raccourcis actifs : `a` (sans modificateur) → [`MessageTuiCoeur::AllumageNoeud`] ;
-    /// `q` (sans modificateur) → [`MessageTuiCoeur::Quitter`].
-    /// `KeyModifiers::NONE` est requis explicitement : un `Ctrl+a` ou `Alt+a`
-    /// ne déclenchent pas l'allumage.
+    /// La logique se déroule en trois filtres successifs : [`Self::lire_touche`]
+    /// écarte les événements non clavier ; le lookup dans
+    /// [`EtatTui::commandes_actives`] écarte les touches non liées dans le
+    /// contexte courant ; le `match` final mappe chaque [`Commande`] à son
+    /// effet — envoi de message au cœur, mutation de la table pour les
+    /// commandes à usage unique, ou affichage de l'aide.
     ///
-    /// Retourne `false` pour signaler à la boucle principale de s'arrêter (`q`).
+    /// Aucun raccourci n'est hardcodé ici : ajouter une commande consiste à
+    /// étendre l'enum [`Commande`], à insérer la liaison dans
+    /// [`CommandesActives::new`] (ou via une future activation contextuelle)
+    /// et à ajouter un bras au `match`. La logique de filtrage par contexte
+    /// reste entièrement dans [`commandes`].
+    ///
+    /// Retourne `false` pour signaler à la boucle principale de s'arrêter
+    /// (déclenché par [`Commande::Quitter`]).
     fn saisie_mode_normal(&mut self) -> std::io::Result<bool> {
-        match Self::lire_touche()? {
-            Some((KeyCode::Char('a'), KeyModifiers::NONE)) => {
-                self.connecteur_vers_coeur
-                    .envoyer_message_tui_coeur(MessageTuiCoeur::AllumageNoeud);
+        if let Some(touche) = Self::lire_touche()? {
+            if let Some(commande) = self.etat_tui.commandes_actives.get(&touche) {
+                match commande {
+                    Commande::AllumerNoeud => {
+                        self.connecteur_vers_coeur
+                            .envoyer_message_tui_coeur(MessageTuiCoeur::AllumageNoeud);
+                        self.etat_tui
+                            .commandes_actives
+                            .desactiver(Commande::AllumerNoeud);
+                    }
+                    // TODO: brancher l'affichage de l'aide contextuelle.
+                    Commande::ListeCommandesActives => {}
+                    Commande::Quitter => {
+                        self.connecteur_vers_coeur
+                            .envoyer_message_tui_coeur(MessageTuiCoeur::Quitter);
+                        return Ok(false);
+                    }
+                }
             }
-
-            Some((KeyCode::Char('q'), KeyModifiers::NONE)) => {
-                self.connecteur_vers_coeur
-                    .envoyer_message_tui_coeur(MessageTuiCoeur::Quitter);
-                return Ok(false);
-            }
-
-            _ => {}
         }
+
         Ok(true)
     }
 

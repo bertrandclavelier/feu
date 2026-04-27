@@ -15,14 +15,14 @@
 //!
 //! Les deux threads communiquent via deux canaux `mpsc` typés, créés ici et
 //! distribués aux connecteurs. Ce fichier ne fait qu'amorcer l'exécution —
-//! toute la logique réside dans [`connecteurs`], [`tui`] et [`rendu`].
+//! toute la logique réside dans [`connecteurs`] et [`tui`], ce dernier
+//! orchestrant ses propres sous-modules de rendu et de commandes.
 //!
 //! En cas de panique du thread cœur, le processus sort avec le code 1.
 //! Le terminal est restauré automatiquement par le guard de [`ratatui::run`]
 //! même si la TUI panique avant ce point.
 
 mod connecteurs;
-mod rendu;
 mod tui;
 
 use std::io::Error;

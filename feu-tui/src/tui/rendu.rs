@@ -25,7 +25,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType};
 use secrecy::{ExposeSecret, SecretString};
 
-use crate::tui::{Ecran, EtatTui};
+use super::{Ecran, EtatTui};
 
 /// Couleur d'accent unique de l'interface — orange `#FF5A1F`.
 ///
@@ -341,7 +341,7 @@ fn dessiner_ecran_affichage_seed(frame: &mut Frame, seed: &[SecretString], rappe
             if i * NOMBRE_COLONNES_SEED + j < seed.len() {
                 frame.render_widget(
                     Line::from(vec![Span::raw(format!(
-                        "  |{:02}| {}",
+                        "  {:02} · {}",
                         i * NOMBRE_COLONNES_SEED + j + 1,
                         seed[i * NOMBRE_COLONNES_SEED + j].expose_secret()
                     ))]),
