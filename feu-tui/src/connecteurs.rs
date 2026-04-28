@@ -76,16 +76,29 @@ pub(crate) enum MessageTuiCoeur {
     /// à [`FeuApplication`].
     EnvoieMdp(SecretString),
 
+    /// Demande l'ouverture du foyer à l'index donné (base 0).
+    ///
+    /// Émis par [`crate::tui::Tui`] lors de la validation du buffer en
+    /// [`crate::tui::ValidationBufferSaisie::OuvertureFoyer`] ;
+    /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
+    /// [`feu_application::FeuApplication::commande_ouverture_foyer`].
+    OuvertureFoyer(usize),
+
     /// L'utilisateur a confirmé l'enregistrement de la seed — débloque le thread cœur en attente.
     ///
     /// Émis par [`crate::tui::Tui`] à la deuxième frappe en [`crate::tui::ModeSaisie::Information`] ;
     /// débloque [`ConnecteurVersTui::recevoir_seed`].
     SeedBienRecue,
 
-    /// L'utilisateur a annulé la saisie en cours (Échap) — débloque le thread cœur en attente.
+    /// L'utilisateur a annulé la saisie en cours (Échap).
     ///
-    /// Émis par [`crate::tui::Tui`] sur Échap en [`crate::tui::ModeSaisie::Insertion`] ;
-    /// [`ConnecteurVersTui::demander_mdp`] retourne `None` à [`FeuApplication`].
+    /// Émis par [`crate::tui::Tui`] sur Échap en [`crate::tui::ModeSaisie::Insertion`],
+    /// quel que soit le contenu de [`crate::tui::ValidationBufferSaisie`].
+    /// Sa réception côté cœur dépend du contexte :
+    /// - pendant un [`Self::EnvoieMdp`] attendu, débloque [`ConnecteurVersTui::demander_mdp`]
+    ///   qui retourne `None` à [`FeuApplication`] ;
+    /// - hors attente bloquante (ex. saisie d'un numéro de foyer), le message est ignoré
+    ///   par la boucle de dispatch — la TUI a déjà rétabli son état local.
     Annulation,
 
     /// Demande d'arrêt propre : le thread cœur doit terminer sa boucle.
@@ -137,16 +150,19 @@ impl ConnecteurVersTui {
     ///
     /// La boucle de dispatch liste **exhaustivement** chaque variante de
     /// [`MessageTuiCoeur`] — aucun `_ => {}`. Ce choix est structurel : toute
-    /// variante ajoutée à l'enum à l'avenir (ouverture de foyer, requête de
-    /// signature, écriture de blob…) provoque une erreur de compilation tant
-    /// qu'elle n'est pas traitée ici. Le compilateur devient le filet de sécurité
-    /// contre les commandes silencieusement ignorées.
+    /// variante ajoutée à l'enum à l'avenir (requête de signature, écriture de
+    /// blob…) provoque une erreur de compilation tant qu'elle n'est pas traitée
+    /// ici. Le compilateur devient le filet de sécurité contre les commandes
+    /// silencieusement ignorées.
     ///
+    /// [`MessageTuiCoeur::AllumageNoeud`] et [`MessageTuiCoeur::OuvertureFoyer`]
+    /// déclenchent la commande correspondante de [`FeuApplication`] et propagent
+    /// l'erreur éventuelle via [`MessageCoeurTui::AffichageErreur`].
     /// [`MessageTuiCoeur::EnvoieMdp`], [`MessageTuiCoeur::SeedBienRecue`] et
     /// [`MessageTuiCoeur::Annulation`] ont un corps vide : hors-protocole dans
     /// le contexte de la boucle principale (ils ne peuvent arriver ici que si
-    /// le protocole est violé), ils sont ignorés — mais explicitement, pas par
-    /// défaut.
+    /// une attente bloquante a été contournée), ils sont ignorés — mais
+    /// explicitement, pas par défaut.
     ///
     /// La boucle se termine sur [`MessageTuiCoeur::Quitter`] ou fermeture du
     /// canal (`Err`). La poignée retournée permet à `main` d'attendre la fin
@@ -165,6 +181,15 @@ impl ConnecteurVersTui {
                     }
                     Ok(MessageTuiCoeur::Quitter) => break,
                     Ok(MessageTuiCoeur::EnvoieMdp(_)) => {}
+                    Ok(MessageTuiCoeur::OuvertureFoyer(index_foyer)) => {
+                        if let Err(e) =
+                            feu_application.commande_ouverture_foyer(&mut self, index_foyer)
+                        {
+                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
+                                e.to_string(),
+                            ));
+                        }
+                    }
                     Ok(MessageTuiCoeur::SeedBienRecue) => {}
                     Ok(MessageTuiCoeur::Annulation) => {}
                     Err(_) => break,

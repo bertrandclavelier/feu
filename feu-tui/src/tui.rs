@@ -114,6 +114,8 @@ pub(crate) enum ValidationBufferSaisie {
 
     /// Le buffer est transmis comme [`crate::connecteurs::MessageTuiCoeur::EnvoieMdp`] au thread cœur.
     EnvoiMdp,
+
+    OuvertureFoyer,
 }
 
 /// État courant de l'interface entre deux frames.
@@ -170,6 +172,18 @@ pub(crate) struct EtatTui {
     /// Effacé automatiquement quand le compte à rebours atteint zéro via [`EtatTui::decremente_temps`].
     message_erreur: (Option<String>, u8),
 
+    /// Dernière confirmation de commande et son compte à rebours en secondes.
+    ///
+    /// Champ privé — accès en lecture via [`EtatTui::message_commande`],
+    /// écriture via [`EtatTui::ajouter_message_commande`].
+    ///
+    /// Durée volontairement courte (2 s contre 5 s pour les erreurs) : une
+    /// confirmation visuelle doit disparaître vite pour ne pas encombrer l'écran.
+    /// Effacé automatiquement quand le compte à rebours atteint zéro via [`EtatTui::decremente_temps`].
+    message_commande: (Option<String>, u8),
+
+    pub(crate) prompt: String,
+
     /// Accumulateur de la saisie en mode [`ModeSaisie::Insertion`]. Vidé après chaque validation ou annulation.
     ///
     /// À plat dans [`EtatTui`] parce que la boucle d'accumulation est indépendante de l'écran :
@@ -187,6 +201,8 @@ impl EtatTui {
             commandes_actives: CommandesActives::new(),
             validation_buffer_saisie: ValidationBufferSaisie::Rien,
             message_erreur: (None, 0),
+            message_commande: (None, 0),
+            prompt: String::new(),
             buffer_saisie: String::new(),
         }
     }
@@ -207,20 +223,47 @@ impl EtatTui {
         self.message_erreur.1 = 5;
     }
 
+    /// Retourne le texte de la confirmation de commande courante, `None` si aucune.
+    ///
+    /// Expose uniquement le texte — le compte à rebours est un détail interne.
+    pub(crate) fn message_commande(&self) -> &Option<String> {
+        &self.message_commande.0
+    }
+
+    /// Pose une confirmation de commande avec un compte à rebours de 2 secondes.
+    ///
+    /// Toujours appelé à la place d'une affectation directe : garantit que
+    /// texte et durée sont posés atomiquement et ne peuvent pas se désynchroniser.
+    pub(crate) fn ajouter_message_commande(&mut self, message_commande: String) {
+        self.message_commande.0 = Some(message_commande);
+        self.message_commande.1 = 2;
+    }
+
     /// Décrémente d'une seconde tous les comptes à rebours des éléments éphémères.
     ///
     /// Appelé par [`Tui::lancer`] toutes les secondes via une `horloge: Instant`.
     /// Quand le compte à rebours d'un élément atteint zéro, l'élément est effacé.
     ///
-    /// C'est ici que s'ajouteront les prochains éléments éphémères — confirmations
-    /// visuelles, indicateurs d'activité — chacun avec son propre compteur.
-    /// La boucle principale n'a pas à changer : elle appelle `decremente_temps`
-    /// une fois par seconde, quelle que soit la nature des éléments gérés.
+    /// Éléments éphémères gérés actuellement :
+    /// - [`EtatTui::message_erreur`] — durée 5 s ;
+    /// - [`EtatTui::message_commande`] — durée 2 s.
+    ///
+    /// Les prochains éléments (indicateurs d'activité…) s'ajouteront ici,
+    /// chacun avec son propre compteur ; la boucle principale n'a pas à changer.
     fn decremente_temps(&mut self) {
+        // Message erreur
         if self.message_erreur.1 > 0 {
             self.message_erreur.1 -= 1;
             if self.message_erreur.1 == 0 {
                 self.message_erreur.0 = None;
+            }
+        }
+
+        // Message commande
+        if self.message_commande.1 > 0 {
+            self.message_commande.1 -= 1;
+            if self.message_commande.1 == 0 {
+                self.message_commande.0 = None;
             }
         }
     }
@@ -364,6 +407,7 @@ impl Tui {
     fn saisie_mode_normal(&mut self) -> std::io::Result<bool> {
         if let Some(touche) = Self::lire_touche()? {
             if let Some(commande) = self.etat_tui.commandes_actives.get(&touche) {
+                let libelle = commande.afficher();
                 match commande {
                     Commande::AllumerNoeud => {
                         self.connecteur_vers_coeur
@@ -371,15 +415,26 @@ impl Tui {
                         self.etat_tui
                             .commandes_actives
                             .desactiver(Commande::AllumerNoeud);
+                        self.etat_tui.commandes_actives.ajouter(
+                            (KeyCode::Char('o'), KeyModifiers::NONE),
+                            Commande::OuvrirFoyer,
+                        );
                     }
                     // TODO: brancher l'affichage de l'aide contextuelle.
                     Commande::ListeCommandesActives => {}
+                    Commande::OuvrirFoyer => {
+                        self.etat_tui.prompt = String::from("ouvre");
+                        self.etat_tui.mode_saisie = ModeSaisie::Insertion;
+                        self.etat_tui.validation_buffer_saisie =
+                            ValidationBufferSaisie::OuvertureFoyer;
+                    }
                     Commande::Quitter => {
                         self.connecteur_vers_coeur
                             .envoyer_message_tui_coeur(MessageTuiCoeur::Quitter);
                         return Ok(false);
                     }
                 }
+                self.etat_tui.ajouter_message_commande(libelle);
             }
         }
 
@@ -416,11 +471,25 @@ impl Tui {
                             )),
                         );
                     }
+                    ValidationBufferSaisie::OuvertureFoyer => {
+                        let index_result: Result<usize, _> =
+                            self.etat_tui.buffer_saisie.trim().parse();
+                        if let Ok(index) = index_result {
+                            self.connecteur_vers_coeur
+                                .envoyer_message_tui_coeur(MessageTuiCoeur::OuvertureFoyer(index));
+                        } else {
+                            self.etat_tui
+                                .ajouter_message_erreur(String::from("Numéro de foyer invalide"));
+                        }
+                    }
                     ValidationBufferSaisie::Rien => {}
                 }
+                self.etat_tui.validation_buffer_saisie = ValidationBufferSaisie::Rien;
+                self.etat_tui.prompt.clear();
                 self.etat_tui.buffer_saisie.clear();
             }
             Some((KeyCode::Esc, KeyModifiers::NONE)) => {
+                self.etat_tui.prompt.clear();
                 self.etat_tui.buffer_saisie.clear();
                 self.etat_tui.ecran = Ecran::Normal;
                 self.etat_tui.mode_saisie = ModeSaisie::Normal;

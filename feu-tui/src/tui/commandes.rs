@@ -56,6 +56,8 @@ pub(super) enum Commande {
     ///
     /// Désactivée après la première utilisation : l'allumage est non répétable,
     /// la commande disparaît de la table dès que le message est envoyé au cœur.
+    /// Le bras dispatch active simultanément [`Commande::OuvrirFoyer`] dans la table
+    /// — l'ouverture de foyer n'a de sens qu'une fois le nœud allumé.
     AllumerNoeud,
 
     /// Affiche l'aide contextuelle listant les commandes actuellement disponibles.
@@ -63,10 +65,36 @@ pub(super) enum Commande {
     /// Toujours active : `?` doit fonctionner quel que soit l'état du nœud.
     ListeCommandesActives,
 
+    /// Prépare l'ouverture d'un foyer — bascule l'invite en mode saisie pour collecter le numéro.
+    ///
+    /// Activée par [`crate::tui::Tui`] au moment de l'allumage du nœud, désactivée à l'extinction.
+    /// La saisie du numéro et l'envoi de [`crate::connecteurs::MessageTuiCoeur::OuvertureFoyer`]
+    /// sont gérés par `saisie_mode_insertion` une fois le buffer validé.
+    OuvrirFoyer,
+
     /// Demande l'arrêt propre de l'application — émet [`crate::connecteurs::MessageTuiCoeur::Quitter`].
     ///
     /// Toujours active : l'utilisateur doit pouvoir sortir à tout moment.
     Quitter,
+}
+
+impl Commande {
+    /// Retourne un libellé lisible à afficher comme accusé de réception.
+    ///
+    /// Utilisé par [`crate::tui::EtatTui::ajouter_message_commande`] pour afficher
+    /// un retour visuel éphémère après chaque frappe reconnue. Le libellé est
+    /// volontairement court : il confirme que la touche a été interprétée comme
+    /// la commande attendue, sans préjuger du résultat — succès ou échec
+    /// remonteront ensuite via [`crate::connecteurs::MessageCoeurTui::AffichageErreur`]
+    /// ou les pastilles d'état.
+    pub(crate) fn afficher(&self) -> String {
+        match &self {
+            Self::AllumerNoeud => String::from("Allume nœud"),
+            Self::ListeCommandesActives => String::from("Liste commandes actives"),
+            Self::OuvrirFoyer => String::from("Ouverture foyer"),
+            Self::Quitter => String::from("Quitte Feu"),
+        }
+    }
 }
 
 /// Table de dispatch des commandes actives dans le contexte courant.
@@ -112,6 +140,16 @@ impl CommandesActives {
     /// déclenche rien — le filtrage par contexte est entièrement implicite.
     pub(super) fn get(&self, touche: &(KeyCode, KeyModifiers)) -> Option<&Commande> {
         self.0.get(touche)
+    }
+
+    /// Ajoute ou remplace la liaison d'une touche vers une commande.
+    ///
+    /// Pendant de [`desactiver`](Self::desactiver) pour les activations contextuelles :
+    /// une commande indisponible au démarrage (ex. [`Commande::OuvrirFoyer`], qui
+    /// requiert un nœud allumé) est insérée ici au moment où le contexte le permet,
+    /// sans reconstruire la table.
+    pub(super) fn ajouter(&mut self, touche: (KeyCode, KeyModifiers), commande: Commande) {
+        self.0.insert(touche, commande);
     }
 
     /// Retire toutes les liaisons clavier associées à une commande donnée.

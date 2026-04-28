@@ -25,6 +25,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType};
 use secrecy::{ExposeSecret, SecretString};
 
+use crate::tui::ModeSaisie;
+
 use super::{Ecran, EtatTui};
 
 /// Couleur d'accent unique de l'interface — orange `#FF5A1F`.
@@ -104,18 +106,18 @@ pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &EtatTui) {
     }
 }
 
-/// Dessine l'écran normal : cadre à angles droits, pastilles, invite et erreur éventuelle.
+/// Dessine l'écran normal : cadre à angles droits, pastilles, invite et éléments éphémères.
 ///
-/// Déclenché par [`Ecran::Normal`]. Lit [`crate::tui::EtatTui::message_erreur`]
-/// — champ transversal survivant aux transitions d'écran — et l'affiche centré
-/// s'il est `Some`.
+/// Déclenché par [`Ecran::Normal`], utilisé avec [`crate::tui::ModeSaisie::Normal`]
+/// (commandes) et [`crate::tui::ModeSaisie::Insertion`] (prompts de commande tels
+/// qu'`OuvrirFoyer`).
 ///
-/// Actuellement toujours appelé avec [`crate::tui::ModeSaisie::Normal`] ;
-/// accueillera le prompt de commande lorsque [`crate::tui::ModeSaisie::Insertion`]
-/// sera utilisé sur cet écran.
+/// L'invite est construite dynamiquement à chaque frame :
+/// `feu › [prompt] [buffer]▌` — le curseur `▌` n'apparaît qu'en mode Insertion.
 ///
 /// Les pastilles reflètent l'état réel : nœud via `session_application`,
-/// foyers via `etat_foyer`.
+/// foyers via `etat_foyer`. Les messages éphémères (`message_erreur` et
+/// `message_commande`) sont affichés s'ils sont `Some`.
 fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
     let lignes = Layout::vertical([
         Constraint::Fill(1),
@@ -145,8 +147,9 @@ fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
         Constraint::Length(1), // espace affichage erreur
         Constraint::Length(2), // espace vide
         Constraint::Length(1), // invite
-        Constraint::Length(3), // espace vide
+        Constraint::Length(2), // espace vide
         Constraint::Fill(1),
+        Constraint::Length(1), // ligne affichage commande
     ])
     .split(carre);
 
@@ -204,18 +207,35 @@ fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
         frame.render_widget(affichage_erreur, carre_lignes[2]);
     }
 
-    let invite = Line::from(vec![
-        Span::raw("feu "),
-        Span::styled("›", Style::default().fg(COULEUR_ACCENT)),
-    ]);
+    let mut vec = vec![
+        Span::raw("feu"),
+        Span::styled(" › ", Style::default().fg(COULEUR_ACCENT)),
+        Span::raw(etat_tui.prompt.clone()),
+        Span::raw(" "),
+        Span::raw(etat_tui.buffer_saisie.clone()),
+    ];
+
+    if matches!(etat_tui.mode_saisie, ModeSaisie::Insertion) {
+        vec.push(Span::raw("▌"));
+    }
 
     frame.render_widget(
-        invite,
+        Line::from(vec),
         carre_lignes[4].inner(Margin {
             horizontal: 10,
             vertical: 0,
         }),
     );
+
+    if let Some(message) = etat_tui.message_commande() {
+        let affichage_commande = Line::from(vec![
+            Span::styled(" [", Style::default().fg(COULEUR_ACCENT)),
+            Span::raw(message),
+            Span::styled("]", Style::default().fg(COULEUR_ACCENT)),
+        ]);
+
+        frame.render_widget(affichage_commande, carre_lignes[7]);
+    }
 }
 
 /// Dessine l'écran de saisie du mot de passe : cadre arrondi orange, points de masquage et aide.
