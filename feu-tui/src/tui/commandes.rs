@@ -23,19 +23,24 @@
 //!
 //! Le sens du mapping — touche → commande — est dicté par le chemin chaud :
 //! sur chaque frappe, la TUI doit retrouver la commande correspondante en O(1).
-//! La direction inverse (toutes les touches d'une commande donnée) reste
-//! accessible en O(n) via [`HashMap::retain`] dans
-//! [`CommandesActives::desactiver`] — opération rare, déclenchée
-//! uniquement aux transitions de contexte.
 //!
-//! # Évolution du contexte
+//! # Reconstruction déclarative
 //!
-//! La table évolue par mutations incrémentales. Chaque transition d'état
-//! métier (allumage du nœud, ouverture d'un foyer…) ne touche que les
-//! entrées concernées, sans reconstruction. Ce choix garde les transitions
-//! explicites — chaque appel à [`CommandesActives::desactiver`]
-//! ou son futur pendant d'activation matérialise une étape du cycle de vie
-//! de l'interface.
+//! La table est reconstruite intégralement à chaque changement d'état pertinent
+//! via [`CommandesActives::new`], qui prend l'état courant en paramètres et
+//! déduit les commandes actives à partir d'un jeu de règles simples. Aucune
+//! mutation incrémentale, aucun état caché : la sortie de `new` est une
+//! fonction pure de ses entrées.
+//!
+//! Ce choix maintient l'invariant fondamental — *la table reflète toujours
+//! l'état courant* — sans qu'aucun chemin du code n'ait à se rappeler de
+//! coupler une transition métier (ouverture d'un foyer, extinction du nœud)
+//! avec la mutation correspondante de la table. La reconstruction est
+//! déclenchée par [`crate::tui::EtatTui::recalculer_commandes_actives`]
+//! aux points où l'état change : aujourd'hui à la réception d'un
+//! [`crate::connecteurs::MessageCoeurTui::EnvoiSessionApplication`], demain
+//! aux changements de navigation TUI lorsque l'arborescence
+//! foyer/classeur sera introduite.
 
 use std::collections::HashMap;
 
@@ -48,48 +53,59 @@ use crossterm::event::{KeyCode, KeyModifiers};
 /// de touche, sans toucher au code de dispatch dans
 /// [`crate::tui::Tui::saisie_mode_normal`].
 ///
-/// `PartialEq` est dérivé pour permettre la suppression par valeur via
-/// [`CommandesActives::desactiver`].
-#[derive(PartialEq)]
+/// La présence d'une variante dans la table [`CommandesActives`] est entièrement
+/// dictée par les conditions énumérées ci-dessous — voir [`CommandesActives::new`]
+/// pour l'implémentation des règles.
 pub(super) enum Commande {
     /// Demande l'allumage du nœud — émet [`crate::connecteurs::MessageTuiCoeur::AllumageNoeud`].
     ///
-    /// Désactivée après la première utilisation : l'allumage est non répétable,
-    /// la commande disparaît de la table dès que le message est envoyé au cœur.
-    /// Le bras dispatch active simultanément [`Commande::OuvrirFoyer`] dans la table
-    /// — l'ouverture de foyer n'a de sens qu'une fois le nœud allumé.
+    /// Active uniquement lorsque le nœud est éteint (`session_application` à `None`).
+    /// Le succès de l'allumage est signalé via
+    /// [`crate::connecteurs::MessageCoeurTui::EnvoiSessionApplication`], qui déclenche
+    /// la reconstruction de la table : `AllumerNoeud` disparaît alors au profit des
+    /// commandes du nœud allumé.
     AllumerNoeud,
 
     /// Demande l'extinction du nœud — émet [`crate::connecteurs::MessageTuiCoeur::ExtinctionNoeud`].
     ///
-    /// Activée par [`crate::tui::Tui`] au moment de l'allumage du nœud, en miroir
-    /// de [`Commande::AllumerNoeud`]. La couche application refuse l'extinction
-    /// tant qu'au moins un foyer est ouvert — l'erreur remonte alors via
-    /// [`crate::connecteurs::MessageCoeurTui::AffichageErreur`].
+    /// Active uniquement lorsque le nœud est allumé **et** qu'aucun foyer n'est
+    /// ouvert. La couche application refuse de toute façon l'extinction tant qu'un
+    /// foyer est ouvert — l'erreur remonterait via
+    /// [`crate::connecteurs::MessageCoeurTui::AffichageErreur`] —, mais le filtrage
+    /// par contexte évite à l'utilisateur de la déclencher pour rien.
     EteindreNoeud,
 
     /// Prépare la fermeture d'un foyer — symétrique de [`Commande::OuvrirFoyer`].
     ///
-    /// Activée par [`crate::tui::Tui`] au moment de l'allumage du nœud.
-    /// La saisie du numéro et l'envoi de [`crate::connecteurs::MessageTuiCoeur::FermetureFoyer`]
-    /// sont gérés par `saisie_mode_insertion` une fois le buffer validé.
+    /// Active uniquement lorsque le nœud est allumé **et** qu'au moins un foyer est
+    /// ouvert. Bascule l'invite en [`crate::tui::ModeSaisie::Insertion`] pour
+    /// collecter le numéro ; la saisie et l'envoi de
+    /// [`crate::connecteurs::MessageTuiCoeur::FermetureFoyer`] sont gérés par
+    /// `saisie_mode_insertion` une fois le buffer validé.
     FermerFoyer,
 
     /// Affiche l'aide contextuelle listant les commandes actuellement disponibles.
     ///
-    /// Toujours active : `?` doit fonctionner quel que soit l'état du nœud.
+    /// Toujours active : `?` doit fonctionner quel que soit l'état du nœud — c'est
+    /// la seule porte d'entrée pour découvrir les autres commandes accessibles à
+    /// un instant donné.
     ListeCommandesActives,
 
     /// Prépare l'ouverture d'un foyer — bascule l'invite en mode saisie pour collecter le numéro.
     ///
-    /// Activée par [`crate::tui::Tui`] au moment de l'allumage du nœud, désactivée à l'extinction.
-    /// La saisie du numéro et l'envoi de [`crate::connecteurs::MessageTuiCoeur::OuvertureFoyer`]
-    /// sont gérés par `saisie_mode_insertion` une fois le buffer validé.
+    /// Active uniquement lorsque le nœud est allumé **et** qu'au moins une place
+    /// reste libre (`nombre_foyers_ouverts < nombre_foyers`). La saisie du numéro
+    /// et l'envoi de [`crate::connecteurs::MessageTuiCoeur::OuvertureFoyer`] sont
+    /// gérés par `saisie_mode_insertion` une fois le buffer validé.
     OuvrirFoyer,
 
     /// Demande l'arrêt propre de l'application — émet [`crate::connecteurs::MessageTuiCoeur::Quitter`].
     ///
-    /// Toujours active : l'utilisateur doit pouvoir sortir à tout moment.
+    /// Active uniquement lorsque le nœud est éteint, par symétrie avec
+    /// [`Commande::AllumerNoeud`]. Cette contrainte garantit qu'aucun foyer n'est
+    /// ouvert au moment de l'arrêt — l'extinction elle-même exige que tous les
+    /// foyers soient fermés. La touche `q` est silencieusement ignorée tant que
+    /// le nœud est allumé : l'utilisateur doit d'abord l'éteindre.
     Quitter,
 }
 
@@ -117,32 +133,66 @@ impl Commande {
 /// Table de dispatch des commandes actives dans le contexte courant.
 ///
 /// Encapsule un `HashMap<(KeyCode, KeyModifiers), Commande>` pour exposer une
-/// API restreinte : lookup par touche via [`get`](Self::get), mutation contrôlée
-/// par [`desactiver`](Self::desactiver). Le conteneur
+/// API restreinte : lookup par touche via [`get`](Self::get). Le conteneur
 /// interne reste invisible — toute évolution de structure ne traverse pas la
 /// frontière du module.
 ///
-/// La table est instanciée une fois dans [`crate::tui::EtatTui::new`] et
-/// évolue par mutations incrémentales tout au long de la session ; aucune
-/// reconstruction n'est nécessaire.
+/// La table est immuable une fois construite : elle est intégralement
+/// reconstruite par [`new`](Self::new) à chaque changement d'état pertinent,
+/// orchestré depuis [`crate::tui::EtatTui::recalculer_commandes_actives`].
 pub(super) struct CommandesActives(HashMap<(KeyCode, KeyModifiers), Commande>);
 
 impl CommandesActives {
-    /// Crée la table avec les commandes disponibles au lancement de la TUI.
+    /// Construit la table reflétant l'état décrit par les paramètres.
     ///
-    /// Trois commandes sont actives au démarrage : allumage du nœud (`a`),
-    /// affichage de l'aide (`?`) et sortie (`q`). À mesure que des
-    /// fonctionnalités s'ajouteront (ouverture de foyer, signature, écriture
-    /// de blob…), elles seront insérées ici si elles sont disponibles dès le
-    /// démarrage, ou plus tard via une future méthode d'activation lorsque
-    /// le contexte le permet.
-    pub(super) fn new() -> Self {
+    /// Fonction pure — la sortie ne dépend que des entrées, aucun état caché.
+    /// Les règles d'activation sont expliquées sur chaque variante de [`Commande`] ;
+    /// résumées :
+    ///
+    /// - nœud éteint → `AllumerNoeud`, `Quitter` ;
+    /// - nœud allumé sans foyer ouvert → `EteindreNoeud`, `OuvrirFoyer` ;
+    /// - nœud allumé avec au moins un foyer ouvert → `OuvrirFoyer` (si capacité libre), `FermerFoyer` ;
+    /// - dans tous les cas → `ListeCommandesActives`.
+    ///
+    /// `nombre_foyers_max` n'est consulté que si `noeud_allume` vaut `true` ;
+    /// l'instanciation initiale dans [`crate::tui::EtatTui::new`] passe `0` à
+    /// titre de sentinelle, faute d'accès à `MAX_FOYERS` côté TUI — la valeur
+    /// effective est fournie par `SessionApplication::nombre_foyers` dès la
+    /// première reconstruction post-allumage.
+    pub(super) fn new(
+        noeud_allume: bool,
+        nombre_foyers_ouverts: usize,
+        nombre_foyers_max: usize,
+    ) -> Self {
         let mut commandes_actives: HashMap<(KeyCode, KeyModifiers), Commande> = HashMap::new();
-        commandes_actives.insert(
-            (KeyCode::Char('a'), KeyModifiers::NONE),
-            Commande::AllumerNoeud,
-        );
-        commandes_actives.insert((KeyCode::Char('q'), KeyModifiers::NONE), Commande::Quitter);
+
+        if !noeud_allume {
+            commandes_actives.insert(
+                (KeyCode::Char('a'), KeyModifiers::NONE),
+                Commande::AllumerNoeud,
+            );
+            commandes_actives.insert((KeyCode::Char('q'), KeyModifiers::NONE), Commande::Quitter);
+        } else {
+            if nombre_foyers_ouverts == 0 {
+                commandes_actives.insert(
+                    (KeyCode::Char('e'), KeyModifiers::NONE),
+                    Commande::EteindreNoeud,
+                );
+            }
+            if nombre_foyers_ouverts < nombre_foyers_max {
+                commandes_actives.insert(
+                    (KeyCode::Char('o'), KeyModifiers::NONE),
+                    Commande::OuvrirFoyer,
+                );
+            }
+            if nombre_foyers_ouverts > 0 {
+                commandes_actives.insert(
+                    (KeyCode::Char('f'), KeyModifiers::NONE),
+                    Commande::FermerFoyer,
+                );
+            }
+        }
+
         commandes_actives.insert(
             (KeyCode::Char('?'), KeyModifiers::NONE),
             Commande::ListeCommandesActives,
@@ -157,29 +207,5 @@ impl CommandesActives {
     /// déclenche rien — le filtrage par contexte est entièrement implicite.
     pub(super) fn get(&self, touche: &(KeyCode, KeyModifiers)) -> Option<&Commande> {
         self.0.get(touche)
-    }
-
-    /// Ajoute ou remplace la liaison d'une touche vers une commande.
-    ///
-    /// Pendant de [`desactiver`](Self::desactiver) pour les activations contextuelles :
-    /// une commande indisponible au démarrage (ex. [`Commande::OuvrirFoyer`], qui
-    /// requiert un nœud allumé) est insérée ici au moment où le contexte le permet,
-    /// sans reconstruire la table.
-    pub(super) fn ajouter(&mut self, touche: (KeyCode, KeyModifiers), commande: Commande) {
-        self.0.insert(touche, commande);
-    }
-
-    /// Retire toutes les liaisons clavier associées à une commande donnée.
-    ///
-    /// Utilise [`HashMap::retain`] : la suppression par valeur est intrinsèquement
-    /// O(n) puisqu'un `HashMap` n'indexe que les clés. Le coût reste négligeable
-    /// — la table compte une poignée d'entrées et l'opération n'est invoquée
-    /// qu'aux transitions de contexte, jamais sur le chemin chaud du clavier.
-    ///
-    /// Conçue pour que la même commande puisse, à terme, être liée à plusieurs
-    /// touches (raccourci principal + alias) sans changer cette signature : un
-    /// seul appel suffit à toutes les retirer.
-    pub(super) fn desactiver(&mut self, commande: Commande) {
-        self.0.retain(|_, v| *v != commande);
     }
 }
