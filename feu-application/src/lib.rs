@@ -68,16 +68,22 @@ pub trait InterfaceFeuApplication {
     /// Retourne `false` pour interrompre l'initialisation.
     fn confirmer_enregistrement_seed(&self) -> bool;
 
-    /// Reçoit un clone de la session applicative après une commande réussie.
+    /// Notifie la couche de présentation d'un changement d'état applicatif.
     ///
     /// Appelée par [`FeuApplication`] à la fin de chaque commande qui mute
     /// [`SessionApplication`], une fois la session dans un état cohérent.
     /// Un seul appel par commande — jamais en cours de mutation, jamais depuis
     /// les setters de session.
     ///
+    /// Le payload distingue deux cas :
+    /// - `Some(session)` — clone cohérent de l'état applicatif après une commande
+    ///   mutante réussie (allumage, ouverture/fermeture de foyer…).
+    /// - `None` — extinction du nœud : la couche de présentation doit traiter
+    ///   cela comme une remise à zéro et oublier toute donnée applicative.
+    ///
     /// La couche de présentation est libre d'en faire ce qu'elle veut :
     /// l'envoyer sur un canal, le stocker, l'ignorer.
-    fn recevoir_session_application(&self, session_application: SessionApplication);
+    fn recevoir_session_application(&self, session_application: Option<SessionApplication>);
 }
 
 /// Pont éphémère entre [`FeuNoyau`] et la couche applicative.

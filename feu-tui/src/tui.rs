@@ -133,12 +133,14 @@ pub(crate) enum ValidationBufferSaisie {
 /// - `message_erreur` : transversal aux écrans, porte le texte et son compte
 ///   à rebours d'effacement automatique (cf. [`EtatTui::decremente_temps`]).
 pub(crate) struct EtatTui {
-    /// Session applicative courante — `None` tant que le nœud n'a pas été allumé.
+    /// Session applicative courante — `None` quand le nœud est éteint.
     ///
     /// Peuplé par [`crate::connecteurs::MessageCoeurTui::EnvoiSessionApplication`]
-    /// dans la boucle principale. `None` signifie nœud éteint (pastilles éteintes) ;
-    /// `Some(_)` signifie nœud allumé. Pas de booléen séparé — la présence du clone
-    /// est la preuve que l'allumage a réussi.
+    /// dans la boucle principale, qui affecte directement le payload reçu.
+    /// `None` signifie nœud éteint (pastilles éteintes) — état initial, ou
+    /// résultat d'une extinction réussie ; `Some(_)` signifie nœud allumé.
+    /// Pas de booléen séparé — la présence du clone est la preuve que l'allumage
+    /// a réussi, son absence celle de l'extinction.
     pub(crate) session_application: Option<SessionApplication>,
 
     /// Écran actuellement affiché — détermine la fonction de rendu appelée.
@@ -356,7 +358,7 @@ impl Tui {
                         self.etat_tui.mode_saisie = ModeSaisie::Information;
                     }
                     MessageCoeurTui::EnvoiSessionApplication(session_application) => {
-                        self.etat_tui.session_application = Some(session_application);
+                        self.etat_tui.session_application = session_application;
                     }
                 },
             }
@@ -425,6 +427,14 @@ impl Tui {
                             (KeyCode::Char('f'), KeyModifiers::NONE),
                             Commande::FermerFoyer,
                         );
+                        self.etat_tui.commandes_actives.ajouter(
+                            (KeyCode::Char('e'), KeyModifiers::NONE),
+                            Commande::EteindreNoeud,
+                        );
+                    }
+                    Commande::EteindreNoeud => {
+                        self.connecteur_vers_coeur
+                            .envoyer_message_tui_coeur(MessageTuiCoeur::ExtinctionNoeud);
                     }
                     Commande::FermerFoyer => {
                         self.etat_tui.prompt = String::from("ferme");
@@ -486,7 +496,9 @@ impl Tui {
                     ValidationBufferSaisie::FermetureFoyer => {
                         let index_result: Result<usize, _> =
                             self.etat_tui.buffer_saisie.trim().parse();
-                        if let Ok(index) = index_result {
+                        if let Ok(index) = index_result
+                            && index > 0
+                        {
                             self.connecteur_vers_coeur
                                 .envoyer_message_tui_coeur(MessageTuiCoeur::FermetureFoyer(index));
                         } else {
@@ -497,7 +509,9 @@ impl Tui {
                     ValidationBufferSaisie::OuvertureFoyer => {
                         let index_result: Result<usize, _> =
                             self.etat_tui.buffer_saisie.trim().parse();
-                        if let Ok(index) = index_result {
+                        if let Ok(index) = index_result
+                            && index > 0
+                        {
                             self.connecteur_vers_coeur
                                 .envoyer_message_tui_coeur(MessageTuiCoeur::OuvertureFoyer(index));
                         } else {

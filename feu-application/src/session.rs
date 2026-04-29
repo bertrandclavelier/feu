@@ -111,6 +111,19 @@ impl SessionApplication {
         Ok(self.etat_foyers[index_foyer])
     }
 
+    /// Indique si tous les foyers sont fermés.
+    ///
+    /// Retourne `true` quand chaque entrée d'`etat_foyers` est à `false` —
+    /// état initial de la session ou résultat d'une fermeture exhaustive.
+    /// Court-circuite à la première ouverture rencontrée.
+    ///
+    /// Précondition utilisée par
+    /// [`commande_extinction_noeud`](crate::FeuApplication::commande_extinction_noeud)
+    /// pour refuser l'extinction tant qu'un foyer est ouvert.
+    pub fn foyers_fermes(&self) -> bool {
+        self.etat_foyers.iter().all(|&b| !b)
+    }
+
     /// Met à jour l'état d'ouverture du foyer à la position `index_foyer`.
     ///
     /// Appelé par [`RecepteurNoyau`] après ouverture ou fermeture d'un foyer.

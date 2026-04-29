@@ -48,6 +48,16 @@ pub enum ErreurFeuApplication {
     /// Le noyau n'a pas encore été allumé via [`commande_allumage_noeud`](crate::FeuApplication::commande_allumage_noeud).
     #[error("APP > Le nœud doit être allumé")]
     NoeudEteint,
+
+    /// Au moins un foyer est encore ouvert — l'extinction du nœud est refusée.
+    ///
+    /// Levée par
+    /// [`commande_extinction_noeud`](crate::FeuApplication::commande_extinction_noeud)
+    /// quand au moins un état d'`etat_foyers` est à `true`. Les foyers doivent
+    /// tous être fermés avant que le nœud puisse être éteint — l'extinction ne
+    /// déclenche aucune fermeture implicite.
+    #[error("APP > Tous les foyers doivent être fermés")]
+    AuMoinsUnFoyerOuvert,
 }
 
 impl From<ErreurFeuNoyau> for ErreurFeuApplication {

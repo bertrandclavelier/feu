@@ -58,8 +58,43 @@ impl FeuApplication {
             FeuNoyau::new(phrase_seed, &mut recepteur_noyau)?
         });
 
-        interface_feu_application.recevoir_session_application(self.session.clone());
+        interface_feu_application.recevoir_session_application(Some(self.session.clone()));
 
+        Ok(())
+    }
+
+    /// Éteint le nœud : libère [`FeuNoyau`] et réinitialise [`SessionApplication`].
+    ///
+    /// Symétrique de [`commande_allumage_noeud`](Self::commande_allumage_noeud).
+    /// Effectue dans l'ordre :
+    /// 1. Vérifie qu'aucun foyer n'est ouvert.
+    /// 2. Libère le noyau (`feu_noyau = None`) — efface les clés privées en mémoire.
+    /// 3. Réinitialise la session pour qu'aucune donnée applicative ne survive
+    ///    à l'extinction (clés publiques, adresses `.onion`, états).
+    /// 4. Notifie la couche de présentation avec `recevoir_session_application(None)`.
+    ///
+    /// L'extinction n'écrit rien sur disque : les archives chiffrées des foyers
+    /// ont déjà été produites par les fermetures préalables.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurFeuApplication::AuMoinsUnFoyerOuvert`] si au moins un foyer
+    /// est encore ouvert ; [`ErreurFeuApplication::NoeudEteint`] si le nœud n'a
+    /// pas été allumé.
+    pub fn commande_extinction_noeud(
+        &mut self,
+        interface_feu_application: &mut impl InterfaceFeuApplication,
+    ) -> ResultFeuApplication<()> {
+        if !self.session.foyers_fermes() {
+            return Err(ErreurFeuApplication::AuMoinsUnFoyerOuvert);
+        }
+        if self.feu_noyau.is_none() {
+            return Err(ErreurFeuApplication::NoeudEteint);
+        }
+
+        self.feu_noyau = None;
+        self.session = SessionApplication::new();
+        interface_feu_application.recevoir_session_application(None);
         Ok(())
     }
 
@@ -114,7 +149,7 @@ impl FeuApplication {
 
         noyau.ouverture_foyer(&mut recepteur, index_foyer)?;
 
-        interface_feu_application.recevoir_session_application(self.session.clone());
+        interface_feu_application.recevoir_session_application(Some(self.session.clone()));
 
         Ok(())
     }
@@ -143,7 +178,7 @@ impl FeuApplication {
         let mut recepteur = RecepteurNoyau::new(&mut self.session, interface_feu_application);
         noyau.fermeture_foyer_index(&mut recepteur, index_foyer)?;
 
-        interface_feu_application.recevoir_session_application(self.session.clone());
+        interface_feu_application.recevoir_session_application(Some(self.session.clone()));
 
         Ok(())
     }
@@ -175,7 +210,7 @@ impl FeuApplication {
         let mut recepteur = RecepteurNoyau::new(&mut self.session, interface_feu_application);
         noyau.secours_fermeture_foyer_index(&mut recepteur, index_foyer)?;
 
-        interface_feu_application.recevoir_session_application(self.session.clone());
+        interface_feu_application.recevoir_session_application(Some(self.session.clone()));
 
         Ok(())
     }

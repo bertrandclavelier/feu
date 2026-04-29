@@ -54,10 +54,14 @@ pub(crate) enum MessageCoeurTui {
     /// Session applicative mise à jour — la TUI doit rafraîchir son état.
     ///
     /// Émis par [`ConnecteurVersTui::recevoir_session_application`] après chaque
-    /// commande de [`feu_application::FeuApplication`] qui mute la session ;
-    /// consommé par la boucle [`crate::tui::Tui::lancer`] qui pose
-    /// [`crate::tui::EtatTui::session_application`].
-    EnvoiSessionApplication(SessionApplication),
+    /// commande de [`feu_application::FeuApplication`] qui mute la session.
+    /// Le payload est forwardé tel quel :
+    /// - `Some(session)` — clone cohérent après une commande mutante réussie ;
+    /// - `None` — extinction du nœud, la TUI repasse à l'état initial.
+    ///
+    /// Consommé par la boucle [`crate::tui::Tui::lancer`] qui affecte directement
+    /// [`crate::tui::EtatTui::session_application`] à la valeur reçue.
+    EnvoiSessionApplication(Option<SessionApplication>),
 }
 
 /// Messages envoyés du thread TUI vers le thread cœur.
@@ -68,6 +72,15 @@ pub(crate) enum MessageTuiCoeur {
     /// consommé par la boucle de [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
     /// [`FeuApplication::commande_allumage_noeud`].
     AllumageNoeud,
+
+    /// Demande l'extinction du nœud — symétrique de [`Self::AllumageNoeud`].
+    ///
+    /// Émis par [`crate::tui::Tui`] sur frappe `e` en [`crate::tui::ModeSaisie::Normal`] ;
+    /// consommé par la boucle de [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
+    /// [`FeuApplication::commande_extinction_noeud`]. L'erreur éventuelle (foyer
+    /// encore ouvert, nœud déjà éteint) est propagée via
+    /// [`MessageCoeurTui::AffichageErreur`].
+    ExtinctionNoeud,
 
     /// Mot de passe saisi par l'utilisateur, en réponse à [`MessageCoeurTui::AttenteMdp`].
     ///
@@ -163,12 +176,13 @@ impl ConnecteurVersTui {
     /// ici. Le compilateur devient le filet de sécurité contre les commandes
     /// silencieusement ignorées.
     ///
-    /// [`MessageTuiCoeur::AllumageNoeud`], [`MessageTuiCoeur::FermetureFoyer`] et
-    /// [`MessageTuiCoeur::OuvertureFoyer`] déclenchent la commande correspondante
-    /// de [`FeuApplication`] et propagent l'erreur éventuelle via
-    /// [`MessageCoeurTui::AffichageErreur`]. Les index de foyer arrivent en base 1
-    /// (valeur saisie par l'utilisateur) ; la conversion en base 0 est effectuée
-    /// ici (`index_foyer - 1`) avant l'appel à [`FeuApplication`].
+    /// [`MessageTuiCoeur::AllumageNoeud`], [`MessageTuiCoeur::ExtinctionNoeud`],
+    /// [`MessageTuiCoeur::FermetureFoyer`] et [`MessageTuiCoeur::OuvertureFoyer`]
+    /// déclenchent la commande correspondante de [`FeuApplication`] et propagent
+    /// l'erreur éventuelle via [`MessageCoeurTui::AffichageErreur`]. Les index
+    /// de foyer arrivent en base 1 (valeur saisie par l'utilisateur, déjà filtrée
+    /// pour exclure 0) ; la conversion en base 0 est effectuée ici
+    /// (`index_foyer - 1`) avant l'appel à [`FeuApplication`].
     /// [`MessageTuiCoeur::EnvoieMdp`], [`MessageTuiCoeur::SeedBienRecue`] et
     /// [`MessageTuiCoeur::Annulation`] ont un corps vide : hors-protocole dans
     /// le contexte de la boucle principale (ils ne peuvent arriver ici que si
@@ -185,6 +199,13 @@ impl ConnecteurVersTui {
                 match self.recepteur.recv() {
                     Ok(MessageTuiCoeur::AllumageNoeud) => {
                         if let Err(e) = feu_application.commande_allumage_noeud(&mut self, None) {
+                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
+                                e.to_string(),
+                            ));
+                        }
+                    }
+                    Ok(MessageTuiCoeur::ExtinctionNoeud) => {
+                        if let Err(e) = feu_application.commande_extinction_noeud(&mut self) {
                             self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
                                 e.to_string(),
                             ));
@@ -272,14 +293,14 @@ impl InterfaceFeuApplication for ConnecteurVersTui {
         true
     }
 
-    /// Encapsule la session dans [`MessageCoeurTui::EnvoiSessionApplication`] et l'envoie sur le canal.
+    /// Forwarde la session vers le thread TUI via [`MessageCoeurTui::EnvoiSessionApplication`].
     ///
-    /// Appelée par [`feu_application::FeuApplication`] après chaque commande mutante réussie.
+    /// Appelée par [`feu_application::FeuApplication`] à la fin de chaque commande
+    /// qui mute la session — `Some(session)` après une commande mutante réussie,
+    /// `None` à l'extinction du nœud. Le payload est transmis tel quel : aucune
+    /// transformation, aucune politique côté connecteur.
     /// L'erreur d'envoi est ignorée : canal fermé = TUI déjà terminée.
-    fn recevoir_session_application(
-        &self,
-        session_application: feu_application::SessionApplication,
-    ) {
+    fn recevoir_session_application(&self, session_application: Option<SessionApplication>) {
         self.envoyer_message_coeur_tui(MessageCoeurTui::EnvoiSessionApplication(
             session_application,
         ));

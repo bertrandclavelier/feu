@@ -60,6 +60,14 @@ pub(super) enum Commande {
     /// — l'ouverture de foyer n'a de sens qu'une fois le nœud allumé.
     AllumerNoeud,
 
+    /// Demande l'extinction du nœud — émet [`crate::connecteurs::MessageTuiCoeur::ExtinctionNoeud`].
+    ///
+    /// Activée par [`crate::tui::Tui`] au moment de l'allumage du nœud, en miroir
+    /// de [`Commande::AllumerNoeud`]. La couche application refuse l'extinction
+    /// tant qu'au moins un foyer est ouvert — l'erreur remonte alors via
+    /// [`crate::connecteurs::MessageCoeurTui::AffichageErreur`].
+    EteindreNoeud,
+
     /// Prépare la fermeture d'un foyer — symétrique de [`Commande::OuvrirFoyer`].
     ///
     /// Activée par [`crate::tui::Tui`] au moment de l'allumage du nœud.
@@ -97,6 +105,7 @@ impl Commande {
     pub(crate) fn afficher(&self) -> String {
         match &self {
             Self::AllumerNoeud => String::from("Allume nœud"),
+            Self::EteindreNoeud => String::from("Extinction du nœud"),
             Self::FermerFoyer => String::from("Fermeture foyer"),
             Self::ListeCommandesActives => String::from("Liste commandes actives"),
             Self::OuvrirFoyer => String::from("Ouverture foyer"),
