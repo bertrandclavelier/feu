@@ -60,6 +60,13 @@ pub(super) enum Commande {
     /// — l'ouverture de foyer n'a de sens qu'une fois le nœud allumé.
     AllumerNoeud,
 
+    /// Prépare la fermeture d'un foyer — symétrique de [`Commande::OuvrirFoyer`].
+    ///
+    /// Activée par [`crate::tui::Tui`] au moment de l'allumage du nœud.
+    /// La saisie du numéro et l'envoi de [`crate::connecteurs::MessageTuiCoeur::FermetureFoyer`]
+    /// sont gérés par `saisie_mode_insertion` une fois le buffer validé.
+    FermerFoyer,
+
     /// Affiche l'aide contextuelle listant les commandes actuellement disponibles.
     ///
     /// Toujours active : `?` doit fonctionner quel que soit l'état du nœud.
@@ -90,6 +97,7 @@ impl Commande {
     pub(crate) fn afficher(&self) -> String {
         match &self {
             Self::AllumerNoeud => String::from("Allume nœud"),
+            Self::FermerFoyer => String::from("Fermeture foyer"),
             Self::ListeCommandesActives => String::from("Liste commandes actives"),
             Self::OuvrirFoyer => String::from("Ouverture foyer"),
             Self::Quitter => String::from("Quitte Feu"),

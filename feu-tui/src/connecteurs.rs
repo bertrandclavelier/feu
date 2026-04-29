@@ -76,7 +76,15 @@ pub(crate) enum MessageTuiCoeur {
     /// à [`FeuApplication`].
     EnvoieMdp(SecretString),
 
-    /// Demande l'ouverture du foyer à l'index donné (base 0).
+    /// Demande la fermeture du foyer à l'index donné (base 1, tel que saisi par l'utilisateur).
+    ///
+    /// Émis par [`crate::tui::Tui`] lors de la validation du buffer en
+    /// [`crate::tui::ValidationBufferSaisie::FermetureFoyer`] ;
+    /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
+    /// [`feu_application::FeuApplication::commande_fermeture_foyer`].
+    FermetureFoyer(usize),
+
+    /// Demande l'ouverture du foyer à l'index donné (base 1, tel que saisi par l'utilisateur).
     ///
     /// Émis par [`crate::tui::Tui`] lors de la validation du buffer en
     /// [`crate::tui::ValidationBufferSaisie::OuvertureFoyer`] ;
@@ -155,9 +163,12 @@ impl ConnecteurVersTui {
     /// ici. Le compilateur devient le filet de sécurité contre les commandes
     /// silencieusement ignorées.
     ///
-    /// [`MessageTuiCoeur::AllumageNoeud`] et [`MessageTuiCoeur::OuvertureFoyer`]
-    /// déclenchent la commande correspondante de [`FeuApplication`] et propagent
-    /// l'erreur éventuelle via [`MessageCoeurTui::AffichageErreur`].
+    /// [`MessageTuiCoeur::AllumageNoeud`], [`MessageTuiCoeur::FermetureFoyer`] et
+    /// [`MessageTuiCoeur::OuvertureFoyer`] déclenchent la commande correspondante
+    /// de [`FeuApplication`] et propagent l'erreur éventuelle via
+    /// [`MessageCoeurTui::AffichageErreur`]. Les index de foyer arrivent en base 1
+    /// (valeur saisie par l'utilisateur) ; la conversion en base 0 est effectuée
+    /// ici (`index_foyer - 1`) avant l'appel à [`FeuApplication`].
     /// [`MessageTuiCoeur::EnvoieMdp`], [`MessageTuiCoeur::SeedBienRecue`] et
     /// [`MessageTuiCoeur::Annulation`] ont un corps vide : hors-protocole dans
     /// le contexte de la boucle principale (ils ne peuvent arriver ici que si
@@ -181,9 +192,18 @@ impl ConnecteurVersTui {
                     }
                     Ok(MessageTuiCoeur::Quitter) => break,
                     Ok(MessageTuiCoeur::EnvoieMdp(_)) => {}
+                    Ok(MessageTuiCoeur::FermetureFoyer(index_foyer)) => {
+                        if let Err(e) =
+                            feu_application.commande_fermeture_foyer(&mut self, index_foyer - 1)
+                        {
+                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
+                                e.to_string(),
+                            ));
+                        }
+                    }
                     Ok(MessageTuiCoeur::OuvertureFoyer(index_foyer)) => {
                         if let Err(e) =
-                            feu_application.commande_ouverture_foyer(&mut self, index_foyer)
+                            feu_application.commande_ouverture_foyer(&mut self, index_foyer - 1)
                         {
                             self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
                                 e.to_string(),

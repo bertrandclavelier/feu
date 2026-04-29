@@ -115,6 +115,8 @@ pub(crate) enum ValidationBufferSaisie {
     /// Le buffer est transmis comme [`crate::connecteurs::MessageTuiCoeur::EnvoieMdp`] au thread cœur.
     EnvoiMdp,
 
+    FermetureFoyer,
+
     OuvertureFoyer,
 }
 
@@ -419,6 +421,16 @@ impl Tui {
                             (KeyCode::Char('o'), KeyModifiers::NONE),
                             Commande::OuvrirFoyer,
                         );
+                        self.etat_tui.commandes_actives.ajouter(
+                            (KeyCode::Char('f'), KeyModifiers::NONE),
+                            Commande::FermerFoyer,
+                        );
+                    }
+                    Commande::FermerFoyer => {
+                        self.etat_tui.prompt = String::from("ferme");
+                        self.etat_tui.mode_saisie = ModeSaisie::Insertion;
+                        self.etat_tui.validation_buffer_saisie =
+                            ValidationBufferSaisie::FermetureFoyer;
                     }
                     // TODO: brancher l'affichage de l'aide contextuelle.
                     Commande::ListeCommandesActives => {}
@@ -470,6 +482,17 @@ impl Tui {
                                 self.etat_tui.buffer_saisie.clone(),
                             )),
                         );
+                    }
+                    ValidationBufferSaisie::FermetureFoyer => {
+                        let index_result: Result<usize, _> =
+                            self.etat_tui.buffer_saisie.trim().parse();
+                        if let Ok(index) = index_result {
+                            self.connecteur_vers_coeur
+                                .envoyer_message_tui_coeur(MessageTuiCoeur::FermetureFoyer(index));
+                        } else {
+                            self.etat_tui
+                                .ajouter_message_erreur(String::from("Numéro de foyer invalide"));
+                        }
                     }
                     ValidationBufferSaisie::OuvertureFoyer => {
                         let index_result: Result<usize, _> =
