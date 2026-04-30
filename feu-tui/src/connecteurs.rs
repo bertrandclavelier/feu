@@ -89,11 +89,13 @@ pub(crate) enum MessageTuiCoeur {
     /// à [`FeuApplication`].
     EnvoieMdp(SecretString),
 
-    /// Demande la fermeture du foyer à l'index donné (base 1, tel que saisi par l'utilisateur).
+    /// Demande la fermeture du foyer à l'index donné (base 1, tel que désigné par
+    /// la position courante de l'utilisateur).
     ///
-    /// Émis par [`crate::tui::Tui`] lors de la validation du buffer en
-    /// [`crate::tui::ValidationBufferSaisie::FermetureFoyer`] ;
-    /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
+    /// Émis par [`crate::tui::Tui`] sur dispatch de la commande
+    /// `FermerFoyerCourant` — l'index est lu directement sur
+    /// [`crate::tui::EtatTui::position_courante`], il n'y a pas de saisie.
+    /// Consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
     /// [`feu_application::FeuApplication::commande_fermeture_foyer`].
     FermetureFoyer(usize),
 

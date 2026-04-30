@@ -113,7 +113,14 @@ pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &EtatTui) {
 /// qu'`OuvrirFoyer`).
 ///
 /// L'invite est construite dynamiquement à chaque frame :
-/// `feu › [prompt] [buffer]▌` — le curseur `▌` n'apparaît qu'en mode Insertion.
+/// `feu[/foy.N][/cla.M] › [prompt] [buffer]▌` — les segments entre crochets
+/// ne sont présents que selon la position courante et le mode :
+/// - `/foy.N` apparaît dès que [`crate::tui::PositionCourante::foyer`] est `Some` ;
+/// - `/cla.M` apparaît dès que [`crate::tui::PositionCourante::classeur`] est `Some` ;
+/// - le curseur `▌` n'apparaît qu'en [`crate::tui::ModeSaisie::Insertion`].
+///
+/// Le préfixe `feu[/foy.N][/cla.M]` joue le rôle de fil d'Ariane : il rappelle
+/// à l'utilisateur où il est positionné dans la pseudo-arborescence.
 ///
 /// Les pastilles reflètent l'état réel : nœud via `session_application`,
 /// foyers via `etat_foyer`. Les messages éphémères (`message_erreur` et
@@ -207,20 +214,26 @@ fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
         frame.render_widget(affichage_erreur, carre_lignes[2]);
     }
 
-    let mut vec = vec![
-        Span::raw("feu"),
+    let mut spans_invite = vec![Span::raw("feu")];
+    if let Some(index) = etat_tui.position_courante.foyer {
+        spans_invite.push(Span::raw(format!("/foy.{index}")));
+    }
+    if let Some(index) = etat_tui.position_courante.classeur {
+        spans_invite.push(Span::raw(format!("/cla.{index}")));
+    }
+    spans_invite.extend([
         Span::styled(" › ", Style::default().fg(COULEUR_ACCENT)),
         Span::raw(etat_tui.prompt.clone()),
         Span::raw(" "),
         Span::raw(etat_tui.buffer_saisie.clone()),
-    ];
+    ]);
 
     if matches!(etat_tui.mode_saisie, ModeSaisie::Insertion) {
-        vec.push(Span::raw("▌"));
+        spans_invite.push(Span::raw("▌"));
     }
 
     frame.render_widget(
-        Line::from(vec),
+        Line::from(spans_invite),
         carre_lignes[4].inner(Margin {
             horizontal: 10,
             vertical: 0,

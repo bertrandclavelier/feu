@@ -23,6 +23,29 @@
 //! Les commandes accessibles à un instant donné sont filtrées par le contexte
 //! via [`commandes::CommandesActives`] — la boucle clavier ne connaît aucun
 //! raccourci hardcodé, elle dispatche ce que la table lui retourne.
+//!
+//! # Modèle d'interaction
+//!
+//! L'état courant se lit sur quatre axes orthogonaux qui évoluent indépendamment.
+//!
+//! [`Ecran`] décide quelle famille visuelle est dessinée : carré normal pour
+//! l'usage courant, cadres arrondis orange pour les écrans pilotés par le cœur
+//! (saisie du mot de passe, affichage de la seed). [`ModeSaisie`] décide
+//! comment les touches sont interprétées : `Normal` (dispatch via la table de
+//! commandes), `Insertion` (accumulation dans un buffer, validation par Entrée),
+//! `Information` (avancement par Entrée uniquement). [`PositionCourante`]
+//! décrit où l'utilisateur est dans la pseudo-arborescence foyer → classeur,
+//! affichée en fil d'Ariane dans l'invite et utilisée comme index implicite par
+//! les commandes contextuelles. [`commandes::CommandesActives`] enfin liste les
+//! touches actives, reconstruite à chaque changement d'état du nœud.
+//!
+//! Le geste utilisateur typique au clavier : `a` pour allumer le nœud, mot de
+//! passe, seed validée par deux pressions d'Entrée, puis `o` pour ouvrir un
+//! foyer (saisie du numéro), `1`-`5` pour naviguer dans un foyer ouvert,
+//! `Backspace` pour remonter, `f` pour fermer le foyer où l'on est positionné,
+//! `e` pour éteindre quand tous les foyers sont fermés, `q` pour quitter quand
+//! le nœud est éteint. À tout moment `?` affiche les commandes actives dans le
+//! contexte (à venir).
 
 mod commandes;
 mod rendu;
@@ -56,9 +79,9 @@ pub(crate) enum Ecran {
     ///
     /// Utilisé avec [`ModeSaisie::Normal`] pour le dispatch des commandes filtrées
     /// par contexte, et avec [`ModeSaisie::Insertion`] lorsque l'invite porte un
-    /// prompt de commande (numéro de foyer pour [`Commande::OuvrirFoyer`] ou
-    /// [`Commande::FermerFoyer`]). Accueillera également [`ModeSaisie::Information`]
-    /// à mesure que des confirmations contextuelles s'ajouteront.
+    /// prompt de commande (numéro de foyer pour [`Commande::OuvrirFoyer`]).
+    /// Accueillera également [`ModeSaisie::Information`] à mesure que des
+    /// confirmations contextuelles s'ajouteront.
     Normal,
 
     /// Cadre arrondi orange centré — affiché quand le cœur demande un mot de passe.
@@ -110,10 +133,14 @@ pub(crate) enum ModeSaisie {
 ///
 /// Positionné avant de basculer en [`ModeSaisie::Insertion`] par le bras qui
 /// déclenche la saisie — réception de [`crate::connecteurs::MessageCoeurTui::AttenteMdp`]
-/// pour [`Self::EnvoiMdp`], dispatch d'une commande [`Commande::OuvrirFoyer`] ou
-/// [`Commande::FermerFoyer`] pour les variantes correspondantes.
+/// pour [`Self::EnvoiMdp`], dispatch d'une commande [`Commande::OuvrirFoyer`]
+/// pour [`Self::OuvertureFoyer`].
 /// Consommé et remis à [`Self::Rien`] par `saisie_mode_insertion`, qui n'a ainsi
 /// pas à connaître l'écran courant pour décider quoi émettre.
+///
+/// La fermeture d'un foyer ne passe pas par ce mécanisme : elle est immédiate
+/// depuis le foyer où l'on est positionné (cf. [`Commande::FermerFoyerCourant`]),
+/// l'index étant porté par [`EtatTui::position_courante`].
 pub(crate) enum ValidationBufferSaisie {
     /// Le buffer est vidé sans envoyer de message au cœur.
     ///
@@ -124,31 +151,74 @@ pub(crate) enum ValidationBufferSaisie {
     EnvoiMdp,
 
     /// Le buffer est interprété comme un numéro de foyer (base 1) et envoyé via
-    /// [`crate::connecteurs::MessageTuiCoeur::FermetureFoyer`].
-    ///
-    /// Posé par [`Tui::saisie_mode_normal`] sur dispatch de
-    /// [`Commande::FermerFoyer`]. La validation parse le buffer et rejette les
-    /// valeurs non numériques ou nulles avec un message d'erreur — la conversion
-    /// en index base 0 reste à la charge du connecteur cœur.
-    FermetureFoyer,
-
-    /// Le buffer est interprété comme un numéro de foyer (base 1) et envoyé via
     /// [`crate::connecteurs::MessageTuiCoeur::OuvertureFoyer`].
     ///
     /// Posé par [`Tui::saisie_mode_normal`] sur dispatch de
-    /// [`Commande::OuvrirFoyer`]. Mêmes règles de parsing et de conversion que
-    /// [`Self::FermetureFoyer`].
+    /// [`Commande::OuvrirFoyer`]. À la validation, le buffer est parsé en
+    /// `usize` et l'index doit être strictement positif ; sinon un message
+    /// d'erreur est affiché et aucun message n'est envoyé au cœur. La
+    /// conversion en index base 0 reste à la charge du connecteur cœur.
     OuvertureFoyer,
+}
+
+/// Position de navigation dans la pseudo-arborescence foyer → classeur.
+///
+/// Sépare la navigation TUI des commandes noyau : la position est purement un
+/// curseur de présentation, elle ne déclenche aucune action métier en elle-même.
+/// Elle conditionne en revanche l'index implicite des commandes contextuelles —
+/// au premier rang [`Commande::FermerFoyerCourant`], qui agit sur le foyer où
+/// l'utilisateur est positionné sans saisie d'index.
+///
+/// # Niveaux et invariants
+///
+/// Trois niveaux successifs, encodés par la combinaison des deux `Option` :
+/// - racine : `foyer = None`, `classeur = None` ;
+/// - dans un foyer : `foyer = Some(i)`, `classeur = None` ;
+/// - dans un classeur : `foyer = Some(i)`, `classeur = Some(j)`.
+///
+/// L'invariant *« `classeur = Some(_)` implique `foyer = Some(_)` »* est tenu
+/// par la logique de transition (cf. les bras `PositionSuivante` et
+/// `PositionPrecedente` dans [`Tui::saisie_mode_normal`]) plutôt que par le type.
+///
+/// # Réconciliation avec la session
+///
+/// La position courante doit toujours rester cohérente avec la session du nœud :
+/// si l'utilisateur ferme le foyer où il est positionné, la position est
+/// immédiatement remise à la racine au moment où la commande de fermeture est
+/// émise. Comme [`Commande::FermerFoyerCourant`] est l'unique chemin de fermeture
+/// d'un foyer, l'invariant tient en cascade : à l'extinction du nœud (qui exige
+/// que tous les foyers soient fermés), la position est nécessairement déjà à la
+/// racine.
+pub(crate) struct PositionCourante {
+    /// Index 1-based du foyer où l'utilisateur est positionné, `None` à la racine.
+    ///
+    /// Posé par [`Commande::PositionSuivante`] depuis la racine, après vérification
+    /// que le foyer ciblé est effectivement ouvert dans la session courante.
+    /// Effacé par [`Commande::PositionPrecedente`] (depuis le niveau foyer) ou
+    /// par [`Commande::FermerFoyerCourant`] (qui ferme aussi le classeur courant
+    /// par la même occasion).
+    foyer: Option<usize>,
+
+    /// Index 1-based du classeur où l'utilisateur est positionné, `None` si l'on
+    /// n'est pas descendu jusqu'à un classeur.
+    ///
+    /// Posé par [`Commande::PositionSuivante`] depuis un foyer, après vérification
+    /// que l'index est dans `[1, nombre_classeurs]` (aucune notion d'« ouverture »
+    /// pour les classeurs aujourd'hui : tous les indices valides sont accessibles).
+    /// Effacé par [`Commande::PositionPrecedente`] depuis le niveau classeur.
+    classeur: Option<usize>,
 }
 
 /// État courant de l'interface entre deux frames.
 ///
-/// Regroupe neuf dimensions orthogonales dont aucune ne peut être absorbée
+/// Regroupe dix dimensions orthogonales dont aucune ne peut être absorbée
 /// par une autre :
 /// - `session_application` : clone de la session reçu après chaque commande mutante,
 ///   `None` quand le nœud est éteint ;
 /// - [`Ecran`] : quoi dessiner ;
 /// - [`ModeSaisie`] : comment interpréter les touches ;
+/// - [`PositionCourante`] : où l'utilisateur est positionné dans la
+///   pseudo-arborescence foyer → classeur, indépendant de l'écran et du mode ;
 /// - `commandes_actives` : quelles touches déclenchent quelle commande dans le
 ///   contexte courant ;
 /// - [`ValidationBufferSaisie`] : quoi émettre lors de la validation du buffer ;
@@ -175,6 +245,13 @@ pub(crate) struct EtatTui {
 
     /// Mode de saisie courant — détermine l'interprétation des touches.
     pub(crate) mode_saisie: ModeSaisie,
+
+    /// Position de navigation TUI — racine, foyer, ou foyer + classeur.
+    ///
+    /// Curseur de présentation, indépendant de l'écran et du mode. Affiché en
+    /// fil d'Ariane dans l'invite (`feu/foy.N/cla.M ›`) et utilisé comme index
+    /// implicite par [`Commande::FermerFoyerCourant`].
+    pub(crate) position_courante: PositionCourante,
 
     /// Table de dispatch touche → commande, filtrée par le contexte courant.
     ///
@@ -235,6 +312,10 @@ impl EtatTui {
             session_application: None,
             ecran: Ecran::Normal,
             mode_saisie: ModeSaisie::Normal,
+            position_courante: PositionCourante {
+                foyer: None,
+                classeur: None,
+            },
             commandes_actives: CommandesActives::new(false, 0, 0),
             validation_buffer_saisie: ValidationBufferSaisie::Rien,
             message_erreur: (None, 0),
@@ -481,11 +562,13 @@ impl Tui {
                         self.connecteur_vers_coeur
                             .envoyer_message_tui_coeur(MessageTuiCoeur::ExtinctionNoeud);
                     }
-                    Commande::FermerFoyer => {
-                        self.etat_tui.prompt = String::from("ferme");
-                        self.etat_tui.mode_saisie = ModeSaisie::Insertion;
-                        self.etat_tui.validation_buffer_saisie =
-                            ValidationBufferSaisie::FermetureFoyer;
+                    Commande::FermerFoyerCourant => {
+                        if let Some(index) = self.etat_tui.position_courante.foyer {
+                            self.connecteur_vers_coeur
+                                .envoyer_message_tui_coeur(MessageTuiCoeur::FermetureFoyer(index));
+                            self.etat_tui.position_courante.foyer = None;
+                            self.etat_tui.position_courante.classeur = None;
+                        }
                     }
                     // TODO: brancher l'affichage de l'aide contextuelle.
                     Commande::ListeCommandesActives => {}
@@ -494,6 +577,28 @@ impl Tui {
                         self.etat_tui.mode_saisie = ModeSaisie::Insertion;
                         self.etat_tui.validation_buffer_saisie =
                             ValidationBufferSaisie::OuvertureFoyer;
+                    }
+                    Commande::PositionPrecedente => {
+                        if self.etat_tui.position_courante.classeur.is_some() {
+                            self.etat_tui.position_courante.classeur = None;
+                        } else if self.etat_tui.position_courante.foyer.is_some() {
+                            self.etat_tui.position_courante.foyer = None;
+                        }
+                    }
+                    Commande::PositionSuivante(index) => {
+                        if let Some(session) = &self.etat_tui.session_application {
+                            if self.etat_tui.position_courante.foyer.is_none() {
+                                if *index <= session.nombre_foyers
+                                    && session.etat_foyer(*index - 1).unwrap()
+                                {
+                                    self.etat_tui.position_courante.foyer = Some(*index);
+                                }
+                            } else if self.etat_tui.position_courante.classeur.is_none()
+                                && *index <= session.nombre_classeurs
+                            {
+                                self.etat_tui.position_courante.classeur = Some(*index);
+                            }
+                        }
                     }
                     Commande::Quitter => {
                         self.connecteur_vers_coeur
@@ -517,10 +622,9 @@ impl Tui {
     /// décider quel message envoyer au cœur :
     /// - [`ValidationBufferSaisie::EnvoiMdp`] → transmission directe en
     ///   [`SecretString`] ;
-    /// - [`ValidationBufferSaisie::OuvertureFoyer`] /
-    ///   [`ValidationBufferSaisie::FermetureFoyer`] → parsing du buffer en `usize`
-    ///   et garde `index > 0` avant émission ; en cas d'échec, un message d'erreur
-    ///   est affiché et aucun message n'est envoyé au cœur ;
+    /// - [`ValidationBufferSaisie::OuvertureFoyer`] → parsing du buffer en
+    ///   `usize` et garde `index > 0` avant émission ; en cas d'échec, un message
+    ///   d'erreur est affiché et aucun message n'est envoyé au cœur ;
     /// - [`ValidationBufferSaisie::Rien`] → no-op (état hors-saisie indue).
     ///
     /// Quel que soit le bras pris, l'écran repasse à [`Ecran::Normal`], le mode à
@@ -550,19 +654,6 @@ impl Tui {
                                 self.etat_tui.buffer_saisie.clone(),
                             )),
                         );
-                    }
-                    ValidationBufferSaisie::FermetureFoyer => {
-                        let index_result: Result<usize, _> =
-                            self.etat_tui.buffer_saisie.trim().parse();
-                        if let Ok(index) = index_result
-                            && index > 0
-                        {
-                            self.connecteur_vers_coeur
-                                .envoyer_message_tui_coeur(MessageTuiCoeur::FermetureFoyer(index));
-                        } else {
-                            self.etat_tui
-                                .ajouter_message_erreur(String::from("Numéro de foyer invalide"));
-                        }
                     }
                     ValidationBufferSaisie::OuvertureFoyer => {
                         let index_result: Result<usize, _> =
