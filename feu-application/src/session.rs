@@ -97,6 +97,16 @@ impl SessionApplication {
         self.onion_foyers[index_foyer] = onion;
     }
 
+    /// Retourne une vue immuable sur le tableau des états d'ouverture des foyers.
+    ///
+    /// Permet à l'appelant d'itérer pour repérer les positions ouvertes sans
+    /// connaître `MAX_FOYERS` ni passer par [`Self::etat_foyer`] index par index.
+    /// Préserve l'encapsulation : le tableau reste privé en écriture, seul
+    /// `feu-application` peut le muter via [`Self::definit_etat_foyer`].
+    pub fn etat_foyers(&self) -> &[bool] {
+        &self.etat_foyers
+    }
+
     /// Retourne l'état d'ouverture du foyer à la position `index_foyer`.
     ///
     /// # Erreurs

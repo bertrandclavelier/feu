@@ -124,7 +124,7 @@ pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &EtatTui) {
 ///
 /// Les pastilles reflètent l'état réel : nœud via `session_application`,
 /// foyers via `etat_foyer`. Les messages éphémères (`message_erreur` et
-/// `message_commande`) sont affichés s'ils sont `Some`.
+/// `message_aide`) sont affichés s'ils sont `Some`.
 fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
     let lignes = Layout::vertical([
         Constraint::Fill(1),
@@ -240,11 +240,11 @@ fn dessiner_ecran_normal(frame: &mut Frame, etat_tui: &EtatTui) {
         }),
     );
 
-    if let Some(message) = etat_tui.message_commande() {
+    if let Some(message) = etat_tui.message_aide() {
         let affichage_commande = Line::from(vec![
-            Span::styled(" [", Style::default().fg(COULEUR_ACCENT)),
+            Span::styled(" <", Style::default().fg(COULEUR_ACCENT)),
             Span::raw(message),
-            Span::styled("]", Style::default().fg(COULEUR_ACCENT)),
+            Span::styled(">", Style::default().fg(COULEUR_ACCENT)),
         ]);
 
         frame.render_widget(affichage_commande, carre_lignes[7]);
