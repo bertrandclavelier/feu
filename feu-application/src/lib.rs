@@ -1,3 +1,11 @@
+// Copyright (C) 2026 Bertrand CLAVELIER
+//
+// This file is part of FeuApplication.
+//
+// FeuApplication is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+// FeuApplication is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+// You should have received a copy of the GNU General Public License along with FeuApplication. If not, see <https://www.gnu.org/licenses/>.
+
 //! Couche applicative du protocole Feu.
 //!
 //! `feu-application` est l'unique consommateur de `feu-noyau` dans le workspace.
@@ -11,7 +19,7 @@
 //! tout problème de propriété et aligne `feu-application` sur le modèle de
 //! `feu-noyau`.
 //!
-//! - [`InterfaceFeuNoyau`] est implémentée par [`RecepteurNoyau`], pont éphémère
+//! - [`InterfaceFeuNoyau`] est implémentée par `RecepteurNoyau`, pont éphémère
 //!   créé pour la durée d'un appel noyau. Il délègue les interactions bloquantes
 //!   à [`InterfaceFeuApplication`] et écrit les notifications d'état directement
 //!   dans [`SessionApplication`].
@@ -40,8 +48,6 @@ mod commandes;
 pub mod erreur;
 mod session;
 
-/// Contrat entre `feu-application` et la couche de présentation.
-///
 /// Contrat entre [`FeuApplication`] et la couche de présentation.
 ///
 /// Regroupe les interactions bloquantes déléguées par le pont interne

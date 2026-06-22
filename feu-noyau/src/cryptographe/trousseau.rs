@@ -99,7 +99,6 @@ const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu-foyer-cl
 
 const CHUNK_SIZE: usize = 4096;
 
-const ERR_TRO_001: &str = "TRO-001 > Aucune arborescence du nœud trouvée";
 const ERR_TRO_002: &str = "TRO-002 > Problème index tableau";
 const ERR_TRO_003: &str = "TRO-003 > Problème de génération du sel";
 const ERR_TRO_004: &str = "TRO-004 > Mot de passe manquant";
@@ -204,7 +203,7 @@ impl TrousseauFoyer {
                     i,
                 )?;
             } else {
-                return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_001)));
+                return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_012)));
             }
         }
 

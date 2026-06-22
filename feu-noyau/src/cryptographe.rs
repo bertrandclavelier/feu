@@ -96,7 +96,7 @@ impl Cryptographe {
     ///
     /// 1. Génère la seed mnémonique (12 mots, français) et la transmet à `interface`.
     /// 2. Demande confirmation que la seed a bien été notée — interrompt si refus.
-    /// 3. Collecte et vérifie un nouveau mot de passe (deux saisies concordantes, ≥ 12 caractères).
+    /// 3. Collecte et vérifie un nouveau mot de passe (deux saisies concordantes).
     /// 4. Dérive et enregistre dans le trousseau de manière déterministe les clés du nœud,
     ///    des foyers et le sel Argon2id via [`genere_trousseau_a_partir_seed`](Self::genere_trousseau_a_partir_seed).
     ///
@@ -144,7 +144,7 @@ impl Cryptographe {
     ///
     /// Enchaîne deux opérations séquentielles :
     ///
-    /// 1. Collecte et vérifie le nouveau mot de passe (deux saisies concordantes, ≥ 12 caractères).
+    /// 1. Collecte et vérifie le nouveau mot de passe (deux saisies concordantes).
     /// 2. Dérive et enregistre dans le trousseau les clés du nœud, des foyers et le sel Argon2id via
     ///    [`genere_trousseau_a_partir_seed`](Self::genere_trousseau_a_partir_seed).
     ///

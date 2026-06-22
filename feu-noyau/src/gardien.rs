@@ -74,8 +74,8 @@ impl Configuration {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si `version` ou `prochain_index` ne sont pas des
-    /// entiers valides. Panique si le fichier contient moins de lignes qu'attendu.
+    /// Retourne une erreur si le fichier contient moins de `2 + MAX_FOYERS`
+    /// lignes, ou si `version` ou `prochain_index` ne sont pas des entiers valides.
     fn new_from_string(contenu: &str) -> ResultGardien<Self> {
         let mut lignes: Vec<&str> = contenu.lines().collect();
         if lignes.len() < 2 + MAX_FOYERS {
@@ -170,7 +170,7 @@ impl Gardien {
     /// Construit le tableau de session des foyers depuis la configuration en mémoire.
     ///
     /// Retourne un tableau de `MAX_FOYERS` tuples `(false, adresse_onion)` —
-    /// tous les foyers sont marqués éteints à l'allumage du nœud.
+    /// tous les foyers sont marqués fermés à l'allumage du nœud.
     pub(super) fn creation_tableau_session_foyers(&self) -> [(bool, String); MAX_FOYERS] {
         let mut t: [(bool, String); MAX_FOYERS] =
             std::array::from_fn(|_| (false, String::from("")));
@@ -250,7 +250,8 @@ impl Gardien {
     /// Enregistre l'adresse `.onion` d'un foyer dans la [`Configuration`] en mémoire.
     ///
     /// Écrit l'adresse fournie par le cryptographe à la position `position`
-    /// dans le tableau `adresses_onion`.
+    /// dans le tableau `adresses_onion` et avance `prochain_index` d'une unité
+    /// (index de dérivation BIP32 réservé au prochain foyer créé).
     ///
     /// Cette méthode n'écrit rien sur le disque — appeler ensuite
     /// [`Gardien::enregistrement_configuration`] pour persister l'état.

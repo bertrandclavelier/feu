@@ -102,7 +102,7 @@ impl SessionApplication {
     /// Permet à l'appelant d'itérer pour repérer les positions ouvertes sans
     /// connaître `MAX_FOYERS` ni passer par [`Self::etat_foyer`] index par index.
     /// Préserve l'encapsulation : le tableau reste privé en écriture, seul
-    /// `feu-application` peut le muter via [`Self::definit_etat_foyer`].
+    /// `feu-application` peut le muter via `definit_etat_foyer`.
     pub fn etat_foyers(&self) -> &[bool] {
         &self.etat_foyers
     }

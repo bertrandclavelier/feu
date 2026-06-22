@@ -360,7 +360,7 @@ impl CommandesActives {
     /// Retourne une chaîne énumérant les touches actives, séparées par des espaces.
     ///
     /// Format : chaque caractère imprimable est entouré de guillemets simples
-    /// (`'a'`, `'1'`…), `Backspace` est rendu par le glyphe `⌫`. Les autres
+    /// (`'a'`, `'1'`…), `Backspace` par le glyphe entre guillemets `'⌫'`. Les autres
     /// `KeyCode` (non utilisés par la table aujourd'hui) seraient ignorés.
     ///
     /// Appelée par le bras d'exécution de [`Commande::ListeCommandesActives`]

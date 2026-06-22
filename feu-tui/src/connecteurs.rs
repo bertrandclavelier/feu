@@ -30,6 +30,13 @@ use feu_application::{FeuApplication, InterfaceFeuApplication, SessionApplicatio
 use secrecy::SecretString;
 
 /// Messages envoyés du thread cœur vers le thread TUI.
+// `EnvoiSessionApplication` est bien plus grosse que les autres variantes
+// (`SessionApplication`, dont la taille est irréductible). On assume l'écart
+// plutôt que de boxer : ce canal ne transporte que de rares messages
+// événementiels (allumage, ouverture/fermeture de foyer, erreur), jamais en
+// rafale. Le surcoût mémoire est sans effet observable ; l'indirection serait
+// de la complexité gratuite.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum MessageCoeurTui {
     /// Une commande a échoué — la TUI doit afficher le message d'erreur.
     ///

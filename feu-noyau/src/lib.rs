@@ -219,12 +219,13 @@ impl Foyer {
 
 /// État de la session courante — foyers ouverts et leurs adresses `.onion`.
 ///
-/// Maintient pour chaque foyer un tuple `(ouvert, onion)` indexé par
-/// position. L'index est partagé avec `Configuration::adresses_onion`
-/// et le trousseau cryptographique — c'est le point de vérité unique
-/// pour relier un foyer à son adresse et à son état d'ouverture.
+/// Maintient pour chaque foyer un [`Foyer`] (adresse `.onion` et état
+/// d'ouverture) indexé par position. L'index est partagé avec
+/// `Configuration::adresses_onion` et le trousseau cryptographique — c'est
+/// le point de vérité unique pour relier un foyer à son adresse et à son
+/// état d'ouverture.
 struct SessionFoyers {
-    /// État et adresse de chaque foyer — `(ouvert, adresse_onion)`.
+    /// État et adresse de chaque foyer.
     foyers: [Foyer; MAX_FOYERS],
 }
 
@@ -330,7 +331,7 @@ impl SessionFoyers {
 /// injectée à chaque appel, garantissant une séparation totale entre la
 /// logique du protocole et la couche de présentation.
 pub struct FeuNoyau {
-    /// État de la session courante — foyers et statut d'allumage du nœud.
+    /// État de la session courante — foyers ouverts et leurs adresses `.onion`.
     session: SessionFoyers,
     /// Gardien des données locales — fichiers, foyers, configuration.
     /// Présent et actif pour toute la durée de vie du nœud.
@@ -520,7 +521,7 @@ impl FeuNoyau {
     /// Enchaîne les opérations suivantes :
     ///
     /// 1. Régénère toutes les clés en mémoire, collecte le mot de passe original et dérive
-    ///    le sel via [`genere_trousseau_a_partir_seed`](Cryptographe::genere_trousseau_a_partir_seed).
+    ///    le sel via `genere_trousseau_a_partir_seed`.
     /// 2. Produit le trousseau public chiffré (efface mot de passe et clé éphémère).
     /// 3. Recrée `config.feu` avec les adresses `.onion` dérivées.
     /// 4. **Première passe** — écrit les fichiers root `~/.feu/.cles/` (dont `<onion>.cle`)
@@ -857,7 +858,7 @@ impl FeuNoyau {
 
     /// Stocke un blob dans un classeur d'un foyer ouvert.
     ///
-    /// Orchestre cinq opérations séquentielles :
+    /// Orchestre six opérations séquentielles :
     ///
     /// 1. Valide les index et l'état du foyer.
     /// 2. Crée un tiroir vide via l'Archiviste du foyer.
@@ -1036,7 +1037,7 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le nœud n'est pas allumé, si les index sont hors bornes,
+    /// Retourne une erreur si les index sont hors bornes,
     /// si le foyer n'est pas ouvert, ou si le blob est introuvable.
     pub fn informations_blob(
         &self,
@@ -1071,7 +1072,7 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le nœud n'est pas allumé, si la taille dépasse
+    /// Retourne une erreur si la taille dépasse
     /// [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`], ou si le chiffrement échoue.
     pub fn chiffrement_asymetrique(
         &self,
@@ -1099,7 +1100,7 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le nœud n'est pas allumé, si l'index est invalide,
+    /// Retourne une erreur si l'index est invalide,
     /// si le foyer n'est pas ouvert, si la taille dépasse la limite,
     /// ou si le déchiffrement échoue.
     pub fn dechiffrement_asymetrique(
@@ -1136,7 +1137,7 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le nœud n'est pas allumé, si la taille
+    /// Retourne une erreur si la taille
     /// dépasse [`MAX_TAILLE_SIGNATURE`], ou si la signature échoue.
     pub fn signature_noeud(&self, octets_a_signer: &[u8]) -> ResultFeuNoyau<[u8; 64]> {
         if octets_a_signer.len() >= MAX_TAILLE_SIGNATURE {
@@ -1158,7 +1159,7 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le nœud n'est pas allumé, si l'index est invalide,
+    /// Retourne une erreur si l'index est invalide,
     /// si le foyer n'est pas ouvert, si la taille dépasse [`MAX_TAILLE_SIGNATURE`],
     /// ou si la signature échoue.
     pub fn signature_foyer(
@@ -1244,7 +1245,7 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le nœud n'est pas allumé, si l'index est invalide,
+    /// Retourne une erreur si l'index est invalide,
     /// ou si le foyer n'est pas ouvert.
     pub fn diagnostic_foyer(&self, index_foyer: usize) -> ResultFeuNoyau<Vec<Anomalie>> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;

@@ -19,7 +19,7 @@
 //! [`FeuApplication`], elle est fournie à l'appel, comme [`InterfaceFeuNoyau`]
 //! l'est dans `feu-noyau`.
 //!
-//! Les commandes qui ne modifient pas l'état du noyau (`blob_existe`,
+//! Les commandes qui ne modifient pas l'état du noyau (`existence_blob`,
 //! `informations_blob`, signatures, diagnostic…) prennent `&self` ;
 //! les autres prennent `&mut self`.
 

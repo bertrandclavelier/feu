@@ -36,11 +36,11 @@ const ERR_TIR_002: &str = "Dépassement MAX_TAILLE_BLOB";
 ///
 /// ```text
 /// Archiviste → FeuNoyau : tiroir vide
-/// FeuNoyau : remplir_tiroir(source)        ← blob en clair
+/// FeuNoyau : remplir(source)               ← blob en clair
 /// FeuNoyau → Cryptographe : lire_blob()
 /// Cryptographe → FeuNoyau : blob chiffré + hash
 /// FeuNoyau : remplace_blob() + definit_hash()
-/// FeuNoyau → Archiviste : ecrire_blob(tiroir)  ← blob chiffré
+/// FeuNoyau → Archiviste : ecrit_blob(tiroir)   ← blob chiffré
 /// ```
 ///
 /// # Invariants

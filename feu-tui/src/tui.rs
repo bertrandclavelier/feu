@@ -556,52 +556,51 @@ impl Tui {
     /// Retourne `false` pour signaler à la boucle principale de s'arrêter
     /// (déclenché par [`Commande::Quitter`]).
     fn saisie_mode_normal(&mut self) -> std::io::Result<bool> {
-        if let Some(touche) = Self::lire_touche()? {
-            if let Some(commande) = self.etat_tui.commandes_actives.get(&touche) {
-                match commande {
-                    Commande::AllumerNoeud => {
-                        self.connecteur_vers_coeur
-                            .envoyer_message_tui_coeur(MessageTuiCoeur::AllumageNoeud);
-                    }
-                    Commande::ChangerPositionClasseur(index) => {
-                        self.etat_tui.position_courante.classeur = *index;
-                    }
-                    Commande::ChangerPositionFoyer(index) => {
-                        self.etat_tui.position_courante.foyer = *index;
-                    }
-                    Commande::EteindreNoeud => {
-                        self.connecteur_vers_coeur
-                            .envoyer_message_tui_coeur(MessageTuiCoeur::ExtinctionNoeud);
-                    }
-                    Commande::FermerFoyer(index) => {
-                        self.connecteur_vers_coeur
-                            .envoyer_message_tui_coeur(MessageTuiCoeur::FermetureFoyer(*index));
-                        self.etat_tui.position_courante.foyer = None;
-                        self.etat_tui.position_courante.classeur = None;
-                    }
-                    Commande::ListeCommandesActives => {
-                        self.etat_tui.ajouter_message_aide(
-                            self.etat_tui.commandes_actives.liste_commandes_actives(),
-                        );
-                    }
-                    Commande::OuvrirFoyer => {
-                        self.etat_tui.prompt = String::from("ouvre");
-                        self.etat_tui.mode_saisie = ModeSaisie::Insertion;
-                        self.etat_tui.validation_buffer_saisie =
-                            ValidationBufferSaisie::OuvertureFoyer;
-                    }
-                    Commande::Quitter => {
-                        self.connecteur_vers_coeur
-                            .envoyer_message_tui_coeur(MessageTuiCoeur::Quitter);
-                        return Ok(false);
-                    }
+        if let Some(touche) = Self::lire_touche()?
+            && let Some(commande) = self.etat_tui.commandes_actives.get(&touche)
+        {
+            match commande {
+                Commande::AllumerNoeud => {
+                    self.connecteur_vers_coeur
+                        .envoyer_message_tui_coeur(MessageTuiCoeur::AllumageNoeud);
                 }
-
-                self.etat_tui.commandes_actives = CommandesActives::new(
-                    &self.etat_tui.session_application,
-                    &self.etat_tui.position_courante,
-                );
+                Commande::ChangerPositionClasseur(index) => {
+                    self.etat_tui.position_courante.classeur = *index;
+                }
+                Commande::ChangerPositionFoyer(index) => {
+                    self.etat_tui.position_courante.foyer = *index;
+                }
+                Commande::EteindreNoeud => {
+                    self.connecteur_vers_coeur
+                        .envoyer_message_tui_coeur(MessageTuiCoeur::ExtinctionNoeud);
+                }
+                Commande::FermerFoyer(index) => {
+                    self.connecteur_vers_coeur
+                        .envoyer_message_tui_coeur(MessageTuiCoeur::FermetureFoyer(*index));
+                    self.etat_tui.position_courante.foyer = None;
+                    self.etat_tui.position_courante.classeur = None;
+                }
+                Commande::ListeCommandesActives => {
+                    self.etat_tui.ajouter_message_aide(
+                        self.etat_tui.commandes_actives.liste_commandes_actives(),
+                    );
+                }
+                Commande::OuvrirFoyer => {
+                    self.etat_tui.prompt = String::from("ouvre");
+                    self.etat_tui.mode_saisie = ModeSaisie::Insertion;
+                    self.etat_tui.validation_buffer_saisie = ValidationBufferSaisie::OuvertureFoyer;
+                }
+                Commande::Quitter => {
+                    self.connecteur_vers_coeur
+                        .envoyer_message_tui_coeur(MessageTuiCoeur::Quitter);
+                    return Ok(false);
+                }
             }
+
+            self.etat_tui.commandes_actives = CommandesActives::new(
+                &self.etat_tui.session_application,
+                &self.etat_tui.position_courante,
+            );
         }
 
         Ok(true)
@@ -692,21 +691,19 @@ impl Tui {
     /// Deuxième pression d'Entrée : retour à [`Ecran::Normal`] +
     /// envoi de [`MessageTuiCoeur::SeedBienRecue`].
     fn saisie_mode_information(&mut self) -> std::io::Result<()> {
-        match Self::lire_touche()? {
-            Some((KeyCode::Enter, KeyModifiers::NONE)) => {
-                if let Ecran::AffichageSeed { seed: _, rappel } = &mut self.etat_tui.ecran {
-                    if *rappel {
-                        self.etat_tui.ecran = Ecran::Normal;
-                        self.etat_tui.mode_saisie = ModeSaisie::Normal;
-                        self.connecteur_vers_coeur
-                            .envoyer_message_tui_coeur(MessageTuiCoeur::SeedBienRecue);
-                    } else {
-                        *rappel = true;
-                    }
-                }
+        if let Some((KeyCode::Enter, KeyModifiers::NONE)) = Self::lire_touche()?
+            && let Ecran::AffichageSeed { seed: _, rappel } = &mut self.etat_tui.ecran
+        {
+            if *rappel {
+                self.etat_tui.ecran = Ecran::Normal;
+                self.etat_tui.mode_saisie = ModeSaisie::Normal;
+                self.connecteur_vers_coeur
+                    .envoyer_message_tui_coeur(MessageTuiCoeur::SeedBienRecue);
+            } else {
+                *rappel = true;
             }
-            _ => {}
         }
+
         Ok(())
     }
 }

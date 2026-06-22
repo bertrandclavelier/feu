@@ -106,9 +106,7 @@ impl TrousseauPublicFoyer {
         if let Some(cle) = &self.cles_chiffrement_classeurs[index] {
             Ok(cle)
         } else {
-            Err(ErreurCryptographe::Interne(String::from(
-                "Pas de clé pour ce classeur",
-            )))
+            Err(ErreurCryptographe::Interne(String::from(ERR_TRP_001)))
         }
     }
 

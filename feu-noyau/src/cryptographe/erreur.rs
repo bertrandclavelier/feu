@@ -30,9 +30,11 @@
 //! **`From` manuel + `String`** — quand l'erreur source n'implémente PAS
 //! `std::error::Error`, `#[from]` est inutilisable. La variante stocke alors
 //! un `String` extrait par `.to_string()`. Le type original est perdu — seul
-//! le message textuel est conservé. Deux cas ici :
+//! le message textuel est conservé. Trois cas ici :
 //!
 //! - `hkdf::InvalidLength` : implémente `Display` mais pas `std::error::Error` —
+//!   `.to_string()` suffit.
+//! - `aes_gcm::Error` : implémente `Display` mais pas `std::error::Error` —
 //!   `.to_string()` suffit.
 //! - `data_encoding::DecodePartial` : n'implémente ni `Display` ni
 //!   `std::error::Error` — le message est extrait de son champ `error: DecodeError`
