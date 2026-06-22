@@ -247,13 +247,16 @@ impl FeuApplication {
     /// Lit et déchiffre un blob depuis un classeur d'un foyer ouvert.
     ///
     /// Déchiffre `<hash>.dat` avec la clé du classeur (AES-256-GCM) et écrit
-    /// le clair dans `destination`. Le blob n'est pas vérifié par hash après
-    /// déchiffrement — l'intégrité est garantie par le tag GCM.
+    /// le clair dans `destination`. L'intégrité est doublement vérifiée : par le
+    /// tag d'authentification AES-GCM, puis par recalcul du hash SHA3-256 du clair,
+    /// qui doit correspondre à `hash` — une divergence est traitée comme une
+    /// donnée corrompue et retourne une erreur.
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si les index sont invalides, si le foyer n'est pas ouvert,
-    /// si le blob est introuvable, ou si le déchiffrement échoue.
+    /// si le blob est introuvable, si le déchiffrement échoue, ou si le hash recalculé
+    /// ne correspond pas à `hash` (donnée corrompue).
     pub fn commande_lecture_donnees(
         &mut self,
         index_foyer: usize,
