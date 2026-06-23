@@ -100,6 +100,25 @@ pub(crate) enum Ecran {
         seed: Vec<SecretString>,
         rappel: bool,
     },
+
+    /// Cadre arrondi orange centré — écran générique d'affichage d'un message.
+    ///
+    /// Associé à [`ModeSaisie::Information`]. Conçu pour être réutilisable : toute
+    /// information textuelle à présenter hors du flux normal (à-propos, aide,
+    /// message ponctuel) passe par cette variante plutôt que par un écran dédié.
+    ///
+    /// `titre` et `information` sont affichés **en clair** : cette variante est
+    /// réservée à de l'information publique. Aucune donnée sensible (seed, clé,
+    /// adresse `.onion`) ne doit y transiter — celles-ci relèvent d'un écran
+    /// dédié comme [`Ecran::AffichageSeed`], qui protège son contenu via
+    /// `secrecy::SecretString`.
+    AffichageInformation {
+        /// Titre affiché centré en haut du cadre.
+        titre: String,
+        /// Corps du message, rendu en paragraphe centré ; chaque `\n` délimite
+        /// une ligne affichée.
+        information: String,
+    },
 }
 
 /// Axe d'interprétation des touches clavier — indépendant de l'écran affiché.
@@ -564,6 +583,17 @@ impl Tui {
                     self.connecteur_vers_coeur
                         .envoyer_message_tui_coeur(MessageTuiCoeur::AllumageNoeud);
                 }
+                Commande::APropos => {
+                    self.etat_tui.ecran = Ecran::AffichageInformation {
+                        titre: String::from("Feu"),
+                        information: format!(
+                            "Version {} · GPL-3.0-or-later\n\n\
+                             © 2026 Bertrand CLAVELIER\n\n",
+                            env!("CARGO_PKG_VERSION")
+                        ),
+                    };
+                    self.etat_tui.mode_saisie = ModeSaisie::Information;
+                }
                 Commande::ChangerPositionClasseur(index) => {
                     self.etat_tui.position_courante.classeur = *index;
                 }
@@ -684,26 +714,30 @@ impl Tui {
     ///
     /// Seule `Entrée` sans modificateur est active — tout autre événement est ignoré.
     /// Ce choix est intentionnel : il évite qu'un redimensionnement de fenêtre ou un
-    /// clic souris ne fasse progresser l'écran de seed sans action explicite de l'utilisateur.
+    /// clic souris ne fasse progresser l'écran sans action explicite de l'utilisateur.
     ///
-    /// Première pression d'Entrée : pose `rappel = true` dans [`Ecran::AffichageSeed`]
-    /// pour afficher le message de confirmation.
-    /// Deuxième pression d'Entrée : retour à [`Ecran::Normal`] +
-    /// envoi de [`MessageTuiCoeur::SeedBienRecue`].
+    /// Le comportement dépend de l'écran courant :
+    /// - [`Ecran::AffichageSeed`] : déroulement en deux temps — la première
+    ///   pression pose `rappel = true` (affiche le message de confirmation), la
+    ///   seconde revient à [`Ecran::Normal`] et envoie [`MessageTuiCoeur::SeedBienRecue`] ;
+    /// - tout autre écran d'information (aujourd'hui [`Ecran::AffichageInformation`]) :
+    ///   une seule pression suffit à revenir à [`Ecran::Normal`], sans message au cœur.
     fn saisie_mode_information(&mut self) -> std::io::Result<()> {
-        if let Some((KeyCode::Enter, KeyModifiers::NONE)) = Self::lire_touche()?
-            && let Ecran::AffichageSeed { seed: _, rappel } = &mut self.etat_tui.ecran
-        {
-            if *rappel {
+        if let Some((KeyCode::Enter, KeyModifiers::NONE)) = Self::lire_touche()? {
+            if let Ecran::AffichageSeed { seed: _, rappel } = &mut self.etat_tui.ecran {
+                if *rappel {
+                    self.etat_tui.ecran = Ecran::Normal;
+                    self.etat_tui.mode_saisie = ModeSaisie::Normal;
+                    self.connecteur_vers_coeur
+                        .envoyer_message_tui_coeur(MessageTuiCoeur::SeedBienRecue);
+                } else {
+                    *rappel = true;
+                }
+            } else {
                 self.etat_tui.ecran = Ecran::Normal;
                 self.etat_tui.mode_saisie = ModeSaisie::Normal;
-                self.connecteur_vers_coeur
-                    .envoyer_message_tui_coeur(MessageTuiCoeur::SeedBienRecue);
-            } else {
-                *rappel = true;
             }
         }
-
         Ok(())
     }
 }

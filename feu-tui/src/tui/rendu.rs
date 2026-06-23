@@ -19,10 +19,10 @@
 //! module d'état.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Margin};
-use ratatui::style::{Color, Style};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType};
+use ratatui::widgets::{Block, BorderType, Paragraph};
 use secrecy::{ExposeSecret, SecretString};
 
 use crate::tui::ModeSaisie;
@@ -77,6 +77,20 @@ const DIMENSIONS_ECRAN_AFFICHAGE_SEED: Dimensions = Dimensions {
     hauteur: 10,
 };
 
+/// Dimensions du cadre arrondi de l'écran d'information générique.
+///
+/// Contrairement à [`DIMENSIONS_ECRAN_AFFICHAGE_SEED`], la `hauteur` est ici
+/// *fixe* : le cadre ne s'étire pas avec le contenu, qui est centré
+/// verticalement par deux zones de remplissage. Conséquence : le corps du
+/// message ne peut dépasser `hauteur − 6` lignes — les 6 retranchées étant les
+/// 2 bordures, le titre, les 2 espaces et la ligne d'aide — sans être tronqué
+/// silencieusement (soit 9 lignes pour la `hauteur` actuelle de 15). À garder
+/// court : ce n'est pas un écran défilable.
+const DIMENSIONS_ECRAN_AFFICHAGE_INFORMATION: Dimensions = Dimensions {
+    largeur: 60,
+    hauteur: 15,
+};
+
 /// Nombre de colonnes sur lesquelles la seed est affichée.
 ///
 /// Sert au calcul de `n = ceil(seed.len() / NOMBRE_COLONNES_SEED)` — le nombre
@@ -102,6 +116,9 @@ pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &EtatTui) {
         Ecran::SaisieMdp => dessiner_ecran_saisie_mdp(frame, etat_tui),
         Ecran::AffichageSeed { seed, rappel } => {
             dessiner_ecran_affichage_seed(frame, seed, *rappel)
+        }
+        Ecran::AffichageInformation { titre, information } => {
+            dessiner_ecran_affichage_information(frame, titre, information)
         }
     }
 }
@@ -396,4 +413,70 @@ fn dessiner_ecran_affichage_seed(frame: &mut Frame, seed: &[SecretString], rappe
     let texte_aide = Line::from(vec![Span::raw("Appuyer sur Entrée pour continuer")]).centered();
 
     frame.render_widget(texte_aide, zone_interieure_lignes[6]);
+}
+
+/// Dessine l'écran d'information générique : cadre arrondi orange, titre, paragraphe centré et aide.
+///
+/// Déclenché par [`Ecran::AffichageInformation`], associé à [`crate::tui::ModeSaisie::Information`].
+/// Le `titre` est rendu en accent orange et gras (cf. [`COULEUR_ACCENT`]) ; le
+/// corps `information` en paragraphe centré, sans style.
+/// La hauteur de la zone du paragraphe est dérivée du nombre de lignes de
+/// `information` (`str::lines`) ; le cadre, lui, reste de hauteur fixe
+/// (cf. [`DIMENSIONS_ECRAN_AFFICHAGE_INFORMATION`]) — un contenu plus haut que
+/// la place disponible est tronqué sans avertissement.
+fn dessiner_ecran_affichage_information(frame: &mut Frame, titre: &str, information: &str) {
+    let lignes = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(DIMENSIONS_ECRAN_AFFICHAGE_INFORMATION.hauteur),
+        Constraint::Fill(1),
+    ])
+    .split(frame.area());
+
+    let colonnes = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(DIMENSIONS_ECRAN_AFFICHAGE_INFORMATION.largeur),
+        Constraint::Fill(1),
+    ])
+    .split(lignes[1]);
+
+    let bordure = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(COULEUR_ACCENT));
+    frame.render_widget(bordure, colonnes[1]);
+
+    let zone_interieure = colonnes[1].inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+
+    let n = information.lines().count() as u16;
+
+    let zone_interieure_lignes = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1), // titre
+        Constraint::Length(1), // espace vide
+        Constraint::Length(n), // paragraphe d'information
+        Constraint::Length(1), // espace vide
+        Constraint::Length(1), // texte aide
+        Constraint::Fill(1),
+    ])
+    .split(zone_interieure);
+
+    let ligne_titre = Line::from(vec![Span::styled(
+        titre,
+        Style::default()
+            .fg(COULEUR_ACCENT)
+            .add_modifier(Modifier::BOLD),
+    )])
+    .centered();
+
+    frame.render_widget(ligne_titre, zone_interieure_lignes[1]);
+
+    let paragraphe = Paragraph::new(information).alignment(Alignment::Center);
+
+    frame.render_widget(paragraphe, zone_interieure_lignes[3]);
+
+    let texte_aide = Line::from(vec![Span::raw("Entrée pour continuer")]).centered();
+
+    frame.render_widget(texte_aide, zone_interieure_lignes[5]);
 }

@@ -26,8 +26,10 @@
 //!
 //! # Cartographie clavier
 //!
-//! Touches actives selon le contexte. `?` est toujours actif et liste les
-//! touches courantes ; il est omis ci-dessous pour ne pas alourdir.
+//! Touches actives selon le contexte. Deux touches sont toujours actives, quel
+//! que soit l'état du nœud et la position : `?` liste les touches courantes et
+//! `!` affiche l'écran « à propos ». Toutes deux sont omises ci-dessous pour ne
+//! pas alourdir.
 //!
 //! - **Nœud éteint, racine** : `a` allume le nœud, `q` quitte Feu.
 //! - **Nœud allumé, racine, aucun foyer ouvert** : `e` éteint le nœud, `o`
@@ -121,6 +123,18 @@ pub(super) enum Commande {
     /// la reconstruction de la table : `AllumerNoeud` disparaît alors au profit des
     /// commandes du nœud allumé.
     AllumerNoeud,
+
+    /// Affiche l'écran « à propos » : identité du programme, version, licence, copyright.
+    ///
+    /// Toujours active, comme [`Commande::ListeCommandesActives`] : `!` fonctionne
+    /// quel que soit l'état du nœud et la position courante. Méta-commande
+    /// purement informationnelle — aucun effet métier, elle ne touche ni au nœud
+    /// ni aux foyers.
+    ///
+    /// Le bras d'exécution dans [`crate::tui::Tui::saisie_mode_normal`] bascule
+    /// l'écran sur [`crate::tui::Ecran::AffichageInformation`] ; l'utilisateur en
+    /// sort par Entrée (cf. [`crate::tui::ModeSaisie::Information`]).
+    APropos,
 
     /// Affecte directement [`crate::tui::PositionCourante::classeur`] à la valeur portée.
     ///
@@ -345,6 +359,8 @@ impl CommandesActives {
             (KeyCode::Char('?'), KeyModifiers::NONE),
             Commande::ListeCommandesActives,
         );
+
+        commandes_actives.insert((KeyCode::Char('!'), KeyModifiers::NONE), Commande::APropos);
 
         Self(commandes_actives)
     }

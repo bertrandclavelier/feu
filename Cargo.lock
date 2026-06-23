@@ -511,7 +511,7 @@ dependencies = [
 
 [[package]]
 name = "feu-application"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "feu-noyau",
  "secrecy",
@@ -520,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "feu-noyau"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "aead",
  "aes-gcm",
@@ -541,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "feu-tui"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "crossterm",
  "feu-application",

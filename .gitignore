@@ -1,7 +1,13 @@
-/docs_conception
+# Artefacts de build Rust
 /target
+
+# Fichiers système macOS
 .DS_Store
+
+# Config locale Claude Code et fichiers de travail personnels : ne doivent
+# jamais finir sur GitHub. Ils vivent normalement à la racine `feu/` (hors
+# dépôt) ; ignorés ici par sécurité s'ils venaient à apparaître dans workspace/.
+.claude
+CLAUDE.local.md
 sauvegarde.sh
 supprime.sh
-CLAUDE.local.md
-.claude
