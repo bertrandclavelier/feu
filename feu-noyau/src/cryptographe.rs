@@ -12,9 +12,9 @@
 //! toute opération de chiffrement, de déchiffrement ou de dérivation de
 //! clés passe exclusivement par lui.
 //!
-//! Il a en charge la génération des seeds BIP39, la dérivation SLIP-0010
-//! des clés nœud et foyer, ainsi que la génération des clés symétrique,
-//! de signature (Ed25519) et de chiffrement (X25519) par foyer.
+//! Il a en charge la génération des seeds BIP39, la dérivation HKDF-SHA3-256
+//! des clés nœud et foyer depuis la seed, ainsi que la génération des clés
+//! symétrique, de signature (Ed25519) et de chiffrement (X25519) par foyer.
 //! Il maintient en mémoire le trousseau — l'unique endroit où les clés
 //! privées et la clé symétrique existent en clair.
 //!
@@ -204,7 +204,7 @@ impl Cryptographe {
 
         // Ajoute la paire de clés du nœud au trousseau à partir de la seed
 
-        self.trousseau.ajouter_paire_noeud(&seed_bytes);
+        self.trousseau.ajouter_paire_noeud(&seed_bytes)?;
 
         // Ajoute les trousseaux des MAX_FOYERS
         for i in 0..MAX_FOYERS {

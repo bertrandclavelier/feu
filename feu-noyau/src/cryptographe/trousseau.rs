@@ -87,15 +87,16 @@ use rand::rngs::OsRng;
 use secrecy::SecretString;
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use sha3::{Digest, Sha3_256};
-use slip10_ed25519::derive_ed25519_private_key;
 use std::io::{Read, Write};
 use x25519_dalek::{PublicKey, StaticSecret};
 
+const LABEL_DERIVATION_SIGNATURE_NOEUD: &str = "feu-noeud-signature";
+const LABEL_DERIVATION_SIGNATURE_FOYER: &str = "feu-foyer-paire-signature";
+const LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_FOYER: &str = "feu-foyer-chiffrement-symetrique";
+const LABEL_DERIVATION_CHIFFREMENT_FOYER: &str = "feu-foyer-paire-chiffrement";
+const LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu-foyer-chiffrement-classeur";
+
 const CHAINE_A_SIGNER_POUR_SEL: &str = "feu-noeud-sel";
-const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE: &str = "feu-foyer-symetrique";
-const CHAINE_A_SIGNER_POUR_PAIRE_SIGNATURE: &str = "feu-foyer-paire-signature";
-const CHAINE_A_SIGNER_POUR_PAIRE_CHIFFREMENT: &str = "feu-foyer-paire-chiffrement";
-const CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu-foyer-classeur";
 
 const CHUNK_SIZE: usize = 4096;
 
@@ -313,22 +314,19 @@ impl Trousseau {
 
     /// Dérive et enregistre dans le trousseau la paire de clés de signature du nœud.
     ///
-    /// Le chemin de dérivation SLIP-0010 utilisé est `m/0'`.
-    /// La clé brute intermédiaire est zéroïsée immédiatement après usage.
-    pub(super) fn ajouter_paire_noeud(&mut self, seed_bytes: &SecretBox<[u8; 64]>) {
-        let cle_privee: SigningKey;
-
-        // Bloc encadrant la portée de cle_brute
-        {
-            // Dérivation m/0' pour obtenir la clé brute
-            let cle_brute = SecretBox::new(Box::new(derive_ed25519_private_key(
-                seed_bytes.expose_secret(),
-                &[0],
-            )));
-
-            // Transformation de la clé brute en paire de clés de signature
-            cle_privee = SigningKey::from_bytes(cle_brute.expose_secret());
-        }
+    /// La clé privée Ed25519 est dérivée de la seed par HKDF-SHA3-256, en
+    /// passant le label `feu-noeud-signature` comme `info` — ce qui sépare son
+    /// domaine de dérivation de celui des clés de foyer.
+    /// La clé brute intermédiaire est portée par un `SecretBox`, zéroïsé en fin
+    /// d'instruction.
+    pub(super) fn ajouter_paire_noeud(
+        &mut self,
+        seed_bytes: &SecretBox<[u8; 64]>,
+    ) -> ResultCryptographe<()> {
+        let cle_privee = SigningKey::from_bytes(
+            Self::derive_depuis_seed::<32>(seed_bytes, LABEL_DERIVATION_SIGNATURE_NOEUD)?
+                .expose_secret(),
+        );
 
         let cle_publique = cle_privee.verifying_key();
 
@@ -337,19 +335,24 @@ impl Trousseau {
             privee: cle_privee,
             publique: cle_publique,
         });
+
+        Ok(())
     }
 
     /// Dérive et enregistre dans le trousseau l'ensemble des clés d'un foyer.
     ///
-    /// À partir de `seed_bytes` et de `position`, dérive via SLIP-0010
-    /// une clé mère (`m/(position+1)'`), puis en tire par signature + HKDF-SHA3-256 :
+    /// À partir de `seed_bytes` et de `position`, dérive par HKDF-SHA3-256
+    /// l'ensemble des clés du foyer. Chaque clé est tirée d'un `info` distinct,
+    /// combinant un label dédié et l'index du foyer (`position + 1`) — ce qui
+    /// sépare le domaine de dérivation de chaque clé et de chaque foyer :
     ///
-    /// - une clé symétrique de chiffrement du foyer
-    /// - une paire de clés Ed25519 de signature
-    /// - une paire de clés X25519 de chiffrement asymétrique
-    /// - cinq clés symétriques pour les classeurs (`feu-foyer-classeur1` à `5`)
+    /// - une clé symétrique de chiffrement du foyer (`feu-foyer-chiffrement-symetrique`)
+    /// - une paire de clés Ed25519 de signature (`feu-foyer-paire-signature`)
+    /// - une paire de clés X25519 de chiffrement asymétrique (`feu-foyer-paire-chiffrement`)
+    /// - cinq clés symétriques de classeur (`feu-foyer-chiffrement-classeur`, suffixée de l'index du classeur)
     ///
-    /// Toutes les clés brutes intermédiaires sont zéroïsées après usage.
+    /// Toutes les clés brutes intermédiaires sont portées par des `SecretBox` et
+    /// zéroïsées dès qu'elles ne sont plus nécessaires.
     pub(super) fn ajouter_trousseau_foyer(
         &mut self,
         seed_bytes: &SecretBox<[u8; 64]>,
@@ -358,54 +361,40 @@ impl Trousseau {
         // L'index de dérivation est position + 1
         let index_foyer = (position + 1) as u32;
 
-        let cle_privee: SigningKey;
+        // Paire de clés signature du foyer
+        let cle_sig_priv = SigningKey::from_bytes(
+            Self::derive_depuis_seed::<32>(
+                seed_bytes,
+                &format!("{}-{}", LABEL_DERIVATION_SIGNATURE_FOYER, index_foyer),
+            )?
+            .expose_secret(),
+        );
 
-        // Bloc encadrant la portée de cle_brute
-        {
-            // Dérivation m/index_foyer' pour la clé brute du foyer
-            let cle_brute = SecretBox::new(Box::new(derive_ed25519_private_key(
-                seed_bytes.expose_secret(),
-                &[index_foyer],
-            )));
-
-            // Clé mère du foyer — sert à dériver toutes les sous-clés du foyer
-            cle_privee = SigningKey::from_bytes(cle_brute.expose_secret());
-        }
-
-        // Clé symétrique de chiffrement du foyer
-        let cle_chiffrement = Trousseau::genere_cle_brute_from_signature(
-            &cle_privee,
-            CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE,
-        )?;
-
-        let cle_sign_priv: SigningKey;
-
-        // Bloc encadrant la portée de cle_brute
-        {
-            // Création de la paire de clés signature du foyer
-            let cle_brute = Trousseau::genere_cle_brute_from_signature(
-                &cle_privee,
-                CHAINE_A_SIGNER_POUR_PAIRE_SIGNATURE,
-            )?;
-
-            cle_sign_priv = SigningKey::from_bytes(cle_brute.expose_secret());
-        }
-
-        let cle_sig_pub = cle_sign_priv.verifying_key();
+        let cle_sig_pub = cle_sig_priv.verifying_key();
 
         let paire_signature = PaireClesSignature {
-            privee: cle_sign_priv,
+            privee: cle_sig_priv,
             publique: cle_sig_pub,
         };
 
+        // Clé symétrique de chiffrement du foyer
+        let cle_chiffrement = Self::derive_depuis_seed::<32>(
+            seed_bytes,
+            &format!(
+                "{}-{}",
+                LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_FOYER, index_foyer
+            ),
+        )?;
+
+        // Paire de clés chiffrement foyer
         let cle_chiff_priv: SecretBox<StaticSecret>;
 
         // Bloc encadrant la portée de cle_brute
         {
             // Création de la paire de clés chiffrement du foyer
-            let cle_brute = Trousseau::genere_cle_brute_from_signature(
-                &cle_privee,
-                CHAINE_A_SIGNER_POUR_PAIRE_CHIFFREMENT,
+            let cle_brute = Self::derive_depuis_seed::<32>(
+                seed_bytes,
+                &format!("{}-{}", LABEL_DERIVATION_CHIFFREMENT_FOYER, index_foyer),
             )?;
             cle_chiff_priv =
                 SecretBox::new(Box::new(StaticSecret::from(*cle_brute.expose_secret())));
@@ -422,12 +411,13 @@ impl Trousseau {
         let mut cles_chiffrement_classeurs: [Option<SecretBox<[u8; 32]>>; MAX_CLASSEURS] =
             std::array::from_fn(|_| None);
         for (i, e) in cles_chiffrement_classeurs.iter_mut().enumerate() {
-            *e = Some(Trousseau::genere_cle_brute_from_signature(
-                &cle_privee,
+            *e = Some(Self::derive_depuis_seed::<32>(
+                seed_bytes,
                 &format!(
-                    "{}{}",
-                    CHAINE_A_SIGNER_POUR_CHIFFREMENT_SYMETRIQUE_CLASSEUR,
-                    i + 1,
+                    "{}-{}-{}",
+                    LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_CLASSEUR,
+                    index_foyer,
+                    i + 1
                 ),
             )?);
         }
@@ -1053,20 +1043,14 @@ impl Trousseau {
         Ok(&paire_signature_noeud.privee)
     }
 
-    /// Dérive 32 octets de matière clé à partir d'une signature Ed25519.
-    ///
-    /// Signe `texte` avec `cle_privee`, soumet la signature à HKDF-SHA3-256
-    /// et retourne les 32 octets résultants. La signature intermédiaire
-    /// est zéroïsée immédiatement après l'étape d'extraction.
-    fn genere_cle_brute_from_signature(
-        cle_privee: &SigningKey,
-        texte: &str,
-    ) -> ResultCryptographe<SecretBox<[u8; 32]>> {
-        let mut sig = SecretBox::new(Box::new(cle_privee.sign(texte.as_bytes()).to_bytes()));
-        let hkdf = Hkdf::<Sha3_256>::new(None, sig.expose_secret_mut());
+    fn derive_depuis_seed<const N: usize>(
+        seed: &SecretBox<[u8; 64]>,
+        label: &str,
+    ) -> ResultCryptographe<SecretBox<[u8; N]>> {
+        let hkdf = Hkdf::<Sha3_256>::new(None, seed.expose_secret());
 
-        let mut cle_brute = SecretBox::new(Box::new([0u8; 32]));
-        hkdf.expand(b"", cle_brute.expose_secret_mut())?;
+        let mut cle_brute = SecretBox::new(Box::new([0u8; N]));
+        hkdf.expand(label.as_bytes(), cle_brute.expose_secret_mut())?;
 
         Ok(cle_brute)
     }
