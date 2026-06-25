@@ -109,7 +109,7 @@ pub(crate) enum Ecran {
     ///
     /// `titre` et `information` sont affichés **en clair** : cette variante est
     /// réservée à de l'information publique. Aucune donnée sensible (seed, clé,
-    /// adresse `.onion`) ne doit y transiter — celles-ci relèvent d'un écran
+    /// adresse `.braise`) ne doit y transiter — celles-ci relèvent d'un écran
     /// dédié comme [`Ecran::AffichageSeed`], qui protège son contenu via
     /// `secrecy::SecretString`.
     AffichageInformation {

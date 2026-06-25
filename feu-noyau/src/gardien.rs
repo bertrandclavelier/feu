@@ -42,15 +42,15 @@ const ERR_GAR_004: &str = "GAR-004 > Manque au moins un élément dans config.fe
 /// Configuration globale du nœud — miroir de `config.feu` en mémoire.
 ///
 /// Contient la version du format de fichier, le prochain index de dérivation
-/// BIP32, et les adresses `.onion` des `MAX_FOYERS` foyers du nœud.
+/// BIP32, et les adresses `.braise` des `MAX_FOYERS` foyers du nœud.
 struct Configuration {
     /// Version du format de `config.feu` — incrémentée à chaque changement
     /// de structure incompatible.
     version: u32,
     /// Prochain index de dérivation BIP32 à attribuer au prochain foyer créé.
     prochain_index: u32,
-    /// Adresses `.onion` des foyers — tableau de taille fixe `MAX_FOYERS`.
-    adresses_onion: [String; MAX_FOYERS],
+    /// Adresses `.braise` des foyers — tableau de taille fixe `MAX_FOYERS`.
+    adresses_braise: [String; MAX_FOYERS],
 }
 
 impl Configuration {
@@ -58,19 +58,19 @@ impl Configuration {
     ///
     /// `version` est `VERSION_CONFIGURATION`, `prochain_index` est `1` —
     /// la dérivation BIP32 du premier foyer commence à l'index `1` (`m/1'`).
-    /// Les adresses `.onion` sont toutes vides.
+    /// Les adresses `.braise` sont toutes vides.
     fn new() -> Self {
         Self {
             version: VERSION_CONFIGURATION,
             prochain_index: 1,
-            adresses_onion: std::array::from_fn(|_| String::from("")),
+            adresses_braise: std::array::from_fn(|_| String::from("")),
         }
     }
 
     /// Reconstruit la configuration depuis le contenu textuel de `config.feu`.
     ///
     /// Attend exactement `2 + MAX_FOYERS` lignes : version, prochain_index,
-    /// puis une adresse `.onion` par foyer.
+    /// puis une adresse `.braise` par foyer.
     ///
     /// # Erreurs
     ///
@@ -92,26 +92,26 @@ impl Configuration {
         Ok(Self {
             version,
             prochain_index,
-            adresses_onion: tableau,
+            adresses_braise: tableau,
         })
     }
 
     /// Sérialise la configuration en texte pour écriture dans `config.feu`.
     ///
-    /// Format : version, prochain_index, puis chaque adresse `.onion`,
+    /// Format : version, prochain_index, puis chaque adresse `.braise`,
     /// chaque champ séparé par `\n`.
     fn exporte_en_texte(&self) -> String {
         let mut resultat = format!("{}\n{}\n", self.version, self.prochain_index);
-        for e in &self.adresses_onion {
+        for e in &self.adresses_braise {
             resultat.push_str(e);
             resultat.push('\n');
         }
         resultat
     }
 
-    /// Retourne le tableau des adresses `.onion` des foyers.
-    fn donne_adresses_onion(&self) -> &[String] {
-        &self.adresses_onion
+    /// Retourne le tableau des adresses `.braise` des foyers.
+    fn donne_adresses_braise(&self) -> &[String] {
+        &self.adresses_braise
     }
 }
 
@@ -169,22 +169,22 @@ impl Gardien {
 
     /// Construit le tableau de session des foyers depuis la configuration en mémoire.
     ///
-    /// Retourne un tableau de `MAX_FOYERS` tuples `(false, adresse_onion)` —
+    /// Retourne un tableau de `MAX_FOYERS` tuples `(false, adresse_braise)` —
     /// tous les foyers sont marqués fermés à l'allumage du nœud.
     pub(super) fn creation_tableau_session_foyers(&self) -> [(bool, String); MAX_FOYERS] {
         let mut t: [(bool, String); MAX_FOYERS] =
             std::array::from_fn(|_| (false, String::from("")));
 
         for (i, e) in t.iter_mut().enumerate() {
-            *e = (false, self.configuration.adresses_onion[i].clone());
+            *e = (false, self.configuration.adresses_braise[i].clone());
         }
 
         t
     }
 
-    /// Retourne le chemin du dossier `~/.feu/<onion>`.
-    pub(super) fn donne_chemin_onion(&self, onion: &str) -> PathBuf {
-        self.carnet.donne_chemin_onion(onion)
+    /// Retourne le chemin du dossier `~/.feu/<braise>`.
+    pub(super) fn donne_chemin_braise(&self, braise: &str) -> PathBuf {
+        self.carnet.donne_chemin_braise(braise)
     }
 
     /// Ancre le nœud vierge sur le disque à partir du trousseau public.
@@ -211,19 +211,19 @@ impl Gardien {
         Ok(())
     }
 
-    /// Supprime le dossier clair `<onion>` après vérification que l'archive existe.
+    /// Supprime le dossier clair `<braise>` après vérification que l'archive existe.
     ///
-    /// Contrôle l'existence de `<onion>.feu` avant toute suppression —
+    /// Contrôle l'existence de `<braise>.feu` avant toute suppression —
     /// garantit qu'on ne supprime pas un dossier non archivé.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si l'archive `<onion>.feu` est absente
+    /// Retourne une erreur si l'archive `<braise>.feu` est absente
     /// ou si la suppression récursive du dossier échoue.
-    pub(super) fn suppression_dossier_onion(&self, onion: &str) -> ResultGardien<()> {
+    pub(super) fn suppression_dossier_braise(&self, braise: &str) -> ResultGardien<()> {
         // Vérification que l'archive existe avant de supprimer le dossier. Sinon impossible
-        if self.carnet.donne_chemin_archive_chiffree(onion).exists() {
-            self.carnet.supprime_dossier_onion(onion)?;
+        if self.carnet.donne_chemin_archive_chiffree(braise).exists() {
+            self.carnet.supprime_dossier_braise(braise)?;
             Ok(())
         } else {
             Err(ErreurGardien::Interne(String::from(ERR_GAR_003)))
@@ -247,20 +247,20 @@ impl Gardien {
         Ok(())
     }
 
-    /// Enregistre l'adresse `.onion` d'un foyer dans la [`Configuration`] en mémoire.
+    /// Enregistre l'adresse `.braise` d'un foyer dans la [`Configuration`] en mémoire.
     ///
     /// Écrit l'adresse fournie par le cryptographe à la position `position`
-    /// dans le tableau `adresses_onion` et avance `prochain_index` d'une unité
+    /// dans le tableau `adresses_braise` et avance `prochain_index` d'une unité
     /// (index de dérivation BIP32 réservé au prochain foyer créé).
     ///
     /// Cette méthode n'écrit rien sur le disque — appeler ensuite
     /// [`Gardien::enregistrement_configuration`] pour persister l'état.
     pub(super) fn ajout_nouveau_foyer_dans_configuration(
         &mut self,
-        onion: String,
+        braise: String,
         position: usize,
     ) {
-        self.configuration.adresses_onion[position] = onion;
+        self.configuration.adresses_braise[position] = braise;
         self.configuration.prochain_index += 1;
     }
 
@@ -312,9 +312,9 @@ impl Gardien {
     /// Retourne une erreur si un fichier de clé est absent, illisible ou de taille incorrecte.
     pub(super) fn creation_trousseau_foyer_public(
         &self,
-        onion: &str,
+        braise: &str,
     ) -> ResultGardien<TrousseauPublicFoyer> {
-        self.carnet.creer_trousseau_public_foyer(onion)
+        self.carnet.creer_trousseau_public_foyer(braise)
     }
 
     // ── Archives ──────────────────────────────────────────────────────────────
@@ -323,27 +323,27 @@ impl Gardien {
     ///
     /// Enchaîne trois opérations :
     ///
-    /// 1. Crée l'archive tar intermédiaire `<onion>.tar` depuis le dossier `<onion>`.
-    /// 2. Ouvre `<onion>.tar` en lecture — source du chiffrement.
-    /// 3. Crée `<onion>.feu` en écriture exclusive — destination du chiffrement.
+    /// 1. Crée l'archive tar intermédiaire `<braise>.tar` depuis le dossier `<braise>`.
+    /// 2. Ouvre `<braise>.tar` en lecture — source du chiffrement.
+    /// 3. Crée `<braise>.feu` en écriture exclusive — destination du chiffrement.
     ///
     /// Le tuple retourné `(source, destination)` est passé directement au cryptographe
     /// via [`Cryptographe::donne_flux_chiffrement_foyer`].
-    /// `<onion>.tar` doit être supprimé après chiffrement.
+    /// `<braise>.tar` doit être supprimé après chiffrement.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la création du tar échoue, si `<onion>.feu` existe déjà,
+    /// Retourne une erreur si la création du tar échoue, si `<braise>.feu` existe déjà,
     /// ou si une opération disque échoue.
     pub(super) fn preparation_archivage_chiffre_foyer(
         &self,
-        onion: &str,
+        braise: &str,
     ) -> ResultGardien<(File, File)> {
-        self.carnet.archive_tar_foyer(onion)?;
+        self.carnet.archive_tar_foyer(braise)?;
 
         Ok((
-            self.carnet.ouvre_archive_tar_foyer_lecture(onion)?,
-            self.carnet.ouvre_archive_chiffree_foyer_ecriture(onion)?,
+            self.carnet.ouvre_archive_tar_foyer_lecture(braise)?,
+            self.carnet.ouvre_archive_chiffree_foyer_ecriture(braise)?,
         ))
     }
 
@@ -352,9 +352,9 @@ impl Gardien {
     /// Lit depuis le disque et ouvre les fichiers dans l'ordre attendu par
     /// [`Cryptographe::donne_flux_dechiffrement_foyer`] :
     ///
-    /// 1. La clé symétrique chiffrée depuis `~/.feu/.cles/<onion>.cle` — 60 octets.
-    /// 2. L'archive chiffrée `<onion>.feu` en lecture — source du déchiffrement.
-    /// 3. Un fichier `<onion>.tar` vide en écriture — destination du déchiffrement.
+    /// 1. La clé symétrique chiffrée depuis `~/.feu/.cles/<braise>.cle` — 60 octets.
+    /// 2. L'archive chiffrée `<braise>.feu` en lecture — source du déchiffrement.
+    /// 3. Un fichier `<braise>.tar` vide en écriture — destination du déchiffrement.
     ///
     /// Après déchiffrement, appeler [`desarchivage_chiffre_foyer`](Self::desarchivage_chiffre_foyer)
     /// pour extraire le tar et nettoyer les fichiers intermédiaires.
@@ -362,15 +362,15 @@ impl Gardien {
     /// # Erreurs
     ///
     /// Retourne une erreur si un fichier de clé est absent ou de taille incorrecte,
-    /// si `<onion>.feu` est absent, ou si la création de `<onion>.tar` échoue.
+    /// si `<braise>.feu` est absent, ou si la création de `<braise>.tar` échoue.
     pub(super) fn preparation_desarchivage_chiffre_foyer(
         &self,
-        onion: &str,
+        braise: &str,
     ) -> ResultGardien<([u8; 60], File, File)> {
         Ok((
-            self.carnet.lire_pour_donner_cle_chiffrement_foyer(onion)?,
-            self.carnet.ouvre_archive_chiffree_foyer_lecture(onion)?,
-            self.carnet.ouvre_archive_tar_vide_ecriture(onion)?,
+            self.carnet.lire_pour_donner_cle_chiffrement_foyer(braise)?,
+            self.carnet.ouvre_archive_chiffree_foyer_lecture(braise)?,
+            self.carnet.ouvre_archive_tar_vide_ecriture(braise)?,
         ))
     }
 
@@ -378,9 +378,9 @@ impl Gardien {
     ///
     /// Enchaîne trois opérations séquentielles :
     ///
-    /// 1. Extrait `<onion>.tar` vers `~/.feu/<onion>/`.
-    /// 2. Supprime `<onion>.tar`.
-    /// 3. Supprime `<onion>.feu`.
+    /// 1. Extrait `<braise>.tar` vers `~/.feu/<braise>/`.
+    /// 2. Supprime `<braise>.tar`.
+    /// 3. Supprime `<braise>.feu`.
     ///
     /// Doit être appelé immédiatement après [`Cryptographe::donne_flux_dechiffrement_foyer`].
     ///
@@ -388,14 +388,14 @@ impl Gardien {
     ///
     /// Retourne une erreur si l'extraction échoue ou si la suppression d'un
     /// fichier intermédiaire échoue.
-    pub(super) fn desarchivage_chiffre_foyer(&self, onion: &str) -> ResultGardien<()> {
-        self.carnet.desarchive_tar_foyer(onion)?;
-        self.carnet.supprime_archive_foyer_tar(onion)?;
-        self.carnet.supprime_archive_foyer_chiffree(onion)?;
+    pub(super) fn desarchivage_chiffre_foyer(&self, braise: &str) -> ResultGardien<()> {
+        self.carnet.desarchive_tar_foyer(braise)?;
+        self.carnet.supprime_archive_foyer_tar(braise)?;
+        self.carnet.supprime_archive_foyer_chiffree(braise)?;
         Ok(())
     }
 
-    /// Supprime l'archive tar intermédiaire `<onion>.tar` après chiffrement.
+    /// Supprime l'archive tar intermédiaire `<braise>.tar` après chiffrement.
     ///
     /// Doit être appelé immédiatement après [`preparation_archivage_chiffre_foyer`](Self::preparation_archivage_chiffre_foyer)
     /// et le chiffrement — le `.tar` est un fichier temporaire qui ne doit pas
@@ -404,8 +404,8 @@ impl Gardien {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
-    pub(super) fn suppression_archive_foyer_tar(&self, onion: &str) -> ResultGardien<()> {
-        self.carnet.supprime_archive_foyer_tar(onion)?;
+    pub(super) fn suppression_archive_foyer_tar(&self, braise: &str) -> ResultGardien<()> {
+        self.carnet.supprime_archive_foyer_tar(braise)?;
 
         Ok(())
     }
@@ -430,7 +430,7 @@ impl Gardien {
 
                 Ok(configuration) => {
                     // Pour chaque foyer
-                    for element in configuration.donne_adresses_onion() {
+                    for element in configuration.donne_adresses_braise() {
                         if !self
                             .carnet
                             .donne_chemin_feu()
@@ -467,7 +467,7 @@ impl Gardien {
     /// Vérifie la présence des fichiers d'un foyer ouvert.
     ///
     /// Délègue la vérification de l'arborescence interne au carnet.
-    pub(super) fn diagnostic_foyer(&self, onion: &str) -> Vec<Anomalie> {
-        self.carnet.verifier_arborescence_foyer(onion)
+    pub(super) fn diagnostic_foyer(&self, braise: &str) -> Vec<Anomalie> {
+        self.carnet.verifier_arborescence_foyer(braise)
     }
 }

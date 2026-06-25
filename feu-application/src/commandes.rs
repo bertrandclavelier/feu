@@ -70,7 +70,7 @@ impl FeuApplication {
     /// 1. Vérifie qu'aucun foyer n'est ouvert.
     /// 2. Libère le noyau (`feu_noyau = None`) — efface les clés privées en mémoire.
     /// 3. Réinitialise la session pour qu'aucune donnée applicative ne survive
-    ///    à l'extinction (clés publiques, adresses `.onion`, états).
+    ///    à l'extinction (clés publiques, adresses `.braise`, états).
     /// 4. Notifie la couche de présentation avec `recevoir_session_application(None)`.
     ///
     /// L'extinction n'écrit rien sur disque : les archives chiffrées des foyers

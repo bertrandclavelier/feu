@@ -54,7 +54,7 @@ mod session;
 /// (`demander_mdp`, `recevoir_seed`, `confirmer_enregistrement_seed`) et la
 /// notification d'état émise après chaque commande mutante
 /// (`recevoir_session_application`). Les notifications d'état internes au noyau
-/// (clés publiques, adresses `.onion`) sont écrites directement dans
+/// (clés publiques, adresses `.braise`) sont écrites directement dans
 /// [`SessionApplication`] sans passer par ce trait.
 pub trait InterfaceFeuApplication {
     /// Collecte le mot de passe Feu en masquant la saisie.
@@ -132,13 +132,13 @@ impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
             .confirmer_enregistrement_seed()
     }
 
-    /// Enregistre l'adresse `.onion` d'un foyer dans la session applicative.
+    /// Enregistre l'adresse `.braise` d'un foyer dans la session applicative.
     ///
     /// Appelée par le noyau à l'allumage pour chaque foyer connu, et à
     /// l'initialisation pour chaque foyer créé.
-    fn recevoir_onion_foyer(&mut self, index_foyer: usize, onion: &str) {
+    fn recevoir_braise_foyer(&mut self, index_foyer: usize, braise: &str) {
         self.session_application
-            .definit_onion_foyer(index_foyer, String::from(onion));
+            .definit_braise_foyer(index_foyer, String::from(braise));
     }
 
     /// Met à jour l'état d'ouverture d'un foyer dans la session applicative.

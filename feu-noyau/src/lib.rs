@@ -105,13 +105,13 @@ pub trait InterfaceFeuNoyau {
     /// case à cocher, ou autre.
     fn confirmer_enregistrement_seed(&self) -> bool;
 
-    /// Notifie l'interface de l'adresse `.onion` d'un foyer.
+    /// Notifie l'interface de l'adresse `.braise` d'un foyer.
     ///
     /// Appelée à l'allumage du nœud pour chaque foyer présent dans
     /// `config.feu`, et à l'initialisation pour chaque foyer créé. Permet à
-    /// l'interface de construire un index stable `index_foyer → onion` sans
+    /// l'interface de construire un index stable `index_foyer → braise` sans
     /// avoir à inspecter la configuration elle-même.
-    fn recevoir_onion_foyer(&mut self, index_foyer: usize, onion: &str);
+    fn recevoir_braise_foyer(&mut self, index_foyer: usize, braise: &str);
 
     /// Notifie l'interface d'un changement d'état d'ouverture d'un foyer.
     ///
@@ -206,22 +206,22 @@ impl DonneesBlob {
 
 /// État d'un foyer dans la session courante.
 struct Foyer {
-    onion: String,
+    braise: String,
     est_ouvert: bool,
 }
 
 impl Foyer {
-    /// Crée un [`Foyer`] avec l'adresse `.onion` et l'état d'ouverture fournis.
-    fn new(onion: String, est_ouvert: bool) -> Self {
-        Self { onion, est_ouvert }
+    /// Crée un [`Foyer`] avec l'adresse `.braise` et l'état d'ouverture fournis.
+    fn new(braise: String, est_ouvert: bool) -> Self {
+        Self { braise, est_ouvert }
     }
 }
 
-/// État de la session courante — foyers ouverts et leurs adresses `.onion`.
+/// État de la session courante — foyers ouverts et leurs adresses `.braise`.
 ///
-/// Maintient pour chaque foyer un [`Foyer`] (adresse `.onion` et état
+/// Maintient pour chaque foyer un [`Foyer`] (adresse `.braise` et état
 /// d'ouverture) indexé par position. L'index est partagé avec
-/// `Configuration::adresses_onion` et le trousseau cryptographique — c'est
+/// `Configuration::adresses_braise` et le trousseau cryptographique — c'est
 /// le point de vérité unique pour relier un foyer à son adresse et à son
 /// état d'ouverture.
 struct SessionFoyers {
@@ -234,7 +234,7 @@ impl SessionFoyers {
     fn new() -> Self {
         Self {
             foyers: std::array::from_fn(|_| Foyer {
-                onion: String::from(""),
+                braise: String::from(""),
                 est_ouvert: false,
             }),
         }
@@ -270,54 +270,54 @@ impl SessionFoyers {
         t: [(bool, String); MAX_FOYERS],
     ) {
         for (i, foyer) in self.foyers.iter_mut().enumerate() {
-            interface.recevoir_onion_foyer(i, &t[i].1);
+            interface.recevoir_braise_foyer(i, &t[i].1);
             *foyer = Foyer::new(t[i].1.clone(), t[i].0);
         }
     }
 
-    /// Retourne l'adresse `.onion` du foyer à la position `index`.
+    /// Retourne l'adresse `.braise` du foyer à la position `index`.
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si `index >= MAX_FOYERS`.
-    fn index_vers_onion(&self, index: usize) -> ResultFeuNoyau<&str> {
+    fn index_vers_braise(&self, index: usize) -> ResultFeuNoyau<&str> {
         if index >= MAX_FOYERS {
-            Err(ErreurFeuNoyau::OnionIntrouvable)
+            Err(ErreurFeuNoyau::BraiseIntrouvable)
         } else {
-            Ok(&self.foyers[index].onion)
+            Ok(&self.foyers[index].braise)
         }
     }
 
-    /// Retourne la position d'un foyer à partir de son adresse `.onion`.
+    /// Retourne la position d'un foyer à partir de son adresse `.braise`.
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si l'adresse n'est pas trouvée dans la session.
-    fn onion_vers_index(&self, onion: &str) -> ResultFeuNoyau<usize> {
+    fn braise_vers_index(&self, braise: &str) -> ResultFeuNoyau<usize> {
         for index in 0..MAX_FOYERS {
-            if self.foyers[index].onion == onion {
+            if self.foyers[index].braise == braise {
                 return Ok(index);
             }
         }
-        Err(ErreurFeuNoyau::OnionIntrouvable)
+        Err(ErreurFeuNoyau::BraiseIntrouvable)
     }
 
-    /// Indique si le foyer identifié par `onion` est actuellement ouvert.
+    /// Indique si le foyer identifié par `braise` est actuellement ouvert.
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si l'adresse n'est pas trouvée dans la session.
-    fn onion_est_ouvert(&self, onion: &str) -> ResultFeuNoyau<bool> {
-        Ok(self.foyers[self.onion_vers_index(onion)?].est_ouvert)
+    fn braise_est_ouvert(&self, braise: &str) -> ResultFeuNoyau<bool> {
+        Ok(self.foyers[self.braise_vers_index(braise)?].est_ouvert)
     }
 
-    /// Modifie le statut d'ouverture du foyer identifié par `onion`.
+    /// Modifie le statut d'ouverture du foyer identifié par `braise`.
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si l'adresse n'est pas trouvée dans la session.
-    fn change_statut_onion(&mut self, onion: &str, valeur: bool) -> ResultFeuNoyau<()> {
-        self.foyers[self.onion_vers_index(onion)?].est_ouvert = valeur;
+    fn change_statut_braise(&mut self, braise: &str, valeur: bool) -> ResultFeuNoyau<()> {
+        self.foyers[self.braise_vers_index(braise)?].est_ouvert = valeur;
 
         Ok(())
     }
@@ -331,7 +331,7 @@ impl SessionFoyers {
 /// injectée à chaque appel, garantissant une séparation totale entre la
 /// logique du protocole et la couche de présentation.
 pub struct FeuNoyau {
-    /// État de la session courante — foyers ouverts et leurs adresses `.onion`.
+    /// État de la session courante — foyers ouverts et leurs adresses `.braise`.
     session: SessionFoyers,
     /// Gardien des données locales — fichiers, foyers, configuration.
     /// Présent et actif pour toute la durée de vie du nœud.
@@ -385,7 +385,7 @@ impl FeuNoyau {
     ///
     /// **Phase disque — gardien**
     /// 3. Crée l'arborescence globale `~/.feu` et les arborescences de chaque foyer.
-    /// 4. Enregistre les `MAX_FOYERS` adresses `.onion` dans `config.feu`.
+    /// 4. Enregistre les `MAX_FOYERS` adresses `.braise` dans `config.feu`.
     ///
     /// **Fermeture**
     /// 5. Ferme chaque foyer — archive, chiffre et supprime le dossier clair.
@@ -474,14 +474,14 @@ impl FeuNoyau {
 
             // Ajout des MAX_FOYERS foyers dans la configuration
             for i in 0..MAX_FOYERS {
-                let onion = String::from(
+                let braise = String::from(
                     trousseau_public_complet
                         .donne_trousseau_public_foyer(i)?
-                        .donne_onion(),
+                        .donne_braise(),
                 );
-                gardien.ajout_nouveau_foyer_dans_configuration(onion.clone(), i);
-                session.foyers[i] = Foyer::new(onion.clone(), true);
-                interface_feu_noyau.recevoir_onion_foyer(i, &onion);
+                gardien.ajout_nouveau_foyer_dans_configuration(braise.clone(), i);
+                session.foyers[i] = Foyer::new(braise.clone(), true);
+                interface_feu_noyau.recevoir_braise_foyer(i, &braise);
             }
 
             // Enregistrement de config.feu
@@ -497,7 +497,7 @@ impl FeuNoyau {
             // Fermeture des foyers
             for i in 0..MAX_FOYERS {
                 noyau
-                    .fermeture_foyer(interface_feu_noyau, &noyau.session.foyers[i].onion.clone())?;
+                    .fermeture_foyer(interface_feu_noyau, &noyau.session.foyers[i].braise.clone())?;
             }
 
             Ok(noyau)
@@ -510,7 +510,7 @@ impl FeuNoyau {
     /// À utiliser quand des fichiers de clés ont été supprimés ou corrompus mais que
     /// les archives `.feu` des foyers sont intactes. La dérivation des clés est
     /// déterministe — la même seed produit exactement les mêmes clés, le même sel et
-    /// les mêmes adresses `.onion`.
+    /// les mêmes adresses `.braise`.
     ///
     /// Le mot de passe original est demandé à plusieurs reprises : une première fois
     /// pour chiffrer les fichiers de clés, puis une fois par foyer pour désarchiver
@@ -523,13 +523,13 @@ impl FeuNoyau {
     /// 1. Régénère toutes les clés en mémoire, collecte le mot de passe original et dérive
     ///    le sel via `genere_trousseau_a_partir_seed`.
     /// 2. Produit le trousseau public chiffré (efface mot de passe et clé éphémère).
-    /// 3. Recrée `config.feu` avec les adresses `.onion` dérivées.
-    /// 4. **Première passe** — écrit les fichiers root `~/.feu/.cles/` (dont `<onion>.cle`)
+    /// 3. Recrée `config.feu` avec les adresses `.braise` dérivées.
+    /// 4. **Première passe** — écrit les fichiers root `~/.feu/.cles/` (dont `<braise>.cle`)
     ///    nécessaires à l'ouverture des foyers. Les erreurs sont ignorées — les répertoires
-    ///    `<onion>/` n'existent pas encore, les clés de classeurs seront écrites à la passe suivante.
+    ///    `<braise>/` n'existent pas encore, les clés de classeurs seront écrites à la passe suivante.
     /// 5. Ouvre chaque foyer — désarchive et charge les clés en mémoire.
     /// 6. **Deuxième passe** — écrit l'intégralité du trousseau public, y compris les
-    ///    clés de classeurs dans `~/.feu/<onion>/.cles/`.
+    ///    clés de classeurs dans `~/.feu/<braise>/.cles/`.
     /// 7. Ferme chaque foyer — archive le dossier clair (avec les nouvelles `.cles/`) et
     ///    supprime le dossier clair.
     ///
@@ -566,13 +566,13 @@ impl FeuNoyau {
 
         // Ajout des MAX_FOYERS foyers dans la configuration
         for i in 0..MAX_FOYERS {
-            let onion = String::from(
+            let braise = String::from(
                 trousseau_public_complet
                     .donne_trousseau_public_foyer(i)?
-                    .donne_onion(),
+                    .donne_braise(),
             );
-            gardien.ajout_nouveau_foyer_dans_configuration(onion.clone(), i);
-            session.foyers[i] = Foyer::new(onion.clone(), false);
+            gardien.ajout_nouveau_foyer_dans_configuration(braise.clone(), i);
+            session.foyers[i] = Foyer::new(braise.clone(), false);
         }
 
         // Enregistrement de config.feu
@@ -585,8 +585,8 @@ impl FeuNoyau {
             archivistes: std::array::from_fn(|_| None),
         };
 
-        // Première passe : écrit les fichiers root .cles/ (dont <onion>.cle) nécessaires
-        // à l'ouverture des foyers. L'échec partiel est ignoré — <onion>/ n'existe pas
+        // Première passe : écrit les fichiers root .cles/ (dont <braise>.cle) nécessaires
+        // à l'ouverture des foyers. L'échec partiel est ignoré — <braise>/ n'existe pas
         // encore, les clés de classeurs seront écrites par la deuxième passe.
         let _ = noyau
             .gardien
@@ -602,7 +602,7 @@ impl FeuNoyau {
 
         // Fermeture des foyers
         for i in 0..MAX_FOYERS {
-            noyau.fermeture_foyer(interface_feu_noyau, &noyau.session.foyers[i].onion.clone())?;
+            noyau.fermeture_foyer(interface_feu_noyau, &noyau.session.foyers[i].braise.clone())?;
         }
 
         Ok(())
@@ -653,11 +653,11 @@ impl FeuNoyau {
     ///
     /// **Phase mémoire — cryptographe**
     /// 2. Collecte le mot de passe FeuNoyau et dérive la clé éphémère Argon2id.
-    /// 3. Déchiffre la clé symétrique du foyer (`<onion>.cle`) avec la clé éphémère.
+    /// 3. Déchiffre la clé symétrique du foyer (`<braise>.cle`) avec la clé éphémère.
     /// 4. Crée un flux de lecture déchiffré AES-256-GCM-stream.
     ///
     /// **Phase disque — gardien**
-    /// 5. Extrait l'archive `<onion>.feu` dans `~/.feu/` via le flux déchiffré.
+    /// 5. Extrait l'archive `<braise>.feu` dans `~/.feu/` via le flux déchiffré.
     ///    Supprime l'archive après extraction.
     /// 6. Lit les clés chiffrées du foyer depuis le dossier extrait.
     ///
@@ -699,14 +699,14 @@ impl FeuNoyau {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::IndexInvalide);
         }
-        let onion = self.session.index_vers_onion(index_foyer)?;
+        let braise = self.session.index_vers_braise(index_foyer)?;
 
-        if self.session.onion_est_ouvert(onion)? {
+        if self.session.braise_est_ouvert(braise)? {
             return Err(ErreurFeuNoyau::FoyerDejaOuvert);
         }
 
         let (cle, mut source, mut destination) =
-            self.gardien.preparation_desarchivage_chiffre_foyer(onion)?;
+            self.gardien.preparation_desarchivage_chiffre_foyer(braise)?;
 
         self.cryptographe.donne_flux_dechiffrement_foyer(
             &cle,
@@ -715,8 +715,8 @@ impl FeuNoyau {
             interface_feu_noyau,
         )?;
 
-        self.gardien.desarchivage_chiffre_foyer(onion)?;
-        let trousseau_public_foyer = self.gardien.creation_trousseau_foyer_public(onion)?;
+        self.gardien.desarchivage_chiffre_foyer(braise)?;
+        let trousseau_public_foyer = self.gardien.creation_trousseau_foyer_public(braise)?;
 
         interface_feu_noyau.recevoir_cles_publiques_foyer(
             index_foyer,
@@ -730,7 +730,7 @@ impl FeuNoyau {
         // Instanciation de l'archiviste — crée l'arborescence classeurs/registre
         // à la première ouverture, ne fait rien lors des ouvertures suivantes.
         self.archivistes[index_foyer] =
-            Some(Archiviste::new(self.gardien.donne_chemin_onion(onion))?);
+            Some(Archiviste::new(self.gardien.donne_chemin_braise(braise))?);
 
         self.session.foyers[index_foyer].est_ouvert = true;
         interface_feu_noyau.recevoir_etat_foyer(index_foyer, true);
@@ -741,10 +741,10 @@ impl FeuNoyau {
     /// le dossier clair.
     ///
     /// Orchestre quatre opérations séquentielles :
-    /// 1. Ouvre le fichier de destination `<onion>.feu` en écriture.
-    /// 2. Crée l'archive tar chiffrée AES-256-GCM-stream du dossier `<onion>`.
+    /// 1. Ouvre le fichier de destination `<braise>.feu` en écriture.
+    /// 2. Crée l'archive tar chiffrée AES-256-GCM-stream du dossier `<braise>`.
     ///    L'archive inclut `registre/`, `classeur0/` à `classeur4/` et leur contenu.
-    /// 3. Supprime le dossier clair `<onion>` après vérification que l'archive existe.
+    /// 3. Supprime le dossier clair `<braise>` après vérification que l'archive existe.
     /// 4. Détruit l'Archiviste du foyer.
     ///
     /// # Erreurs
@@ -754,35 +754,35 @@ impl FeuNoyau {
     fn fermeture_foyer(
         &mut self,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
-        onion: &str,
+        braise: &str,
     ) -> ResultFeuNoyau<()> {
-        if !self.session.onion_est_ouvert(onion)? {
+        if !self.session.braise_est_ouvert(braise)? {
             return Err(ErreurFeuNoyau::FoyerFerme);
         }
 
         let (mut source, mut destination) =
-            self.gardien.preparation_archivage_chiffre_foyer(onion)?;
+            self.gardien.preparation_archivage_chiffre_foyer(braise)?;
 
         self.cryptographe.donne_flux_chiffrement_foyer(
-            self.session.onion_vers_index(onion)?,
+            self.session.braise_vers_index(braise)?,
             &mut source,
             &mut destination,
         )?;
 
-        self.gardien.suppression_archive_foyer_tar(onion)?;
-        self.gardien.suppression_dossier_onion(onion)?;
+        self.gardien.suppression_archive_foyer_tar(braise)?;
+        self.gardien.suppression_dossier_braise(braise)?;
 
         // Destruction de l'archiviste — le dossier du foyer est déjà supprimé.
-        self.archivistes[self.session.onion_vers_index(onion)?] = None;
+        self.archivistes[self.session.braise_vers_index(braise)?] = None;
 
-        self.session.change_statut_onion(onion, false)?;
-        interface_feu_noyau.recevoir_etat_foyer(self.session.onion_vers_index(onion)?, false);
+        self.session.change_statut_braise(braise, false)?;
+        interface_feu_noyau.recevoir_etat_foyer(self.session.braise_vers_index(braise)?, false);
         Ok(())
     }
 
     /// Ferme un foyer à partir de son index dans la session.
     ///
-    /// Résout l'index en adresse `.onion` puis déclenche la fermeture : archive
+    /// Résout l'index en adresse `.braise` puis déclenche la fermeture : archive
     /// et chiffre le dossier du foyer, détruit son archiviste et supprime le
     /// dossier clair.
     ///
@@ -797,8 +797,8 @@ impl FeuNoyau {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::IndexInvalide);
         }
-        let onion = String::from(self.session.index_vers_onion(index_foyer)?);
-        self.fermeture_foyer(interface_feu_noyau, &onion)?;
+        let braise = String::from(self.session.index_vers_braise(index_foyer)?);
+        self.fermeture_foyer(interface_feu_noyau, &braise)?;
         Ok(())
     }
 
@@ -822,7 +822,7 @@ impl FeuNoyau {
     ///
     /// # Prérequis
     ///
-    /// Le dossier clair `<onion>/` doit exister sur disque et être intact —
+    /// Le dossier clair `<braise>/` doit exister sur disque et être intact —
     /// le diagnostic vérifie la présence de toutes les clés nécessaires.
     ///
     /// # Erreurs
@@ -837,19 +837,19 @@ impl FeuNoyau {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::IndexInvalide);
         }
-        let onion = String::from(self.session.index_vers_onion(index_foyer)?);
-        if !self.gardien.diagnostic_foyer(&onion).is_empty() {
+        let braise = String::from(self.session.index_vers_braise(index_foyer)?);
+        if !self.gardien.diagnostic_foyer(&braise).is_empty() {
             return Err(ErreurFeuNoyau::FermetureSecoursFoyerImpossible);
         }
 
         self.cryptographe.secours_recoit_trousseau_public_foyer(
-            self.gardien.creation_trousseau_foyer_public(&onion)?,
+            self.gardien.creation_trousseau_foyer_public(&braise)?,
             index_foyer,
             interface_feu_noyau,
         )?;
 
-        self.session.change_statut_onion(&onion, true)?;
-        self.fermeture_foyer(interface_feu_noyau, &onion)?;
+        self.session.change_statut_braise(&braise, true)?;
+        self.fermeture_foyer(interface_feu_noyau, &braise)?;
 
         Ok(())
     }
@@ -1252,7 +1252,7 @@ impl FeuNoyau {
 
         let mut resultat = self
             .gardien
-            .diagnostic_foyer(self.session.index_vers_onion(index_foyer)?);
+            .diagnostic_foyer(self.session.index_vers_braise(index_foyer)?);
 
         resultat.extend(archiviste.verifier_arborescence_classeurs()?);
 

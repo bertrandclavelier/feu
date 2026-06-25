@@ -262,7 +262,7 @@ impl Cryptographe {
     ///
     /// Déchiffre toutes les clés privées et symétriques du [`TrousseauPublicFoyer`]
     /// fourni avec la clé éphémère et les enregistre dans le trousseau à la position
-    /// `index`. L'adresse `.onion` est lue depuis le [`TrousseauPublicFoyer`].
+    /// `index`. L'adresse `.braise` est lue depuis le [`TrousseauPublicFoyer`].
     /// Le mot de passe et la clé éphémère sont effacés avant le retour.
     ///
     /// # Prérequis

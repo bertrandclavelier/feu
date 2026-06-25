@@ -25,7 +25,7 @@ use feu_noyau::{
 /// État applicatif de la session courante.
 ///
 /// Regroupe les capacités du noyau (limites de taille, nombre de foyers) et
-/// l'état dynamique de la session (adresses onion, états d'ouverture, clés
+/// l'état dynamique de la session (adresses braise, états d'ouverture, clés
 /// publiques). Peuplé à l'allumage et mis à jour à chaque ouverture/fermeture
 /// de foyer.
 ///
@@ -45,8 +45,8 @@ pub struct SessionApplication {
     pub max_taille_chiffrement_asymetrique: usize,
     /// Taille maximum d'un message à signer.
     pub max_taille_signature: usize,
-    /// Adresses `.onion` des foyers — indexées par position.
-    onion_foyers: [String; MAX_FOYERS],
+    /// Adresses `.braise` des foyers — indexées par position.
+    braise_foyers: [String; MAX_FOYERS],
     /// État d'ouverture de chaque foyer — `true` si ouvert.
     etat_foyers: [bool; MAX_FOYERS],
     /// Clé publique de signature Ed25519 du nœud — reçue à l'allumage.
@@ -68,7 +68,7 @@ impl SessionApplication {
             max_taille_blob: MAX_TAILLE_BLOB,
             max_taille_chiffrement_asymetrique: MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
             max_taille_signature: MAX_TAILLE_SIGNATURE,
-            onion_foyers: std::array::from_fn(|_| String::new()),
+            braise_foyers: std::array::from_fn(|_| String::new()),
             etat_foyers: std::array::from_fn(|_| false),
             cle_publique_sig_noeud: [0u8; 32],
             cle_publique_sig_foyers: std::array::from_fn(|_| [0u8; 32]),
@@ -76,25 +76,25 @@ impl SessionApplication {
         }
     }
 
-    /// Retourne l'adresse `.onion` du foyer à la position `index_foyer`.
+    /// Retourne l'adresse `.braise` du foyer à la position `index_foyer`.
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si `index_foyer >= MAX_FOYERS`.
-    pub fn onion_foyer(&self, index_foyer: usize) -> ResultFeuApplication<&str> {
+    pub fn braise_foyer(&self, index_foyer: usize) -> ResultFeuApplication<&str> {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuApplication::Standard(String::from(
                 "index_foyer trop élevé",
             )));
         }
-        Ok(&self.onion_foyers[index_foyer])
+        Ok(&self.braise_foyers[index_foyer])
     }
 
-    /// Enregistre l'adresse `.onion` du foyer à la position `index_foyer`.
+    /// Enregistre l'adresse `.braise` du foyer à la position `index_foyer`.
     ///
     /// Appelé par [`RecepteurNoyau`] lors de l'allumage du nœud.
-    pub(crate) fn definit_onion_foyer(&mut self, index_foyer: usize, onion: String) {
-        self.onion_foyers[index_foyer] = onion;
+    pub(crate) fn definit_braise_foyer(&mut self, index_foyer: usize, braise: String) {
+        self.braise_foyers[index_foyer] = braise;
     }
 
     /// Retourne une vue immuable sur le tableau des états d'ouverture des foyers.

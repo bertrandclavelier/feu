@@ -98,10 +98,10 @@ pub enum ErreurFeuNoyau {
     #[error("NOY > Check-up négatif pour fermeture en secours du foyer")]
     FermetureSecoursFoyerImpossible,
 
-    /// L'adresse `.onion` fournie ou résolue depuis un index ne correspond
+    /// L'adresse `.braise` fournie ou résolue depuis un index ne correspond
     /// à aucun foyer connu de la session.
-    #[error("NOY > Adresse onion inconnue")]
-    OnionIntrouvable,
+    #[error("NOY > Adresse braise inconnue")]
+    BraiseIntrouvable,
 }
 
 impl From<ErreurGardien> for ErreurFeuNoyau {

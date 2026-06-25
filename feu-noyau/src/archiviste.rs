@@ -31,7 +31,7 @@
 //! # Structure disque d'un foyer ouvert
 //!
 //! ```text
-//! ~/.feu/<onion>/
+//! ~/.feu/<braise>/
 //!     registre/
 //!         classeur.0  → ../  ← lien symbolique vers la racine du foyer
 //!         classeur.1  → ../
@@ -68,10 +68,10 @@ const CLASSEUR: &str = "classeur";
 
 /// Archiviste d'un foyer ouvert.
 ///
-/// Maintient le chemin racine du foyer (`~/.feu/<onion>/`). Instancié par
+/// Maintient le chemin racine du foyer (`~/.feu/<braise>/`). Instancié par
 /// [`FeuNoyau`](crate::FeuNoyau) à l'ouverture du foyer, détruit à la fermeture.
 pub(super) struct Archiviste {
-    /// Chemin racine du foyer — `~/.feu/<onion>/`.
+    /// Chemin racine du foyer — `~/.feu/<braise>/`.
     racine: PathBuf,
 }
 

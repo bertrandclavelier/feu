@@ -80,7 +80,7 @@ use aead::stream::{DecryptorBE32, EncryptorBE32};
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use argon2::Argon2;
-use data_encoding::BASE32;
+use data_encoding::BASE32_NOPAD;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
 use ml_kem::Decapsulate;
@@ -111,6 +111,7 @@ const LABEL_DERIVATION_SIGNATURE_NOEUD: &str = "feu/noeud/signature";
 const LABEL_DERIVATION_SIGNATURE_FOYER: &str = "feu/foyer/signature";
 const LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_FOYER: &str = "feu/foyer/symetrique";
 const LABEL_DERIVATION_CHIFFREMENT_FOYER: &str = "feu/foyer/chiffrement";
+const LABEL_DERIVATION_BRAISE_FOYER: &str = "feu/foyer/braise";
 const LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu/classeur/symetrique";
 
 // ── Constantes d'implémentation ──────────────────────────────────────────────
@@ -131,7 +132,7 @@ const ERR_TRO_011: &str = "TRO-011 > Pas de trousseau foyer";
 const ERR_TRO_012: &str = "TRO-012 > Pas de clé du classeur";
 const ERR_TRO_013: &str = "TRO-013 > Pas de clé de signature du nœud";
 
-/// Paire de clés Ed25519 d'un foyer — signature réseau et dérivation de l'adresse `.onion`.
+/// Paire de clés Ed25519 de signature d'un foyer.
 ///
 /// `privee` est protégée par `ZeroizeOnDrop` (ed25519-dalek, feature `zeroize`) —
 /// `SigningKey` n'implémente pas `Zeroize`, `SecretBox` est donc inutilisable.
@@ -159,11 +160,11 @@ struct PaireClesChiffrement {
 
 /// Clés opérationnelles d'un foyer ouvert, maintenues en mémoire pour la durée de la session.
 ///
-/// Contient l'adresse `.onion`, la clé symétrique d'archive, la paire de signature réseau,
-/// la paire de chiffrement réseau et les clés des classeurs. Toutes les clés privées et
-/// symétriques sont encapsulées dans [`SecretBox`] ou protégées par `ZeroizeOnDrop`.
+/// Contient l'adresse `.braise`, la clé symétrique d'archive, la paire
+/// de signature, la paire de chiffrement réseau et les clés des classeurs. Toutes les
+/// clés privées et symétriques sont encapsulées dans [`SecretBox`] ou protégées par `ZeroizeOnDrop`.
 struct TrousseauFoyer {
-    onion: String,
+    braise: String,
     cle_chiffrement: SecretBox<[u8; 32]>,
     paire_signature: PaireClesSignature,
     paire_chiffrement: PaireClesChiffrement,
@@ -176,13 +177,13 @@ impl TrousseauFoyer {
     /// Les slots de classeurs sont initialisés à `None` — ils sont peuplés
     /// après construction via [`ajoute_cle_classeur`](Self::ajoute_cle_classeur).
     fn new(
-        onion: String,
+        braise: String,
         cle_chiffrement: SecretBox<[u8; 32]>,
         paire_signature: PaireClesSignature,
         paire_chiffrement: PaireClesChiffrement,
     ) -> Self {
         Self {
-            onion,
+            braise,
             cle_chiffrement,
             paire_signature,
             paire_chiffrement,
@@ -213,7 +214,7 @@ impl TrousseauFoyer {
         trousseau: &Trousseau,
     ) -> ResultCryptographe<TrousseauPublicFoyer> {
         let mut trousseau_public_foyer = TrousseauPublicFoyer::new(
-            self.onion.clone(),
+            self.braise.clone(),
             trousseau.chiffre_cle(self.cle_chiffrement.expose_secret())?,
             trousseau.chiffre_cle(self.paire_signature.privee.as_bytes())?,
             self.paire_signature.publique.to_bytes(),
@@ -239,55 +240,6 @@ impl TrousseauFoyer {
         }
 
         Ok(trousseau_public_foyer)
-    }
-
-    /// Dérive l'adresse `.onion` Tor v3 du foyer depuis sa clé publique de signature.
-    ///
-    /// Implémente le standard Tor v3 (rend-spec-v3) :
-    ///
-    /// ```text
-    /// CHECKSUM = SHA3-256(b".onion checksum" || PUBKEY || [0x03])[..2]
-    /// ADRESSE  = BASE32(PUBKEY || CHECKSUM || [0x03]).to_lowercase() + ".onion"
-    /// ```
-    ///
-    /// # Étapes
-    ///
-    /// 1. **Buffer checksum (48 octets)** — concatène le préfixe Tor fixe
-    ///    `b".onion checksum"` (15 octets), la clé publique Ed25519 (32 octets)
-    ///    et l'octet de version `0x03` (1 octet).
-    ///
-    /// 2. **Checksum (2 octets)** — SHA3-256 du buffer ; seuls les 2 premiers
-    ///    octets sont conservés. Ce checksum permet de détecter les fautes de
-    ///    frappe dans l'adresse.
-    ///
-    /// 3. **Buffer final (35 octets)** — concatène la clé publique (32 octets),
-    ///    le checksum (2 octets) et l'octet de version `0x03` (1 octet).
-    ///
-    /// 4. **Encodage** — BASE32 du buffer final, mis en minuscules, suivi
-    ///    du suffixe `.onion`. Produit une adresse de 62 caractères
-    ///    (56 caractères base32 + 6 pour `.onion`).
-    ///
-    /// SHA3-256 est utilisé ici en cohérence avec le reste du protocole Feu,
-    /// qui retient SHA3-256 comme unique primitive de hashage.
-    fn derive_adresse_onion(cle: VerifyingKey) -> String {
-        // 1. Buffer checksum (48 octets)
-        let mut buf = Vec::new();
-        buf.extend_from_slice(b".onion checksum");
-        buf.extend_from_slice(cle.as_bytes());
-        buf.push(0x03);
-
-        // 2. Checksum (2 octets)
-        let hash = Sha3_256::digest(&buf);
-        let checksum = &hash[..2];
-
-        // 3. Buffer final (35 octets)
-        let mut data = Vec::new();
-        data.extend_from_slice(cle.as_bytes());
-        data.extend_from_slice(checksum);
-        data.push(0x03);
-
-        // 4. Encodage
-        format!("{}.onion", BASE32.encode(&data).to_lowercase())
     }
 
     /// Retourne une référence à la clé symétrique de chiffrement du foyer.
@@ -369,13 +321,14 @@ impl Trousseau {
         Ok(())
     }
 
-    /// Dérive et enregistre dans le trousseau l'ensemble des clés d'un foyer.
+    /// Dérive et enregistre dans le trousseau l'ensemble du matériau d'un foyer.
     ///
-    /// À partir de `seed_bytes` et de `position`, dérive par HKDF-SHA3-256
-    /// l'ensemble des clés du foyer. Chaque clé est tirée d'un `info` distinct,
-    /// combinant un label dédié et l'index du foyer (`position + 1`) — ce qui
-    /// sépare le domaine de dérivation de chaque clé et de chaque foyer :
+    /// À partir de `seed_bytes` et de `position`, dérive par HKDF-SHA3-256 le
+    /// matériau du foyer. Chaque élément est tiré d'un `info` distinct, combinant
+    /// un label dédié et l'index du foyer (`position + 1`) — ce qui sépare le
+    /// domaine de dérivation de chaque élément et de chaque foyer :
     ///
+    /// - la braise, identifiant public du foyer — pas une clé (`feu/foyer/braise`)
     /// - une clé symétrique de chiffrement du foyer (`feu/foyer/symetrique`)
     /// - une paire de clés Ed25519 de signature (`feu/foyer/signature`)
     /// - une paire de clés ML-KEM-768 de chiffrement asymétrique (`feu/foyer/chiffrement`)
@@ -447,9 +400,33 @@ impl Trousseau {
             )?);
         }
 
+        // Braise : identifiant public du foyer, 32 octets dérivés directement de la
+        // seed via un label dédié — donc indépendants de toute clé. Contrairement à
+        // l'onion qu'elle remplace, elle ne dépend d'aucun schéma cryptographique et
+        // reste stable à travers les migrations (p. ex. passage post-quantique).
+        let braise_brute = Self::derive_depuis_seed::<32>(
+            seed_bytes,
+            &format!("{}/{}", LABEL_DERIVATION_BRAISE_FOYER, index_foyer),
+        )?;
+
+        // Checksum de 2 octets accolé à la braise : repère une faute de frappe à la
+        // relecture de l'adresse. Le préfixe de domaine empêche ce checksum d'être
+        // valide hors de ce contexte (séparation de domaine).
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"feu/braise/checksum");
+        buf.extend_from_slice(braise_brute.expose_secret());
+        let checksum = &Sha3_256::digest(&buf)[..2];
+
+        let mut data = braise_brute.expose_secret().to_vec();
+        data.extend_from_slice(checksum);
+
+        // BASE32_NOPAD : alphabet `a-z2-7` sans padding `=`, l'adresse est donc
+        // utilisable telle quelle comme nom de dossier (34 octets → 55 caractères).
+        let braise = format!("{}{}", BASE32_NOPAD.encode(&data).to_lowercase(), ".braise");
+
         // enregistrement de toutes les clés dans un TrousseauFoyer
         let trousseau_foyer = TrousseauFoyer {
-            onion: TrousseauFoyer::derive_adresse_onion(paire_signature.publique),
+            braise,
             cle_chiffrement,
             paire_signature,
             paire_chiffrement,
@@ -995,7 +972,7 @@ impl Trousseau {
     ///
     /// Déchiffre la clé symétrique, la paire de signature Ed25519, la paire de chiffrement ML-KEM-768
     /// et les cinq clés de classeurs avec la clé éphémère, puis enregistre le [`TrousseauFoyer`]
-    /// résultant à l'`index` donné. L'adresse `.onion` est lue depuis le [`TrousseauPublicFoyer`].
+    /// résultant à l'`index` donné. La braise (identifiant du foyer) est lue depuis le [`TrousseauPublicFoyer`].
     ///
     /// # Prérequis
     ///
@@ -1032,7 +1009,7 @@ impl Trousseau {
         };
 
         let mut trousseau_foyer = TrousseauFoyer::new(
-            String::from(trousseau_public_foyer.donne_onion()),
+            String::from(trousseau_public_foyer.donne_braise()),
             cle_chiffrement,
             paire_signature,
             paire_chiffrement,
