@@ -119,6 +119,11 @@ impl Cryptographe {
 
             // Bloc encadrant la portée de mnemonic
             {
+                // `Mnemonic` est déjà `ZeroizeOnDrop` (bip39, feature `zeroize`) :
+                // le `SecretBox` n'est pas requis pour la zéroïsation, il sert à
+                // porter la seed derrière un accès gardé (`expose_secret`) le temps
+                // du callback d'affichage/confirmation. Ailleurs (parse_in), un
+                // `Mnemonic` nu est donc tout aussi sûr.
                 let mnemonic = SecretBox::new(Box::new(Mnemonic::generate_in(
                     Language::French,
                     NOMBRE_MOTS_SEED,
@@ -213,7 +218,7 @@ impl Cryptographe {
         }
 
         // Génère le sel et le met dans le trousseau
-        self.trousseau.genere_sel()?;
+        self.trousseau.genere_sel(&seed_bytes)?;
 
         Ok(())
     }

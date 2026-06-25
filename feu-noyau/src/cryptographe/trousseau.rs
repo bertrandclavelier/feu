@@ -62,7 +62,7 @@
 //! - `cle_chiffrement` — clé symétrique dans `SecretBox<[u8; 32]>` (pas de newtype)
 //! - `mdp` — mot de passe dans `Option<SecretBox<String>>` (pas de newtype)
 //! - `sel` — sel Argon2id dans `Option<[u8; 16]>` (pas secret — dérivé de manière déterministe
-//!   depuis la clé privée du nœud, re-dérivable depuis la seed en cas de perte du disque)
+//!   depuis la seed par HKDF, re-dérivable en cas de perte du disque)
 //! - `cle_ephemere` — clé AES-256-GCM dérivée du mot de passe via Argon2id,
 //!   dans `Option<SecretBox<[u8; 32]>>` — présente uniquement le temps du
 //!   chiffrement des clés, effacée dès que le trousseau persistable est constitué.
@@ -93,18 +93,33 @@ use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use sha3::{Digest, Sha3_256};
 use std::io::{Read, Write};
 
-const LABEL_DERIVATION_SIGNATURE_NOEUD: &str = "feu-noeud-signature";
-const LABEL_DERIVATION_SIGNATURE_FOYER: &str = "feu-foyer-paire-signature";
-const LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_FOYER: &str = "feu-foyer-chiffrement-symetrique";
-const LABEL_DERIVATION_CHIFFREMENT_FOYER: &str = "feu-foyer-paire-chiffrement";
-const LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu-foyer-chiffrement-classeur";
+// ── Labels de dérivation HKDF ────────────────────────────────────────────────
+//
+// AVERTISSEMENT — élément primordial du protocole Feu, à ne JAMAIS modifier.
+//
+// Ces labels sont le seul mécanisme de séparation de domaine de la dérivation
+// (passés en `info` de HKDF, voir `derive_depuis_seed`). Ils font partie du
+// format persistant : changer, renommer ou réordonner la valeur d'un seul label
+// re-dérive la clé correspondante et rend TOUS les trousseaux existants
+// définitivement illisibles. Toute évolution impose une migration explicite des
+// données — jamais une simple édition.
+//
+// Leur unicité garantit l'absence de collision entre clés ; elle se vérifie à
+// l'œil, d'où des chaînes lisibles plutôt qu'opaques.
+const LABEL_DERIVATION_SEL: &str = "feu/noeud/sel";
+const LABEL_DERIVATION_SIGNATURE_NOEUD: &str = "feu/noeud/signature";
+const LABEL_DERIVATION_SIGNATURE_FOYER: &str = "feu/foyer/signature";
+const LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_FOYER: &str = "feu/foyer/symetrique";
+const LABEL_DERIVATION_CHIFFREMENT_FOYER: &str = "feu/foyer/chiffrement";
+const LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu/classeur/symetrique";
 
-const CHAINE_A_SIGNER_POUR_SEL: &str = "feu-noeud-sel";
+// ── Constantes d'implémentation ──────────────────────────────────────────────
 
 const CHUNK_SIZE: usize = 4096;
 
+// ── Messages d'erreur ────────────────────────────────────────────────────────
+
 const ERR_TRO_002: &str = "TRO-002 > Problème index tableau";
-const ERR_TRO_003: &str = "TRO-003 > Problème de génération du sel";
 const ERR_TRO_004: &str = "TRO-004 > Mot de passe manquant";
 const ERR_TRO_005: &str = "TRO-005 > Problème de chiffrement clé";
 const ERR_TRO_006: &str = "TRO-006 > Erreur chiffrement";
@@ -330,7 +345,7 @@ impl Trousseau {
     /// Dérive et enregistre dans le trousseau la paire de clés de signature du nœud.
     ///
     /// La clé privée Ed25519 est dérivée de la seed par HKDF-SHA3-256, en
-    /// passant le label `feu-noeud-signature` comme `info` — ce qui sépare son
+    /// passant le label `feu/noeud/signature` comme `info` — ce qui sépare son
     /// domaine de dérivation de celui des clés de foyer.
     /// La clé brute intermédiaire est portée par un `SecretBox`, zéroïsé en fin
     /// d'instruction.
@@ -361,10 +376,10 @@ impl Trousseau {
     /// combinant un label dédié et l'index du foyer (`position + 1`) — ce qui
     /// sépare le domaine de dérivation de chaque clé et de chaque foyer :
     ///
-    /// - une clé symétrique de chiffrement du foyer (`feu-foyer-chiffrement-symetrique`)
-    /// - une paire de clés Ed25519 de signature (`feu-foyer-paire-signature`)
-    /// - une paire de clés ML-KEM-768 de chiffrement asymétrique (`feu-foyer-paire-chiffrement`)
-    /// - cinq clés symétriques de classeur (`feu-foyer-chiffrement-classeur`, suffixée de l'index du classeur)
+    /// - une clé symétrique de chiffrement du foyer (`feu/foyer/symetrique`)
+    /// - une paire de clés Ed25519 de signature (`feu/foyer/signature`)
+    /// - une paire de clés ML-KEM-768 de chiffrement asymétrique (`feu/foyer/chiffrement`)
+    /// - cinq clés symétriques de classeur (`feu/classeur/symetrique`, suffixée de l'index du classeur)
     ///
     /// Toutes les clés brutes intermédiaires sont portées par des `SecretBox` et
     /// zéroïsées dès qu'elles ne sont plus nécessaires.
@@ -380,7 +395,7 @@ impl Trousseau {
         let cle_sig_priv = SigningKey::from_bytes(
             Self::derive_depuis_seed::<32>(
                 seed_bytes,
-                &format!("{}-{}", LABEL_DERIVATION_SIGNATURE_FOYER, index_foyer),
+                &format!("{}/{}", LABEL_DERIVATION_SIGNATURE_FOYER, index_foyer),
             )?
             .expose_secret(),
         );
@@ -396,7 +411,7 @@ impl Trousseau {
         let cle_chiffrement = Self::derive_depuis_seed::<32>(
             seed_bytes,
             &format!(
-                "{}-{}",
+                "{}/{}",
                 LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_FOYER, index_foyer
             ),
         )?;
@@ -405,7 +420,7 @@ impl Trousseau {
         let cle_chiff_priv = {
             let seed_brute = Self::derive_depuis_seed::<64>(
                 seed_bytes,
-                &format!("{}-{}", LABEL_DERIVATION_CHIFFREMENT_FOYER, index_foyer),
+                &format!("{}/{}", LABEL_DERIVATION_CHIFFREMENT_FOYER, index_foyer),
             )?;
             DecapsulationKey768::from_seed(Seed::from(*seed_brute.expose_secret()))
         };
@@ -424,7 +439,7 @@ impl Trousseau {
             *e = Some(Self::derive_depuis_seed::<32>(
                 seed_bytes,
                 &format!(
-                    "{}-{}-{}",
+                    "{}/{}/{}",
                     LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_CLASSEUR,
                     index_foyer,
                     i + 1
@@ -450,38 +465,33 @@ impl Trousseau {
         Ok(())
     }
 
-    /// Dérive le sel Argon2id depuis la clé privée du nœud et l'enregistre dans le trousseau.
+    /// Dérive le sel Argon2id depuis la seed et l'enregistre dans le trousseau.
     ///
-    /// Signe [`CHAINE_A_SIGNER_POUR_SEL`] avec la clé privée du nœud — signature
-    /// déterministe Ed25519 (RFC 8032) — et retient les 16 premiers octets de la
-    /// signature (64 octets). Le sel n'est pas secret et sera stocké en clair sur
-    /// le disque aux côtés des clés chiffrées.
+    /// Tire 16 octets par HKDF-SHA3-256 avec le label `feu/noeud/sel` — la même
+    /// primitive que toutes les autres clés du trousseau. Le sel n'est pas secret
+    /// et sera stocké en clair sur le disque aux côtés des clés chiffrées.
     ///
-    /// Cette dérivation déterministe garantit que le sel est toujours reconstituable
-    /// depuis la seed, même en cas de perte des données disque.
+    /// La dérivation est déterministe : le sel est toujours reconstituable depuis
+    /// la seed, même en cas de perte des données disque.
     ///
-    /// # Prérequis
+    /// # Pourquoi depuis la seed et non par signature
     ///
-    /// La paire de signature du nœud doit être présente dans le trousseau.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la paire de signature du nœud est absente.
-    pub(super) fn genere_sel(&mut self) -> ResultCryptographe<()> {
-        match &self.paire_signature_noeud {
-            Some(valeur) => {
-                let sig = valeur
-                    .privee
-                    .sign(CHAINE_A_SIGNER_POUR_SEL.as_bytes())
-                    .to_bytes();
+    /// Une variante antérieure dérivait le sel en signant une chaîne fixe avec la
+    /// clé du nœud. Tirer le sel directement de la seed supprime trois fragilités :
+    /// aucune dépendance à la présence préalable de la clé du nœud, aucune
+    /// réutilisation de la clé de signature pour un usage étranger, et surtout
+    /// aucune dépendance au déterminisme de la primitive de signature — une future
+    /// migration vers une signature post-quantique (ML-DSA, signature *hedged* par
+    /// défaut) ne risque donc pas de rendre le sel non reproductible.
+    pub(super) fn genere_sel(
+        &mut self,
+        seed_bytes: &SecretBox<[u8; 64]>,
+    ) -> ResultCryptographe<()> {
+        self.sel = Some(
+            *Self::derive_depuis_seed::<16>(seed_bytes, LABEL_DERIVATION_SEL)?.expose_secret(),
+        );
 
-                let mut sel = [0u8; 16];
-                sel.copy_from_slice(&sig[..16]);
-                self.sel = Some(sel);
-                Ok(())
-            }
-            None => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_003))),
-        }
+        Ok(())
     }
 
     // ── Mot de passe et clé éphémère ─────────────────────────────────────────
