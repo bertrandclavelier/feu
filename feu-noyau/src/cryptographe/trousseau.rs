@@ -27,10 +27,11 @@
 //!   destruction.
 //!
 //! - `ZeroizeOnDrop` (crate `zeroize`) : utilisé pour [`SigningKey`]
-//!   (ed25519-dalek), dont le type n'implémente pas [`Zeroize`] et ne peut
-//!   donc pas être encapsulé dans [`SecretBox`]. La mémoire est garantie
-//!   zéroïsée à la destruction par l'implémentation interne d'ed25519-dalek,
-//!   mais `.zeroize()` ne peut pas être appelé manuellement.
+//!   (ed25519-dalek) et [`DecapsulationKey768`] (ml-kem), dont les types
+//!   n'implémentent pas [`Zeroize`] et ne peuvent donc pas être encapsulés
+//!   dans [`SecretBox`]. La mémoire est garantie zéroïsée à la destruction par
+//!   l'implémentation interne de la crate, mais `.zeroize()` ne peut pas être
+//!   appelé manuellement.
 //!
 //! # Clés brutes intermédiaires
 //!
@@ -56,8 +57,8 @@
 //! - [`TrousseauFoyer`] — clés opérationnelles d'un foyer ouvert
 //! - [`PaireClesSignature`] — paire de clés Ed25519 ; `privee` protégée par
 //!   `ZeroizeOnDrop` (exception : `SigningKey` n'implémente pas `Zeroize`)
-//! - [`PaireClesChiffrement`] — paire de clés X25519 ; `privee` dans
-//!   `SecretBox<StaticSecret>`
+//! - [`PaireClesChiffrement`] — paire de clés ML-KEM-768 ; `privee` protégée par
+//!   `ZeroizeOnDrop` (exception : `DecapsulationKey` n'implémente pas `Zeroize`)
 //! - `cle_chiffrement` — clé symétrique dans `SecretBox<[u8; 32]>` (pas de newtype)
 //! - `mdp` — mot de passe dans `Option<SecretBox<String>>` (pas de newtype)
 //! - `sel` — sel Argon2id dans `Option<[u8; 16]>` (pas secret — dérivé de manière déterministe
@@ -82,13 +83,15 @@ use argon2::Argon2;
 use data_encoding::BASE32;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
+use ml_kem::Decapsulate;
+use ml_kem::ml_kem_768::Ciphertext as Ciphertext768;
+use ml_kem::{DecapsulationKey768, EncapsulationKey768, KeyExport, Seed};
 use rand::RngCore;
 use rand::rngs::OsRng;
 use secrecy::SecretString;
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use sha3::{Digest, Sha3_256};
 use std::io::{Read, Write};
-use x25519_dalek::{PublicKey, StaticSecret};
 
 const LABEL_DERIVATION_SIGNATURE_NOEUD: &str = "feu-noeud-signature";
 const LABEL_DERIVATION_SIGNATURE_FOYER: &str = "feu-foyer-paire-signature";
@@ -126,12 +129,17 @@ struct PaireClesSignature {
     publique: VerifyingKey,
 }
 
-/// Paire de clés X25519 d'un foyer — chiffrement réseau asymétrique.
+/// Paire de clés ML-KEM-768 d'un foyer — chiffrement réseau asymétrique post-quantique.
 ///
-/// `privee` est encapsulée dans [`SecretBox`] — zéroïsée automatiquement au `Drop`.
+/// `privee` est protégée par `ZeroizeOnDrop` (ml-kem, feature `zeroize`) —
+/// `DecapsulationKey` n'implémente pas `Zeroize`, `SecretBox` est donc inutilisable.
+/// La zéroïsation est garantie à la destruction, mais ne peut pas être déclenchée manuellement.
 struct PaireClesChiffrement {
-    privee: SecretBox<StaticSecret>,
-    publique: PublicKey,
+    // DecapsulationKey n'implémente que ZeroizeOnDrop (ml-kem feature "zeroize") —
+    // SecretBox impossible, comme pour SigningKey. La clé privée ML-KEM-768 est
+    // stockée sous forme de seed 64 o (sérialisation recommandée par la crate).
+    privee: DecapsulationKey768,
+    publique: EncapsulationKey768,
 }
 
 /// Clés opérationnelles d'un foyer ouvert, maintenues en mémoire pour la durée de la session.
@@ -177,7 +185,8 @@ impl TrousseauFoyer {
 
     /// Chiffre toutes les clés du foyer et produit le [`TrousseauPublicFoyer`] persistable.
     ///
-    /// Délègue le chiffrement AES-256-GCM de chaque clé à [`Trousseau::chiffre_cle`].
+    /// Délègue le chiffrement AES-256-GCM de chaque clé à [`Trousseau::chiffre_cle`]
+    /// (clés de 32 octets) ou [`Trousseau::chiffre_seed`] (seed ML-KEM-768 de 64 octets).
     /// Les clés publiques sont copiées en clair.
     ///
     /// # Erreurs
@@ -193,8 +202,14 @@ impl TrousseauFoyer {
             trousseau.chiffre_cle(self.cle_chiffrement.expose_secret())?,
             trousseau.chiffre_cle(self.paire_signature.privee.as_bytes())?,
             self.paire_signature.publique.to_bytes(),
-            trousseau.chiffre_cle(self.paire_chiffrement.privee.expose_secret().as_bytes())?,
-            self.paire_chiffrement.publique.to_bytes(),
+            trousseau.chiffre_seed(
+                self.paire_chiffrement
+                    .privee
+                    .to_seed()
+                    .ok_or_else(|| ErreurCryptographe::Interne(String::from(ERR_TRO_005)))?
+                    .as_ref(),
+            )?,
+            self.paire_chiffrement.publique.to_bytes().into(),
         );
 
         for i in 0..MAX_CLASSEURS {
@@ -265,8 +280,8 @@ impl TrousseauFoyer {
         &self.cle_chiffrement
     }
 
-    /// Retourne une référence à la clé privée X25519 de chiffrement du foyer.
-    fn donne_cle_privee_chiffrement(&self) -> &SecretBox<StaticSecret> {
+    /// Retourne une référence à la clé privée ML-KEM-768 de chiffrement du foyer.
+    fn donne_cle_privee_chiffrement(&self) -> &DecapsulationKey768 {
         &self.paire_chiffrement.privee
     }
 
@@ -348,7 +363,7 @@ impl Trousseau {
     ///
     /// - une clé symétrique de chiffrement du foyer (`feu-foyer-chiffrement-symetrique`)
     /// - une paire de clés Ed25519 de signature (`feu-foyer-paire-signature`)
-    /// - une paire de clés X25519 de chiffrement asymétrique (`feu-foyer-paire-chiffrement`)
+    /// - une paire de clés ML-KEM-768 de chiffrement asymétrique (`feu-foyer-paire-chiffrement`)
     /// - cinq clés symétriques de classeur (`feu-foyer-chiffrement-classeur`, suffixée de l'index du classeur)
     ///
     /// Toutes les clés brutes intermédiaires sont portées par des `SecretBox` et
@@ -387,20 +402,15 @@ impl Trousseau {
         )?;
 
         // Paire de clés chiffrement foyer
-        let cle_chiff_priv: SecretBox<StaticSecret>;
-
-        // Bloc encadrant la portée de cle_brute
-        {
-            // Création de la paire de clés chiffrement du foyer
-            let cle_brute = Self::derive_depuis_seed::<32>(
+        let cle_chiff_priv = {
+            let seed_brute = Self::derive_depuis_seed::<64>(
                 seed_bytes,
                 &format!("{}-{}", LABEL_DERIVATION_CHIFFREMENT_FOYER, index_foyer),
             )?;
-            cle_chiff_priv =
-                SecretBox::new(Box::new(StaticSecret::from(*cle_brute.expose_secret())));
-        }
+            DecapsulationKey768::from_seed(Seed::from(*seed_brute.expose_secret()))
+        };
 
-        let cle_chiff_pub = PublicKey::from(cle_chiff_priv.expose_secret());
+        let cle_chiff_pub = cle_chiff_priv.encapsulation_key().clone();
 
         let paire_chiffrement = PaireClesChiffrement {
             privee: cle_chiff_priv,
@@ -609,6 +619,34 @@ impl Trousseau {
         }
     }
 
+    /// Chiffre une seed ML-KEM-768 de 64 octets avec AES-256-GCM.
+    ///
+    /// Variante de [`chiffre_cle`](Self::chiffre_cle) pour la clé privée de
+    /// chiffrement, sérialisée sous forme de seed 64 octets — `chiffre_cle` est
+    /// verrouillée sur 32 octets. Le mécanisme est identique : clé éphémère du
+    /// trousseau, nonce aléatoire de 12 octets via [`OsRng`] à chaque appel.
+    ///
+    /// Le résultat de 92 octets est structuré comme suit :
+    /// ```text
+    /// [0..12]  nonce (12 octets)
+    /// [12..92] ciphertext + auth tag (64 + 16 octets)
+    /// ```
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé éphémère est absente du trousseau
+    /// ou si le chiffrement AES-256-GCM échoue.
+    pub(super) fn chiffre_seed(&self, cle: &[u8; 64]) -> ResultCryptographe<[u8; 92]> {
+        match &self.cle_ephemere {
+            None => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_005))),
+            Some(valeur) => Ok(
+                Self::chiffrement_generique_avec_cle(valeur.expose_secret(), cle)?
+                    .try_into()
+                    .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_006)))?,
+            ),
+        }
+    }
+
     /// Déchiffre une clé de 60 octets (`nonce || ciphertext || tag`) avec AES-256-GCM.
     ///
     /// Extrait le nonce des 12 premiers octets, déchiffre les 48 octets restants
@@ -621,6 +659,30 @@ impl Trousseau {
     /// Retourne une erreur si la clé éphémère est absente, si l'auth tag est invalide
     /// (mot de passe incorrect), ou si la conversion du résultat en `[u8; 32]` échoue.
     pub(super) fn dechiffre_cle(&self, cle: &[u8; 60]) -> ResultCryptographe<SecretBox<[u8; 32]>> {
+        match &self.cle_ephemere {
+            None => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_005))),
+            Some(valeur) => {
+                let resultat = Self::dechiffrement_generique_avec_cle(valeur.expose_secret(), cle)?
+                    .try_into()
+                    .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_007)))?;
+                Ok(SecretBox::new(Box::new(resultat)))
+            }
+        }
+    }
+
+    /// Déchiffre une seed ML-KEM-768 de 92 octets (`nonce || ciphertext || tag`) avec AES-256-GCM.
+    ///
+    /// Réciproque de [`chiffre_seed`](Self::chiffre_seed) — variante 64 octets de
+    /// [`dechiffre_cle`](Self::dechiffre_cle). Extrait le nonce des 12 premiers
+    /// octets, déchiffre les 80 octets restants (`ciphertext` de 64 octets +
+    /// `auth tag` de 16 octets) et retourne les 64 octets en clair dans un
+    /// [`SecretBox`]. Un auth tag invalide signale un mot de passe incorrect.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé éphémère est absente, si l'auth tag est invalide
+    /// (mot de passe incorrect), ou si la conversion du résultat en `[u8; 64]` échoue.
+    pub(super) fn dechiffre_seed(&self, cle: &[u8; 92]) -> ResultCryptographe<SecretBox<[u8; 64]>> {
         match &self.cle_ephemere {
             None => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_005))),
             Some(valeur) => {
@@ -751,7 +813,7 @@ impl Trousseau {
     /// Chiffre `contenu` avec AES-256-GCM et une clé fournie directement.
     ///
     /// Utilisé pour les cas où la clé est dérivée à l'extérieur du trousseau
-    /// (ECIES, chiffrement de blobs). Pour les clés du trousseau, préférer
+    /// (chiffrement asymétrique KEM, chiffrement de blobs). Pour les clés du trousseau, préférer
     /// [`chiffre_cle`](Self::chiffre_cle) ou [`chiffre_blob`](Self::chiffre_blob).
     ///
     /// Un nonce aléatoire de 12 octets est généré via [`OsRng`] à chaque appel.
@@ -817,13 +879,12 @@ impl Trousseau {
         Ok(contenu_dechiffre)
     }
 
-    /// Calcule le secret partagé X25519 entre la clé privée du foyer et la clé éphémère publique.
+    /// Récupère le secret partagé ML-KEM-768 par décapsulation.
     ///
-    /// Effectue le ECDH : `secret_partagé = clé_privée_foyer × clé_éphémère_publique`.
-    /// Le secret est extrait dans un [`SecretBox<[u8; 32]>`] immédiatement —
-    /// le [`SharedSecret`] sort de scope sans persistance.
+    /// Décapsule le `ciphertext` (1088 octets) avec la clé privée du foyer
+    /// et retourne le secret partagé de 32 octets dans un [`SecretBox`].
     ///
-    /// Utilisé dans le schéma ECIES pour le déchiffrement asymétrique.
+    /// Utilisé dans le schéma de chiffrement asymétrique post-quantique.
     ///
     /// # Erreurs
     ///
@@ -831,19 +892,13 @@ impl Trousseau {
     pub(super) fn recuperation_secret_partage(
         &self,
         index_foyer: usize,
-        cle_ephemere_publique: &[u8; 32],
+        ciphertext: &Ciphertext768,
     ) -> ResultCryptographe<SecretBox<[u8; 32]>> {
-        let cle_publique = PublicKey::from(*cle_ephemere_publique);
+        let secret_partage = self
+            .donne_cle_privee_chiffrement_foyer(index_foyer)?
+            .decapsulate(ciphertext);
 
-        let secret_partage = SecretBox::new(Box::new(
-            *self
-                .donne_cle_privee_chiffrement_foyer(index_foyer)?
-                .expose_secret()
-                .diffie_hellman(&cle_publique)
-                .as_bytes(),
-        ));
-
-        Ok(secret_partage)
+        Ok(SecretBox::new(Box::new(secret_partage.into())))
     }
 
     // ── Trousseaux publics ────────────────────────────────────────────────────
@@ -928,7 +983,7 @@ impl Trousseau {
 
     /// Déchiffre et charge les clés d'un foyer dans le trousseau à partir d'un [`TrousseauPublicFoyer`].
     ///
-    /// Déchiffre la clé symétrique, la paire de signature Ed25519, la paire de chiffrement X25519
+    /// Déchiffre la clé symétrique, la paire de signature Ed25519, la paire de chiffrement ML-KEM-768
     /// et les cinq clés de classeurs avec la clé éphémère, puis enregistre le [`TrousseauFoyer`]
     /// résultant à l'`index` donné. L'adresse `.onion` est lue depuis le [`TrousseauPublicFoyer`].
     ///
@@ -958,15 +1013,12 @@ impl Trousseau {
                 .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_010)))?,
         };
 
-        let cle_chiff_priv =
-            self.dechiffre_cle(&trousseau_public_foyer.donne_cle_chiff_privee())?;
-        let cle_chiff_pub = trousseau_public_foyer.donne_cle_chiff_pub();
+        let cle_brute = self.dechiffre_seed(&trousseau_public_foyer.donne_cle_chiff_privee())?;
+        let cle_chiff_priv = DecapsulationKey768::from_seed(Seed::from(*cle_brute.expose_secret()));
 
         let paire_chiffrement = PaireClesChiffrement {
-            privee: SecretBox::new(Box::new(StaticSecret::from(
-                *cle_chiff_priv.expose_secret(),
-            ))),
-            publique: PublicKey::from(cle_chiff_pub),
+            publique: cle_chiff_priv.encapsulation_key().clone(),
+            privee: cle_chiff_priv,
         };
 
         let mut trousseau_foyer = TrousseauFoyer::new(
@@ -1008,7 +1060,7 @@ impl Trousseau {
         Ok(cle_classeur)
     }
 
-    /// Retourne la clé privée X25519 du foyer à la position `index_foyer`.
+    /// Retourne la clé privée ML-KEM-768 du foyer à la position `index_foyer`.
     ///
     /// # Erreurs
     ///
@@ -1016,7 +1068,7 @@ impl Trousseau {
     fn donne_cle_privee_chiffrement_foyer(
         &self,
         index_foyer: usize,
-    ) -> ResultCryptographe<&SecretBox<StaticSecret>> {
+    ) -> ResultCryptographe<&DecapsulationKey768> {
         let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
             return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_011)));
         };

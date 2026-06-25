@@ -54,7 +54,7 @@ pub const MAX_CLASSEURS: usize = 5;
 /// Taille maximum d'un blob — 512 Mio.
 pub const MAX_TAILLE_BLOB: usize = 512 * 1024 * 1024;
 
-/// Taille maximum d'un message à chiffrer via ECIES X25519 — 1 Mio.
+/// Taille maximum d'un message à chiffrer via ML-KEM-768 + AES-256-GCM — 1 Mio.
 pub const MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE: usize = 1024 * 1024;
 
 /// Taille maximum d'un message à signer via Ed25519 — 64 Kio.
@@ -133,12 +133,12 @@ pub trait InterfaceFeuNoyau {
     /// Appelée après lecture du trousseau public du foyer depuis le disque,
     /// avant chargement des clés privées en mémoire.
     /// - `cle_publique_sig` — clé de signature Ed25519 du foyer.
-    /// - `cle_publique_chif` — clé de chiffrement X25519 du foyer.
+    /// - `cle_publique_chif` — clé de chiffrement ML-KEM-768 du foyer.
     fn recevoir_cles_publiques_foyer(
         &mut self,
         index_foyer: usize,
         cle_publique_sig: [u8; 32],
-        cle_publique_chif: [u8; 32],
+        cle_publique_chif: [u8; 1184],
     );
 }
 
@@ -1055,9 +1055,9 @@ impl FeuNoyau {
 
     // ── Chiffrement asymétrique ───────────────────────────────────────────────
 
-    /// Chiffre des octets à destination d'un nœud identifié par sa clé publique X25519.
+    /// Chiffre des octets à destination d'un nœud identifié par sa clé publique ML-KEM-768.
     ///
-    /// Délègue au cryptographe qui implémente le schéma ECIES X25519 + AES-256-GCM.
+    /// Délègue au cryptographe qui implémente le schéma KEM + HKDF + AES-256-GCM.
     /// Aucune clé privée du trousseau n'est utilisée — seule la clé publique du
     /// destinataire est nécessaire.
     ///
@@ -1067,7 +1067,7 @@ impl FeuNoyau {
     /// # Format de sortie
     ///
     /// Le vecteur retourné concatène, dans cet ordre :
-    /// la clé éphémère X25519 (32 octets), le nonce AES-GCM (12 octets),
+    /// le ciphertext ML-KEM-768 (1088 octets), le nonce AES-GCM (12 octets),
     /// le ciphertext, puis le tag d'authentification AES-GCM (16 octets).
     ///
     /// # Erreurs
@@ -1076,7 +1076,7 @@ impl FeuNoyau {
     /// [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`], ou si le chiffrement échoue.
     pub fn chiffrement_asymetrique(
         &self,
-        cle_publique_destinataire: &[u8; 32],
+        cle_publique_destinataire: &[u8; 1184],
         octets_a_chiffrer: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
         if octets_a_chiffrer.len() >= MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE {
@@ -1091,12 +1091,12 @@ impl FeuNoyau {
     /// Déchiffre un message chiffré à destination de ce foyer.
     ///
     /// Réciproque de [`chiffrement_asymetrique`](Self::chiffrement_asymetrique) —
-    /// délègue au cryptographe qui effectue le ECDH X25519 + HKDF + AES-256-GCM.
-    /// La clé privée X25519 du foyer doit être présente dans le trousseau,
+    /// délègue au cryptographe qui effectue la décapsulation ML-KEM-768 + HKDF + AES-256-GCM.
+    /// La clé privée ML-KEM-768 du foyer doit être présente dans le trousseau,
     /// ce qui requiert que le foyer soit ouvert.
     ///
-    /// La taille des données est limitée à [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`] + 60 octets
-    /// (surcoût du schéma ECIES : 32 clé éphémère + 12 nonce + 16 auth tag).
+    /// La taille des données est limitée à [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`] + 1116 octets
+    /// (surcoût du schéma KEM : 1088 ciphertext KEM + 12 nonce + 16 auth tag).
     ///
     /// # Erreurs
     ///
@@ -1114,7 +1114,7 @@ impl FeuNoyau {
         if !self.session.foyers[index_foyer].est_ouvert {
             return Err(ErreurFeuNoyau::FoyerFerme);
         }
-        if octets_a_dechiffrer.len() >= MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE + 60 {
+        if octets_a_dechiffrer.len() >= MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE + 1116 {
             return Err(ErreurFeuNoyau::TailleMaxDepassee);
         }
 

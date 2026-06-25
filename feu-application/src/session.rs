@@ -53,8 +53,8 @@ pub struct SessionApplication {
     cle_publique_sig_noeud: [u8; 32],
     /// Clés publiques de signature Ed25519 des foyers — reçues à l'ouverture.
     cle_publique_sig_foyers: [[u8; 32]; MAX_FOYERS],
-    /// Clés publiques de chiffrement X25519 des foyers — reçues à l'ouverture.
-    cle_publique_chif_foyers: [[u8; 32]; MAX_FOYERS],
+    /// Clés publiques de chiffrement ML-KEM-768 des foyers — reçues à l'ouverture.
+    cle_publique_chif_foyers: [[u8; 1184]; MAX_FOYERS],
 }
 
 impl SessionApplication {
@@ -72,7 +72,7 @@ impl SessionApplication {
             etat_foyers: std::array::from_fn(|_| false),
             cle_publique_sig_noeud: [0u8; 32],
             cle_publique_sig_foyers: std::array::from_fn(|_| [0u8; 32]),
-            cle_publique_chif_foyers: std::array::from_fn(|_| [0u8; 32]),
+            cle_publique_chif_foyers: std::array::from_fn(|_| [0u8; 1184]),
         }
     }
 
@@ -186,12 +186,12 @@ impl SessionApplication {
         self.cle_publique_sig_foyers[index_foyer] = cle;
     }
 
-    /// Retourne la clé publique de chiffrement X25519 du foyer à la position `index_foyer`.
+    /// Retourne la clé publique de chiffrement ML-KEM-768 du foyer à la position `index_foyer`.
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si `index_foyer >= MAX_FOYERS`.
-    pub fn cle_publique_chif_foyer(&self, index_foyer: usize) -> ResultFeuApplication<[u8; 32]> {
+    pub fn cle_publique_chif_foyer(&self, index_foyer: usize) -> ResultFeuApplication<[u8; 1184]> {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuApplication::Standard(String::from(
                 "index_foyer trop élevé",
@@ -200,10 +200,10 @@ impl SessionApplication {
         Ok(self.cle_publique_chif_foyers[index_foyer])
     }
 
-    /// Enregistre la clé publique de chiffrement X25519 du foyer.
+    /// Enregistre la clé publique de chiffrement ML-KEM-768 du foyer.
     ///
     /// Appelé par [`RecepteurNoyau`] à l'ouverture du foyer.
-    pub(crate) fn definit_cle_publique_chif_foyer(&mut self, index_foyer: usize, cle: [u8; 32]) {
+    pub(crate) fn definit_cle_publique_chif_foyer(&mut self, index_foyer: usize, cle: [u8; 1184]) {
         self.cle_publique_chif_foyers[index_foyer] = cle;
     }
 }

@@ -239,8 +239,8 @@ impl Carnet {
     /// - `~/.feu/.cles/<onion>.cle` — clé symétrique d'archive (chiffrée)
     /// - `~/.feu/<onion>/.cles/sig.priv` — clé privée de signature réseau (chiffrée)
     /// - `~/.feu/<onion>/.cles/sig.pub` — clé publique de signature réseau (en clair)
-    /// - `~/.feu/<onion>/.cles/chif.priv` — clé privée de chiffrement réseau (chiffrée)
-    /// - `~/.feu/<onion>/.cles/chif.pub` — clé publique de chiffrement réseau (en clair)
+    /// - `~/.feu/<onion>/.cles/chif.priv` — clé privée ML-KEM-768 (chiffrée, 92 o)
+    /// - `~/.feu/<onion>/.cles/chif.pub` — clé publique ML-KEM-768 (en clair, 1184 o)
     /// - `~/.feu/<onion>/.cles/classeur0.cle` à `classeur4.cle` — clés des classeurs (chiffrées)
     ///
     /// Tous les dossiers sont créés avec les permissions `rwx------` (0o700).
@@ -346,7 +346,7 @@ impl Carnet {
     /// Lit depuis `~/.feu/.cles/<onion>.cle` et `~/.feu/<onion>/.cles/` :
     /// - la clé symétrique de chiffrement (`<onion>.cle`) — 60 octets
     /// - la paire de clés de signature (`sig.priv`, `sig.pub`) — 60 et 32 octets
-    /// - la paire de clés de chiffrement (`chif.priv`, `chif.pub`) — 60 et 32 octets
+    /// - la paire de clés de chiffrement ML-KEM-768 (`chif.priv`, `chif.pub`) — 92 et 1184 octets
     ///
     /// Les clés privées et symétriques sont retournées chiffrées (AES-256-GCM),
     /// y compris les cinq clés de classeurs (`classeur0.cle` à `classeur4.cle`).

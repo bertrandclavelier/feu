@@ -14,7 +14,7 @@
 //!
 //! Il a en charge la génération des seeds BIP39, la dérivation HKDF-SHA3-256
 //! des clés nœud et foyer depuis la seed, ainsi que la génération des clés
-//! symétrique, de signature (Ed25519) et de chiffrement (X25519) par foyer.
+//! symétrique, de signature (Ed25519) et de chiffrement (ML-KEM-768) par foyer.
 //! Il maintient en mémoire le trousseau — l'unique endroit où les clés
 //! privées et la clé symétrique existent en clair.
 //!
@@ -46,11 +46,12 @@ use bip39::{Language, Mnemonic};
 use data_encoding::HEXLOWER;
 use ed25519_dalek::VerifyingKey;
 use hkdf::Hkdf;
-use rand::rngs::OsRng;
+use ml_kem::Encapsulate;
+use ml_kem::EncapsulationKey768;
+use ml_kem::ml_kem_768::Ciphertext as Ciphertext768;
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use sha3::{Digest, Sha3_256};
 use std::io::{Read, Write};
-use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::InterfaceFeuNoyau;
 use crate::MAX_FOYERS;
@@ -488,43 +489,41 @@ impl Cryptographe {
 
     // ── Chiffrement asymétrique ───────────────────────────────────────────────
 
-    /// Chiffre des octets à destination d'un nœud identifié par sa clé publique X25519.
+    /// Chiffre des octets à destination d'un nœud identifié par sa clé publique ML-KEM-768.
     ///
-    /// Implémente le schéma ECIES sur X25519 :
+    /// Implémente le schéma KEM + HKDF + AES-256-GCM :
     ///
-    /// 1. Génère une paire X25519 éphémère.
-    /// 2. ECDH : `secret_partagé = clé_éphémère_privée × clé_pub_destinataire`.
+    /// 1. Reconstruit la clé publique ML-KEM-768 depuis les 1184 octets.
+    /// 2. Encapsulation ML-KEM-768 : produit un ciphertext (1088 o) et un secret partagé (32 o).
     /// 3. Dérive une clé AES-256-GCM via HKDF-SHA3-256 sur le secret partagé.
     /// 4. Chiffre `octets_a_chiffrer` avec AES-256-GCM (nonce aléatoire).
-    /// 5. Zéroïse le secret partagé et la clé dérivée.
-    ///
-    /// Le secret partagé est extrait dans un [`SecretBox<[u8; 32]>`] immédiatement
-    /// après l'ECDH — le [`SharedSecret`] sort de scope sans persistance.
     ///
     /// # Format de sortie
     ///
     /// ```text
-    /// [0..32]  clé éphémère publique X25519
-    /// [32..44] nonce AES-GCM (12 octets)
-    /// [44..]   ciphertext + auth tag (16 octets)
+    /// [0..1088]    ciphertext ML-KEM-768 (1088 octets)
+    /// [1088..1100] nonce AES-GCM (12 octets)
+    /// [1100..]     ciphertext + auth tag (16 octets)
     /// ```
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la dérivation HKDF ou le chiffrement AES-256-GCM échoue.
+    /// Retourne une erreur si la clé publique est invalide, si la dérivation HKDF
+    /// ou le chiffrement AES-256-GCM échoue.
     pub(super) fn chiffrement_asymetrique(
         &self,
-        cle_publique_destinataire: &[u8; 32],
+        cle_publique_destinataire: &[u8; 1184],
         octets_a_chiffrer: &[u8],
     ) -> ResultCryptographe<Vec<u8>> {
-        let secret_ephemere = EphemeralSecret::random_from_rng(OsRng);
-        let cle_publique = PublicKey::from(&secret_ephemere);
-        let cle_pub_dest = PublicKey::from(*cle_publique_destinataire);
+        // Reconstruit la clé publique ML-KEM-768 depuis les octets
+        let ek = EncapsulationKey768::new(cle_publique_destinataire.into())
+            .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_CRY_002)))?;
 
-        let secret_partage = SecretBox::new(Box::new(
-            *secret_ephemere.diffie_hellman(&cle_pub_dest).as_bytes(),
-        ));
+        // Encapsulation → (ciphertext 1088 o, secret partagé 32 o)
+        let (ciphertext, secret_partage) = ek.encapsulate();
+        let secret_partage = SecretBox::new(Box::new(<[u8; 32]>::from(secret_partage)));
 
+        // HKDF -> clé AES
         let hkdf = Hkdf::<Sha3_256>::new(None, secret_partage.expose_secret());
         let mut cle_brute = SecretBox::new(Box::new([0u8; 32]));
         hkdf.expand(
@@ -532,8 +531,9 @@ impl Cryptographe {
             cle_brute.expose_secret_mut(),
         )?;
 
+        // Résultat : ciphertext_kem (1088 o) || nonce || ciphertext AES
         let mut resultat: Vec<u8> = Vec::new();
-        resultat.extend_from_slice(cle_publique.as_bytes());
+        resultat.extend_from_slice(ciphertext.as_ref());
         resultat.extend(Trousseau::chiffrement_generique_avec_cle(
             cle_brute.expose_secret(),
             octets_a_chiffrer,
@@ -544,27 +544,24 @@ impl Cryptographe {
 
     /// Déchiffre un message chiffré par [`chiffrement_asymetrique`](Self::chiffrement_asymetrique).
     ///
-    /// Implémente le schéma ECIES sur X25519, côté destinataire :
+    /// Implémente le schéma KEM + HKDF + AES-256-GCM, côté destinataire :
     ///
-    /// 1. Extrait la clé éphémère publique `[0..32]` (envoyée en clair).
-    /// 2. ECDH : `secret_partagé = clé_privée_foyer × clé_éphémère_publique`.
+    /// 1. Extrait le ciphertext ML-KEM-768 `[0..1088]`.
+    /// 2. Décapsulation avec la clé privée du foyer → secret partagé (32 o).
     /// 3. Dérive la clé AES-256-GCM via HKDF-SHA3-256 sur le secret partagé.
-    /// 4. Déchiffre `[32..]` avec AES-256-GCM.
-    ///
-    /// Le secret partagé est extrait dans un [`SecretBox<[u8; 32]>`] immédiatement
-    /// après l'ECDH — le [`SharedSecret`] sort de scope sans persistance.
+    /// 4. Déchiffre `[1088..]` avec AES-256-GCM.
     ///
     /// # Format d'entrée
     ///
     /// ```text
-    /// [0..32]  clé éphémère publique X25519
-    /// [32..44] nonce AES-GCM (12 octets)
-    /// [44..]   ciphertext + auth tag (16 octets)
+    /// [0..1088]    ciphertext ML-KEM-768 (1088 octets)
+    /// [1088..1100] nonce AES-GCM (12 octets)
+    /// [1100..]     ciphertext + auth tag (16 octets)
     /// ```
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la conversion de la clé éphémère échoue,
+    /// Retourne une erreur si le ciphertext KEM est invalide,
     /// si le foyer est absent du trousseau, si la dérivation HKDF échoue,
     /// ou si le déchiffrement AES-256-GCM échoue.
     pub(super) fn dechiffrement_asymetrique(
@@ -572,13 +569,19 @@ impl Cryptographe {
         index_foyer: usize,
         octets_a_dechiffrer: &[u8],
     ) -> ResultCryptographe<Vec<u8>> {
-        let cle_ephemere_publique: &[u8; 32] = octets_a_dechiffrer[0..32]
+        // Extrait le ciphertext KEM (1088 o)
+        let ciphertext: &Ciphertext768 = octets_a_dechiffrer
+            .get(0..1088)
+            .ok_or_else(|| ErreurCryptographe::Interne(String::from(ERR_CRY_002)))?
             .try_into()
             .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_CRY_002)))?;
+
+        // Décapsulation → secret partagé
         let secret_partage = self
             .trousseau
-            .recuperation_secret_partage(index_foyer, cle_ephemere_publique)?;
+            .recuperation_secret_partage(index_foyer, ciphertext)?;
 
+        // Dérive la clé AES-256-GCM depuis le secret partagé
         let hkdf = Hkdf::<Sha3_256>::new(None, secret_partage.expose_secret());
         let mut cle_brute = SecretBox::new(Box::new([0u8; 32]));
         hkdf.expand(
@@ -588,7 +591,7 @@ impl Cryptographe {
 
         Trousseau::dechiffrement_generique_avec_cle(
             cle_brute.expose_secret(),
-            &octets_a_dechiffrer[32..],
+            &octets_a_dechiffrer[1088..],
         )
     }
 
