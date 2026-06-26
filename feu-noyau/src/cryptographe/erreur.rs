@@ -100,9 +100,6 @@ pub(crate) enum ErreurCryptographe {
     /// (de type `DecodeError`, qui implémente `Display`) — le type original est perdu.
     #[error("CRY > {0}")]
     DecodePartial(String),
-
-    #[error("CRY > {0}")]
-    SignatureError(#[from] ed25519_dalek::SignatureError),
 }
 
 impl From<DecodePartial> for ErreurCryptographe {

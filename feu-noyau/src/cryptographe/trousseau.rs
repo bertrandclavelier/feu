@@ -27,7 +27,7 @@
 //!   destruction.
 //!
 //! - `ZeroizeOnDrop` (crate `zeroize`) : utilisé pour [`SigningKey`]
-//!   (ed25519-dalek) et [`DecapsulationKey768`] (ml-kem), dont les types
+//!   (ml-dsa) et [`DecapsulationKey768`] (ml-kem), dont les types
 //!   n'implémentent pas [`Zeroize`] et ne peuvent donc pas être encapsulés
 //!   dans [`SecretBox`]. La mémoire est garantie zéroïsée à la destruction par
 //!   l'implémentation interne de la crate, mais `.zeroize()` ne peut pas être
@@ -55,7 +55,7 @@
 //!
 //! - [`Trousseau`] — conteneur principal de la session active
 //! - [`TrousseauFoyer`] — clés opérationnelles d'un foyer ouvert
-//! - [`PaireClesSignature`] — paire de clés Ed25519 ; `privee` protégée par
+//! - [`PaireClesSignature`] — paire de clés ML-DSA-87 ; `privee` protégée par
 //!   `ZeroizeOnDrop` (exception : `SigningKey` n'implémente pas `Zeroize`)
 //! - [`PaireClesChiffrement`] — paire de clés ML-KEM-768 ; `privee` protégée par
 //!   `ZeroizeOnDrop` (exception : `DecapsulationKey` n'implémente pas `Zeroize`)
@@ -81,8 +81,8 @@ use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use argon2::Argon2;
 use data_encoding::BASE32_NOPAD;
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
+use ml_dsa::{Keypair, MlDsa87, Signer, SigningKey, VerifyingKey};
 use ml_kem::Decapsulate;
 use ml_kem::ml_kem_768::Ciphertext as Ciphertext768;
 use ml_kem::{DecapsulationKey768, EncapsulationKey768, KeyExport, Seed};
@@ -127,22 +127,21 @@ const ERR_TRO_006: &str = "TRO-006 > Erreur chiffrement";
 const ERR_TRO_007: &str = "TRO-007 > Erreur déchiffrement";
 const ERR_TRO_008: &str = "TRO-008 > Pas de trousseau pour cet indice";
 const ERR_TRO_009: &str = "TRO-009 > Problème de génération du trousseau public";
-const ERR_TRO_010: &str = "TRO-010 > Erreur récupération clé";
 const ERR_TRO_011: &str = "TRO-011 > Pas de trousseau foyer";
 const ERR_TRO_012: &str = "TRO-012 > Pas de clé du classeur";
 const ERR_TRO_013: &str = "TRO-013 > Pas de clé de signature du nœud";
 
-/// Paire de clés Ed25519 de signature d'un foyer.
+/// Paire de clés ML-DSA-87 de signature d'un foyer.
 ///
-/// `privee` est protégée par `ZeroizeOnDrop` (ed25519-dalek, feature `zeroize`) —
+/// `privee` est protégée par `ZeroizeOnDrop` (ml-dsa, feature `zeroize`) —
 /// `SigningKey` n'implémente pas `Zeroize`, `SecretBox` est donc inutilisable.
 /// La zéroïsation est garantie à la destruction, mais ne peut pas être déclenchée manuellement.
 struct PaireClesSignature {
-    // SigningKey n'implémente pas Zeroize (contrainte d'ed25519-dalek v2) —
+    // SigningKey n'implémente pas Zeroize (contrainte de ml-dsa) —
     // SecretBox impossible. La mémoire est zéroïsée à la destruction via
-    // ZeroizeOnDrop, garanti par ed25519-dalek avec le feature "zeroize".
-    privee: SigningKey,
-    publique: VerifyingKey,
+    // ZeroizeOnDrop, garanti par ml-dsa avec le feature "zeroize".
+    privee: SigningKey<MlDsa87>,
+    publique: VerifyingKey<MlDsa87>,
 }
 
 /// Paire de clés ML-KEM-768 d'un foyer — chiffrement réseau asymétrique post-quantique.
@@ -216,8 +215,8 @@ impl TrousseauFoyer {
         let mut trousseau_public_foyer = TrousseauPublicFoyer::new(
             self.braise.clone(),
             trousseau.chiffre_cle(self.cle_chiffrement.expose_secret())?,
-            trousseau.chiffre_cle(self.paire_signature.privee.as_bytes())?,
-            self.paire_signature.publique.to_bytes(),
+            trousseau.chiffre_cle(&self.paire_signature.privee.to_seed().into())?,
+            self.paire_signature.publique.encode().into(),
             trousseau.chiffre_seed(
                 self.paire_chiffrement
                     .privee
@@ -252,8 +251,8 @@ impl TrousseauFoyer {
         &self.paire_chiffrement.privee
     }
 
-    /// Retourne une référence à la clé privée Ed25519 de signature du foyer.
-    fn donne_cle_privee_signature(&self) -> &SigningKey {
+    /// Retourne une référence à la clé privée ML-DSA-87 de signature du foyer.
+    fn donne_cle_privee_signature(&self) -> &SigningKey<MlDsa87> {
         &self.paire_signature.privee
     }
 }
@@ -296,7 +295,7 @@ impl Trousseau {
 
     /// Dérive et enregistre dans le trousseau la paire de clés de signature du nœud.
     ///
-    /// La clé privée Ed25519 est dérivée de la seed par HKDF-SHA3-256, en
+    /// La clé privée ML-DSA-87 est dérivée de la seed par HKDF-SHA3-256, en
     /// passant le label `feu/noeud/signature` comme `info` — ce qui sépare son
     /// domaine de dérivation de celui des clés de foyer.
     /// La clé brute intermédiaire est portée par un `SecretBox`, zéroïsé en fin
@@ -305,9 +304,10 @@ impl Trousseau {
         &mut self,
         seed_bytes: &SecretBox<[u8; 64]>,
     ) -> ResultCryptographe<()> {
-        let cle_privee = SigningKey::from_bytes(
+        let cle_privee = SigningKey::<MlDsa87>::from_seed(
             Self::derive_depuis_seed::<32>(seed_bytes, LABEL_DERIVATION_SIGNATURE_NOEUD)?
-                .expose_secret(),
+                .expose_secret()
+                .into(),
         );
 
         let cle_publique = cle_privee.verifying_key();
@@ -330,7 +330,7 @@ impl Trousseau {
     ///
     /// - la braise, identifiant public du foyer — pas une clé (`feu/foyer/braise`)
     /// - une clé symétrique de chiffrement du foyer (`feu/foyer/symetrique`)
-    /// - une paire de clés Ed25519 de signature (`feu/foyer/signature`)
+    /// - une paire de clés ML-DSA-87 de signature (`feu/foyer/signature`)
     /// - une paire de clés ML-KEM-768 de chiffrement asymétrique (`feu/foyer/chiffrement`)
     /// - cinq clés symétriques de classeur (`feu/classeur/symetrique`, suffixée de l'index du classeur)
     ///
@@ -345,12 +345,13 @@ impl Trousseau {
         let index_foyer = (position + 1) as u32;
 
         // Paire de clés signature du foyer
-        let cle_sig_priv = SigningKey::from_bytes(
+        let cle_sig_priv = SigningKey::<MlDsa87>::from_seed(
             Self::derive_depuis_seed::<32>(
                 seed_bytes,
                 &format!("{}/{}", LABEL_DERIVATION_SIGNATURE_FOYER, index_foyer),
             )?
-            .expose_secret(),
+            .expose_secret()
+            .into(),
         );
 
         let cle_sig_pub = cle_sig_priv.verifying_key();
@@ -542,7 +543,7 @@ impl Trousseau {
 
     // ── Signature ────────────────────────────────────────────────────────────
 
-    /// Signe des octets avec la clé privée Ed25519 du nœud.
+    /// Signe des octets avec la clé privée ML-DSA-87 du nœud.
     ///
     /// # Erreurs
     ///
@@ -550,14 +551,14 @@ impl Trousseau {
     pub(super) fn signe_avec_cle_noeud(
         &self,
         octets_a_signer: &[u8],
-    ) -> ResultCryptographe<[u8; 64]> {
-        Ok(Self::signature_generique_ed25519(
+    ) -> ResultCryptographe<[u8; 4627]> {
+        Ok(Self::signe_octets(
             self.donne_cle_privee_signature_noeud()?,
             octets_a_signer,
         ))
     }
 
-    /// Signe des octets avec la clé privée Ed25519 du foyer à la position `index_foyer`.
+    /// Signe des octets avec la clé privée ML-DSA-87 du foyer à la position `index_foyer`.
     ///
     /// # Erreurs
     ///
@@ -566,8 +567,8 @@ impl Trousseau {
         &self,
         index_foyer: usize,
         octets_a_signer: &[u8],
-    ) -> ResultCryptographe<[u8; 64]> {
-        Ok(Self::signature_generique_ed25519(
+    ) -> ResultCryptographe<[u8; 4627]> {
+        Ok(Self::signe_octets(
             self.donne_cle_privee_signature_foyer(index_foyer)?,
             octets_a_signer,
         ))
@@ -913,8 +914,8 @@ impl Trousseau {
             (Some(valeur1), Some(valeur2)) => {
                 let trousseau_public_noeud = TrousseauPublicNoeud::new(
                     valeur1,
-                    self.chiffre_cle(valeur2.privee.as_bytes())?,
-                    *valeur2.publique.as_bytes(),
+                    self.chiffre_cle(&valeur2.privee.to_seed().into())?,
+                    valeur2.publique.encode().into(),
                 );
 
                 let mut trousseau_public_complet =
@@ -936,8 +937,9 @@ impl Trousseau {
 
     /// Reconstruit la paire de signature du nœud à partir d'un [`TrousseauPublicNoeud`].
     ///
-    /// Déchiffre la clé privée de signature du nœud et reconstitue la paire Ed25519
-    /// en mémoire. Le déchiffrement échoue si le mot de passe est incorrect —
+    /// Déchiffre la seed privée de signature du nœud et reconstitue la paire ML-DSA-87
+    /// en mémoire — la clé publique est re-dérivée depuis la privée, et non lue sur
+    /// disque. Le déchiffrement échoue si le mot de passe est incorrect —
     /// c'est le mécanisme de vérification du mot de passe dans Feu.
     ///
     /// Les clés des foyers ne sont pas chargées ici — chaque foyer est
@@ -951,26 +953,27 @@ impl Trousseau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le déchiffrement échoue ou si la clé publique
-    /// ne peut pas être reconstruite depuis les octets lus.
+    /// Retourne une erreur si le déchiffrement échoue.
     pub(super) fn trousseau_public_noeud_vers_trousseau(
         &mut self,
         trousseau_public_noeud: &TrousseauPublicNoeud,
     ) -> ResultCryptographe<()> {
         let cle_dechiffree = self.dechiffre_cle(&trousseau_public_noeud.donne_cle_sig_privee())?;
-        let cle_pub = trousseau_public_noeud.donne_cle_sig_pub();
+
+        let cle_sig_priv = SigningKey::<MlDsa87>::from_seed(cle_dechiffree.expose_secret().into());
+        let cle_sig_pub = cle_sig_priv.verifying_key();
 
         self.paire_signature_noeud = Some(PaireClesSignature {
-            privee: SigningKey::from_bytes(cle_dechiffree.expose_secret()),
-            publique: VerifyingKey::from_bytes(&cle_pub)
-                .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_010)))?,
+            privee: cle_sig_priv,
+            publique: cle_sig_pub,
         });
+
         Ok(())
     }
 
     /// Déchiffre et charge les clés d'un foyer dans le trousseau à partir d'un [`TrousseauPublicFoyer`].
     ///
-    /// Déchiffre la clé symétrique, la paire de signature Ed25519, la paire de chiffrement ML-KEM-768
+    /// Déchiffre la clé symétrique, la paire de signature ML-DSA-87, la paire de chiffrement ML-KEM-768
     /// et les cinq clés de classeurs avec la clé éphémère, puis enregistre le [`TrousseauFoyer`]
     /// résultant à l'`index` donné. La braise (identifiant du foyer) est lue depuis le [`TrousseauPublicFoyer`].
     ///
@@ -981,8 +984,9 @@ impl Trousseau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la clé éphémère est absente, si le déchiffrement d'une clé
-    /// échoue, ou si la reconstruction d'une clé publique depuis ses octets échoue.
+    /// Retourne une erreur si la clé éphémère est absente ou si le déchiffrement d'une clé
+    /// échoue. Les clés publiques de signature et de chiffrement sont re-dérivées depuis
+    /// leurs privées, et non lues sur disque.
     pub(super) fn trousseau_public_foyer_vers_trousseau_foyer(
         &mut self,
         trousseau_public_foyer: &TrousseauPublicFoyer,
@@ -991,13 +995,12 @@ impl Trousseau {
         let cle_chiffrement =
             self.dechiffre_cle(&trousseau_public_foyer.donne_cle_chiffrement())?;
 
-        let cle_sig_priv = self.dechiffre_cle(&trousseau_public_foyer.donne_cle_sig_privee())?;
-        let cle_sig_pub = trousseau_public_foyer.donne_cle_sig_pub();
+        let cle_dechiffree = self.dechiffre_cle(&trousseau_public_foyer.donne_cle_sig_privee())?;
+        let cle_sig_priv = SigningKey::<MlDsa87>::from_seed(cle_dechiffree.expose_secret().into());
 
         let paire_signature = PaireClesSignature {
-            privee: SigningKey::from_bytes(cle_sig_priv.expose_secret()),
-            publique: VerifyingKey::from_bytes(&cle_sig_pub)
-                .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_010)))?,
+            publique: cle_sig_priv.verifying_key(),
+            privee: cle_sig_priv,
         };
 
         let cle_brute = self.dechiffre_seed(&trousseau_public_foyer.donne_cle_chiff_privee())?;
@@ -1063,10 +1066,15 @@ impl Trousseau {
         Ok(trousseau_foyer.donne_cle_privee_chiffrement())
     }
 
+    /// Retourne la clé privée ML-DSA-87 de signature du foyer à la position `index_foyer`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le foyer est absent du trousseau.
     fn donne_cle_privee_signature_foyer(
         &self,
         index_foyer: usize,
-    ) -> ResultCryptographe<&SigningKey> {
+    ) -> ResultCryptographe<&SigningKey<MlDsa87>> {
         let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
             return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_011)));
         };
@@ -1074,7 +1082,12 @@ impl Trousseau {
         Ok(trousseau_foyer.donne_cle_privee_signature())
     }
 
-    fn donne_cle_privee_signature_noeud(&self) -> ResultCryptographe<&SigningKey> {
+    /// Retourne la clé privée ML-DSA-87 de signature du nœud.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la paire de signature du nœud est absente du trousseau.
+    fn donne_cle_privee_signature_noeud(&self) -> ResultCryptographe<&SigningKey<MlDsa87>> {
         let Some(paire_signature_noeud) = &self.paire_signature_noeud else {
             return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_013)));
         };
@@ -1082,6 +1095,17 @@ impl Trousseau {
         Ok(&paire_signature_noeud.privee)
     }
 
+    /// Dérive `N` octets de matériau clé depuis la seed master par HKDF-SHA3-256.
+    ///
+    /// Primitive de dérivation unique du trousseau : chaque clé du protocole descend
+    /// directement de la seed, isolée par un `label` distinct passé en `info` HKDF.
+    /// C'est ce label — et non une clé mère intermédiaire — qui sépare les domaines
+    /// de dérivation, sans collision possible entre clés. Le résultat est encapsulé
+    /// dans un [`SecretBox`], zéroïsé à sa destruction.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si l'expansion HKDF échoue (taille `N` invalide).
     fn derive_depuis_seed<const N: usize>(
         seed: &SecretBox<[u8; 64]>,
         label: &str,
@@ -1094,8 +1118,13 @@ impl Trousseau {
         Ok(cle_brute)
     }
 
-    fn signature_generique_ed25519(cle_privee: &SigningKey, octets_a_signer: &[u8]) -> [u8; 64] {
-        cle_privee.sign(octets_a_signer).to_bytes()
+    /// Signe `octets_a_signer` avec une clé privée ML-DSA-87 et retourne la
+    /// signature encodée (4627 octets).
+    ///
+    /// Helper interne factorisant la signature du nœud et du foyer — seule la
+    /// clé privée employée diffère entre les deux appelants.
+    fn signe_octets(cle_privee: &SigningKey<MlDsa87>, octets_a_signer: &[u8]) -> [u8; 4627] {
+        cle_privee.sign(octets_a_signer).encode().into()
     }
 
     /// Chiffre un flux d'octets avec AES-256-GCM-stream.

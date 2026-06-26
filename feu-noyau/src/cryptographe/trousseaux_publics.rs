@@ -13,7 +13,7 @@
 //! avant d'être stocké sur le disque.
 //!
 //! Aucune donnée sensible n'est stockée en clair : seul le sel Argon2id
-//! et les clés publiques (Ed25519, ML-KEM-768) apparaissent sans chiffrement.
+//! et les clés publiques (ML-DSA-87, ML-KEM-768) apparaissent sans chiffrement.
 //! Ces structures sont destinées à être écrites sur le disque par le gardien.
 
 use super::erreur::{ErreurCryptographe, ResultCryptographe};
@@ -35,7 +35,7 @@ pub(crate) struct TrousseauPublicFoyer {
 
     cle_chiffrement: [u8; 60], // chiffrée
     cle_sig_privee: [u8; 60],  // chiffrée
-    cle_sig_pub: [u8; 32],
+    cle_sig_pub: [u8; 2592],
     cle_chiff_privee: [u8; 92], // chiffrée
     cle_chiff_pub: [u8; 1184],
 
@@ -51,7 +51,7 @@ impl TrousseauPublicFoyer {
         braise: String,
         cle_chiffrement: [u8; 60],
         cle_sig_privee: [u8; 60],
-        cle_sig_pub: [u8; 32],
+        cle_sig_pub: [u8; 2592],
         cle_chiff_privee: [u8; 92],
         cle_chiff_pub: [u8; 1184],
     ) -> Self {
@@ -76,13 +76,13 @@ impl TrousseauPublicFoyer {
         self.cle_chiffrement
     }
 
-    /// Retourne la clé privée de signature Ed25519 du foyer — chiffrée, 60 octets.
+    /// Retourne la clé privée de signature ML-DSA-87 du foyer — seed chiffrée, 60 octets.
     pub(crate) fn donne_cle_sig_privee(&self) -> [u8; 60] {
         self.cle_sig_privee
     }
 
-    /// Retourne la clé publique de signature Ed25519 du foyer — 32 octets.
-    pub(crate) fn donne_cle_sig_pub(&self) -> [u8; 32] {
+    /// Retourne la clé publique de signature ML-DSA-87 du foyer — 2592 octets.
+    pub(crate) fn donne_cle_sig_pub(&self) -> [u8; 2592] {
         self.cle_sig_pub
     }
 
@@ -138,12 +138,12 @@ pub(crate) struct TrousseauPublicNoeud {
     sel: [u8; 16],
 
     cle_sig_privee: [u8; 60], // chiffrée
-    cle_sig_pub: [u8; 32],
+    cle_sig_pub: [u8; 2592],
 }
 
 impl TrousseauPublicNoeud {
     /// Crée un [`TrousseauPublicNoeud`].
-    pub(crate) fn new(sel: [u8; 16], cle_sig_privee: [u8; 60], cle_sig_pub: [u8; 32]) -> Self {
+    pub(crate) fn new(sel: [u8; 16], cle_sig_privee: [u8; 60], cle_sig_pub: [u8; 2592]) -> Self {
         Self {
             sel,
             cle_sig_privee,
@@ -156,13 +156,13 @@ impl TrousseauPublicNoeud {
         self.sel
     }
 
-    /// Retourne la clé privée de signature Ed25519 du nœud — chiffrée, 60 octets.
+    /// Retourne la clé privée de signature ML-DSA-87 du nœud — seed chiffrée, 60 octets.
     pub(crate) fn donne_cle_sig_privee(&self) -> [u8; 60] {
         self.cle_sig_privee
     }
 
-    /// Retourne la clé publique de signature Ed25519 du nœud — 32 octets.
-    pub(crate) fn donne_cle_sig_pub(&self) -> [u8; 32] {
+    /// Retourne la clé publique de signature ML-DSA-87 du nœud — 2592 octets.
+    pub(crate) fn donne_cle_sig_pub(&self) -> [u8; 2592] {
         self.cle_sig_pub
     }
 }

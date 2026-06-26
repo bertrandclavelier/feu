@@ -152,7 +152,7 @@ impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
     /// Stocke la clé publique de signature du nœud dans la session.
     ///
     /// Appelée par le noyau à l'allumage, après lecture du trousseau public.
-    fn recevoir_cle_publique_noeud(&mut self, cle_publique_sig_noeud: [u8; 32]) {
+    fn recevoir_cle_publique_noeud(&mut self, cle_publique_sig_noeud: [u8; 2592]) {
         self.session_application
             .definit_cle_publique_sig_noeud(cle_publique_sig_noeud);
     }
@@ -163,7 +163,7 @@ impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
     fn recevoir_cles_publiques_foyer(
         &mut self,
         index_foyer: usize,
-        cle_publique_sig: [u8; 32],
+        cle_publique_sig: [u8; 2592],
         cle_publique_chif: [u8; 1184],
     ) {
         self.session_application

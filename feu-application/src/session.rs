@@ -49,10 +49,10 @@ pub struct SessionApplication {
     braise_foyers: [String; MAX_FOYERS],
     /// État d'ouverture de chaque foyer — `true` si ouvert.
     etat_foyers: [bool; MAX_FOYERS],
-    /// Clé publique de signature Ed25519 du nœud — reçue à l'allumage.
-    cle_publique_sig_noeud: [u8; 32],
-    /// Clés publiques de signature Ed25519 des foyers — reçues à l'ouverture.
-    cle_publique_sig_foyers: [[u8; 32]; MAX_FOYERS],
+    /// Clé publique de signature ML-DSA-87 du nœud — reçue à l'allumage.
+    cle_publique_sig_noeud: [u8; 2592],
+    /// Clés publiques de signature ML-DSA-87 des foyers — reçues à l'ouverture.
+    cle_publique_sig_foyers: [[u8; 2592]; MAX_FOYERS],
     /// Clés publiques de chiffrement ML-KEM-768 des foyers — reçues à l'ouverture.
     cle_publique_chif_foyers: [[u8; 1184]; MAX_FOYERS],
 }
@@ -70,8 +70,8 @@ impl SessionApplication {
             max_taille_signature: MAX_TAILLE_SIGNATURE,
             braise_foyers: std::array::from_fn(|_| String::new()),
             etat_foyers: std::array::from_fn(|_| false),
-            cle_publique_sig_noeud: [0u8; 32],
-            cle_publique_sig_foyers: std::array::from_fn(|_| [0u8; 32]),
+            cle_publique_sig_noeud: [0u8; 2592],
+            cle_publique_sig_foyers: std::array::from_fn(|_| [0u8; 2592]),
             cle_publique_chif_foyers: std::array::from_fn(|_| [0u8; 1184]),
         }
     }
@@ -153,24 +153,24 @@ impl SessionApplication {
         self.etat_foyers[index_foyer] = etat;
     }
 
-    /// Enregistre la clé publique de signature Ed25519 du nœud.
+    /// Enregistre la clé publique de signature ML-DSA-87 du nœud.
     ///
     /// Appelé par [`RecepteurNoyau`] à l'allumage du nœud.
-    pub(crate) fn definit_cle_publique_sig_noeud(&mut self, cle: [u8; 32]) {
+    pub(crate) fn definit_cle_publique_sig_noeud(&mut self, cle: [u8; 2592]) {
         self.cle_publique_sig_noeud = cle;
     }
 
-    /// Retourne la clé publique de signature Ed25519 du nœud.
-    pub fn cle_publique_sig_noeud(&self) -> [u8; 32] {
+    /// Retourne la clé publique de signature ML-DSA-87 du nœud.
+    pub fn cle_publique_sig_noeud(&self) -> [u8; 2592] {
         self.cle_publique_sig_noeud
     }
 
-    /// Retourne la clé publique de signature Ed25519 du foyer à la position `index_foyer`.
+    /// Retourne la clé publique de signature ML-DSA-87 du foyer à la position `index_foyer`.
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si `index_foyer >= MAX_FOYERS`.
-    pub fn cle_publique_sig_foyer(&self, index_foyer: usize) -> ResultFeuApplication<[u8; 32]> {
+    pub fn cle_publique_sig_foyer(&self, index_foyer: usize) -> ResultFeuApplication<[u8; 2592]> {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuApplication::Standard(String::from(
                 "index_foyer trop élevé",
@@ -179,10 +179,10 @@ impl SessionApplication {
         Ok(self.cle_publique_sig_foyers[index_foyer])
     }
 
-    /// Enregistre la clé publique de signature Ed25519 du foyer.
+    /// Enregistre la clé publique de signature ML-DSA-87 du foyer.
     ///
     /// Appelé par [`RecepteurNoyau`] à l'ouverture du foyer.
-    pub(crate) fn definit_cle_publique_sig_foyer(&mut self, index_foyer: usize, cle: [u8; 32]) {
+    pub(crate) fn definit_cle_publique_sig_foyer(&mut self, index_foyer: usize, cle: [u8; 2592]) {
         self.cle_publique_sig_foyers[index_foyer] = cle;
     }
 

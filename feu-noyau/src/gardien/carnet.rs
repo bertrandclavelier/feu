@@ -345,7 +345,7 @@ impl Carnet {
     ///
     /// Lit depuis `~/.feu/.cles/<braise>.cle` et `~/.feu/<braise>/.cles/` :
     /// - la clé symétrique de chiffrement (`<braise>.cle`) — 60 octets
-    /// - la paire de clés de signature (`sig.priv`, `sig.pub`) — 60 et 32 octets
+    /// - la paire de clés de signature (`sig.priv`, `sig.pub`) — 60 et 2592 octets
     /// - la paire de clés de chiffrement ML-KEM-768 (`chif.priv`, `chif.pub`) — 92 et 1184 octets
     ///
     /// Les clés privées et symétriques sont retournées chiffrées (AES-256-GCM),
@@ -435,8 +435,8 @@ impl Carnet {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 32 octets.
-    pub(super) fn lire_pour_donner_cle_sig_pub(&self) -> ResultGardien<[u8; 32]> {
+    /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 2592 octets.
+    pub(super) fn lire_pour_donner_cle_sig_pub(&self) -> ResultGardien<[u8; 2592]> {
         std::fs::read(self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB))?
             .try_into()
             .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))
@@ -467,7 +467,10 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier existe déjà ou si la création échoue.
-    pub(super) fn ouvre_archive_chiffree_foyer_ecriture(&self, braise: &str) -> ResultGardien<File> {
+    pub(super) fn ouvre_archive_chiffree_foyer_ecriture(
+        &self,
+        braise: &str,
+    ) -> ResultGardien<File> {
         Ok(OpenOptions::new()
             .write(true)
             .create_new(true)

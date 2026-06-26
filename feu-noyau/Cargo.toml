@@ -10,8 +10,8 @@ aes-gcm = { version = "0.10", features = ["std", "zeroize"] }
 argon2 = { version = "0.5", features = ["std"] }
 bip39 = { version = "2", features = ["rand", "french", "zeroize"] }
 data-encoding = { version = "2", features = ["alloc"] }
-ed25519-dalek = { version = "2", features = ["zeroize"] }
 hkdf = "0.12"
+ml-dsa = { version = "0.1", features = ["zeroize", "getrandom"] }
 ml-kem = { version = "0.3", features = ["zeroize", "getrandom"] }
 rand = "0.8"
 secrecy = "0.10"

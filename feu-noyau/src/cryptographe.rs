@@ -14,7 +14,7 @@
 //!
 //! Il a en charge la génération des seeds BIP39, la dérivation HKDF-SHA3-256
 //! des clés nœud et foyer depuis la seed, ainsi que la génération des clés
-//! symétrique, de signature (Ed25519) et de chiffrement (ML-KEM-768) par foyer.
+//! symétrique, de signature (ML-DSA-87) et de chiffrement (ML-KEM-768) par foyer.
 //! Il maintient en mémoire le trousseau — l'unique endroit où les clés
 //! privées et la clé symétrique existent en clair.
 //!
@@ -44,11 +44,10 @@ pub(crate) mod trousseaux_publics;
 
 use bip39::{Language, Mnemonic};
 use data_encoding::HEXLOWER;
-use ed25519_dalek::VerifyingKey;
 use hkdf::Hkdf;
-use ml_kem::Encapsulate;
-use ml_kem::EncapsulationKey768;
+use ml_dsa::{MlDsa87, Signature, Verifier, VerifyingKey};
 use ml_kem::ml_kem_768::Ciphertext as Ciphertext768;
+use ml_kem::{Encapsulate, EncapsulationKey768};
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use sha3::{Digest, Sha3_256};
 use std::io::{Read, Write};
@@ -68,6 +67,7 @@ const ERR_CRY_001: &str = "CRY-001 > Données corrompues après déchiffrement";
 const ERR_CRY_002: &str = "CRY-002 > Erreur déchiffrement";
 const ERR_CRY_003: &str = "CRY-003 > Erreur définition mot de passe";
 const ERR_CRY_004: &str = "CRY-004 > Problème enregistrement seed";
+const ERR_CRY_005: &str = "CRY-005 > Signature ML-DSA invalide";
 
 /// Gardien de la sécurité cryptographique du nœud.
 ///
@@ -602,18 +602,18 @@ impl Cryptographe {
 
     // ── Signature ─────────────────────────────────────────────────────────────
 
-    /// Signe des octets avec la clé privée Ed25519 du nœud.
+    /// Signe des octets avec la clé privée ML-DSA-87 du nœud.
     ///
     /// Délègue directement à [`Trousseau::signe_avec_cle_noeud`].
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si la clé de signature du nœud est absente du trousseau.
-    pub(super) fn signature_noeud(&self, octets_a_signer: &[u8]) -> ResultCryptographe<[u8; 64]> {
+    pub(super) fn signature_noeud(&self, octets_a_signer: &[u8]) -> ResultCryptographe<[u8; 4627]> {
         self.trousseau.signe_avec_cle_noeud(octets_a_signer)
     }
 
-    /// Signe des octets avec la clé privée Ed25519 du foyer à la position `index_foyer`.
+    /// Signe des octets avec la clé privée ML-DSA-87 du foyer à la position `index_foyer`.
     ///
     /// Délègue directement à [`Trousseau::signe_avec_cle_foyer`].
     ///
@@ -624,31 +624,33 @@ impl Cryptographe {
         &self,
         index_foyer: usize,
         octets_a_signer: &[u8],
-    ) -> ResultCryptographe<[u8; 64]> {
+    ) -> ResultCryptographe<[u8; 4627]> {
         self.trousseau
             .signe_avec_cle_foyer(index_foyer, octets_a_signer)
     }
 
-    /// Vérifie une signature Ed25519.
+    /// Vérifie une signature ML-DSA-87.
     ///
     /// Retourne `true` si `signature` est une signature valide de `octets_signes`
     /// produite par la clé privée correspondant à `cle_publique`, `false` sinon.
     ///
-    /// Utilise `verify_strict` pour résister aux attaques par malléabilité de signature.
+    /// Une signature bien encodée mais invalide retourne `false` ; un encodage mal
+    /// formé est en revanche rejeté par une erreur (voir ci-dessous). La clé publique,
+    /// de taille fixe, se décode sans faillir.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si `cle_publique` ne forme pas un point Ed25519 valide.
+    /// Retourne une erreur si `signature` n'est pas un encodage ML-DSA-87 valide.
     pub(super) fn verification_signature(
-        cle_publique: [u8; 32],
-        signature: [u8; 64],
+        cle_publique: [u8; 2592],
+        signature: [u8; 4627],
         octets_signes: &[u8],
     ) -> ResultCryptographe<bool> {
-        let signature_reconstruite = ed25519_dalek::Signature::from_bytes(&signature);
-        let cle = VerifyingKey::from_bytes(&cle_publique)?;
-        Ok(cle
-            .verify_strict(octets_signes, &signature_reconstruite)
-            .is_ok())
+        let signature = Signature::<MlDsa87>::decode(&signature.into())
+            .ok_or_else(|| ErreurCryptographe::Interne(String::from(ERR_CRY_005)))?;
+        let cle_publique = VerifyingKey::<MlDsa87>::decode(&cle_publique.into());
+
+        Ok(cle_publique.verify(octets_signes, &signature).is_ok())
     }
 
     // ── Utilitaires privés ────────────────────────────────────────────────────

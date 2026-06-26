@@ -57,7 +57,7 @@ pub const MAX_TAILLE_BLOB: usize = 512 * 1024 * 1024;
 /// Taille maximum d'un message à chiffrer via ML-KEM-768 + AES-256-GCM — 1 Mio.
 pub const MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE: usize = 1024 * 1024;
 
-/// Taille maximum d'un message à signer via Ed25519 — 64 Kio.
+/// Taille maximum d'un message à signer — 64 Kio.
 pub const MAX_TAILLE_SIGNATURE: usize = 64 * 1024;
 
 pub(crate) const TAILLE_CHUNK: usize = 8 * 1024;
@@ -124,20 +124,20 @@ pub trait InterfaceFeuNoyau {
     /// Notifie l'interface de la clé publique de signature du nœud.
     ///
     /// Appelée à l'allumage du nœud, après lecture du trousseau public
-    /// depuis le disque. Cette clé Ed25519 est l'identité cryptographique
+    /// depuis le disque. Cette clé ML-DSA-87 est l'identité cryptographique
     /// du nœud.
-    fn recevoir_cle_publique_noeud(&mut self, cle_publique_sig_noeud: [u8; 32]);
+    fn recevoir_cle_publique_noeud(&mut self, cle_publique_sig_noeud: [u8; 2592]);
 
     /// Notifie l'interface des clés publiques d'un foyer à son ouverture.
     ///
     /// Appelée après lecture du trousseau public du foyer depuis le disque,
     /// avant chargement des clés privées en mémoire.
-    /// - `cle_publique_sig` — clé de signature Ed25519 du foyer.
+    /// - `cle_publique_sig` — clé de signature ML-DSA-87 du foyer.
     /// - `cle_publique_chif` — clé de chiffrement ML-KEM-768 du foyer.
     fn recevoir_cles_publiques_foyer(
         &mut self,
         index_foyer: usize,
-        cle_publique_sig: [u8; 32],
+        cle_publique_sig: [u8; 2592],
         cle_publique_chif: [u8; 1184],
     );
 }
@@ -496,8 +496,10 @@ impl FeuNoyau {
 
             // Fermeture des foyers
             for i in 0..MAX_FOYERS {
-                noyau
-                    .fermeture_foyer(interface_feu_noyau, &noyau.session.foyers[i].braise.clone())?;
+                noyau.fermeture_foyer(
+                    interface_feu_noyau,
+                    &noyau.session.foyers[i].braise.clone(),
+                )?;
             }
 
             Ok(noyau)
@@ -705,8 +707,9 @@ impl FeuNoyau {
             return Err(ErreurFeuNoyau::FoyerDejaOuvert);
         }
 
-        let (cle, mut source, mut destination) =
-            self.gardien.preparation_desarchivage_chiffre_foyer(braise)?;
+        let (cle, mut source, mut destination) = self
+            .gardien
+            .preparation_desarchivage_chiffre_foyer(braise)?;
 
         self.cryptographe.donne_flux_dechiffrement_foyer(
             &cle,
@@ -1125,11 +1128,11 @@ impl FeuNoyau {
 
     // ── Signature ────────────────────────────────────────────────────────────
 
-    /// Signe des octets avec la clé privée de signature Ed25519 du nœud.
+    /// Signe des octets avec la clé privée de signature ML-DSA-87 du nœud.
     ///
-    /// La clé de signature du nœud (`m/0'`) est l'identité cryptographique
-    /// racine — elle signe les IdNU et tout acte engageant le nœud dans
-    /// sa globalité.
+    /// La clé de signature du nœud (label `feu/noeud/signature`) est l'identité
+    /// cryptographique racine — elle signe les IdNU et tout acte engageant le
+    /// nœud dans sa globalité.
     ///
     /// La taille des données est limitée à [`MAX_TAILLE_SIGNATURE`] —
     /// cette fonction est destinée aux structures légères (IdNU, ENU),
@@ -1139,7 +1142,7 @@ impl FeuNoyau {
     ///
     /// Retourne une erreur si la taille
     /// dépasse [`MAX_TAILLE_SIGNATURE`], ou si la signature échoue.
-    pub fn signature_noeud(&self, octets_a_signer: &[u8]) -> ResultFeuNoyau<[u8; 64]> {
+    pub fn signature_noeud(&self, octets_a_signer: &[u8]) -> ResultFeuNoyau<[u8; 4627]> {
         if octets_a_signer.len() >= MAX_TAILLE_SIGNATURE {
             return Err(ErreurFeuNoyau::TailleMaxDepassee);
         }
@@ -1147,9 +1150,9 @@ impl FeuNoyau {
         Ok(self.cryptographe.signature_noeud(octets_a_signer)?)
     }
 
-    /// Signe des octets avec la clé privée de signature Ed25519 du foyer.
+    /// Signe des octets avec la clé privée de signature ML-DSA-87 du foyer.
     ///
-    /// La clé de signature du foyer (`m/index'`, message `"feu-foyer-paire-signature"`)
+    /// La clé de signature du foyer (label `feu/foyer/signature/{index}`)
     /// authentifie les ENU et les échanges réseau du foyer.
     /// Le foyer doit être ouvert — sa clé privée doit être présente en mémoire.
     ///
@@ -1166,7 +1169,7 @@ impl FeuNoyau {
         &self,
         index_foyer: usize,
         octets_a_signer: &[u8],
-    ) -> ResultFeuNoyau<[u8; 64]> {
+    ) -> ResultFeuNoyau<[u8; 4627]> {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::IndexInvalide);
         }
@@ -1182,18 +1185,18 @@ impl FeuNoyau {
             .signature_foyer(index_foyer, octets_a_signer)?)
     }
 
-    /// Vérifie une signature Ed25519.
+    /// Vérifie une signature ML-DSA-87.
     ///
     /// Retourne `Ok(true)` si `signature` est valide pour `octets_signes` avec
     /// `cle_publique`, `Ok(false)` sinon.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si `cle_publique` ne forme pas un point Ed25519 valide.
+    /// Retourne une erreur si `signature` n'est pas un encodage ML-DSA-87 valide.
     pub fn verification_signature(
         &self,
-        cle_publique: [u8; 32],
-        signature: [u8; 64],
+        cle_publique: [u8; 2592],
+        signature: [u8; 4627],
         octets_signes: &[u8],
     ) -> ResultFeuNoyau<bool> {
         Ok(Cryptographe::verification_signature(

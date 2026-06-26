@@ -405,7 +405,7 @@ impl FeuApplication {
         Ok(noyau.dechiffrement_asymetrique(index_foyer, octets_a_dechiffrer)?)
     }
 
-    /// Signe des octets avec la clé privée Ed25519 du nœud.
+    /// Signe des octets avec la clé privée ML-DSA-87 du nœud.
     ///
     /// La clé de signature du nœud est l'identité cryptographique racine —
     /// elle signe les IdNU et tout acte engageant le nœud dans sa globalité.
@@ -416,7 +416,7 @@ impl FeuApplication {
     pub fn commande_signature_noeud(
         &self,
         octets_a_signer: &[u8],
-    ) -> ResultFeuApplication<[u8; 64]> {
+    ) -> ResultFeuApplication<[u8; 4627]> {
         let noyau = self
             .feu_noyau
             .as_ref()
@@ -425,7 +425,7 @@ impl FeuApplication {
         Ok(noyau.signature_noeud(octets_a_signer)?)
     }
 
-    /// Signe des octets avec la clé privée Ed25519 du foyer désigné.
+    /// Signe des octets avec la clé privée ML-DSA-87 du foyer désigné.
     ///
     /// Le foyer doit être ouvert — sa clé privée de signature doit être présente
     /// dans le trousseau.
@@ -438,7 +438,7 @@ impl FeuApplication {
         &self,
         index_foyer: usize,
         octets_a_signer: &[u8],
-    ) -> ResultFeuApplication<[u8; 64]> {
+    ) -> ResultFeuApplication<[u8; 4627]> {
         let noyau = self
             .feu_noyau
             .as_ref()
@@ -447,7 +447,7 @@ impl FeuApplication {
         Ok(noyau.signature_foyer(index_foyer, octets_a_signer)?)
     }
 
-    /// Vérifie une signature Ed25519.
+    /// Vérifie une signature ML-DSA-87.
     ///
     /// Retourne `true` si `signature` est une signature valide de `octets_signes`
     /// produite par la clé privée correspondant à `cle_publique`, `false` sinon.
@@ -458,8 +458,8 @@ impl FeuApplication {
     /// un échec de vérification cryptographique retourne `false`, pas une erreur.
     pub fn commande_verification_signature(
         &self,
-        cle_publique: [u8; 32],
-        signature: [u8; 64],
+        cle_publique: [u8; 2592],
+        signature: [u8; 4627],
         octets_signes: &[u8],
     ) -> ResultFeuApplication<bool> {
         let noyau = self
