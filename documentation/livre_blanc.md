@@ -1,9 +1,9 @@
 # F E U
 
-### 12 mots, un nœud, tout son numérique.
+### 24 mots, un nœud, tout son numérique.
 
 **Livre blanc**
-**Date : 5 avril 2026**
+**Date : 26 juin 2026**
 
 *Le 17 février 2026, nouvel an chinois marquant le début de l'année du Cheval de Feu, naît le projet Feu.*
 
@@ -27,15 +27,15 @@ Si chaque individu contrôle ses données, les communautés peuvent reconquérir
 
 Mais la décentralisation n'est pas un produit. C'est une pratique. Elle demande d'apprendre à posséder ses clés, à gérer ses espaces, à comprendre la valeur de ce qu'on partage. Feu repose sur une conviction : la possession d'une clé cryptographique personnelle — idéalement dans un hardware wallet — deviendra la norme du numérique.
 
-Notre souveraineté numérique tient en 12 mots !
+Notre souveraineté numérique tient en 24 mots !
 
 ---
 
-## 1. 12 mots, un nœud, des foyers
+## 1. 24 mots, un nœud, des foyers
 
-Tout commence par une seule graine cryptographique : la **seed**. Une liste de 12 mots, conforme au standard BIP39 — le même qui sécurise des milliards d'euros en cryptomonnaies depuis plus d'une décennie. Feu retient 12 mots — le seuil bas du standard, suffisant pour une entropie de 128 bits, et la limite de ce qu'un être humain peut raisonnablement mémoriser ou transcrire sans erreur. Cette seed n'est jamais stockée, jamais transmise. Elle est la clé absolue du système — tout en découle.
+Tout commence par une seule graine cryptographique : la **seed**. Une liste de 24 mots, conforme au standard BIP39 — le même qui sécurise des milliards d'euros en cryptomonnaies depuis plus d'une décennie. Feu retient 24 mots pour une entropie de 256 bits, alignée sur le niveau de sécurité maximal des primitives post-quantiques sous-jacentes. La restauration depuis des seeds de 12, 15, 18 ou 21 mots reste acceptée. Cette seed n'est jamais stockée, jamais transmise. Elle est la clé absolue du système — tout en découle.
 
-La seed est générée localement, sans serveur, sans tiers, sans accès au réseau. L'utilisateur crée seul son identité, ses clés et ses adresses réseau — aucune inscription, aucune autorisation, aucune dépendance extérieure. L'identité existe dès que les 12 mots sont générés.
+La seed est générée localement, sans serveur, sans tiers, sans accès au réseau. L'utilisateur crée seul son identité, ses clés et ses adresses réseau — aucune inscription, aucune autorisation, aucune dépendance extérieure. L'identité existe dès que les 24 mots sont générés.
 
 Depuis cette seed, Feu dérive un **nœud** : la racine logique de toute l'identité numérique de l'utilisateur. Le nœud est lié à la seed, pas à une machine — réinstaller Feu ailleurs avec la même seed reconstitue le même nœud. Il est unique, irrévocable, et constitue la preuve cryptographique que tout ce qui suit lui appartient.
 
@@ -49,13 +49,13 @@ Toutes les clés sont dérivables depuis la seed. La perte de la machine n'entra
 
 ## 2. L'identité numérique universelle
 
-L'**IdNU** est la carte d'identité cryptographique d'un foyer. Signée par la clé privée du nœud (Ed25519), elle prouve l'appartenance du foyer à l'identité racine.
+L'**IdNU** est la carte d'identité cryptographique d'un foyer. Signée par la clé privée du nœud (ML-DSA-87, post-quantique), elle prouve l'appartenance du foyer à l'identité racine.
 
 Elle contient :
 
-- L'adresse `.onion` du foyer — dérivée de la clé publique de signature réseau, permanente et immuable
+- L'adresse `.braise` du foyer — dérivée directement de la seed, permanente et immuable
 - La clé publique du nœud — pour la vérification de la signature par les tiers
-- La clé publique de chiffrement réseau X25519 — pour recevoir des messages chiffrés
+- La clé publique de chiffrement réseau ML-KEM-1024 — pour recevoir des messages chiffrés
 - La date d'émission et la date d'expiration
 - Optionnellement un pseudonyme ou un nom de domaine
 - La signature de l'ensemble par la clé privée du nœud
@@ -72,7 +72,7 @@ Pour un foyer qui sommeille, la situation est différente — à sa réactivatio
 
 ### Validation par un foyer tiers
 
-Un tiers qui reçoit une IdNU vérifie quatre choses : que l'adresse `.onion` déclarée correspond à la clé publique de signature réseau, que la signature de l'IdNU est valide avec la clé publique du nœud, que l'IdNU n'est pas expirée, et que le foyer répond bien à l'adresse `.onion` déclarée.
+Un tiers qui reçoit une IdNU vérifie quatre choses : que l'adresse `.braise` déclarée correspond à celle dérivée de la seed, que la signature de l'IdNU est valide avec la clé publique du nœud, que l'IdNU n'est pas expirée, et que le foyer répond bien à son adresse réseau.
 
 Au premier contact, le tiers fait confiance au canal Tor (chiffrement de bout en bout). C'est le modèle TOFU — Trust On First Use. Aux contacts suivants, il vérifie la continuité : même clé publique de nœud que l'IdNU précédemment stockée.
 
@@ -82,7 +82,7 @@ Un **pont DNS** permet de lier un nom de domaine classique à un foyer. Le propr
 
 ### Révocation
 
-Si un foyer est compromis, le propriétaire dérive un nouveau jeu de clés au prochain index disponible (ressaisie de la seed). Nouvelle adresse `.onion`, nouvelle IdNU, signée par le même nœud. La nouvelle IdNU fait office de révocation de l'ancienne. Les contacts qui avaient l'ancienne IdNU voient apparaître la nouvelle, signée par le même nœud, et comprennent que le foyer a migré.
+Si un foyer est compromis, le propriétaire dérive un nouveau jeu de clés au prochain index disponible (ressaisie de la seed). Nouvelle adresse `.braise`, nouvelle IdNU, signée par le même nœud. La nouvelle IdNU fait office de révocation de l'ancienne. Les contacts qui avaient l'ancienne IdNU voient apparaître la nouvelle, signée par le même nœud, et comprennent que le foyer a migré.
 
 ### Ce que l'IdNU n'est pas
 
@@ -96,7 +96,7 @@ Côté architecture, l'IdNU est une donnée comme les autres : un blob stocké d
 
 Sous Unix, tout est fichier. Sous Feu, tout est **ENU**.
 
-L'ENU est l'unité fondamentale du protocole. Une structure légère — quelques centaines d'octets — qui décrit ou contient une donnée. Chaque ENU porte son propre hash, calculé sur l'ensemble de son contenu hors ce champ — c'est son identifiant unique. Elle est signée par le foyer émetteur (Ed25519) et immuable : si la donnée change, l'ENU est supprimée et une nouvelle prend sa place.
+L'ENU est l'unité fondamentale du protocole. Une structure légère — quelques centaines d'octets — qui décrit ou contient une donnée. Chaque ENU porte son propre hash, calculé sur l'ensemble de son contenu hors ce champ — c'est son identifiant unique. Elle est signée par le foyer émetteur (ML-DSA-87, post-quantique) et immuable : si la donnée change, l'ENU est supprimée et une nouvelle prend sa place.
 
 Deux niveaux d'adressage : le hash de l'ENU identifie l'enveloppe, le hash de la donnée à l'intérieur identifie le contenu. On trouve l'enveloppe par son hash, on trouve la donnée par le hash qu'elle contient.
 
@@ -128,15 +128,15 @@ Pour modifier la photo (recadrage), Alice récupère le blob via le tiroir (déc
 
 ### Exemple réseau — Alice partage avec Bob
 
-Alice veut partager la photo avec Bob. Elle associe une condition à la donnée dans le registre : `registre/<hash_photo>.1 → <hash_condition>`, où la condition est `Onion(bob)`.
+Alice veut partager la photo avec Bob. Elle associe une condition à la donnée dans le registre : `registre/<hash_photo>.1 → <hash_condition>`, où la condition est `Braise(bob)`.
 
 Alice publie un paquet sur le réseau (couche réseau, hors noyau). Le paquet contient l'ENUd — le hash de l'ENU, le hash de la photo, les métadonnées, la signature d'Alice. Il ne contient pas la photo, juste l'enveloppe. Le paquet circule par le gossip protocol de foyer en foyer.
 
 Bob reçoit le paquet. Il lit l'ENUd, vérifie la signature avec la clé publique d'Alice (publiée dans son IdNU), vérifie le hash de l'ENU contre son contenu. L'enveloppe est authentique. Il veut la photo. Il contacte le foyer d'Alice via Tor (adresse `.onion`).
 
-Le foyer d'Alice reçoit la requête : « je veux `hash_photo`, je suis Bob ». Le noyau cherche dans le registre : `<hash_photo>.1` existe, la cible donne `<hash_condition>`. Le noyau évalue la condition : `Onion(bob)`, le demandeur est Bob — condition remplie. Le noyau déchiffre le blob (clé du classeur), le rechiffre pour Bob (X25519, clé publique tirée de l'IdNU de Bob), et le sert.
+Le foyer d'Alice reçoit la requête : « je veux `hash_photo`, je suis Bob ». Le noyau cherche dans le registre : `<hash_photo>.1` existe, la cible donne `<hash_condition>`. Le noyau évalue la condition : `Braise(bob)`, le demandeur est Bob — condition remplie. Le noyau déchiffre le blob (clé du classeur), le rechiffre pour Bob (ML-KEM-1024, clé publique tirée de l'IdNU de Bob), et le sert.
 
-Bob déchiffre avec sa clé privée X25519. Il vérifie le hash contre celui contenu dans l'ENUd — la donnée est authentique et correspond à l'enveloppe reçue. Il stocke la photo dans son propre classeur via son tiroir, et peut créer sa propre ENUd s'il le souhaite.
+Bob déchiffre avec sa clé privée ML-KEM-1024. Il vérifie le hash contre celui contenu dans l'ENUd — la donnée est authentique et correspond à l'enveloppe reçue. Il stocke la photo dans son propre classeur via son tiroir, et peut créer sa propre ENUd s'il le souhaite.
 
 Le noyau d'Alice n'a jamais entendu parler d'ENU, de Bob, ni de photos. Il a stocké des octets, évalué une condition, signé, chiffré, déchiffré. Le reste appartient aux couches supérieures.
 
@@ -147,7 +147,7 @@ Le noyau d'Alice n'a jamais entendu parler d'ENU, de Bob, ni de photos. Il a sto
 Le foyer est l'espace souverain de l'utilisateur. Il contient les classeurs (données chiffrées), le registre (contrôle d'accès) et le dossier `enu/` (enveloppes signées en clair).
 
 ```
-~/.feu/<onion>/
+~/.feu/<braise>/
     classeur0/
         <hash>.dat              ← blob chiffré
     classeur1/
@@ -190,11 +190,11 @@ Pas de lien = pas de condition. La donnée existe dans son classeur, accessible 
 
 Une **condition** est une expression booléenne composable, immuable, stockée comme un blob chiffré dans un classeur — une donnée comme une autre, adressée par son hash. Elle porte dans son contenu le hash de la donnée qu'elle conditionne — ce qui permet de reconstruire le registre à partir des classeurs seuls.
 
-Les variantes de base : `Tout` (toujours vrai), `Rien` (toujours faux), `Onion` (demandeur spécifique), `Avant` (limite temporelle), `AvecPreuve` (preuve cryptographique fournie par un tiers). Les opérateurs `Et`, `Ou`, `Non` permettent de composer n'importe quelle règle.
+Les variantes de base : `Tout` (toujours vrai), `Rien` (toujours faux), `Braise` (demandeur spécifique, identifié par sa braise), `Avant` (limite temporelle), `AvecPreuve` (preuve cryptographique fournie par un tiers). Les opérateurs `Et`, `Ou`, `Non` permettent de composer n'importe quelle règle.
 
 La variante `AvecPreuve` est le mécanisme d'extension du noyau. Le noyau ne se connecte jamais à un service extérieur — il évalue des preuves qu'on lui présente. Une couche supérieure (plugin, oracle, agent) peut vérifier une transaction Bitcoin, valider un certificat, ou interroger une API, puis fournir au noyau une preuve signée. Le noyau vérifie la signature de la preuve et l'accepte ou la refuse. Seules les preuves signées par un oracle explicitement autorisé par le propriétaire sont acceptées — chaque foyer définit ses propres sources de confiance. Le mécanisme d'autorisation et de validation des oracles est un sujet de conception à détailler ultérieurement.
 
-Exemples : accès réservé à Alice — `Onion(alice)`. Accès réservé à Alice ou Bob avant le 1er janvier 2027 — `Et(Ou(Onion(alice), Onion(bob)), Avant(2027-01-01))`. S'interdire l'accès à ses propres données après une date — `Avant(2025-12-31)`, appliqué par le propriétaire sur ses propres blobs.
+Exemples : accès réservé à Alice — `Braise(alice)`. Accès réservé à Alice ou Bob avant le 1er janvier 2027 — `Et(Ou(Braise(alice), Braise(bob)), Avant(2027-01-01))`. S'interdire l'accès à ses propres données après une date — `Avant(2025-12-31)`, appliqué par le propriétaire sur ses propres blobs.
 
 Une condition est immuable. Pour modifier une règle d'accès, on crée une nouvelle condition et on met à jour le lien dans le registre. L'ancienne condition devient orpheline.
 
@@ -220,7 +220,7 @@ Le **tiroir** est l'interface unique entre le noyau et les couches supérieures.
 
 **Tiroir données** — Entrée/sortie des données chiffrées dans les classeurs. On pousse un flux d'octets et un numéro de classeur, le noyau chiffre avec la clé du classeur, range le blob sous son hash, et retourne ce hash. Le hash est calculé sur le clair avant chiffrement — c'est l'identifiant content-addressable de la donnée. On donne un hash, le noyau localise le blob dans les classeurs, déchiffre, et retourne le flux d'octets. Aucune donnée en clair ne touche le disque — le chiffrement et le déchiffrement sont strictement en mémoire.
 
-**Tiroir signature** — Signature et vérification. On donne des octets, le noyau signe avec la clé privée Ed25519 du foyer et retourne la signature. On donne des octets, une signature et une clé publique, le noyau vérifie et retourne vrai ou faux. La couche ENU utilise ce tiroir pour signer les enveloppes qu'elle crée et vérifier celles qu'elle reçoit du réseau.
+**Tiroir signature** — Signature et vérification. On donne des octets, le noyau signe avec la clé privée ML-DSA-87 du foyer et retourne la signature. On donne des octets, une signature et une clé publique, le noyau vérifie et retourne vrai ou faux. La couche ENU utilise ce tiroir pour signer les enveloppes qu'elle crée et vérifier celles qu'elle reçoit du réseau.
 
 Les deux tiroirs sont les seuls chemins vers le noyau. Les couches supérieures ne voient jamais une clé, ne touchent jamais un classeur directement, ne manipulent jamais un blob chiffré. Elles travaillent avec des hashs, des flux d'octets en clair, et des signatures.
 
@@ -236,17 +236,17 @@ La philosophie du projet encourage à aller plus loin : rapatrier ses données d
 
 ## 8. Le réseau
 
-Chaque foyer Feu est un service caché sur le réseau Tor. Pas d'adresse IP exposée, pas de NAT à configurer, chiffrement de bout en bout natif. L'adresse `.onion` est l'identifiant réseau permanent — immuable, vérifiable, dérivé de la seed.
+Chaque foyer Feu est un service caché sur le réseau Tor. Pas d'adresse IP exposée, pas de NAT à configurer, chiffrement de bout en bout natif. L'adresse `.onion` est l'adresse de transport — jetable, elle peut changer sans que l'identité du foyer change. L'identité du foyer, c'est la **braise** — permanente, dérivée de la seed, indépendante du réseau.
 
 ### Propagation
 
 Les ENU circulent par la **rumeur** : un protocole de propagation où chaque foyer transmet périodiquement à quelques pairs aléatoires. L'information se propage de proche en proche. En quelques cycles, l'ensemble du réseau est informé.
 
-Les ENU voyagent dans des **paquets** — des enveloppes réseau qui ajoutent les informations de transport et un référencement libre en mots-clés. Le paquet transporte les enveloppes, jamais les données elles-mêmes. Un paquet peut être public (lisible par tous) ou privé (chiffré pour un destinataire spécifique avec sa clé publique X25519, que lui seul peut ouvrir).
+Les ENU voyagent dans des **paquets** — des enveloppes réseau qui ajoutent les informations de transport et un référencement libre en mots-clés. Le paquet transporte les enveloppes, jamais les données elles-mêmes. Un paquet peut être public (lisible par tous) ou privé (chiffré pour un destinataire spécifique avec sa clé publique ML-KEM-1024, que lui seul peut ouvrir).
 
 ### Accès à une donnée
 
-Un tiers qui reçoit une ENUd par la rumeur connaît le hash de la donnée et l'adresse `.onion` du foyer émetteur. Pour obtenir la donnée, il contacte le foyer via Tor. Le flux est détaillé dans l'exemple réseau de la section 3.
+Un tiers qui reçoit une ENUd par la rumeur connaît le hash de la donnée et la braise du foyer émetteur (ainsi que son adresse `.onion` de transport, propagée avec le paquet). Pour obtenir la donnée, il contacte le foyer via Tor. Le flux est détaillé dans l'exemple réseau de la section 3.
 
 ### Relais et déni plausible
 
@@ -282,7 +282,7 @@ Un classeur exporté est une archive opaque — chiffrée par sa propre clé, il
 
 La seed BIP39 étant la racine commune de toutes les dérivations, un foyer Feu est nativement compatible avec tout écosystème de cryptomonnaies reposant sur le même standard. Connaître le nom de domaine d'un foyer suffit pour lui adresser un paiement. L'adresse BTC est dérivée de la même seed — aucune clé supplémentaire.
 
-Le noyau ne se connecte jamais à la blockchain. La vérification d'une transaction est assurée par une couche supérieure (plugin, oracle, agent) qui fournit au noyau une preuve cryptographique via la condition `AvecPreuve`. Le paiement devient une condition d'accès comme une autre — composable avec `Onion`, `Avant`, `Et`, `Ou`. Le contrôle d'accès par paiement est un cas particulier du registre, sans dépendance extérieure dans le noyau.
+Le noyau ne se connecte jamais à la blockchain. La vérification d'une transaction est assurée par une couche supérieure (plugin, oracle, agent) qui fournit au noyau une preuve cryptographique via la condition `AvecPreuve`. Le paiement devient une condition d'accès comme une autre — composable avec `Braise`, `Avant`, `Et`, `Ou`. Le contrôle d'accès par paiement est un cas particulier du registre, sans dépendance extérieure dans le noyau.
 
 Ce mécanisme ouvre des perspectives : rémunération automatique lors de l'accès à des données publiées, micro-transactions entre foyers, commerce décentralisé.
 
@@ -294,7 +294,7 @@ Inscrire le hash d'une ENU sur une blockchain publique constitue un horodatage i
 
 L'architecture de Feu repose sur six garanties. Elles ne sont pas des objectifs — elles découlent mécaniquement des choix du protocole.
 
-1. **Souveraineté en 12 mots.** Douze mots suffisent à dériver l'intégralité d'une vie numérique — clés, identités, foyers, adresses réseau. Aucune autorité extérieure, aucun serveur, aucun tiers. La seed est la seule dépendance. Sa perte est la seule perte irréversible.
+1. **Souveraineté en 24 mots.** Vingt-quatre mots suffisent à dériver l'intégralité d'une vie numérique — clés, identités, foyers, adresses réseau. Aucune autorité extérieure, aucun serveur, aucun tiers. La seed est la seule dépendance. Sa perte est la seule perte irréversible.
 
 2. **Chiffré par défaut, clair par exception.** Les données sont chiffrées au repos dans les classeurs, chiffrées en transit sur le réseau, chiffrées dans l'archive du foyer. Les ENU sont en clair mais signées — leur intégrité repose sur la signature, pas sur le chiffrement. Les clés en clair n'existent qu'en mémoire, le temps d'une opération via le tiroir. Le disque ne voit jamais de secret en clair.
 
@@ -318,7 +318,9 @@ L'architecture de Feu repose sur six garanties. Elles ne sont pas des objectifs 
 
 **Foyer** — Instance opérationnelle d'un nœud. Chaque foyer dispose de son propre jeu de clés, de son propre espace chiffré et de sa propre adresse réseau. Un foyer est un service caché sur le réseau Tor.
 
-**Seed** — Graine cryptographique (standard BIP39) de 12 mots. Racine absolue de toutes les clés, identités et foyers. Jamais stockée. Perdre sa seed, c'est perdre son nœud.
+**Braise** — Identifiant public et invariant d'un foyer. Dérivé directement de la seed, indépendant de toute clé cryptographique. Adresse textuelle `.braise` (ex. `k7x4…wq.braise`). Stable à vie, survit à toute migration de primitive.
+
+**Seed** — Graine cryptographique (standard BIP39) de 24 mots, 256 bits d'entropie. Racine absolue de toutes les clés, identités et foyers. Jamais stockée. Perdre sa seed, c'est perdre son nœud.
 
 **Hardware wallet** — Dispositif physique dédié qui génère et conserve la seed dans un environnement inviolable. Architecture cible de Feu.
 
@@ -332,7 +334,7 @@ L'architecture de Feu repose sur six garanties. Elles ne sont pas des objectifs 
 
 **Registre** — Répertoire de liens symboliques dans le foyer. Chaque lien associe le hash d'une donnée (et son classeur) au hash de sa condition d'accès. Reconstructible depuis les classeurs.
 
-**Condition** — Expression booléenne composable et immuable définissant une règle d'accès. Stockée comme un blob chiffré dans un classeur. Variantes : `Tout`, `Rien`, `Onion`, `Avant`, `AvecPreuve`, `Et`, `Ou`, `Non`.
+**Condition** — Expression booléenne composable et immuable définissant une règle d'accès. Stockée comme un blob chiffré dans un classeur. Variantes : `Tout`, `Rien`, `Braise`, `Avant`, `AvecPreuve`, `Et`, `Ou`, `Non`.
 
 **Relais** — Espace réseau du foyer. Contient les paquets publiés et ceux propagés pour d'autres foyers. Le degré de déni plausible dépend du volume de paquets chiffrés relayés — plus le relais est actif, plus l'attribution est difficile.
 

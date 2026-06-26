@@ -404,7 +404,8 @@ impl Trousseau {
         // Braise : identifiant public du foyer, 32 octets dérivés directement de la
         // seed via un label dédié — donc indépendants de toute clé. Contrairement à
         // l'onion qu'elle remplace, elle ne dépend d'aucun schéma cryptographique et
-        // reste stable à travers les migrations (p. ex. passage post-quantique).
+        // reste stable à travers les migrations (p. ex. la montée ML-KEM-768 → 1024
+        // en v0.0.4 ne change aucune braise).
         let braise_brute = Self::derive_depuis_seed::<32>(
             seed_bytes,
             &format!("{}/{}", LABEL_DERIVATION_BRAISE_FOYER, index_foyer),
@@ -458,9 +459,10 @@ impl Trousseau {
     /// clé du nœud. Tirer le sel directement de la seed supprime trois fragilités :
     /// aucune dépendance à la présence préalable de la clé du nœud, aucune
     /// réutilisation de la clé de signature pour un usage étranger, et surtout
-    /// aucune dépendance au déterminisme de la primitive de signature — une future
-    /// migration vers une signature post-quantique (ML-DSA, signature *hedged* par
-    /// défaut) ne risque donc pas de rendre le sel non reproductible.
+    /// aucune dépendance au déterminisme de la primitive de signature — la
+    /// migration vers ML-DSA (v0.0.4, signature déterministe en place, mode
+    /// *hedged* possible demain) ne risque donc pas de rendre le sel non
+    /// reproductible.
     pub(super) fn genere_sel(
         &mut self,
         seed_bytes: &SecretBox<[u8; 64]>,

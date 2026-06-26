@@ -177,17 +177,18 @@ impl Cryptographe {
     /// Dérive et enregistre dans le trousseau toutes les clés du nœud et des foyers.
     ///
     /// À partir de `phrase_seed`, parse la phrase mnémotechnique BIP39, puis dérive
-    /// de manière déterministe et enregistre dans le trousseau :
-    /// - la paire de clés de signature du nœud (`m/0'`)
+    /// de manière déterministe par HKDF-SHA3-256 et enregistre dans le trousseau :
+    /// - la paire de clés de signature du nœud (label `feu/noeud/signature`)
     /// - les clés de signature, de chiffrement, symétriques et de classeurs de chaque
-    ///   foyer (`m/1'` à `m/MAX_FOYERS'`)
+    ///   foyer (labels `feu/foyer/*` suffixés de l'index du foyer)
     ///
     /// Si aucun mot de passe n'est présent dans le trousseau, en collecte un via
     /// `interface` (saisie unique, sans confirmation) — c'est le cas de
     /// [`demarrage_secours`](super::FeuNoyau::demarrage_secours). Si un mot de passe est déjà
     /// présent (positionné au préalable par l'appelant), la saisie est ignorée.
     ///
-    /// Génère également le sel Argon2id de manière déterministe depuis la clé privée du nœud.
+    /// Génère également le sel Argon2id de manière déterministe depuis la seed
+    /// par HKDF-SHA3-256 (label `feu/noeud/sel`).
     ///
     /// `phrase_seed` est consommée par la fonction — elle est zéroïsée à son retour.
     ///

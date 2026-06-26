@@ -42,12 +42,12 @@ const ERR_GAR_004: &str = "GAR-004 > Manque au moins un élément dans config.fe
 /// Configuration globale du nœud — miroir de `config.feu` en mémoire.
 ///
 /// Contient la version du format de fichier, le prochain index de dérivation
-/// BIP32, et les adresses `.braise` des `MAX_FOYERS` foyers du nœud.
+/// et les adresses `.braise` des `MAX_FOYERS` foyers du nœud.
 struct Configuration {
     /// Version du format de `config.feu` — incrémentée à chaque changement
     /// de structure incompatible.
     version: u32,
-    /// Prochain index de dérivation BIP32 à attribuer au prochain foyer créé.
+    /// Prochain index de dérivation à attribuer au prochain foyer créé.
     prochain_index: u32,
     /// Adresses `.braise` des foyers — tableau de taille fixe `MAX_FOYERS`.
     adresses_braise: [String; MAX_FOYERS],
@@ -56,8 +56,8 @@ struct Configuration {
 impl Configuration {
     /// Crée une configuration vide avec les valeurs initiales.
     ///
-    /// `version` est `VERSION_CONFIGURATION`, `prochain_index` est `1` —
-    /// la dérivation BIP32 du premier foyer commence à l'index `1` (`m/1'`).
+    /// `version` est `VERSION_CONFIGURATION`, `prochain_index` est `1`
+    /// (la dérivation du premier foyer commence à l'index `1`).
     /// Les adresses `.braise` sont toutes vides.
     fn new() -> Self {
         Self {
@@ -251,7 +251,7 @@ impl Gardien {
     ///
     /// Écrit l'adresse fournie par le cryptographe à la position `position`
     /// dans le tableau `adresses_braise` et avance `prochain_index` d'une unité
-    /// (index de dérivation BIP32 réservé au prochain foyer créé).
+    /// (index réservé au prochain foyer créé — prépare la révocation future).
     ///
     /// Cette méthode n'écrit rien sur le disque — appeler ensuite
     /// [`Gardien::enregistrement_configuration`] pour persister l'état.
