@@ -14,7 +14,7 @@
 //!
 //! Il a en charge la génération des seeds BIP39, la dérivation HKDF-SHA3-256
 //! des clés nœud et foyer depuis la seed, ainsi que la génération des clés
-//! symétrique, de signature (ML-DSA-87) et de chiffrement (ML-KEM-768) par foyer.
+//! symétrique, de signature (ML-DSA-87) et de chiffrement (ML-KEM-1024) par foyer.
 //! Il maintient en mémoire le trousseau — l'unique endroit où les clés
 //! privées et la clé symétrique existent en clair.
 //!
@@ -46,8 +46,8 @@ use bip39::{Language, Mnemonic};
 use data_encoding::HEXLOWER;
 use hkdf::Hkdf;
 use ml_dsa::{MlDsa87, Signature, Verifier, VerifyingKey};
-use ml_kem::ml_kem_768::Ciphertext as Ciphertext768;
-use ml_kem::{Encapsulate, EncapsulationKey768};
+use ml_kem::ml_kem_1024::Ciphertext as Ciphertext1024;
+use ml_kem::{Encapsulate, EncapsulationKey1024};
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use sha3::{Digest, Sha3_256};
 use std::io::{Read, Write};
@@ -494,21 +494,21 @@ impl Cryptographe {
 
     // ── Chiffrement asymétrique ───────────────────────────────────────────────
 
-    /// Chiffre des octets à destination d'un nœud identifié par sa clé publique ML-KEM-768.
+    /// Chiffre des octets à destination d'un nœud identifié par sa clé publique ML-KEM-1024.
     ///
     /// Implémente le schéma KEM + HKDF + AES-256-GCM :
     ///
-    /// 1. Reconstruit la clé publique ML-KEM-768 depuis les 1184 octets.
-    /// 2. Encapsulation ML-KEM-768 : produit un ciphertext (1088 o) et un secret partagé (32 o).
+    /// 1. Reconstruit la clé publique ML-KEM-1024 depuis les 1568 octets.
+    /// 2. Encapsulation ML-KEM-1024 : produit un ciphertext (1568 o) et un secret partagé (32 o).
     /// 3. Dérive une clé AES-256-GCM via HKDF-SHA3-256 sur le secret partagé.
     /// 4. Chiffre `octets_a_chiffrer` avec AES-256-GCM (nonce aléatoire).
     ///
     /// # Format de sortie
     ///
     /// ```text
-    /// [0..1088]    ciphertext ML-KEM-768 (1088 octets)
-    /// [1088..1100] nonce AES-GCM (12 octets)
-    /// [1100..]     ciphertext + auth tag (16 octets)
+    /// [0..1568]    ciphertext ML-KEM-1024 (1568 octets)
+    /// [1568..1580] nonce AES-GCM (12 octets)
+    /// [1580..]     ciphertext + auth tag (16 octets)
     /// ```
     ///
     /// # Erreurs
@@ -517,14 +517,14 @@ impl Cryptographe {
     /// ou le chiffrement AES-256-GCM échoue.
     pub(super) fn chiffrement_asymetrique(
         &self,
-        cle_publique_destinataire: &[u8; 1184],
+        cle_publique_destinataire: &[u8; 1568],
         octets_a_chiffrer: &[u8],
     ) -> ResultCryptographe<Vec<u8>> {
-        // Reconstruit la clé publique ML-KEM-768 depuis les octets
-        let ek = EncapsulationKey768::new(cle_publique_destinataire.into())
+        // Reconstruit la clé publique ML-KEM-1024 depuis les octets
+        let ek = EncapsulationKey1024::new(cle_publique_destinataire.into())
             .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_CRY_002)))?;
 
-        // Encapsulation → (ciphertext 1088 o, secret partagé 32 o)
+        // Encapsulation → (ciphertext 1568 o, secret partagé 32 o)
         let (ciphertext, secret_partage) = ek.encapsulate();
         let secret_partage = SecretBox::new(Box::new(<[u8; 32]>::from(secret_partage)));
 
@@ -536,7 +536,7 @@ impl Cryptographe {
             cle_brute.expose_secret_mut(),
         )?;
 
-        // Résultat : ciphertext_kem (1088 o) || nonce || ciphertext AES
+        // Résultat : ciphertext_kem (1568 o) || nonce || ciphertext AES
         let mut resultat: Vec<u8> = Vec::new();
         resultat.extend_from_slice(ciphertext.as_ref());
         resultat.extend(Trousseau::chiffrement_generique_avec_cle(
@@ -551,17 +551,17 @@ impl Cryptographe {
     ///
     /// Implémente le schéma KEM + HKDF + AES-256-GCM, côté destinataire :
     ///
-    /// 1. Extrait le ciphertext ML-KEM-768 `[0..1088]`.
+    /// 1. Extrait le ciphertext ML-KEM-1024 `[0..1568]`.
     /// 2. Décapsulation avec la clé privée du foyer → secret partagé (32 o).
     /// 3. Dérive la clé AES-256-GCM via HKDF-SHA3-256 sur le secret partagé.
-    /// 4. Déchiffre `[1088..]` avec AES-256-GCM.
+    /// 4. Déchiffre `[1568..]` avec AES-256-GCM.
     ///
     /// # Format d'entrée
     ///
     /// ```text
-    /// [0..1088]    ciphertext ML-KEM-768 (1088 octets)
-    /// [1088..1100] nonce AES-GCM (12 octets)
-    /// [1100..]     ciphertext + auth tag (16 octets)
+    /// [0..1568]    ciphertext ML-KEM-1024 (1568 octets)
+    /// [1568..1580] nonce AES-GCM (12 octets)
+    /// [1580..]     ciphertext + auth tag (16 octets)
     /// ```
     ///
     /// # Erreurs
@@ -574,9 +574,9 @@ impl Cryptographe {
         index_foyer: usize,
         octets_a_dechiffrer: &[u8],
     ) -> ResultCryptographe<Vec<u8>> {
-        // Extrait le ciphertext KEM (1088 o)
-        let ciphertext: &Ciphertext768 = octets_a_dechiffrer
-            .get(0..1088)
+        // Extrait le ciphertext KEM (1568 o)
+        let ciphertext: &Ciphertext1024 = octets_a_dechiffrer
+            .get(0..1568)
             .ok_or_else(|| ErreurCryptographe::Interne(String::from(ERR_CRY_002)))?
             .try_into()
             .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_CRY_002)))?;
@@ -596,7 +596,7 @@ impl Cryptographe {
 
         Trousseau::dechiffrement_generique_avec_cle(
             cle_brute.expose_secret(),
-            &octets_a_dechiffrer[1088..],
+            &octets_a_dechiffrer[1568..],
         )
     }
 

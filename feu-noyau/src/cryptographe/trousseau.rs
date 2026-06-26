@@ -27,7 +27,7 @@
 //!   destruction.
 //!
 //! - `ZeroizeOnDrop` (crate `zeroize`) : utilisé pour [`SigningKey`]
-//!   (ml-dsa) et [`DecapsulationKey768`] (ml-kem), dont les types
+//!   (ml-dsa) et [`DecapsulationKey1024`] (ml-kem), dont les types
 //!   n'implémentent pas [`Zeroize`] et ne peuvent donc pas être encapsulés
 //!   dans [`SecretBox`]. La mémoire est garantie zéroïsée à la destruction par
 //!   l'implémentation interne de la crate, mais `.zeroize()` ne peut pas être
@@ -57,7 +57,7 @@
 //! - [`TrousseauFoyer`] — clés opérationnelles d'un foyer ouvert
 //! - [`PaireClesSignature`] — paire de clés ML-DSA-87 ; `privee` protégée par
 //!   `ZeroizeOnDrop` (exception : `SigningKey` n'implémente pas `Zeroize`)
-//! - [`PaireClesChiffrement`] — paire de clés ML-KEM-768 ; `privee` protégée par
+//! - [`PaireClesChiffrement`] — paire de clés ML-KEM-1024 ; `privee` protégée par
 //!   `ZeroizeOnDrop` (exception : `DecapsulationKey` n'implémente pas `Zeroize`)
 //! - `cle_chiffrement` — clé symétrique dans `SecretBox<[u8; 32]>` (pas de newtype)
 //! - `mdp` — mot de passe dans `Option<SecretBox<String>>` (pas de newtype)
@@ -84,8 +84,8 @@ use data_encoding::BASE32_NOPAD;
 use hkdf::Hkdf;
 use ml_dsa::{Keypair, MlDsa87, Signer, SigningKey, VerifyingKey};
 use ml_kem::Decapsulate;
-use ml_kem::ml_kem_768::Ciphertext as Ciphertext768;
-use ml_kem::{DecapsulationKey768, EncapsulationKey768, KeyExport, Seed};
+use ml_kem::ml_kem_1024::Ciphertext as Ciphertext1024;
+use ml_kem::{DecapsulationKey1024, EncapsulationKey1024, KeyExport, Seed};
 use rand::RngCore;
 use rand::rngs::OsRng;
 use secrecy::SecretString;
@@ -144,17 +144,17 @@ struct PaireClesSignature {
     publique: VerifyingKey<MlDsa87>,
 }
 
-/// Paire de clés ML-KEM-768 d'un foyer — chiffrement réseau asymétrique post-quantique.
+/// Paire de clés ML-KEM-1024 d'un foyer — chiffrement réseau asymétrique post-quantique.
 ///
 /// `privee` est protégée par `ZeroizeOnDrop` (ml-kem, feature `zeroize`) —
 /// `DecapsulationKey` n'implémente pas `Zeroize`, `SecretBox` est donc inutilisable.
 /// La zéroïsation est garantie à la destruction, mais ne peut pas être déclenchée manuellement.
 struct PaireClesChiffrement {
     // DecapsulationKey n'implémente que ZeroizeOnDrop (ml-kem feature "zeroize") —
-    // SecretBox impossible, comme pour SigningKey. La clé privée ML-KEM-768 est
+    // SecretBox impossible, comme pour SigningKey. La clé privée ML-KEM-1024 est
     // stockée sous forme de seed 64 o (sérialisation recommandée par la crate).
-    privee: DecapsulationKey768,
-    publique: EncapsulationKey768,
+    privee: DecapsulationKey1024,
+    publique: EncapsulationKey1024,
 }
 
 /// Clés opérationnelles d'un foyer ouvert, maintenues en mémoire pour la durée de la session.
@@ -201,7 +201,7 @@ impl TrousseauFoyer {
     /// Chiffre toutes les clés du foyer et produit le [`TrousseauPublicFoyer`] persistable.
     ///
     /// Délègue le chiffrement AES-256-GCM de chaque clé à [`Trousseau::chiffre_cle`]
-    /// (clés de 32 octets) ou [`Trousseau::chiffre_seed`] (seed ML-KEM-768 de 64 octets).
+    /// (clés de 32 octets) ou [`Trousseau::chiffre_seed`] (seed ML-KEM-1024 de 64 octets).
     /// Les clés publiques sont copiées en clair.
     ///
     /// # Erreurs
@@ -246,8 +246,8 @@ impl TrousseauFoyer {
         &self.cle_chiffrement
     }
 
-    /// Retourne une référence à la clé privée ML-KEM-768 de chiffrement du foyer.
-    fn donne_cle_privee_chiffrement(&self) -> &DecapsulationKey768 {
+    /// Retourne une référence à la clé privée ML-KEM-1024 de chiffrement du foyer.
+    fn donne_cle_privee_chiffrement(&self) -> &DecapsulationKey1024 {
         &self.paire_chiffrement.privee
     }
 
@@ -331,7 +331,7 @@ impl Trousseau {
     /// - la braise, identifiant public du foyer — pas une clé (`feu/foyer/braise`)
     /// - une clé symétrique de chiffrement du foyer (`feu/foyer/symetrique`)
     /// - une paire de clés ML-DSA-87 de signature (`feu/foyer/signature`)
-    /// - une paire de clés ML-KEM-768 de chiffrement asymétrique (`feu/foyer/chiffrement`)
+    /// - une paire de clés ML-KEM-1024 de chiffrement asymétrique (`feu/foyer/chiffrement`)
     /// - cinq clés symétriques de classeur (`feu/classeur/symetrique`, suffixée de l'index du classeur)
     ///
     /// Toutes les clés brutes intermédiaires sont portées par des `SecretBox` et
@@ -376,7 +376,7 @@ impl Trousseau {
                 seed_bytes,
                 &format!("{}/{}", LABEL_DERIVATION_CHIFFREMENT_FOYER, index_foyer),
             )?;
-            DecapsulationKey768::from_seed(Seed::from(*seed_brute.expose_secret()))
+            DecapsulationKey1024::from_seed(Seed::from(*seed_brute.expose_secret()))
         };
 
         let cle_chiff_pub = cle_chiff_priv.encapsulation_key().clone();
@@ -607,7 +607,7 @@ impl Trousseau {
         }
     }
 
-    /// Chiffre une seed ML-KEM-768 de 64 octets avec AES-256-GCM.
+    /// Chiffre une seed ML-KEM-1024 de 64 octets avec AES-256-GCM.
     ///
     /// Variante de [`chiffre_cle`](Self::chiffre_cle) pour la clé privée de
     /// chiffrement, sérialisée sous forme de seed 64 octets — `chiffre_cle` est
@@ -658,7 +658,7 @@ impl Trousseau {
         }
     }
 
-    /// Déchiffre une seed ML-KEM-768 de 92 octets (`nonce || ciphertext || tag`) avec AES-256-GCM.
+    /// Déchiffre une seed ML-KEM-1024 de 92 octets (`nonce || ciphertext || tag`) avec AES-256-GCM.
     ///
     /// Réciproque de [`chiffre_seed`](Self::chiffre_seed) — variante 64 octets de
     /// [`dechiffre_cle`](Self::dechiffre_cle). Extrait le nonce des 12 premiers
@@ -867,9 +867,9 @@ impl Trousseau {
         Ok(contenu_dechiffre)
     }
 
-    /// Récupère le secret partagé ML-KEM-768 par décapsulation.
+    /// Récupère le secret partagé ML-KEM-1024 par décapsulation.
     ///
-    /// Décapsule le `ciphertext` (1088 octets) avec la clé privée du foyer
+    /// Décapsule le `ciphertext` (1568 octets) avec la clé privée du foyer
     /// et retourne le secret partagé de 32 octets dans un [`SecretBox`].
     ///
     /// Utilisé dans le schéma de chiffrement asymétrique post-quantique.
@@ -880,7 +880,7 @@ impl Trousseau {
     pub(super) fn recuperation_secret_partage(
         &self,
         index_foyer: usize,
-        ciphertext: &Ciphertext768,
+        ciphertext: &Ciphertext1024,
     ) -> ResultCryptographe<SecretBox<[u8; 32]>> {
         let secret_partage = self
             .donne_cle_privee_chiffrement_foyer(index_foyer)?
@@ -973,7 +973,7 @@ impl Trousseau {
 
     /// Déchiffre et charge les clés d'un foyer dans le trousseau à partir d'un [`TrousseauPublicFoyer`].
     ///
-    /// Déchiffre la clé symétrique, la paire de signature ML-DSA-87, la paire de chiffrement ML-KEM-768
+    /// Déchiffre la clé symétrique, la paire de signature ML-DSA-87, la paire de chiffrement ML-KEM-1024
     /// et les cinq clés de classeurs avec la clé éphémère, puis enregistre le [`TrousseauFoyer`]
     /// résultant à l'`index` donné. La braise (identifiant du foyer) est lue depuis le [`TrousseauPublicFoyer`].
     ///
@@ -1004,7 +1004,8 @@ impl Trousseau {
         };
 
         let cle_brute = self.dechiffre_seed(&trousseau_public_foyer.donne_cle_chiff_privee())?;
-        let cle_chiff_priv = DecapsulationKey768::from_seed(Seed::from(*cle_brute.expose_secret()));
+        let cle_chiff_priv =
+            DecapsulationKey1024::from_seed(Seed::from(*cle_brute.expose_secret()));
 
         let paire_chiffrement = PaireClesChiffrement {
             publique: cle_chiff_priv.encapsulation_key().clone(),
@@ -1050,7 +1051,7 @@ impl Trousseau {
         Ok(cle_classeur)
     }
 
-    /// Retourne la clé privée ML-KEM-768 du foyer à la position `index_foyer`.
+    /// Retourne la clé privée ML-KEM-1024 du foyer à la position `index_foyer`.
     ///
     /// # Erreurs
     ///
@@ -1058,7 +1059,7 @@ impl Trousseau {
     fn donne_cle_privee_chiffrement_foyer(
         &self,
         index_foyer: usize,
-    ) -> ResultCryptographe<&DecapsulationKey768> {
+    ) -> ResultCryptographe<&DecapsulationKey1024> {
         let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
             return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_011)));
         };

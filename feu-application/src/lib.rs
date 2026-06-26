@@ -164,7 +164,7 @@ impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
         &mut self,
         index_foyer: usize,
         cle_publique_sig: [u8; 2592],
-        cle_publique_chif: [u8; 1184],
+        cle_publique_chif: [u8; 1568],
     ) {
         self.session_application
             .definit_cle_publique_sig_foyer(index_foyer, cle_publique_sig);

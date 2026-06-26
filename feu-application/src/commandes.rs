@@ -361,7 +361,7 @@ impl FeuApplication {
         Ok(noyau.informations_blob(index_foyer, index_classeur, hash)?)
     }
 
-    /// Chiffre des octets à destination d'un nœud identifié par sa clé publique ML-KEM-768.
+    /// Chiffre des octets à destination d'un nœud identifié par sa clé publique ML-KEM-1024.
     ///
     /// Schéma KEM + HKDF + AES-256-GCM. La clé privée du nœud local
     /// n'intervient pas — seule la clé publique du destinataire est nécessaire.
@@ -372,7 +372,7 @@ impl FeuApplication {
     /// Retourne une erreur si la taille dépasse la limite ou si le chiffrement échoue.
     pub fn commande_chiffrement_asymetrique(
         &self,
-        cle_publique_destinataire: &[u8; 1184],
+        cle_publique_destinataire: &[u8; 1568],
         octets_a_chiffrer: &[u8],
     ) -> ResultFeuApplication<Vec<u8>> {
         let noyau = self
@@ -386,7 +386,7 @@ impl FeuApplication {
     /// Déchiffre un message chiffré à destination du foyer désigné.
     ///
     /// Réciproque de [`commande_chiffrement_asymetrique`](Self::commande_chiffrement_asymetrique) —
-    /// utilise la clé privée ML-KEM-768 du foyer, qui doit être ouverte.
+    /// utilise la clé privée ML-KEM-1024 du foyer, qui doit être ouverte.
     ///
     /// # Erreurs
     ///

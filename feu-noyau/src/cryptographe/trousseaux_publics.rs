@@ -13,7 +13,7 @@
 //! avant d'être stocké sur le disque.
 //!
 //! Aucune donnée sensible n'est stockée en clair : seul le sel Argon2id
-//! et les clés publiques (ML-DSA-87, ML-KEM-768) apparaissent sans chiffrement.
+//! et les clés publiques (ML-DSA-87, ML-KEM-1024) apparaissent sans chiffrement.
 //! Ces structures sont destinées à être écrites sur le disque par le gardien.
 
 use super::erreur::{ErreurCryptographe, ResultCryptographe};
@@ -28,7 +28,7 @@ const ERR_TRP_003: &str = "TRP-003 > Erreur d'ajout du trousseau public foyer";
 /// Toutes les clés privées et symétriques sont chiffrées avec AES-256-GCM.
 /// Chaque champ chiffré suit le format :
 /// `[nonce (12 o.) | ciphertext + tag (16 o.)]` — 28 + plaintext octets au total.
-/// La plupart des clés font 32 o (→ 60 o chiffrées). La seed ML-KEM-768 (privée)
+/// La plupart des clés font 32 o (→ 60 o chiffrées). La seed ML-KEM-1024 (privée)
 /// fait 64 o (→ 92 o chiffrées).
 pub(crate) struct TrousseauPublicFoyer {
     braise: String,
@@ -37,7 +37,7 @@ pub(crate) struct TrousseauPublicFoyer {
     cle_sig_privee: [u8; 60],  // chiffrée
     cle_sig_pub: [u8; 2592],
     cle_chiff_privee: [u8; 92], // chiffrée
-    cle_chiff_pub: [u8; 1184],
+    cle_chiff_pub: [u8; 1568],
 
     cles_chiffrement_classeurs: [Option<[u8; 60]>; MAX_CLASSEURS], // chiffrées
 }
@@ -53,7 +53,7 @@ impl TrousseauPublicFoyer {
         cle_sig_privee: [u8; 60],
         cle_sig_pub: [u8; 2592],
         cle_chiff_privee: [u8; 92],
-        cle_chiff_pub: [u8; 1184],
+        cle_chiff_pub: [u8; 1568],
     ) -> Self {
         Self {
             braise,
@@ -86,13 +86,13 @@ impl TrousseauPublicFoyer {
         self.cle_sig_pub
     }
 
-    /// Retourne la clé privée de chiffrement ML-KEM-768 du foyer — chiffrée, 92 octets.
+    /// Retourne la clé privée de chiffrement ML-KEM-1024 du foyer — chiffrée, 92 octets.
     pub(crate) fn donne_cle_chiff_privee(&self) -> [u8; 92] {
         self.cle_chiff_privee
     }
 
-    /// Retourne la clé publique de chiffrement ML-KEM-768 du foyer — 1184 octets.
-    pub(crate) fn donne_cle_chiff_pub(&self) -> [u8; 1184] {
+    /// Retourne la clé publique de chiffrement ML-KEM-1024 du foyer — 1568 octets.
+    pub(crate) fn donne_cle_chiff_pub(&self) -> [u8; 1568] {
         self.cle_chiff_pub
     }
 

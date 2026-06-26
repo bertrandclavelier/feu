@@ -239,8 +239,8 @@ impl Carnet {
     /// - `~/.feu/.cles/<braise>.cle` — clé symétrique d'archive (chiffrée)
     /// - `~/.feu/<braise>/.cles/sig.priv` — clé privée de signature réseau (chiffrée)
     /// - `~/.feu/<braise>/.cles/sig.pub` — clé publique de signature réseau (en clair)
-    /// - `~/.feu/<braise>/.cles/chif.priv` — clé privée ML-KEM-768 (chiffrée, 92 o)
-    /// - `~/.feu/<braise>/.cles/chif.pub` — clé publique ML-KEM-768 (en clair, 1184 o)
+    /// - `~/.feu/<braise>/.cles/chif.priv` — clé privée ML-KEM-1024 (chiffrée, 92 o)
+    /// - `~/.feu/<braise>/.cles/chif.pub` — clé publique ML-KEM-1024 (en clair, 1568 o)
     /// - `~/.feu/<braise>/.cles/classeur0.cle` à `classeur4.cle` — clés des classeurs (chiffrées)
     ///
     /// Tous les dossiers sont créés avec les permissions `rwx------` (0o700).
@@ -346,7 +346,7 @@ impl Carnet {
     /// Lit depuis `~/.feu/.cles/<braise>.cle` et `~/.feu/<braise>/.cles/` :
     /// - la clé symétrique de chiffrement (`<braise>.cle`) — 60 octets
     /// - la paire de clés de signature (`sig.priv`, `sig.pub`) — 60 et 2592 octets
-    /// - la paire de clés de chiffrement ML-KEM-768 (`chif.priv`, `chif.pub`) — 92 et 1184 octets
+    /// - la paire de clés de chiffrement ML-KEM-1024 (`chif.priv`, `chif.pub`) — 92 et 1568 octets
     ///
     /// Les clés privées et symétriques sont retournées chiffrées (AES-256-GCM),
     /// y compris les cinq clés de classeurs (`classeur0.cle` à `classeur4.cle`).
