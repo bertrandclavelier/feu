@@ -60,7 +60,7 @@ use crate::cryptographe::trousseaux_publics::{
     TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
 };
 
-const NOMBRE_MOTS_SEED: usize = 12;
+const NOMBRE_MOTS_SEED: usize = 24;
 const INFO_HKDF_CHIFFREMENT_ASYMETRIQUE: &str = "feu-chiffrement-asymetrique";
 
 const ERR_CRY_001: &str = "CRY-001 > Données corrompues après déchiffrement";
@@ -95,7 +95,7 @@ impl Cryptographe {
     ///
     /// Enchaîne les opérations suivantes :
     ///
-    /// 1. Génère la seed mnémonique (12 mots, français) et la transmet à `interface`.
+    /// 1. Génère la seed mnémonique (24 mots, français) et la transmet à `interface`.
     /// 2. Demande confirmation que la seed a bien été notée — interrompt si refus.
     /// 3. Collecte et vérifie un nouveau mot de passe (deux saisies concordantes).
     /// 4. Dérive et enregistre dans le trousseau de manière déterministe les clés du nœud,

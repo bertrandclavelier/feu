@@ -404,7 +404,7 @@ impl FeuNoyau {
     ///
     /// `phrase_seed` est une phrase mnémotechnique BIP39 : mots en minuscules séparés
     /// par des espaces (tout blanc accepté — espaces multiples tolérés). Comptes
-    /// valides : 12, 15, 18, 21 ou 24 mots. Feu génère des seeds de 12 mots.
+    /// valides : 12, 15, 18, 21 ou 24 mots. Feu génère des seeds de 24 mots.
     /// La normalisation NFKD est appliquée automatiquement avant validation.
     ///
     /// # Erreurs
@@ -542,7 +542,7 @@ impl FeuNoyau {
     ///
     /// `phrase_seed` est une phrase mnémotechnique BIP39 : mots en minuscules séparés
     /// par des espaces (tout blanc accepté — espaces multiples tolérés). Comptes
-    /// valides : 12, 15, 18, 21 ou 24 mots. Feu génère des seeds de 12 mots.
+    /// valides : 12, 15, 18, 21 ou 24 mots. Feu génère des seeds de 24 mots.
     /// La normalisation NFKD est appliquée automatiquement avant validation.
     ///
     /// # Erreurs
