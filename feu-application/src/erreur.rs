@@ -18,6 +18,8 @@
 use feu_noyau::ErreurFeuNoyau;
 use thiserror::Error;
 
+use crate::scribe::erreur::ErreurScribe;
+
 /// Alias de [`Result`] utilisé par toutes les fonctions publiques de `feu-application`.
 pub type ResultFeuApplication<T> = Result<T, ErreurFeuApplication>;
 
@@ -39,6 +41,11 @@ pub enum ErreurFeuApplication {
     /// Le message textuel provient de [`ErreurFeuNoyau`] via `.to_string()`.
     #[error("APP > {0}")]
     FeuNoyau(String),
+
+    /// Erreur remontée depuis le Scribe (couche ENU).
+    /// Le message textuel provient de `ErreurScribe` via `.to_string()`.
+    #[error("APP > {0}")]
+    Scribe(String),
 
     /// Erreur propre à la couche applicative — argument invalide, précondition non
     /// satisfaite ou état interne incohérent. Indépendante de `feu-noyau`.
@@ -67,5 +74,11 @@ impl From<ErreurFeuNoyau> for ErreurFeuApplication {
     /// préservant l'encapsulation des détails d'implémentation de `feu-noyau`.
     fn from(e: ErreurFeuNoyau) -> Self {
         ErreurFeuApplication::FeuNoyau(e.to_string())
+    }
+}
+
+impl From<ErreurScribe> for ErreurFeuApplication {
+    fn from(e: ErreurScribe) -> Self {
+        ErreurFeuApplication::Scribe(e.to_string())
     }
 }

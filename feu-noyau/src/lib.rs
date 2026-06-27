@@ -36,6 +36,7 @@ mod cryptographe;
 mod erreur;
 mod gardien;
 
+use std::env;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -369,6 +370,20 @@ impl Drop for FeuNoyau {
 }
 
 impl FeuNoyau {
+    /// Retourne le chemin racine du nœud — `~/.feu`.
+    ///
+    /// Point de vérité unique pour `~/.feu` dans tout le crate. Centralise la
+    /// lecture de `$HOME` de manière à ne pas la dupliquer entre `Carnet` et
+    /// les autres composants. La résolution a lieu une fois, au premier appel
+    /// (le cache est implicite — appelée depuis `Carnet::new`).
+    ///
+    /// # Panics
+    ///
+    /// Panique si la variable d'environnement `HOME` est absente.
+    pub fn chemin_feu() -> PathBuf {
+        PathBuf::from(env::var("HOME").expect("HOME absente")).join(".feu/")
+    }
+
     /// Crée une instance de [`FeuNoyau`] prête à l'emploi — nœud allumé, foyers fermés.
     ///
     /// Détecte automatiquement l'état du nœud en vérifiant l'existence de l'arborescence

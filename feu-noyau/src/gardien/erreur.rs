@@ -10,8 +10,7 @@
 //!
 //! [`ErreurGardien`] couvre l'ensemble des erreurs pouvant survenir
 //! lors des opérations sur le système de fichiers local — lecture,
-//! écriture, création de dossiers — et lors de la lecture des
-//! variables d'environnement.
+//! écriture, création de dossiers.
 //!
 //! Ce type est interne à `feu-noyau` — il n'est jamais exposé directement
 //! à l'extérieur du crate. Il remonte vers [`ErreurFeuNoyau`] via une
@@ -20,12 +19,13 @@
 //!
 //! # Conversion des erreurs tierces
 //!
-//! Les trois erreurs tierces — `std::env::VarError`, `std::io::Error` et
-//! `std::num::ParseIntError` — implémentent `std::error::Error`.
-//! `#[from]` (thiserror) génère automatiquement leur conversion. Le type
-//! original est préservé dans la variante et peut être inspecté ou ré-affiché.
-
-use std::env::VarError;
+//! Les deux erreurs tierces — `std::io::Error` et `std::num::ParseIntError` —
+//! implémentent `std::error::Error`. `#[from]` (thiserror) génère
+//! automatiquement leur conversion. Le type original est préservé dans la
+//! variante et peut être inspecté ou ré-affiché.
+//!
+//! La lecture de `$HOME` a été centralisée dans [`FeuNoyau::chemin_feu`] —
+//! le `VarError` ne fait donc plus partie de ce type d'erreur.
 
 use thiserror::Error;
 
@@ -36,10 +36,6 @@ pub(crate) enum ErreurGardien {
     /// Erreur interne générique — portée directement par un message textuel.
     #[error("GAR > {0}")]
     Interne(String),
-
-    /// Erreur émise par `std::env::var()` lors de la lecture d'une variable d'environnement.
-    #[error("GAR > VarError > {0}")]
-    VarError(#[from] VarError),
 
     /// Erreur d'entrée/sortie émise par les opérations sur le système de fichiers.
     #[error("GAR > IoError > {0}")]

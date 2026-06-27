@@ -16,7 +16,6 @@
 //! Les noms de fichiers du protocole sont définis comme constantes privées
 //! au niveau du module — point de vérité unique pour toute l'arborescence.
 
-use std::env;
 use std::fs;
 use std::fs::DirBuilder;
 use std::fs::File;
@@ -26,6 +25,7 @@ use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
+use crate::FeuNoyau;
 use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
 use crate::gardien::erreur::{ErreurGardien, ResultGardien};
 use crate::{Anomalie, MAX_CLASSEURS, MAX_FOYERS};
@@ -58,15 +58,18 @@ pub(super) struct Carnet {
 }
 
 impl Carnet {
-    /// Initialise le registre à partir de la variable d'environnement `HOME`.
+    /// Initialise le registre à partir de [`FeuNoyau::chemin_feu`].
     ///
-    /// # Erreurs
+    /// Le chemin racine `~/.feu` est centralisé dans cette méthode —
+    /// voir son implémentation pour le détail de la résolution.
     ///
-    /// Retourne une erreur si `HOME` est absente ou contient une valeur
-    /// non Unicode.
+    /// # Panics
+    ///
+    /// Panique si la variable d'environnement `HOME` est absente
+    /// (propagé depuis `FeuNoyau::chemin_feu`).
     pub(super) fn new() -> ResultGardien<Self> {
         Ok(Carnet {
-            chemin_feu: PathBuf::from(env::var("HOME")?).join(".feu/"),
+            chemin_feu: FeuNoyau::chemin_feu(),
         })
     }
 

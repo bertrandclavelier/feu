@@ -44,8 +44,11 @@ use feu_noyau::{FeuNoyau, InterfaceFeuNoyau};
 use secrecy::SecretString;
 pub use session::SessionApplication;
 
+use crate::scribe::Scribe;
+
 mod commandes;
 pub mod erreur;
+mod scribe;
 mod session;
 
 /// Contrat entre [`FeuApplication`] et la couche de présentation.
@@ -185,6 +188,8 @@ pub struct FeuApplication {
     feu_noyau: Option<FeuNoyau>,
 
     session: SessionApplication,
+
+    scribe: Scribe,
 }
 
 impl FeuApplication {
@@ -194,11 +199,10 @@ impl FeuApplication {
     /// appeler [`commande_allumage_noeud`](Self::commande_allumage_noeud) est nécessaire
     /// avant toute autre commande.
     pub fn new() -> Self {
-        let session = SessionApplication::new();
-
         Self {
             feu_noyau: None,
-            session,
+            session: SessionApplication::new(),
+            scribe: Scribe::new(),
         }
     }
 }

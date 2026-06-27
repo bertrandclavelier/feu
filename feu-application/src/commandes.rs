@@ -60,6 +60,8 @@ impl FeuApplication {
 
         interface_feu_application.recevoir_session_application(Some(self.session.clone()));
 
+        self.scribe.activation()?;
+
         Ok(())
     }
 
@@ -95,6 +97,9 @@ impl FeuApplication {
         self.feu_noyau = None;
         self.session = SessionApplication::new();
         interface_feu_application.recevoir_session_application(None);
+
+        self.scribe.desactivation();
+
         Ok(())
     }
 
