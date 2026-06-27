@@ -654,6 +654,13 @@ impl Cryptographe {
         Ok(cle_publique.verify(octets_signes, &signature).is_ok())
     }
 
+    /// Calcule l'empreinte SHA3-256 des octets fournis.
+    ///
+    /// Retourne un tableau de 32 octets. Fonction pure, sans état.
+    pub(super) fn empreinte(octets: &[u8]) -> [u8; 32] {
+        Sha3_256::digest(octets).into()
+    }
+
     // ── Utilitaires privés ────────────────────────────────────────────────────
 
     /// Demande un nouveau mot de passe à l'utilisateur et le stocke dans le trousseau.

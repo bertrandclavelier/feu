@@ -19,6 +19,7 @@
 //! Il ignore ce qu'est un foyer : la résolution du blob (trouver le `.dat`
 //! correspondant à un `hash_donnee`) est ailleurs.
 
+mod enu;
 pub(super) mod erreur;
 
 use std::{fs::DirBuilder, os::unix::fs::DirBuilderExt, path::PathBuf};

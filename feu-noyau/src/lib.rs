@@ -1221,6 +1221,14 @@ impl FeuNoyau {
         )?)
     }
 
+    /// Calcule l'empreinte SHA3-256 des octets fournis.
+    ///
+    /// Délégation interne au `Cryptographe`. Exposée pour les couches
+    /// supérieures (Scribe) qui ont besoin de hasher sans importer `sha3`.
+    pub fn creation_empreinte(octets: &[u8]) -> [u8; 32] {
+        Cryptographe::empreinte(octets)
+    }
+
     // ── Diagnostic ───────────────────────────────────────────────────────────
 
     /// Diagnostique l'état du nœud sans modifier quoi que ce soit.

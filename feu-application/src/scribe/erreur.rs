@@ -18,6 +18,7 @@
 //! automatiquement la conversion. Le type original est préservé dans la variante
 //! et peut être inspecté ou ré-affiché.
 
+use feu_noyau::ErreurFeuNoyau;
 use thiserror::Error;
 
 /// Alias de [`Result`] utilisé par les fonctions du Scribe.
@@ -26,7 +27,17 @@ pub(crate) type ResultScribe<T> = Result<T, ErreurScribe>;
 /// Erreurs propres au Scribe.
 #[derive(Error, Debug)]
 pub(crate) enum ErreurScribe {
+    /// Erreur remontée depuis `feu-noyau` (signature, empreinte…).
+    #[error("SCR > {0}")]
+    FeuNoyau(String),
+
     /// Erreur d'entrée/sortie émise par les opérations sur le système de fichiers.
     #[error("SCR > IoError > {0}")]
     IoError(#[from] std::io::Error),
+}
+
+impl From<ErreurFeuNoyau> for ErreurScribe {
+    fn from(e: ErreurFeuNoyau) -> Self {
+        ErreurScribe::FeuNoyau(e.to_string())
+    }
 }
