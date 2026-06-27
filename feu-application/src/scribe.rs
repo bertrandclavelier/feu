@@ -36,8 +36,6 @@ use crate::scribe::erreur::ResultScribe;
 pub(super) struct Scribe {
     /// `true` si le Scribe a été activé (nœud allumé).
     est_actif: bool,
-    /// Chemin racine du nœud `~/.feu` — résolu une fois à la construction.
-    chemin_feu: PathBuf,
 }
 
 impl Scribe {
@@ -46,10 +44,7 @@ impl Scribe {
     /// Le chemin `~/.feu` est résolu une fois via [`FeuNoyau::chemin_feu`]
     /// et stocké — pas de relecture de `$HOME` à chaque utilisation.
     pub(super) fn new() -> Self {
-        Self {
-            est_actif: false,
-            chemin_feu: FeuNoyau::chemin_feu(),
-        }
+        Self { est_actif: false }
     }
 
     /// Active le Scribe et crée le dossier `~/.feu/enu/` s'il est absent.
@@ -67,11 +62,11 @@ impl Scribe {
     pub(super) fn activation(&mut self) -> ResultScribe<()> {
         self.est_actif = true;
 
-        if !self.donne_chemin_dossier_enu().exists() {
+        if !donne_chemin_dossier_enu().exists() {
             DirBuilder::new()
                 .mode(0o700)
                 .recursive(true)
-                .create(self.donne_chemin_dossier_enu())?;
+                .create(donne_chemin_dossier_enu())?;
         }
 
         Ok(())
@@ -84,9 +79,9 @@ impl Scribe {
     pub(super) fn desactivation(&mut self) {
         self.est_actif = false;
     }
+}
 
-    /// Retourne le chemin `~/.feu/enu/`.
-    fn donne_chemin_dossier_enu(&self) -> PathBuf {
-        self.chemin_feu.join("enu/")
-    }
+/// Retourne le chemin `~/.feu/enu/`.
+fn donne_chemin_dossier_enu() -> PathBuf {
+    FeuNoyau::chemin_feu().join("enu/")
 }

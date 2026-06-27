@@ -90,6 +90,15 @@ impl SessionApplication {
         Ok(&self.braise_foyers[index_foyer])
     }
 
+    /// Résout une adresse `.braise` en position de foyer.
+    ///
+    /// Retourne `Some(index)` si la braise est celle d'un foyer connu dans la
+    /// session, `None` si l'adresse est inconnue. Permet de retrouver la clé
+    /// publique de signature d'un foyer à partir de la braise lue dans une ENU.
+    pub fn braise_vers_index(&self, braise: &str) -> Option<usize> {
+        self.braise_foyers.iter().position(|b| b == braise)
+    }
+
     /// Enregistre l'adresse `.braise` du foyer à la position `index_foyer`.
     ///
     /// Appelé par [`RecepteurNoyau`] lors de l'allumage du nœud.

@@ -22,6 +22,8 @@
 use feu_noyau::ErreurFeuNoyau;
 use thiserror::Error;
 
+use crate::ErreurFeuApplication;
+
 /// Alias de [`Result`] utilisé par les fonctions du Scribe.
 pub(crate) type ResultScribe<T> = Result<T, ErreurScribe>;
 
@@ -41,6 +43,9 @@ pub(crate) enum ErreurScribe {
     #[error("SCR > {0}")]
     FeuNoyau(String),
 
+    #[error("SCR > {0}")]
+    FeuApplication(String),
+
     /// Erreur d'entrée/sortie émise par les opérations sur le système de fichiers.
     #[error("SCR > IoError > {0}")]
     IoError(#[from] std::io::Error),
@@ -49,5 +54,11 @@ pub(crate) enum ErreurScribe {
 impl From<ErreurFeuNoyau> for ErreurScribe {
     fn from(e: ErreurFeuNoyau) -> Self {
         ErreurScribe::FeuNoyau(e.to_string())
+    }
+}
+
+impl From<ErreurFeuApplication> for ErreurScribe {
+    fn from(e: ErreurFeuApplication) -> Self {
+        ErreurScribe::FeuApplication(e.to_string())
     }
 }

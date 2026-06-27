@@ -1209,7 +1209,6 @@ impl FeuNoyau {
     ///
     /// Retourne une erreur si `signature` n'est pas un encodage ML-DSA-87 valide.
     pub fn verification_signature(
-        &self,
         cle_publique: [u8; 2592],
         signature: [u8; 4627],
         octets_signes: &[u8],

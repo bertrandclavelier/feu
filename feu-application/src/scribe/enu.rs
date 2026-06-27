@@ -33,19 +33,28 @@
 //! Toute évolution de l'adresse `.braise` côté noyau doit être répercutée
 //! ici, faute de quoi le format casse sans erreur de compilation.
 
+use data_encoding::HEXLOWER;
 use std::{
     collections::BTreeSet,
+    fs::{OpenOptions, read},
+    io::Write,
+    os::unix::fs::OpenOptionsExt,
+    path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use feu_noyau::FeuNoyau;
 
-use crate::scribe::erreur::{ErreurScribe, ResultScribe};
+use crate::{
+    SessionApplication,
+    scribe::erreur::{ErreurScribe, ResultScribe},
+};
 
 /// Le buffer est trop court ou contient un discriminant inconnu.
-const ERR_SCR_001: &str = "SCR-001 > Problème désérialisation";
+const ERR_SCR_001: &str = "ENU-001 > Problème désérialisation";
 /// Les octets censés être du texte ne sont pas du UTF-8 valide.
-const ERR_SCR_002: &str = "SCR-002 > UTF-8 invalide";
+const ERR_SCR_002: &str = "ENU-002 > UTF-8 invalide";
+const ERR_SCR_003: &str = "ENU-003 > Problème ouverture ENU";
 
 /// Enveloppe Numérique Universelle.
 ///
@@ -93,6 +102,38 @@ impl Enu {
                 .as_secs(),
             carte,
         })
+    }
+
+    pub(super) fn sauvegarder(&self) -> ResultScribe<()> {
+        let nom_fichier = format!("{}.enu", HEXLOWER.encode(&self.hash_carte));
+        let chemin = crate::scribe::donne_chemin_dossier_enu().join(nom_fichier);
+
+        let mut fichier = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(chemin)?;
+
+        fichier.write_all(&self.vers_octets())?;
+
+        Ok(())
+    }
+
+    pub(super) fn charger(chemin: PathBuf, session: &SessionApplication) -> ResultScribe<Enu> {
+        let enu = Self::octets_vers_enu(&read(&chemin)?)?;
+        let octets_carte = enu.carte.vers_octets();
+
+        if let Some(index_foyer) = session.braise_vers_index(&enu.braise) {
+            if FeuNoyau::verification_signature(
+                session.cle_publique_sig_foyer(index_foyer)?,
+                enu.signature_carte,
+                &octets_carte,
+            )? && FeuNoyau::creation_empreinte(&octets_carte) == enu.hash_carte
+            {
+                return Ok(enu);
+            }
+        }
+        Err(ErreurScribe::Interne(String::from(ERR_SCR_003)))
     }
 
     /// Sérialise l'enveloppe pour écriture disque.

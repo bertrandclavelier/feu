@@ -25,7 +25,7 @@
 
 use std::io::{Read, Write};
 
-use feu_noyau::{Anomalie, DonneesBlob};
+use feu_noyau::{Anomalie, DonneesBlob, FeuNoyau};
 
 use super::*;
 
@@ -472,7 +472,11 @@ impl FeuApplication {
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        Ok(noyau.verification_signature(cle_publique, signature, octets_signes)?)
+        Ok(FeuNoyau::verification_signature(
+            cle_publique,
+            signature,
+            octets_signes,
+        )?)
     }
 
     /// Diagnostique la présence et la cohérence des fichiers du nœud.
