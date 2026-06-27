@@ -8,9 +8,10 @@
 
 //! Définit le type d'erreur du Scribe.
 //!
-//! [`ErreurScribe`] couvre les erreurs de création du dossier `~/.feu/enu/`.
-//! Ce type est interne à `feu-application` — il remonte vers
-//! [`ErreurFeuApplication`] via [`From`].
+//! [`ErreurScribe`] couvre les trois familles d'échecs du Scribe : la création
+//! du dossier `~/.feu/enu/` (I/O), la signature des ENU déléguée à `feu-noyau`,
+//! et la (dé)sérialisation des cartes. Ce type est interne à `feu-application` —
+//! il remonte vers [`ErreurFeuApplication`] via [`From`].
 //!
 //! # Conversion des erreurs tierces
 //!
@@ -27,6 +28,15 @@ pub(crate) type ResultScribe<T> = Result<T, ErreurScribe>;
 /// Erreurs propres au Scribe.
 #[derive(Error, Debug)]
 pub(crate) enum ErreurScribe {
+    /// Échec interne au Scribe, hors I/O et hors `feu-noyau` — survient pendant
+    /// la (dé)sérialisation d'une ENU.
+    ///
+    /// Le message porte un code `SCR-NNN` qui identifie la cause précise :
+    /// buffer trop court ou discriminant de carte inconnu (`SCR-001`), octets
+    /// censés être du texte mais non UTF-8 valide (`SCR-002`).
+    #[error("SCR > {0}")]
+    Interne(String),
+
     /// Erreur remontée depuis `feu-noyau` (signature, empreinte…).
     #[error("SCR > {0}")]
     FeuNoyau(String),

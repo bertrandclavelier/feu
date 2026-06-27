@@ -15,6 +15,23 @@
 //!
 //! Les types ENU sont **content-addressed** : le hash de la carte sert de nom
 //! de fichier sur disque (`<hash_hex>.enu`). Aucune carte n'a de nom stable.
+//!
+//! # Modèle de confiance
+//!
+//! Le hash et la signature couvrent **uniquement la carte sérialisée**, jamais
+//! la braise ni la date — qui restent des métadonnées malléables (routage,
+//! horodatage indicatif). La désérialisation reconstruit les champs sans
+//! revérifier le hash ni la signature : tant qu'une ENU vient du disque, elle
+//! n'est pas digne de confiance avant que l'appelant ait recalculé le hash de
+//! sa carte et validé la signature contre la braise annoncée.
+//!
+//! # Couplage avec la braise du noyau
+//!
+//! Le format sérialisé suppose une braise de **62 octets exactement**
+//! (55 caractères BASE32 + suffixe `.braise`). Cette longueur est figée par
+//! `feu-noyau` ; c'est ce qui autorise à la stocker sans préfixe de taille.
+//! Toute évolution de l'adresse `.braise` côté noyau doit être répercutée
+//! ici, faute de quoi le format casse sans erreur de compilation.
 
 use std::{
     collections::BTreeSet,
@@ -23,7 +40,12 @@ use std::{
 
 use feu_noyau::FeuNoyau;
 
-use crate::scribe::erreur::ResultScribe;
+use crate::scribe::erreur::{ErreurScribe, ResultScribe};
+
+/// Le buffer est trop court ou contient un discriminant inconnu.
+const ERR_SCR_001: &str = "SCR-001 > Problème désérialisation";
+/// Les octets censés être du texte ne sont pas du UTF-8 valide.
+const ERR_SCR_002: &str = "SCR-002 > UTF-8 invalide";
 
 /// Enveloppe Numérique Universelle.
 ///
@@ -75,21 +97,60 @@ impl Enu {
 
     /// Sérialise l'enveloppe pour écriture disque.
     ///
-    /// Format : `braise` (u16 len + UTF-8) | `hash_carte` (32 o) |
+    /// Format : `braise` (62 o UTF-8) | `hash_carte` (32 o) |
     /// `signature_carte` (4627 o) | `date` (u64 BE) | carte (délègue à
     /// [`Carte::vers_octets`]).
     fn vers_octets(&self) -> Vec<u8> {
         let mut resultat = Vec::new();
 
-        let b = self.braise.as_bytes();
-        resultat.extend(&(b.len() as u16).to_be_bytes());
-        resultat.extend(b);
+        resultat.extend(self.braise.as_bytes());
         resultat.extend(self.hash_carte);
         resultat.extend(self.signature_carte);
         resultat.extend(&self.date.to_be_bytes());
         resultat.extend(self.carte.vers_octets());
 
         resultat
+    }
+
+    /// Désérialise une ENU depuis ses octets canoniques.
+    ///
+    /// Format attendu : `braise` (62 o) | `hash_carte` (32 o) |
+    /// `signature_carte` (4627 o) | `date` (u64 BE) | carte (via
+    /// [`Carte::octets_vers_carte`]). Inverse de [`Enu::vers_octets`].
+    ///
+    /// Ne valide **que la structure**, pas l'authenticité : le hash n'est pas
+    /// recalculé et la signature n'est pas vérifiée. Une ENU issue du disque
+    /// reste donc non fiable tant que l'appelant n'a pas fait ces deux contrôles.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurScribe::Interne`] si le buffer est trop court
+    /// (`SCR-001`), si le discriminant de carte est inconnu (`SCR-001`) ou si un
+    /// champ texte n'est pas du UTF-8 valide (`SCR-002`).
+    fn octets_vers_enu(octets: &[u8]) -> ResultScribe<Enu> {
+        let (mut octets, mut reste) = prendre_octets(octets, 62)?;
+        let braise = str::from_utf8(octets)
+            .map_err(|_| ErreurScribe::Interne(String::from(ERR_SCR_002)))?
+            .to_string();
+
+        (octets, reste) = prendre_octets(reste, 32)?;
+        let hash_carte: [u8; 32] = octets.try_into().unwrap(); // pas d'erreur possible
+
+        (octets, reste) = prendre_octets(reste, 4627)?;
+        let signature_carte: [u8; 4627] = octets.try_into().unwrap(); // pas d'erreur possible
+
+        (octets, reste) = prendre_octets(reste, 8)?;
+        let date = u64::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+
+        let carte = Carte::octets_vers_carte(reste)?;
+
+        Ok(Self {
+            braise,
+            hash_carte,
+            signature_carte,
+            date,
+            carte,
+        })
     }
 }
 
@@ -122,17 +183,6 @@ pub(super) enum Carte {
 }
 
 impl Carte {
-    /// Écrit les tags dans le buffer au format canonique :
-    /// `u16 nb_tags` puis pour chaque tag `u16 len_utf8` suivi des octets UTF-8.
-    fn tags_vers_octets(buf: &mut Vec<u8>, tags: &BTreeSet<String>) {
-        buf.extend(&(tags.len() as u16).to_be_bytes());
-        for tag in tags {
-            let b = tag.as_bytes();
-            buf.extend(&(b.len() as u16).to_be_bytes());
-            buf.extend(b);
-        }
-    }
-
     /// Sérialise la carte en bytes canoniques.
     ///
     /// Format : discriminant `u8` (0x00=CaD, 0x01=CaT, 0x02=CaR), tags, puis
@@ -143,19 +193,19 @@ impl Carte {
         match self {
             Carte::Donnee { tags, hash_donnee } => {
                 resultat.push(0x00);
-                Self::tags_vers_octets(&mut resultat, tags);
+                tags_vers_octets(&mut resultat, tags);
                 resultat.extend(hash_donnee);
             }
             Carte::Texte { tags, contenu } => {
                 resultat.push(0x01);
-                Self::tags_vers_octets(&mut resultat, tags);
+                tags_vers_octets(&mut resultat, tags);
                 let c = contenu.as_bytes();
                 resultat.extend(&(c.len() as u64).to_be_bytes());
                 resultat.extend(c);
             }
             Carte::Repertoire { tags, hashs_enu } => {
                 resultat.push(0x02);
-                Self::tags_vers_octets(&mut resultat, tags);
+                tags_vers_octets(&mut resultat, tags);
                 resultat.extend(&(hashs_enu.len() as u16).to_be_bytes());
                 for h in hashs_enu {
                     resultat.extend(h);
@@ -164,4 +214,99 @@ impl Carte {
         }
         resultat
     }
+
+    /// Désérialise une carte depuis ses octets canoniques.
+    ///
+    /// Format attendu : discriminant `u8`, tags (via [`octets_vers_tags`]), puis
+    /// contenu spécifique au variant (32 o hash, `u64` len + texte, ou `u16` nb
+    /// hashs + 32o × n). Inverse de [`Carte::vers_octets`].
+    fn octets_vers_carte(octets: &[u8]) -> ResultScribe<Carte> {
+        let (mut octets, reste) = prendre_octets(octets, 1)?;
+
+        let (tags, mut reste) = octets_vers_tags(reste)?;
+
+        match octets[0] {
+            0 => {
+                let (hash, _) = prendre_octets(reste, 32)?;
+                let hash_donnee: [u8; 32] = hash.try_into().unwrap(); // pas d'erreur possible
+
+                Ok(Carte::Donnee { tags, hash_donnee })
+            }
+            1 => {
+                (octets, reste) = prendre_octets(reste, 8)?;
+                let longueur = u64::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+
+                (octets, _) = prendre_octets(reste, longueur as usize)?;
+
+                let contenu = str::from_utf8(octets)
+                    .map_err(|_| ErreurScribe::Interne(String::from(ERR_SCR_002)))?
+                    .to_string();
+
+                Ok(Carte::Texte { tags, contenu })
+            }
+
+            2 => {
+                (octets, reste) = prendre_octets(reste, 2)?;
+                let n_hashs = u16::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+
+                let mut hashs_enu = BTreeSet::new();
+
+                for _ in 0..n_hashs {
+                    (octets, reste) = prendre_octets(reste, 32)?;
+                    let hash: [u8; 32] = octets.try_into().unwrap(); // pas d'erreur possible
+                    hashs_enu.insert(hash);
+                }
+
+                Ok(Carte::Repertoire { tags, hashs_enu })
+            }
+
+            _ => Err(ErreurScribe::Interne(String::from(ERR_SCR_001))),
+        }
+    }
+}
+
+/// Écrit les tags dans le buffer au format canonique :
+/// `u16 nb_tags` puis pour chaque tag `u16 len_utf8` suivi des octets UTF-8.
+fn tags_vers_octets(buf: &mut Vec<u8>, tags: &BTreeSet<String>) {
+    buf.extend(&(tags.len() as u16).to_be_bytes());
+    for tag in tags {
+        let b = tag.as_bytes();
+        buf.extend(&(b.len() as u16).to_be_bytes());
+        buf.extend(b);
+    }
+}
+
+/// Désérialise un `BTreeSet<String>` de tags depuis le format canonique.
+///
+/// Format : `u16` nb_tags, puis pour chaque tag `u16` len_utf8 suivi des octets
+/// UTF-8. Retourne les tags et le reste du buffer non consommé.
+fn octets_vers_tags(octets: &[u8]) -> ResultScribe<(BTreeSet<String>, &[u8])> {
+    let mut tags = BTreeSet::new();
+    let (mut octets, mut reste) = prendre_octets(octets, 2)?;
+    let n_tags = u16::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+
+    for _ in 0..n_tags {
+        (octets, reste) = prendre_octets(reste, 2)?;
+        let longueur = u16::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+
+        (octets, reste) = prendre_octets(reste, longueur as usize)?;
+
+        tags.insert(
+            str::from_utf8(octets)
+                .map_err(|_| ErreurScribe::Interne(String::from(ERR_SCR_002)))?
+                .to_string(),
+        );
+    }
+
+    Ok((tags, reste))
+}
+
+/// Extrait les `n` premiers octets du buffer.
+///
+/// Retourne `(extrait, reste)` ou une erreur si le buffer est trop court.
+fn prendre_octets(buf: &[u8], n: usize) -> ResultScribe<(&[u8], &[u8])> {
+    if buf.len() < n {
+        return Err(ErreurScribe::Interne(String::from(ERR_SCR_001)));
+    }
+    Ok((&buf[0..n], &buf[n..]))
 }
