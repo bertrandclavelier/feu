@@ -35,7 +35,7 @@
 
 use data_encoding::HEXLOWER;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{OpenOptions, read},
     io::Write,
     os::unix::fs::OpenOptionsExt,
@@ -209,8 +209,8 @@ impl Enu {
     /// # Erreurs
     ///
     /// Retourne [`ErreurScribe::Interne`] si le buffer est trop court
-    /// (`SCR-001`), si le discriminant de carte est inconnu (`SCR-001`) ou si un
-    /// champ texte n'est pas du UTF-8 valide (`SCR-002`).
+    /// (`ENU-001`), si le discriminant de carte est inconnu (`ENU-001`) ou si un
+    /// champ texte n'est pas du UTF-8 valide (`ENU-002`).
     fn octets_vers_enu(octets: &[u8]) -> ResultScribe<Enu> {
         let (mut octets, mut reste) = prendre_octets(octets, 62)?;
         let braise = str::from_utf8(octets)
@@ -241,12 +241,14 @@ impl Enu {
 /// Carte : contenu métier d'une ENU.
 ///
 /// Trois variantes — Donnée (CaD), Texte (CaT), Répertoire (CaR).
-/// Chaque variante porte un `BTreeSet<String>` de tags.
-/// Les `BTreeSet` garantissent l'ordre déterministe nécessaire au hash.
+/// Chaque variante porte des métadonnées structurées (`BTreeMap<String, String>`)
+/// et des tags libres (`BTreeSet<String>`). L'ordre déterministe des deux
+/// collections est nécessaire au calcul du hash.
 #[derive(PartialEq, Eq, Debug)]
 pub(super) enum Carte {
     /// CaD — référence un blob stocké dans un classeur.
     Donnee {
+        metas: BTreeMap<String, String>,
         tags: BTreeSet<String>,
         /// Hash SHA3-256 du blob (également le nom du fichier `.dat`).
         hash_donnee: [u8; 32],
@@ -254,12 +256,14 @@ pub(super) enum Carte {
 
     /// CaT — texte brut, pas de limite de taille en v0.0.5.
     Texte {
+        metas: BTreeMap<String, String>,
         tags: BTreeSet<String>,
         contenu: String,
     },
 
     /// CaR — répertoire, référence ses enfants par leur `hash_carte`.
     Repertoire {
+        metas: BTreeMap<String, String>,
         tags: BTreeSet<String>,
         /// Hash des ENU enfants. L'ordre [`BTreeSet`] assure la reproductibilité
         /// du hash de cette carte.
@@ -270,26 +274,41 @@ pub(super) enum Carte {
 impl Carte {
     /// Sérialise la carte en bytes canoniques.
     ///
-    /// Format : discriminant `u8` (0x00=CaD, 0x01=CaT, 0x02=CaR), tags, puis
-    /// les champs spécifiques à chaque variant. Le résultat est déterministe :
-    /// même carte → mêmes octets → même hash.
+    /// Format : discriminant `u8` (0x00=CaD, 0x01=CaT, 0x02=CaR), métadonnées,
+    /// tags, puis les champs spécifiques à chaque variant. Le résultat est
+    /// déterministe : même carte → mêmes octets → même hash.
     fn vers_octets(&self) -> Vec<u8> {
         let mut resultat = Vec::new();
         match self {
-            Carte::Donnee { tags, hash_donnee } => {
+            Carte::Donnee {
+                metas,
+                tags,
+                hash_donnee,
+            } => {
                 resultat.push(0x00);
+                metas_vers_octets(&mut resultat, metas);
                 tags_vers_octets(&mut resultat, tags);
                 resultat.extend(hash_donnee);
             }
-            Carte::Texte { tags, contenu } => {
+            Carte::Texte {
+                metas,
+                tags,
+                contenu,
+            } => {
                 resultat.push(0x01);
+                metas_vers_octets(&mut resultat, metas);
                 tags_vers_octets(&mut resultat, tags);
                 let c = contenu.as_bytes();
                 resultat.extend(&(c.len() as u64).to_be_bytes());
                 resultat.extend(c);
             }
-            Carte::Repertoire { tags, hashs_enu } => {
+            Carte::Repertoire {
+                metas,
+                tags,
+                hashs_enu,
+            } => {
                 resultat.push(0x02);
+                metas_vers_octets(&mut resultat, metas);
                 tags_vers_octets(&mut resultat, tags);
                 resultat.extend(&(hashs_enu.len() as u32).to_be_bytes());
                 for h in hashs_enu {
@@ -302,14 +321,15 @@ impl Carte {
 
     /// Désérialise une carte depuis ses octets canoniques.
     ///
-    /// Format attendu : discriminant `u8`, tags (via [`octets_vers_tags`]), puis
-    /// contenu spécifique au variant (32 o hash, `u64` len + texte, ou `u32` nb
-    /// hashs + 32o × n). Inverse de [`Carte::vers_octets`].
+    /// Format attendu : discriminant `u8`, métadonnées (via [`octets_vers_metas`]),
+    /// tags (via [`octets_vers_tags`]), puis contenu spécifique au variant (32 o
+    /// hash, `u64` len + texte, ou `u32` nb hashs + 32o × n). Inverse de
+    /// [`Carte::vers_octets`].
     fn octets_vers_carte(octets: &[u8]) -> ResultScribe<Carte> {
         let (mut octets, reste) = prendre_octets(octets, 1)?;
 
+        let (metas, reste) = octets_vers_metas(reste)?;
         let (tags, mut reste) = octets_vers_tags(reste)?;
-
         match octets[0] {
             0 => {
                 let (hash, reste) = prendre_octets(reste, 32)?;
@@ -319,7 +339,11 @@ impl Carte {
                     return Err(ErreurScribe::Interne(String::from(ERR_ENU_001)));
                 }
 
-                Ok(Carte::Donnee { tags, hash_donnee })
+                Ok(Carte::Donnee {
+                    metas,
+                    tags,
+                    hash_donnee,
+                })
             }
             1 => {
                 (octets, reste) = prendre_octets(reste, 8)?;
@@ -335,7 +359,11 @@ impl Carte {
                     return Err(ErreurScribe::Interne(String::from(ERR_ENU_001)));
                 }
 
-                Ok(Carte::Texte { tags, contenu })
+                Ok(Carte::Texte {
+                    metas,
+                    tags,
+                    contenu,
+                })
             }
 
             2 => {
@@ -354,7 +382,11 @@ impl Carte {
                     return Err(ErreurScribe::Interne(String::from(ERR_ENU_001)));
                 }
 
-                Ok(Carte::Repertoire { tags, hashs_enu })
+                Ok(Carte::Repertoire {
+                    metas,
+                    tags,
+                    hashs_enu,
+                })
             }
 
             _ => Err(ErreurScribe::Interne(String::from(ERR_ENU_001))),
@@ -366,6 +398,7 @@ impl Carte {
 /// `u32 nb_tags` puis pour chaque tag `u32 len_utf8` suivi des octets UTF-8.
 fn tags_vers_octets(buf: &mut Vec<u8>, tags: &BTreeSet<String>) {
     buf.extend(&(tags.len() as u32).to_be_bytes());
+
     for tag in tags {
         let b = tag.as_bytes();
         buf.extend(&(b.len() as u32).to_be_bytes());
@@ -396,6 +429,57 @@ fn octets_vers_tags(octets: &[u8]) -> ResultScribe<(BTreeSet<String>, &[u8])> {
     }
 
     Ok((tags, reste))
+}
+
+/// Écrit les métadonnées dans le buffer au format canonique :
+/// `u32 nb_metas` puis pour chaque paire `u32 len_cle`, clé UTF-8, `u32
+/// len_valeur`, valeur UTF-8. Ordre de parcours : celui du BTreeMap
+/// (alphabétique par clé).
+fn metas_vers_octets(buf: &mut Vec<u8>, metas: &BTreeMap<String, String>) {
+    buf.extend(&(metas.len() as u32).to_be_bytes());
+
+    for (cle, valeur) in metas {
+        let cle = cle.as_bytes();
+        let valeur = valeur.as_bytes();
+        buf.extend(&(cle.len() as u32).to_be_bytes());
+        buf.extend(cle);
+        buf.extend(&(valeur.len() as u32).to_be_bytes());
+        buf.extend(valeur);
+    }
+}
+
+/// Désérialise un `BTreeMap<String, String>` de métadonnées depuis le format
+/// canonique.
+///
+/// Format : `u32` nb_metas, puis pour chaque paire `u32` len_cle, clé UTF-8,
+/// `u32` len_valeur, valeur UTF-8. Retourne les métadonnées et le reste du
+/// buffer non consommé.
+fn octets_vers_metas(octets: &[u8]) -> ResultScribe<(BTreeMap<String, String>, &[u8])> {
+    let mut metas = BTreeMap::new();
+    let (mut octets, mut reste) = prendre_octets(octets, 4)?;
+    let n_metas = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+
+    for _ in 0..n_metas {
+        (octets, reste) = prendre_octets(reste, 4)?;
+        let longueur = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+
+        (octets, reste) = prendre_octets(reste, longueur as usize)?;
+        let cle = str::from_utf8(octets)
+            .map_err(|_| ErreurScribe::Interne(String::from(ERR_ENU_002)))?
+            .to_string();
+
+        (octets, reste) = prendre_octets(reste, 4)?;
+        let longueur = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+
+        (octets, reste) = prendre_octets(reste, longueur as usize)?;
+        let valeur = str::from_utf8(octets)
+            .map_err(|_| ErreurScribe::Interne(String::from(ERR_ENU_002)))?
+            .to_string();
+
+        metas.insert(cle, valeur);
+    }
+
+    Ok((metas, reste))
 }
 
 /// Extrait les `n` premiers octets du buffer.
@@ -509,15 +593,72 @@ mod tests {
         Ok(())
     }
 
+    /// Round-trip métadonnées vides : 0 paire → octets → 0 paire, reste vide.
+    #[test]
+    fn metas_vide_vers_octets() -> ResultScribe<()> {
+        let metas = BTreeMap::new();
+        let mut octets = Vec::new();
+
+        metas_vers_octets(&mut octets, &metas);
+        let (metas_retour, reste) = octets_vers_metas(&octets)?;
+
+        assert!(metas_retour.is_empty());
+        assert!(reste.is_empty());
+
+        Ok(())
+    }
+
+    /// Round-trip métadonnée unique : une paire clé/valeur préservée.
+    #[test]
+    fn metas_unique_vers_octets() -> ResultScribe<()> {
+        let metas = BTreeMap::from([(String::from("clé1"), String::from("valeur1"))]);
+        let mut octets = Vec::new();
+
+        metas_vers_octets(&mut octets, &metas);
+        let (metas_retour, reste) = octets_vers_metas(&octets)?;
+
+        assert_eq!(metas, metas_retour);
+        assert!(reste.is_empty());
+
+        Ok(())
+    }
+
+    /// Round-trip métadonnées multiples : tri par clé (ordre BTreeMap) préservé.
+    #[test]
+    fn metas_multi_vers_octets() -> ResultScribe<()> {
+        let metas = BTreeMap::from([
+            (String::from("clé5"), String::from("valeur5")),
+            (String::from("clé1"), String::from("valeur1")),
+            (String::from("clé2"), String::from("valeur2")),
+        ]);
+        let mut octets = Vec::new();
+
+        metas_vers_octets(&mut octets, &metas);
+        let (metas_retour, reste) = octets_vers_metas(&octets)?;
+
+        assert_eq!(metas, metas_retour);
+        assert!(reste.is_empty());
+
+        Ok(())
+    }
+
     // --- Cartes ---
 
-    /// Round-trip CaD : tags + hash → octets → même carte.
+    /// Round-trip CaD : metas + tags + hash → octets → même carte.
     #[test]
     fn carte_donnee_vers_octets() -> ResultScribe<()> {
+        let metas = BTreeMap::from([
+            (String::from("clé1"), String::from("valeur1")),
+            (String::from("clé2"), String::from("valeur2")),
+        ]);
         let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
         let hash_donnee: [u8; 32] = std::array::from_fn(|i| i as u8);
 
-        let carte = Carte::Donnee { tags, hash_donnee };
+        let carte = Carte::Donnee {
+            metas,
+            tags,
+            hash_donnee,
+        };
 
         let octets = carte.vers_octets();
         let carte_retour = Carte::octets_vers_carte(&octets)?;
@@ -527,13 +668,21 @@ mod tests {
         Ok(())
     }
 
-    /// Round-trip CaT : tags + texte → octets → même carte.
+    /// Round-trip CaT : metas + tags + texte → octets → même carte.
     #[test]
     fn carte_texte_vers_octets() -> ResultScribe<()> {
+        let metas = BTreeMap::from([
+            (String::from("clé1"), String::from("valeur1")),
+            (String::from("clé2"), String::from("valeur2")),
+        ]);
         let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
         let contenu = String::from("Contenu de la carte");
 
-        let carte = Carte::Texte { tags, contenu };
+        let carte = Carte::Texte {
+            metas,
+            tags,
+            contenu,
+        };
 
         let octets = carte.vers_octets();
         let carte_retour = Carte::octets_vers_carte(&octets)?;
@@ -543,16 +692,24 @@ mod tests {
         Ok(())
     }
 
-    /// Round-trip CaR : tags + 2 hashs enfants → octets → même carte.
+    /// Round-trip CaR : metas + tags + 2 hashs enfants → octets → même carte.
     #[test]
     fn carte_repertoire_vers_octets() -> ResultScribe<()> {
+        let metas = BTreeMap::from([
+            (String::from("clé1"), String::from("valeur1")),
+            (String::from("clé2"), String::from("valeur2")),
+        ]);
         let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
         let hash1: [u8; 32] = std::array::from_fn(|i| i as u8);
         let hash2: [u8; 32] = std::array::from_fn(|i| (i * 2) as u8);
 
         let hashs_enu = BTreeSet::from([hash1, hash2]);
 
-        let carte = Carte::Repertoire { tags, hashs_enu };
+        let carte = Carte::Repertoire {
+            metas,
+            tags,
+            hashs_enu,
+        };
 
         let octets = carte.vers_octets();
         let carte_retour = Carte::octets_vers_carte(&octets)?;
@@ -573,10 +730,18 @@ mod tests {
         let signature_carte = [0u8; 4627];
         let date: u64 = 1234567890;
 
+        let metas = BTreeMap::from([
+            (String::from("clé1"), String::from("valeur1")),
+            (String::from("clé2"), String::from("valeur2")),
+        ]);
         let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
         let hash_donnee: [u8; 32] = std::array::from_fn(|i| i as u8);
 
-        let carte = Carte::Donnee { tags, hash_donnee };
+        let carte = Carte::Donnee {
+            metas,
+            tags,
+            hash_donnee,
+        };
 
         let enu = Enu {
             braise,
