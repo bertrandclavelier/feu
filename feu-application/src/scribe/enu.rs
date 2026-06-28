@@ -272,6 +272,47 @@ pub(super) enum Carte {
 }
 
 impl Carte {
+    /// Construit une [`Carte::Donnee`] — référence un blob dans un
+    /// classeur.
+    pub(super) fn new_donnee(
+        metas: BTreeMap<String, String>,
+        tags: BTreeSet<String>,
+        hash_donnee: [u8; 32],
+    ) -> Self {
+        Self::Donnee {
+            metas,
+            tags,
+            hash_donnee,
+        }
+    }
+
+    /// Construit une [`Carte::Texte`] — contient directement le texte.
+    pub(super) fn new_texte(
+        metas: BTreeMap<String, String>,
+        tags: BTreeSet<String>,
+        contenu: String,
+    ) -> Self {
+        Self::Texte {
+            metas,
+            tags,
+            contenu,
+        }
+    }
+
+    /// Construit une [`Carte::Repertoire`] — référence des ENU enfants
+    /// par leur `hash_carte`.
+    pub(super) fn new_repertoire(
+        metas: BTreeMap<String, String>,
+        tags: BTreeSet<String>,
+        hashs_enu: BTreeSet<[u8; 32]>,
+    ) -> Self {
+        Self::Repertoire {
+            metas,
+            tags,
+            hashs_enu,
+        }
+    }
+
     /// Sérialise la carte en bytes canoniques.
     ///
     /// Format : discriminant `u8` (0x00=CaD, 0x01=CaT, 0x02=CaR), métadonnées,

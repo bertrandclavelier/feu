@@ -19,14 +19,15 @@
 //! Il ignore ce qu'est un foyer : la résolution du blob (trouver le `.dat`
 //! correspondant à un `hash_donnee`) est ailleurs.
 
+mod comptoir;
 mod enu;
 pub(super) mod erreur;
 
-use std::{fs::DirBuilder, os::unix::fs::DirBuilderExt, path::PathBuf};
+use std::{collections::HashMap, fs::DirBuilder, os::unix::fs::DirBuilderExt, path::PathBuf};
 
 use feu_noyau::FeuNoyau;
 
-use crate::scribe::erreur::ResultScribe;
+use crate::scribe::{comptoir::ComptoirDepot, erreur::ResultScribe};
 
 /// Tenant de la couche ENU — créé et maintient `~/.feu/enu/`.
 ///
@@ -36,6 +37,12 @@ use crate::scribe::erreur::ResultScribe;
 pub(super) struct Scribe {
     /// `true` si le Scribe a été activé (nœud allumé).
     est_actif: bool,
+
+    /// Comptoirs de dépôt actifs, indexés par leur identifiant.
+    comptoirs_depot: HashMap<usize, ComptoirDepot>,
+
+    /// Prochain identifiant disponible pour un nouveau comptoir.
+    prochain_id: usize,
 }
 
 impl Scribe {
@@ -44,7 +51,11 @@ impl Scribe {
     /// Le chemin `~/.feu` est résolu une fois via [`FeuNoyau::chemin_feu`]
     /// et stocké — pas de relecture de `$HOME` à chaque utilisation.
     pub(super) fn new() -> Self {
-        Self { est_actif: false }
+        Self {
+            est_actif: false,
+            comptoirs_depot: HashMap::new(),
+            prochain_id: 0,
+        }
     }
 
     /// Active le Scribe et crée le dossier `~/.feu/enu/` s'il est absent.
@@ -78,6 +89,31 @@ impl Scribe {
     /// Ne supprime pas le dossier `enu/` — les ENU survivent à l'extinction.
     pub(super) fn desactivation(&mut self) {
         self.est_actif = false;
+    }
+
+    /// Ouvre un comptoir de dépôt au chemin donné.
+    ///
+    /// Crée le dossier physique sur le système de fichiers, l'enregistre
+    /// dans [`comptoirs_depot`](Self::comptoirs_depot) et retourne son
+    /// identifiant.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le dossier existe déjà ou ne peut pas être
+    /// créé.
+    pub(super) fn ouverture_comptoir_depot(
+        &mut self,
+        chemin: PathBuf,
+        index_foyer: usize,
+        index_classeur: usize,
+    ) -> ResultScribe<usize> {
+        let comptoir = ComptoirDepot::new(chemin, index_foyer, index_classeur);
+        comptoir.ouvrir()?; // on s'assure qu'on peut l'ouvrir avant de le garder
+        //
+        self.comptoirs_depot.insert(self.prochain_id, comptoir);
+        self.prochain_id += 1;
+
+        Ok(self.prochain_id - 1)
     }
 }
 
