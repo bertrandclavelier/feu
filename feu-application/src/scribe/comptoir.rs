@@ -19,8 +19,6 @@ use std::{fs::DirBuilder, os::unix::fs::DirBuilderExt, path::PathBuf};
 
 use crate::scribe::erreur::{ErreurScribe, ResultScribe};
 
-use super::Scribe;
-
 /// Le dossier existe déjà — un comptoir ne peut pas écraser un dossier
 /// existant.
 const ERR_COM_D_001: &str = "COM_D-001 > Le dossier existe déjà";
@@ -50,6 +48,21 @@ impl ComptoirDepot {
             index_foyer,
             index_classeur,
         }
+    }
+
+    /// Retourne le chemin du dossier physique.
+    pub(super) fn chemin(&self) -> &PathBuf {
+        &self.chemin
+    }
+
+    /// Retourne l'index du foyer de destination des données.
+    pub(super) fn index_foyer(&self) -> usize {
+        self.index_foyer
+    }
+
+    /// Retourne l'index du classeur de destination des données.
+    pub(super) fn index_classeur(&self) -> usize {
+        self.index_classeur
     }
 
     /// Crée le dossier physique avec les permissions `rwx------` (0o700).

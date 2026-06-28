@@ -9,6 +9,7 @@ data-encoding = { version = "2", features = ["alloc"] }
 feu-noyau = { path = "../feu-noyau" }
 secrecy = "0.10"
 thiserror = "2"
+walkdir = "2.5"
 
 [lints]
 workspace = true

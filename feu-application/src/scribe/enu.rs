@@ -35,7 +35,7 @@
 
 use data_encoding::HEXLOWER;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs::{OpenOptions, read},
     io::Write,
     os::unix::fs::OpenOptionsExt,
@@ -106,6 +106,12 @@ impl Enu {
                 .as_secs(),
             carte,
         })
+    }
+
+    /// Retourne le hash SHA3-256 de la carte — identifiant content-addressed
+    /// de l'ENU, également utilisé comme nom de fichier dans `~/.feu/enu/`.
+    pub(super) fn hash_carte(&self) -> [u8; 32] {
+        self.hash_carte
     }
 
     /// Écrit l'ENU sur disque sous `~/.feu/enu/<hash_carte_hex>.enu`.
@@ -274,42 +280,93 @@ pub(super) enum Carte {
 impl Carte {
     /// Construit une [`Carte::Donnee`] — référence un blob dans un
     /// classeur.
-    pub(super) fn new_donnee(
-        metas: BTreeMap<String, String>,
-        tags: BTreeSet<String>,
-        hash_donnee: [u8; 32],
-    ) -> Self {
+    pub(super) fn new_donnee(hash_donnee: [u8; 32]) -> Self {
         Self::Donnee {
-            metas,
-            tags,
+            metas: BTreeMap::new(),
+            tags: BTreeSet::new(),
             hash_donnee,
         }
     }
 
     /// Construit une [`Carte::Texte`] — contient directement le texte.
-    pub(super) fn new_texte(
-        metas: BTreeMap<String, String>,
-        tags: BTreeSet<String>,
-        contenu: String,
-    ) -> Self {
+    pub(super) fn new_texte(contenu: String) -> Self {
         Self::Texte {
-            metas,
-            tags,
+            metas: BTreeMap::new(),
+            tags: BTreeSet::new(),
             contenu,
         }
     }
 
     /// Construit une [`Carte::Repertoire`] — référence des ENU enfants
     /// par leur `hash_carte`.
-    pub(super) fn new_repertoire(
-        metas: BTreeMap<String, String>,
-        tags: BTreeSet<String>,
-        hashs_enu: BTreeSet<[u8; 32]>,
-    ) -> Self {
+    pub(super) fn new_repertoire(hashs_enu: BTreeSet<[u8; 32]>) -> Self {
         Self::Repertoire {
-            metas,
-            tags,
+            metas: BTreeMap::new(),
+            tags: BTreeSet::new(),
             hashs_enu,
+        }
+    }
+
+    /// Ajoute une métadonnée structurée à la carte.
+    ///
+    /// Insère la paire `(cle, valeur)` dans le [`BTreeMap`] de métadonnées.
+    /// Si la clé existe déjà, sa valeur est écrasée.
+    pub(super) fn ajout_meta_carte(&mut self, cle: &str, valeur: &str) {
+        let cle = String::from(cle);
+        let valeur = String::from(valeur);
+
+        match self {
+            Self::Donnee {
+                metas,
+                tags: _,
+                hash_donnee: _,
+            } => {
+                metas.insert(cle, valeur);
+            }
+            Self::Texte {
+                metas,
+                tags: _,
+                contenu: _,
+            } => {
+                metas.insert(cle, valeur);
+            }
+            Self::Repertoire {
+                metas,
+                tags: _,
+                hashs_enu: _,
+            } => {
+                metas.insert(cle, valeur);
+            }
+        }
+    }
+
+    /// Ajoute un tag libre à la carte.
+    ///
+    /// Insère le tag dans le [`BTreeSet`] de tags. Les doublons sont
+    /// silencieusement ignorés.
+    pub(super) fn ajout_tag_carte(&mut self, tag: String) {
+        match self {
+            Self::Donnee {
+                metas: _,
+                tags,
+                hash_donnee: _,
+            } => {
+                tags.insert(tag);
+            }
+            Self::Texte {
+                metas: _,
+                tags,
+                contenu: _,
+            } => {
+                tags.insert(tag);
+            }
+            Self::Repertoire {
+                metas: _,
+                tags,
+                hashs_enu: _,
+            } => {
+                tags.insert(tag);
+            }
         }
     }
 
