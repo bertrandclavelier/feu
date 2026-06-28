@@ -568,3 +568,9 @@ Linux et macOS uniquement. Le noyau repose sur des primitives Unix (permissions,
 10. **Stratification stricte** — la présentation (`feu-tui`) ne touche jamais le noyau directement : tout passe par `feu-application`.
 11. **Identité stable** — la braise est indépendante de toute clé cryptographique ; elle survit à toute migration de primitive.
 12. **Adresse réseau jetable** — l'adresse de transport (`.onion` future) n'est pas liée à la seed ni à l'identité du foyer. Se tromper d'adresse ne coûte rien : la donnée se vérifie contre son hash et n'est lisible que par son destinataire.
+
+---
+
+## Notes pour v0.0.5
+
+- **Type `Braise` dans `feu-noyau`** — Remplacer les `String` brutes d'adresse `.braise` par un type `Braise(String)` avec `TryFrom<String>` validant la longueur (62 o) et le suffixe (`.braise`). L'invariant est actuellement porté par la documentation seule ; un type le rend structurel et supprime les vérifications ad hoc dans le code consommateur.

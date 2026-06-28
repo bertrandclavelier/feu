@@ -31,11 +31,12 @@ pub(crate) type ResultScribe<T> = Result<T, ErreurScribe>;
 #[derive(Error, Debug)]
 pub(crate) enum ErreurScribe {
     /// Échec interne au Scribe, hors I/O et hors `feu-noyau` — survient pendant
-    /// la (dé)sérialisation d'une ENU.
+    /// la (dé)sérialisation ou l'authentification d'une ENU.
     ///
-    /// Le message porte un code `SCR-NNN` qui identifie la cause précise :
-    /// buffer trop court ou discriminant de carte inconnu (`SCR-001`), octets
-    /// censés être du texte mais non UTF-8 valide (`SCR-002`).
+    /// Le message porte un code `ENU-NNN` qui identifie la cause précise :
+    /// buffer trop court, discriminant de carte inconnu ou octets résiduels
+    /// (`ENU-001`) ; octets censés être du texte mais non UTF-8 valide
+    /// (`ENU-002`) ; ENU lue sur disque mais non authentifiable (`ENU-003`).
     #[error("SCR > {0}")]
     Interne(String),
 
