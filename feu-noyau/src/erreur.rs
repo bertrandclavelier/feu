@@ -102,6 +102,11 @@ pub enum ErreurFeuNoyau {
     /// à aucun foyer connu de la session.
     #[error("NOY > Adresse braise inconnue")]
     BraiseIntrouvable,
+
+    /// La chaîne soumise à `Braise::try_from` est mal formée : suffixe
+    /// `.braise` absent, longueur incorrecte, ou caractère hors alphabet BASE32.
+    #[error("NOY > TryFrom : mauvais format de &str pour Braise")]
+    BraiseTryFromStr,
 }
 
 impl From<ErreurGardien> for ErreurFeuNoyau {

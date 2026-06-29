@@ -32,6 +32,7 @@
 compile_error!("feu-noyau only supports Linux and macOS.");
 
 mod archiviste;
+mod braise;
 mod cryptographe;
 mod erreur;
 mod gardien;
@@ -47,6 +48,7 @@ use crate::archiviste::Archiviste;
 use crate::cryptographe::Cryptographe;
 pub use crate::erreur::{ErreurFeuNoyau, ResultFeuNoyau};
 use crate::gardien::Gardien;
+pub use braise::Braise;
 
 /// Nombre maximum de foyers dans le nœud.
 pub const MAX_FOYERS: usize = 3;
