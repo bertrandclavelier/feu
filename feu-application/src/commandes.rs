@@ -23,9 +23,14 @@
 //! `informations_blob`, signatures, diagnostic…) prennent `&self` ;
 //! les autres prennent `&mut self`.
 
-use std::io::{Read, Write};
+use std::{
+    io::{Read, Write},
+    path::PathBuf,
+};
 
 use feu_noyau::{Anomalie, DonneesBlob, FeuNoyau};
+
+use crate::scribe::enu::Enu;
 
 use super::*;
 
@@ -220,33 +225,67 @@ impl FeuApplication {
         Ok(())
     }
 
-    /// Dépose un blob dans le classeur désigné d'un foyer ouvert.
+    /// Ouvre un comptoir de dépôt et retourne son identifiant.
     ///
-    /// Lit `source`, chiffre le contenu avec la clé du classeur (AES-256-GCM)
-    /// et l'écrit sur disque sous le nom `<hash>.dat`. Si un blob portant ce hash
-    /// existe déjà, retourne le hash sans réécriture — comportement idempotent.
+    /// Crée un dossier au `chemin` donné, où l'utilisateur (ou un script, un
+    /// agent) dépose librement les fichiers à injecter dans le classeur
+    /// `index_classeur` du foyer `index_foyer`. Le contenu n'est rangé et
+    /// chiffré qu'à la fermeture, via
+    /// [`commande_fermeture_comptoir_depot`](Self::commande_fermeture_comptoir_depot).
     ///
     /// # Retour
     ///
-    /// Le hash SHA3-256 du clair — identifiant à conserver pour relire
-    /// ou supprimer la donnée.
+    /// L'identifiant du comptoir, à conserver pour le refermer.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas ouvert,
-    /// si la taille dépasse `MAX_TAILLE_BLOB`, ou si le chiffrement / l'écriture échoue.
-    pub fn commande_depot_donnees(
+    /// Retourne une erreur si le dossier existe déjà ou ne peut pas être créé.
+    pub fn commande_ouverture_comptoir_depot(
         &mut self,
+        chemin: PathBuf,
         index_foyer: usize,
         index_classeur: usize,
-        source: impl Read,
-    ) -> ResultFeuApplication<String> {
+    ) -> ResultFeuApplication<usize> {
+        Ok(self
+            .scribe
+            .ouverture_comptoir_depot(chemin, index_foyer, index_classeur)?)
+    }
+
+    /// Ferme un comptoir de dépôt : range son contenu et le greffe sur une ENU
+    /// racine.
+    ///
+    /// Parcourt le dossier du comptoir, dépose chaque fichier chiffré dans le
+    /// classeur de destination, encapsule fichiers et sous-dossiers dans des ENU
+    /// signées, puis ajoute le tout comme enfants de `enu_racine`. Le dossier
+    /// physique du comptoir est supprimé à l'issue ; le détail du rangement est
+    /// porté par le Scribe.
+    ///
+    /// # Retour
+    ///
+    /// Le `hash_carte` de la nouvelle ENU racine — inchangé si le comptoir était
+    /// vide.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : comptoir invalide, braise inconnue de la
+    /// session, E/S ou signature.
+    pub fn commande_fermeture_comptoir_depot(
+        &mut self,
+        index_comptoir: usize,
+        enu_racine: &Enu,
+    ) -> ResultFeuApplication<[u8; 32]> {
         let noyau = self
             .feu_noyau
             .as_mut()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        Ok(noyau.depot_donnees(index_foyer, index_classeur, source)?)
+        Ok(self.scribe.fermeture_comptoir_depot(
+            noyau,
+            &self.session,
+            index_comptoir,
+            enu_racine,
+        )?)
     }
 
     /// Lit et déchiffre un blob depuis un classeur d'un foyer ouvert.

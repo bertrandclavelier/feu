@@ -35,7 +35,7 @@
 
 use data_encoding::HEXLOWER;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fs::{OpenOptions, read},
     io::Write,
     os::unix::fs::OpenOptionsExt,
@@ -58,6 +58,9 @@ const ERR_ENU_002: &str = "ENU-002 > UTF-8 invalide";
 /// L'ENU lue sur disque n'a pas pu être authentifiée : signataire inconnu de la
 /// session, signature invalide, ou hash de carte ne correspondant pas.
 const ERR_ENU_003: &str = "ENU-003 > Problème ouverture ENU";
+/// La carte ciblée n'est pas une [`Carte::Repertoire`] : impossible d'y
+/// ajouter le hash d'une ENU enfant.
+const ERR_ENU_004: &str = "ENU-004 > Ce n'est pas une EnuR";
 
 /// Enveloppe Numérique Universelle.
 ///
@@ -65,8 +68,8 @@ const ERR_ENU_003: &str = "ENU-003 > Problème ouverture ENU";
 /// dans `~/.feu/enu/`. La `signature_carte` (ML-DSA-87) couvre la carte
 /// sérialisée directement. La `date` est le timestamp Unix de mise sous
 /// enveloppe. La `braise` identifie le foyer signataire pour la vérification.
-#[derive(PartialEq, Eq, Debug)]
-pub(super) struct Enu {
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct Enu {
     /// Adresse `.braise` du foyer signataire (non couverte par le hash ni la
     /// signature — métadonnée de routage).
     braise: String,
@@ -93,11 +96,11 @@ impl Enu {
         carte: Carte,
         feu_noyau: &FeuNoyau,
         index_foyer: usize,
-        braise: String,
+        braise: &str,
     ) -> ResultScribe<Self> {
         let octets_carte = carte.vers_octets();
         Ok(Self {
-            braise,
+            braise: String::from(braise),
             hash_carte: FeuNoyau::creation_empreinte(&octets_carte),
             signature_carte: feu_noyau.signature_foyer(index_foyer, &octets_carte)?,
             date: SystemTime::now()
@@ -106,6 +109,19 @@ impl Enu {
                 .as_secs(),
             carte,
         })
+    }
+
+    /// Retourne l'adresse `.braise` du foyer signataire.
+    ///
+    /// Métadonnée de routage, hors hash et hors signature : sa valeur n'est pas
+    /// authentifiée (voir le modèle de confiance du module).
+    pub(super) fn braise(&self) -> &str {
+        &self.braise
+    }
+
+    /// Retourne une référence à la [`Carte`] transportée par l'enveloppe.
+    pub(super) fn carte(&self) -> &Carte {
+        &self.carte
     }
 
     /// Retourne le hash SHA3-256 de la carte — identifiant content-addressed
@@ -242,6 +258,91 @@ impl Enu {
             carte,
         })
     }
+
+    /// Remplace une ENU dans un arbre de répertoires et reconstruit le chemin
+    /// jusqu'à la racine.
+    ///
+    /// Mise à jour **immuable** et content-addressed : `racine` n'est jamais
+    /// modifiée en place. La fonction descend récursivement dans les
+    /// [`Carte::Repertoire`] à la recherche de l'ENU dont le `hash_carte` vaut
+    /// `hash_a_remplacer`. Lorsqu'elle la trouve, elle y substitue
+    /// `remplacement`, puis reconstruit chaque répertoire situé sur le chemin
+    /// entre la racine et le nœud remplacé : métadonnées et tags conservés,
+    /// re-signé par le foyer `index_foyer` sous la `braise` donnée, et
+    /// sauvegardé dans `~/.feu/enu/`. Comme le `hash_carte` d'un répertoire
+    /// dépend du hash de ses enfants, modifier une feuille fait remonter de
+    /// nouveaux hashs jusqu'à une nouvelle racine.
+    ///
+    /// # Retour
+    ///
+    /// La nouvelle ENU racine si le sous-arbre contenait la cible ; sinon un
+    /// clone inchangé de `racine` (cible absente de ce sous-arbre).
+    ///
+    /// # Erreurs
+    ///
+    /// Propage les erreurs de [`Enu::charger`] (E/S, authentification) sur
+    /// chaque enfant visité, et les erreurs de signature de [`Enu::new`].
+    pub(super) fn remplacer(
+        racine: &Enu,
+        hash_a_remplacer: &[u8; 32],
+        remplacement: &Enu,
+        noyau: &FeuNoyau,
+        index_foyer: usize,
+        index_classeur: usize,
+        braise: &str,
+        session: &SessionApplication,
+    ) -> ResultScribe<Enu> {
+        if racine.hash_carte() == *hash_a_remplacer {
+            return Ok(remplacement.clone());
+        }
+
+        if let Carte::Repertoire {
+            metas,
+            tags,
+            ref mut hashs_enu,
+        } = racine.carte.clone()
+        {
+            let mut modifie = false;
+            for h in &hashs_enu.clone() {
+                let nom_fichier = format!("{}.enu", HEXLOWER.encode(h));
+                let chemin = crate::scribe::donne_chemin_dossier_enu().join(nom_fichier);
+
+                let enu_enfant = Self::charger(chemin, session)?;
+
+                let enu_enfant_modifie = Self::remplacer(
+                    &enu_enfant,
+                    hash_a_remplacer,
+                    &remplacement,
+                    noyau,
+                    index_foyer,
+                    index_classeur,
+                    braise,
+                    session,
+                )?;
+
+                if enu_enfant_modifie.hash_carte() != enu_enfant.hash_carte() {
+                    hashs_enu.remove(&enu_enfant.hash_carte());
+                    hashs_enu.insert(enu_enfant_modifie.hash_carte());
+                    modifie = true;
+                }
+            }
+            if modifie {
+                let mut carte = Carte::new_repertoire(hashs_enu.clone());
+                for (cle, valeur) in &metas {
+                    carte.ajout_meta(cle, valeur);
+                }
+                for t in &tags {
+                    carte.ajout_tag(t);
+                }
+
+                let nouvelle_enu = Enu::new(carte, noyau, index_foyer, braise)?;
+                nouvelle_enu.sauvegarder()?;
+
+                return Ok(nouvelle_enu);
+            }
+        }
+        Ok(racine.clone())
+    }
 }
 
 /// Carte : contenu métier d'une ENU.
@@ -250,7 +351,7 @@ impl Enu {
 /// Chaque variante porte des métadonnées structurées (`BTreeMap<String, String>`)
 /// et des tags libres (`BTreeSet<String>`). L'ordre déterministe des deux
 /// collections est nécessaire au calcul du hash.
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub(super) enum Carte {
     /// CaD — référence un blob stocké dans un classeur.
     Donnee {
@@ -311,7 +412,7 @@ impl Carte {
     ///
     /// Insère la paire `(cle, valeur)` dans le [`BTreeMap`] de métadonnées.
     /// Si la clé existe déjà, sa valeur est écrasée.
-    pub(super) fn ajout_meta_carte(&mut self, cle: &str, valeur: &str) {
+    pub(super) fn ajout_meta(&mut self, cle: &str, valeur: &str) {
         let cle = String::from(cle);
         let valeur = String::from(valeur);
 
@@ -344,7 +445,8 @@ impl Carte {
     ///
     /// Insère le tag dans le [`BTreeSet`] de tags. Les doublons sont
     /// silencieusement ignorés.
-    pub(super) fn ajout_tag_carte(&mut self, tag: String) {
+    pub(super) fn ajout_tag(&mut self, tag: &str) {
+        let tag = String::from(tag);
         match self {
             Self::Donnee {
                 metas: _,
@@ -367,6 +469,31 @@ impl Carte {
             } => {
                 tags.insert(tag);
             }
+        }
+    }
+
+    /// Ajoute le `hash_carte` d'une ENU enfant à un répertoire.
+    ///
+    /// Insère `hash` dans le [`BTreeSet`] `hashs_enu` de la
+    /// [`Carte::Repertoire`]. Un doublon est silencieusement ignoré ;
+    /// l'ordre déterministe du set préserve la reproductibilité du hash.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurScribe::Interne`] (`ENU-004`) si la carte n'est pas un
+    /// répertoire : une [`Carte::Donnee`] ou une [`Carte::Texte`] n'a pas
+    /// d'enfants.
+    pub(super) fn ajout_hash_donnee(&mut self, hash: &[u8; 32]) -> ResultScribe<()> {
+        if let Carte::Repertoire {
+            metas: _,
+            tags: _,
+            hashs_enu,
+        } = self
+        {
+            hashs_enu.insert(*hash);
+            return Ok(());
+        } else {
+            return Err(ErreurScribe::Interne(String::from(ERR_ENU_004)));
         }
     }
 

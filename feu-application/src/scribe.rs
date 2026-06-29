@@ -20,13 +20,13 @@
 //! correspondant à un `hash_donnee`) est ailleurs.
 
 mod comptoir;
-mod enu;
+pub mod enu;
 pub(super) mod erreur;
 
 use data_encoding::HEXLOWER;
 use std::{
     collections::HashMap,
-    fs::{DirBuilder, read},
+    fs::{DirBuilder, read, read_dir},
     os::unix::fs::DirBuilderExt,
     path::PathBuf,
 };
@@ -46,9 +46,8 @@ use crate::{
 /// L'ID fourni ne correspond à aucun comptoir de dépôt actif dans
 /// [`Scribe::comptoirs_depot`].
 const ERR_SCR_001: &str = "SCR-001 > Index du comptoir invalide";
-/// Aucune entrée de répertoire trouvée pendant le parcours — comptoir vide
-/// ou parcours interrompu avant d'atteindre le dossier racine.
-const ERR_SCR_002: &str = "SCR-002 > Dépôt de données incomplet";
+/// La braise de `enu_racine` n'appartient à aucun foyer ouvert dans la session.
+const ERR_SCR_002: &str = "SCR-002 > Mauvaise braise";
 
 /// Tenant de la couche ENU — créé et maintient `~/.feu/enu/`.
 ///
@@ -137,37 +136,56 @@ impl Scribe {
         Ok(self.prochain_id - 1)
     }
 
-    /// Ferme un comptoir de dépôt et enregistre son contenu sous forme d'ENU.
+    /// Ferme un comptoir de dépôt et injecte son contenu dans une ENU racine.
     ///
-    /// Parcourt le dossier en bottom-up avec [`WalkDir::contents_first`],
-    /// dépose chaque fichier dans le classeur associé au comptoir via
-    /// [`FeuNoyau::depot_donnees`], crée et signe les ENU correspondantes
-    /// (CarteDonnée pour les fichiers, CarteRépertoire pour les dossiers),
-    /// et les sauvegarde dans `~/.feu/enu/`.
+    /// Parcourt le dossier en bottom-up (`contents_first(true)`) : chaque
+    /// fichier est déposé dans le classeur du comptoir via
+    /// [`FeuNoyau::depot_donnees`], puis encapsulé dans une ENU signée de
+    /// type [`Carte::Donnee`]. Chaque répertoire devient une
+    /// [`Carte::Repertoire`] référençant ses enfants par leur `hash_carte`.
+    /// Toutes les ENU produites sont sauvegardées dans `~/.feu/enu/`.
     ///
-    /// Le nom de chaque fichier et dossier est conservé comme métadonnée
-    /// `"nom"` dans la carte. Le dossier racine du comptoir porte en plus la
-    /// métadonnée `"_racine"` (valeur vide).
+    /// Le nom de chaque entrée (fichier ou dossier) est conservé comme
+    /// métadonnée `"nom"`. L'ENU racine enrichie reçoit la métadonnée
+    /// `"_racine"` (valeur vide).
+    ///
+    /// Les entrées directement à la racine du comptoir (`depth == 1`) sont
+    /// ajoutées comme enfants directs de `enu_racine`. Les entrées plus
+    /// profondes (`depth > 1`) forment des sous-arbres autonomes dont la
+    /// racine devient enfant de `enu_racine`. Le dossier physique du comptoir
+    /// est supprimé en fin de traitement. Un comptoir vide est simplement
+    /// supprimé sans modifier `enu_racine`.
     ///
     /// # Retour
     ///
-    /// Le [`hash_carte`](Enu::hash_carte) de l'ENUr racine du comptoir.
+    /// Le [`hash_carte`](Enu::hash_carte) de la nouvelle ENU racine (modifiée
+    /// ou identique à l'original si le comptoir était vide).
     ///
     /// # Erreurs
     ///
     /// Retourne [`ErreurScribe::Interne`] (`SCR-001`) si l'ID du comptoir est
-    /// invalide, [`ErreurScribe::Interne`] (`SCR-002`) si le comptoir est vide,
-    /// et propage toute erreur de lecture ou dépôt.
+    /// invalide, ou (`SCR-002`) si la braise de `enu_racine` est inconnue de
+    /// la session. Propage toute erreur d'E/S, de dépôt de données ou de
+    /// signature.
     pub(super) fn fermeture_comptoir_depot(
         &mut self,
         noyau: &mut FeuNoyau,
         session: &SessionApplication,
         index_comptoir: usize,
+        enu_racine: &Enu,
     ) -> ResultScribe<[u8; 32]> {
         let Some(comptoir) = self.comptoirs_depot.remove(&index_comptoir) else {
             return Err(ErreurScribe::Interne(String::from(ERR_SCR_001)));
         };
 
+        let dir = read_dir(comptoir.chemin())?;
+        if dir.count() == 0 {
+            comptoir.supprimer()?;
+
+            return Ok(enu_racine.hash_carte());
+        }
+
+        let mut nouveaux_enfants: Vec<[u8; 32]> = Vec::new();
         let mut enfants: HashMap<PathBuf, Vec<[u8; 32]>> = HashMap::new();
 
         for entree in WalkDir::new(comptoir.chemin()).contents_first(true) {
@@ -191,20 +209,25 @@ impl Scribe {
                     .unwrap();
 
                 let mut carte = Carte::new_donnee(hash_fichier);
-                carte.ajout_meta_carte("nom", &entree.file_name().to_string_lossy().to_string());
+                carte.ajout_meta("nom", &entree.file_name().to_string_lossy().to_string());
 
                 let enu = Enu::new(
                     carte,
                     &noyau,
                     comptoir.index_foyer(),
-                    String::from(session.braise_foyer(comptoir.index_foyer())?),
+                    session.braise_foyer(comptoir.index_foyer())?,
                 )?;
 
                 enu.sauvegarder()?;
 
                 let hash_carte = enu.hash_carte();
-                let parent = entree.path().parent().unwrap().to_path_buf();
-                enfants.entry(parent).or_default().push(hash_carte);
+
+                if entree.depth() == 1 {
+                    nouveaux_enfants.push(hash_carte);
+                } else {
+                    let parent = entree.path().parent().unwrap().to_path_buf();
+                    enfants.entry(parent).or_default().push(hash_carte);
+                }
             }
 
             // si c'est un répertoire
@@ -213,33 +236,51 @@ impl Scribe {
 
                 let mut carte = Carte::new_repertoire(hashs.into_iter().collect());
 
-                carte.ajout_meta_carte("nom", &entree.file_name().to_string_lossy().to_string());
-
-                if entree.depth() == 0 {
-                    carte.ajout_meta_carte("_racine", "");
-                }
+                carte.ajout_meta("nom", &entree.file_name().to_string_lossy().to_string());
 
                 let enu = Enu::new(
                     carte,
                     &noyau,
                     comptoir.index_foyer(),
-                    String::from(session.braise_foyer(comptoir.index_foyer())?),
+                    session.braise_foyer(comptoir.index_foyer())?,
                 )?;
 
                 enu.sauvegarder()?;
 
                 let hash_carte = enu.hash_carte();
-                if entree.depth() > 0 {
+                if entree.depth() == 1 {
+                    nouveaux_enfants.push(hash_carte);
+                } else {
                     let parent = entree.path().parent().unwrap().to_path_buf();
                     enfants.entry(parent).or_default().push(hash_carte);
-                }
-                if entree.depth() == 0 {
-                    return Ok(hash_carte);
                 }
             }
         }
 
-        Err(ErreurScribe::Interne(String::from(ERR_SCR_002)))
+        let mut nouvelle_carte = enu_racine.carte().clone();
+
+        nouvelle_carte.ajout_meta("_racine", "");
+
+        for h in &nouveaux_enfants {
+            nouvelle_carte.ajout_hash_donnee(h)?;
+        }
+
+        let Some(index_foyer_enu_racine) = session.braise_vers_index(enu_racine.braise()) else {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_002)));
+        };
+
+        let nouvelle_enu_racine = Enu::new(
+            nouvelle_carte,
+            noyau,
+            index_foyer_enu_racine,
+            enu_racine.braise(),
+        )?;
+
+        nouvelle_enu_racine.sauvegarder()?;
+
+        comptoir.supprimer()?;
+
+        Ok(nouvelle_enu_racine.hash_carte())
     }
 }
 

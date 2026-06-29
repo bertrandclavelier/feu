@@ -15,7 +15,11 @@
 //! agent IA) écrit librement dans le dossier, et Feu le parcourt à la
 //! fermeture pour tout ranger.
 
-use std::{fs::DirBuilder, os::unix::fs::DirBuilderExt, path::PathBuf};
+use std::{
+    fs::{DirBuilder, remove_dir_all},
+    os::unix::fs::DirBuilderExt,
+    path::PathBuf,
+};
 
 use crate::scribe::erreur::{ErreurScribe, ResultScribe};
 
@@ -80,6 +84,22 @@ impl ComptoirDepot {
             .mode(0o700)
             .recursive(true)
             .create(&self.chemin)?;
+
+        Ok(())
+    }
+
+    /// Supprime le dossier physique du comptoir et tout son contenu résiduel.
+    ///
+    /// Appelée par le [`Scribe`] à la fermeture, une fois les fichiers parcourus
+    /// et déposés. Récursive ([`remove_dir_all`]) : le dossier disparaît avec ce
+    /// qu'il reste dedans.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage une [`ErreurScribe::IoError`] si le dossier est absent ou si la
+    /// suppression échoue.
+    pub(super) fn supprimer(&self) -> ResultScribe<()> {
+        remove_dir_all(&self.chemin)?;
 
         Ok(())
     }
