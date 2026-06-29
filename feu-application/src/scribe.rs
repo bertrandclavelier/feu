@@ -46,8 +46,6 @@ use crate::{
 /// L'ID fourni ne correspond à aucun comptoir de dépôt actif dans
 /// [`Scribe::comptoirs_depot`].
 const ERR_SCR_001: &str = "SCR-001 > Index du comptoir invalide";
-/// La braise de `enu_racine` n'appartient à aucun foyer ouvert dans la session.
-const ERR_SCR_002: &str = "SCR-002 > Mauvaise braise";
 
 /// Tenant de la couche ENU — créé et maintient `~/.feu/enu/`.
 ///
@@ -136,7 +134,8 @@ impl Scribe {
         Ok(self.prochain_id - 1)
     }
 
-    /// Ferme un comptoir de dépôt et injecte son contenu dans une ENU racine.
+    /// Ferme un comptoir de dépôt : greffe son contenu sous `enu_racine_depot`,
+    /// puis propage la nouvelle racine de dépôt jusqu'à `enu_racine_noeud`.
     ///
     /// Parcourt le dossier en bottom-up (`contents_first(true)`) : chaque
     /// fichier est déposé dans le classeur du comptoir via
@@ -150,46 +149,57 @@ impl Scribe {
     /// `"_racine"` (valeur vide).
     ///
     /// Les entrées directement à la racine du comptoir (`depth == 1`) sont
-    /// ajoutées comme enfants directs de `enu_racine`. Les entrées plus
+    /// ajoutées comme enfants directs de `enu_racine_depot`. Les entrées plus
     /// profondes (`depth > 1`) forment des sous-arbres autonomes dont la
-    /// racine devient enfant de `enu_racine`. Le dossier physique du comptoir
+    /// racine devient enfant de `enu_racine_depot`. Le dossier physique du comptoir
     /// est supprimé en fin de traitement. Un comptoir vide est simplement
-    /// supprimé sans modifier `enu_racine`.
+    /// supprimé sans modifier `enu_racine_depot`.
     ///
     /// # Retour
     ///
-    /// Le [`hash_carte`](Enu::hash_carte) de la nouvelle ENU racine (modifiée
-    /// ou identique à l'original si le comptoir était vide).
+    /// La nouvelle ENU racine du nœud, après propagation — identique à
+    /// `enu_racine_noeud` si le comptoir était vide.
     ///
     /// # Erreurs
     ///
     /// Retourne [`ErreurScribe::Interne`] (`SCR-001`) si l'ID du comptoir est
-    /// invalide, ou (`SCR-002`) si la braise de `enu_racine` est inconnue de
-    /// la session. Propage toute erreur d'E/S, de dépôt de données ou de
-    /// signature.
+    /// invalide. Propage toute erreur d'E/S, de dépôt de données ou de signature
+    /// — y compris l'échec de signature si un foyer du chemin reconstruit par
+    /// [`Enu::remplacer`] est fermé.
     pub(super) fn fermeture_comptoir_depot(
         &mut self,
         noyau: &mut FeuNoyau,
         session: &SessionApplication,
         index_comptoir: usize,
-        enu_racine: &Enu,
-    ) -> ResultScribe<[u8; 32]> {
+        enu_racine_depot: &Enu,
+        enu_racine_noeud: &Enu,
+    ) -> ResultScribe<Enu> {
         let Some(comptoir) = self.comptoirs_depot.remove(&index_comptoir) else {
             return Err(ErreurScribe::Interne(String::from(ERR_SCR_001)));
         };
 
+        // foyer/classeur de destination, constants pour tout le comptoir
+        let braise = session.braise_foyer(comptoir.index_foyer())?;
+
         let dir = read_dir(comptoir.chemin())?;
         if dir.count() == 0 {
+            // comptoir vide : rien à greffer, le nœud est inchangé
             comptoir.supprimer()?;
 
-            return Ok(enu_racine.hash_carte());
+            return Ok(enu_racine_noeud.clone());
         }
 
+        // depth 1 → enfants directs du dépôt ; plus profond → rattachés à leur parent
         let mut nouveaux_enfants: Vec<[u8; 32]> = Vec::new();
         let mut enfants: HashMap<PathBuf, Vec<[u8; 32]>> = HashMap::new();
 
+        // bottom-up : un dossier est traité après ses enfants, dont il référence les hashs
         for entree in WalkDir::new(comptoir.chemin()).contents_first(true) {
             let entree = entree?;
+            if entree.depth() == 0 {
+                // depth 0 = le comptoir lui-même : on greffe son contenu, pas lui
+                continue;
+            }
             let chemin_entree = entree.path().to_path_buf();
 
             // si c'est un fichier
@@ -211,12 +221,7 @@ impl Scribe {
                 let mut carte = Carte::new_donnee(hash_fichier);
                 carte.ajout_meta("nom", &entree.file_name().to_string_lossy().to_string());
 
-                let enu = Enu::new(
-                    carte,
-                    &noyau,
-                    comptoir.index_foyer(),
-                    session.braise_foyer(comptoir.index_foyer())?,
-                )?;
+                let enu = Enu::new(carte, noyau, braise)?;
 
                 enu.sauvegarder()?;
 
@@ -238,12 +243,7 @@ impl Scribe {
 
                 carte.ajout_meta("nom", &entree.file_name().to_string_lossy().to_string());
 
-                let enu = Enu::new(
-                    carte,
-                    &noyau,
-                    comptoir.index_foyer(),
-                    session.braise_foyer(comptoir.index_foyer())?,
-                )?;
+                let enu = Enu::new(carte, noyau, braise)?;
 
                 enu.sauvegarder()?;
 
@@ -257,30 +257,30 @@ impl Scribe {
             }
         }
 
-        let mut nouvelle_carte = enu_racine.carte().clone();
+        // greffe : le contenu de premier niveau devient enfant du dépôt
+        let mut nouvelle_carte = enu_racine_depot.carte().clone();
 
         nouvelle_carte.ajout_meta("_racine", "");
-
         for h in &nouveaux_enfants {
             nouvelle_carte.ajout_hash_donnee(h)?;
         }
 
-        let Some(index_foyer_enu_racine) = session.braise_vers_index(enu_racine.braise()) else {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_002)));
-        };
+        let nouvelle_enu_racine_depot = Enu::new(nouvelle_carte, noyau, enu_racine_depot.braise())?;
 
-        let nouvelle_enu_racine = Enu::new(
-            nouvelle_carte,
+        nouvelle_enu_racine_depot.sauvegarder()?;
+
+        // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
+        let racine_finale = Enu::remplacer(
+            enu_racine_noeud,
+            &enu_racine_depot.hash_carte(),
+            &nouvelle_enu_racine_depot,
             noyau,
-            index_foyer_enu_racine,
-            enu_racine.braise(),
+            session,
         )?;
-
-        nouvelle_enu_racine.sauvegarder()?;
 
         comptoir.supprimer()?;
 
-        Ok(nouvelle_enu_racine.hash_carte())
+        Ok(racine_finale)
     }
 }
 

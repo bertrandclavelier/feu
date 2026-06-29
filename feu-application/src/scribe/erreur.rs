@@ -50,9 +50,6 @@ pub(crate) enum ErreurScribe {
     /// Erreur d'entrée/sortie émise par les opérations sur le système de fichiers.
     #[error("SCR > IoError > {0}")]
     IoError(#[from] std::io::Error),
-
-    #[error("SCR > IoError > {0}")]
-    WalkdirError(String),
 }
 
 impl From<ErreurFeuNoyau> for ErreurScribe {

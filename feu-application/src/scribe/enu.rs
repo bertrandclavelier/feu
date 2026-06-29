@@ -121,21 +121,17 @@ impl Enu {
     /// Crée une ENU signée.
     ///
     /// Hash la carte (`creation_empreinte`), la signe avec la clé du foyer
-    /// (`signature_foyer`), horodate. Le foyer doit être ouvert.
+    /// désigné par `braise` (`signature_foyer_braise`), horodate. Le foyer doit
+    /// être ouvert — sa clé privée doit être présente en mémoire.
     ///
     /// La taille de la carte sérialisée est limitée à
     /// [`MAX_TAILLE_SIGNATURE`] (64 kio) par le noyau.
-    pub(super) fn new(
-        carte: Carte,
-        feu_noyau: &FeuNoyau,
-        index_foyer: usize,
-        braise: &str,
-    ) -> ResultScribe<Self> {
+    pub(super) fn new(carte: Carte, feu_noyau: &FeuNoyau, braise: &str) -> ResultScribe<Self> {
         let octets_carte = carte.vers_octets();
         Ok(Self {
             braise: String::from(braise),
             hash_carte: FeuNoyau::creation_empreinte(&octets_carte),
-            signature_carte: feu_noyau.signature_foyer(index_foyer, &octets_carte)?,
+            signature_carte: feu_noyau.signature_foyer_braise(braise, &octets_carte)?,
             date: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Horloge système antérieure à 1970")
@@ -180,30 +176,34 @@ impl Enu {
     /// Le nom du fichier est l'empreinte hexadécimale de la carte
     /// (content-addressing) : une carte donnée vise toujours le même fichier,
     /// indépendamment de l'enveloppe qui la transporte. Le fichier est créé en
-    /// mode `0o600` (lecture/écriture réservées au propriétaire) et en
-    /// `create_new`, qui refuse d'écraser un fichier existant.
+    /// mode `0o600` (lecture/écriture réservées au propriétaire).
     ///
-    /// Conséquence du content-addressing : ré-envelopper une carte déjà
-    /// sauvegardée vise le même nom de fichier — l'écriture échoue alors, même
-    /// si la nouvelle enveloppe diffère par sa `date` ou sa `signature` (ces
-    /// champs ne participent pas au nom).
+    /// **Idempotent.** Si le fichier existe déjà, l'écriture est shuntée et la
+    /// méthode renvoie `Ok(())` sans rien faire : le nom étant le hash de la
+    /// carte, un fichier de même nom encode forcément la même carte — il n'y a
+    /// rien à réécrire. Une `date` ou une `signature` différentes dans la
+    /// nouvelle enveloppe sont sans incidence : ces champs ne participent ni au
+    /// hash ni au nom. Un contenu identique n'est donc stocké qu'une fois et
+    /// peut être référencé par autant d'ENU que nécessaire (déduplication à
+    /// l'échelle du nœud).
     ///
     /// # Erreurs
     ///
     /// Propage une [`ErreurScribe::IoError`] si le dossier `~/.feu/enu/` est
-    /// absent, si une ENU de même empreinte existe déjà, ou sur tout autre
-    /// échec d'écriture.
+    /// absent ou sur tout autre échec d'écriture.
     pub(super) fn sauvegarder(&self) -> ResultScribe<()> {
         let nom_fichier = format!("{}.enu", HEXLOWER.encode(&self.hash_carte));
         let chemin = crate::scribe::donne_chemin_dossier_enu().join(nom_fichier);
 
-        let mut fichier = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(chemin)?;
+        if !chemin.exists() {
+            let mut fichier = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(chemin)?;
 
-        fichier.write_all(&self.vers_octets())?;
+            fichier.write_all(&self.vers_octets())?;
+        }
 
         Ok(())
     }
@@ -313,10 +313,15 @@ impl Enu {
     /// `hash_a_remplacer`. Lorsqu'elle la trouve, elle y substitue
     /// `remplacement`, puis reconstruit chaque répertoire situé sur le chemin
     /// entre la racine et le nœud remplacé : métadonnées et tags conservés,
-    /// re-signé par le foyer `index_foyer` sous la `braise` donnée, et
-    /// sauvegardé dans `~/.feu/enu/`. Comme le `hash_carte` d'un répertoire
-    /// dépend du hash de ses enfants, modifier une feuille fait remonter de
-    /// nouveaux hashs jusqu'à une nouvelle racine.
+    /// **re-signé sous sa propre braise** ([`Enu::braise`]), et sauvegardé dans
+    /// `~/.feu/enu/`. Chaque répertoire reste ainsi signé par le foyer qui le
+    /// possède — c'est ce qui autorise un arbre mêlant plusieurs foyers. Comme le
+    /// `hash_carte` d'un répertoire dépend du hash de ses enfants, modifier une
+    /// feuille fait remonter de nouveaux hashs jusqu'à une nouvelle racine.
+    ///
+    /// Corollaire du modèle mixte : **tout foyer présent sur le chemin
+    /// reconstruit doit être ouvert**, sans quoi la re-signature de son
+    /// répertoire échoue.
     ///
     /// # Retour
     ///
@@ -326,21 +331,21 @@ impl Enu {
     /// # Erreurs
     ///
     /// Propage les erreurs de [`Enu::charger`] (E/S, authentification) sur
-    /// chaque enfant visité, et les erreurs de signature de [`Enu::new`].
+    /// chaque enfant visité, et les erreurs de signature de [`Enu::new`] —
+    /// notamment lorsqu'un foyer du chemin est fermé.
     pub(super) fn remplacer(
         racine: &Enu,
         hash_a_remplacer: &[u8; 32],
         remplacement: &Enu,
         noyau: &FeuNoyau,
-        index_foyer: usize,
-        index_classeur: usize,
-        braise: &str,
         session: &SessionApplication,
     ) -> ResultScribe<Enu> {
+        // cible atteinte : on substitue, la remontée s'arrête ici
         if racine.hash_carte() == *hash_a_remplacer {
             return Ok(remplacement.clone());
         }
 
+        // sinon : descente récursive dans chaque sous-répertoire
         if let Carte::Repertoire {
             metas,
             tags,
@@ -354,17 +359,10 @@ impl Enu {
 
                 let enu_enfant = Self::charger(chemin, session)?;
 
-                let enu_enfant_modifie = Self::remplacer(
-                    &enu_enfant,
-                    hash_a_remplacer,
-                    &remplacement,
-                    noyau,
-                    index_foyer,
-                    index_classeur,
-                    braise,
-                    session,
-                )?;
+                let enu_enfant_modifie =
+                    Self::remplacer(&enu_enfant, hash_a_remplacer, remplacement, noyau, session)?;
 
+                // un enfant a changé → on échange son hash dans ce dossier
                 if enu_enfant_modifie.hash_carte() != enu_enfant.hash_carte() {
                     hashs_enu.remove(&enu_enfant.hash_carte());
                     hashs_enu.insert(enu_enfant_modifie.hash_carte());
@@ -372,6 +370,7 @@ impl Enu {
                 }
             }
             if modifie {
+                // dossier reconstruit et re-signé sous SA braise (arbre multi-foyers)
                 let mut carte = Carte::new_repertoire(hashs_enu.clone());
                 for (cle, valeur) in &metas {
                     carte.ajout_meta(cle, valeur);
@@ -380,12 +379,13 @@ impl Enu {
                     carte.ajout_tag(t);
                 }
 
-                let nouvelle_enu = Enu::new(carte, noyau, index_foyer, braise)?;
+                let nouvelle_enu = Enu::new(carte, noyau, racine.braise())?;
                 nouvelle_enu.sauvegarder()?;
 
                 return Ok(nouvelle_enu);
             }
         }
+        // cible absente de ce sous-arbre : racine renvoyée inchangée
         Ok(racine.clone())
     }
 }
@@ -400,7 +400,9 @@ impl Enu {
 pub enum Carte {
     /// CaD — référence un blob stocké dans un classeur.
     Donnee {
+        /// Métadonnées structurées clé → valeur (ordre déterministe pour le hash).
         metas: BTreeMap<String, String>,
+        /// Tags libres (ordre déterministe pour le hash).
         tags: BTreeSet<String>,
         /// Hash SHA3-256 du blob (également le nom du fichier `.dat`).
         hash_donnee: [u8; 32],
@@ -408,14 +410,19 @@ pub enum Carte {
 
     /// CaT — texte brut, pas de limite de taille en v0.0.5.
     Texte {
+        /// Métadonnées structurées clé → valeur (ordre déterministe pour le hash).
         metas: BTreeMap<String, String>,
+        /// Tags libres (ordre déterministe pour le hash).
         tags: BTreeSet<String>,
+        /// Texte brut transporté par la carte.
         contenu: String,
     },
 
     /// CaR — répertoire, référence ses enfants par leur `hash_carte`.
     Repertoire {
+        /// Métadonnées structurées clé → valeur (ordre déterministe pour le hash).
         metas: BTreeMap<String, String>,
+        /// Tags libres (ordre déterministe pour le hash).
         tags: BTreeSet<String>,
         /// Hash des ENU enfants. L'ordre [`BTreeSet`] assure la reproductibilité
         /// du hash de cette carte.

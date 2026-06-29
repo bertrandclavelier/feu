@@ -23,10 +23,7 @@
 //! `informations_blob`, signatures, diagnostic…) prennent `&self` ;
 //! les autres prennent `&mut self`.
 
-use std::{
-    io::{Read, Write},
-    path::PathBuf,
-};
+use std::{io::Write, path::PathBuf};
 
 use feu_noyau::{Anomalie, DonneesBlob, FeuNoyau};
 
@@ -251,30 +248,31 @@ impl FeuApplication {
             .ouverture_comptoir_depot(chemin, index_foyer, index_classeur)?)
     }
 
-    /// Ferme un comptoir de dépôt : range son contenu et le greffe sur une ENU
-    /// racine.
+    /// Ferme un comptoir de dépôt : range son contenu, le greffe sous
+    /// `enu_racine_depot`, puis propage la nouvelle racine jusqu'à `enu_racine_noeud`.
     ///
     /// Parcourt le dossier du comptoir, dépose chaque fichier chiffré dans le
     /// classeur de destination, encapsule fichiers et sous-dossiers dans des ENU
-    /// signées, puis ajoute le tout comme enfants de `enu_racine`. Le dossier
+    /// signées, puis ajoute le tout comme enfants de `enu_racine_depot`. Le dossier
     /// physique du comptoir est supprimé à l'issue ; le détail du rangement est
     /// porté par le Scribe.
     ///
     /// # Retour
     ///
-    /// Le `hash_carte` de la nouvelle ENU racine — inchangé si le comptoir était
-    /// vide.
+    /// La nouvelle ENU racine du nœud — `enu_racine_noeud` inchangé si le
+    /// comptoir était vide.
     ///
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : comptoir invalide, braise inconnue de la
-    /// session, E/S ou signature.
+    /// propage les erreurs du Scribe : comptoir invalide, E/S, dépôt de données
+    /// ou signature (notamment si un foyer du chemin reconstruit est fermé).
     pub fn commande_fermeture_comptoir_depot(
         &mut self,
         index_comptoir: usize,
-        enu_racine: &Enu,
-    ) -> ResultFeuApplication<[u8; 32]> {
+        enu_racine_depot: &Enu,
+        enu_racine_noeud: &Enu,
+    ) -> ResultFeuApplication<Enu> {
         let noyau = self
             .feu_noyau
             .as_mut()
@@ -284,7 +282,8 @@ impl FeuApplication {
             noyau,
             &self.session,
             index_comptoir,
-            enu_racine,
+            enu_racine_depot,
+            enu_racine_noeud,
         )?)
     }
 
@@ -488,7 +487,7 @@ impl FeuApplication {
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        Ok(noyau.signature_foyer(index_foyer, octets_a_signer)?)
+        Ok(noyau.signature_foyer_index(index_foyer, octets_a_signer)?)
     }
 
     /// Vérifie une signature ML-DSA-87.
@@ -506,11 +505,6 @@ impl FeuApplication {
         signature: [u8; 4627],
         octets_signes: &[u8],
     ) -> ResultFeuApplication<bool> {
-        let noyau = self
-            .feu_noyau
-            .as_ref()
-            .ok_or(ErreurFeuApplication::NoeudEteint)?;
-
         Ok(FeuNoyau::verification_signature(
             cle_publique,
             signature,

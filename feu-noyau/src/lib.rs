@@ -1180,7 +1180,7 @@ impl FeuNoyau {
     /// Retourne une erreur si l'index est invalide,
     /// si le foyer n'est pas ouvert, si la taille dépasse [`MAX_TAILLE_SIGNATURE`],
     /// ou si la signature échoue.
-    pub fn signature_foyer(
+    pub fn signature_foyer_index(
         &self,
         index_foyer: usize,
         octets_a_signer: &[u8],
@@ -1198,6 +1198,32 @@ impl FeuNoyau {
         Ok(self
             .cryptographe
             .signature_foyer(index_foyer, octets_a_signer)?)
+    }
+
+    /// Signe des octets avec la clé du foyer identifié par son adresse `.braise`.
+    ///
+    /// Variante de [`signature_foyer_index`](Self::signature_foyer_index) prenant
+    /// la braise plutôt que l'index : elle résout la braise en position via la
+    /// session, puis délègue. C'est la voie d'entrée de la couche ENU — une ENU
+    /// porte la braise de son foyer signataire, jamais son index. Re-signer une
+    /// ENU (par exemple lors de la reconstruction d'une arborescence, où chaque
+    /// répertoire est réémis sous la braise qui le possède) part donc directement
+    /// de cette braise, sans table de correspondance côté appelant.
+    ///
+    /// Comme [`signature_foyer_index`](Self::signature_foyer_index), le foyer doit
+    /// être ouvert : sa clé privée doit être présente en mémoire.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la braise n'identifie aucun foyer de la session, si
+    /// ce foyer n'est pas ouvert, si la taille dépasse [`MAX_TAILLE_SIGNATURE`],
+    /// ou si la signature échoue.
+    pub fn signature_foyer_braise(
+        &self,
+        braise: &str,
+        octets_a_signer: &[u8],
+    ) -> ResultFeuNoyau<[u8; 4627]> {
+        self.signature_foyer_index(self.session.braise_vers_index(braise)?, octets_a_signer)
     }
 
     /// Vérifie une signature ML-DSA-87.
