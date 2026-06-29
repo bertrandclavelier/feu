@@ -32,6 +32,39 @@
 //! `feu-noyau` ; c'est ce qui autorise à la stocker sans préfixe de taille.
 //! Toute évolution de l'adresse `.braise` côté noyau doit être répercutée
 //! ici, faute de quoi le format casse sans erreur de compilation.
+//!
+//! # Exposition publique
+//!
+//! [`Enu`] et [`Carte`] sont exposés en **lecture seule** à toutes les crates
+//! du workspace via [`crate::Enu`] et [`crate::Carte`] (réexportés depuis
+//! `lib.rs`).
+//!
+//! - **`Enu`** — champs privés, accesseurs publics. Seule la crate
+//!   `feu-application` peut construire une enveloppe (via [`Enu::new`],
+//!   `pub(super)`) ou la persister sur disque ([`Enu::sauvegarder`],
+//!   `pub(super)`). Une [`Enu`] lue depuis l'extérieur a obligatoirement
+//!   transité par [`Enu::charger`] (`pub(super)`) qui valide le hash et la
+//!   signature — son intégrité cryptographique est garantie.
+//!   Construire une [`Enu`] directement depuis l'extérieur est impossible
+//!   (champs privés, pas de `new` public).
+//!
+//! - **`Carte`** — enum publique avec champs accessibles en pattern matching.
+//!   Ce choix délibéré permet aux couches supérieures (TUI, futures API) de
+//!   discriminer proprement les variantes (`match carte { Carte::Donnee { .. }
+//!   => ... }`) sans passer par des getters à `Option`. Il rend techniquement
+//!   possible la construction d'une [`Carte`] arbitraire depuis l'extérieur,
+//!   mais cela ne constitue pas une menace : une carte sans enveloppe signée
+//!   ne peut pas être sauvegardée dans `enu/` (seul [`Enu::sauvegarder`] le
+//!   fait, et il est `pub(super)`). Les constructeurs ([`Carte::new_donnee`],
+//!   [`Carte::new_texte`], [`Carte::new_repertoire`]) et les mutateurs
+//!   ([`Carte::ajout_meta`], [`Carte::ajout_tag`],
+//!   [`Carte::ajout_hash_donnee`]) restent `pub(super)`.
+//!
+//!   Les accesseurs [`Carte::metas`] et [`Carte::tags`] sont maintenus parce
+//!   qu'ils évitent de répéter le match sur les trois variantes pour des
+//!   champs communs. Les getters spécifiques (`hash_donnee()`, `contenu()`,
+//!   `hashs_enu()`) ont été supprimés — le pattern matching les rend
+//!   redondants.
 
 use data_encoding::HEXLOWER;
 use std::{
@@ -115,19 +148,31 @@ impl Enu {
     ///
     /// Métadonnée de routage, hors hash et hors signature : sa valeur n'est pas
     /// authentifiée (voir le modèle de confiance du module).
-    pub(super) fn braise(&self) -> &str {
+    pub fn braise(&self) -> &str {
         &self.braise
-    }
-
-    /// Retourne une référence à la [`Carte`] transportée par l'enveloppe.
-    pub(super) fn carte(&self) -> &Carte {
-        &self.carte
     }
 
     /// Retourne le hash SHA3-256 de la carte — identifiant content-addressed
     /// de l'ENU, également utilisé comme nom de fichier dans `~/.feu/enu/`.
-    pub(super) fn hash_carte(&self) -> [u8; 32] {
+    pub fn hash_carte(&self) -> [u8; 32] {
         self.hash_carte
+    }
+
+    /// Retourne la signature ML-DSA-87 de la carte (4627 octets).
+    pub fn signature_carte(&self) -> [u8; 4627] {
+        self.signature_carte
+    }
+
+    /// Retourne le timestamp Unix de mise sous enveloppe.
+    ///
+    /// Non couvert par la signature ni le hash — métadonnée indicative.
+    pub fn date(&self) -> u64 {
+        self.date
+    }
+
+    /// Retourne une référence à la [`Carte`] transportée par l'enveloppe.
+    pub fn carte(&self) -> &Carte {
+        &self.carte
     }
 
     /// Écrit l'ENU sur disque sous `~/.feu/enu/<hash_carte_hex>.enu`.
@@ -352,7 +397,7 @@ impl Enu {
 /// et des tags libres (`BTreeSet<String>`). L'ordre déterministe des deux
 /// collections est nécessaire au calcul du hash.
 #[derive(PartialEq, Eq, Debug, Clone)]
-pub(super) enum Carte {
+pub enum Carte {
     /// CaD — référence un blob stocké dans un classeur.
     Donnee {
         metas: BTreeMap<String, String>,
@@ -386,6 +431,54 @@ impl Carte {
             metas: BTreeMap::new(),
             tags: BTreeSet::new(),
             hash_donnee,
+        }
+    }
+
+    /// Retourne les métadonnées structurées, communes aux trois variantes.
+    ///
+    /// Un [`BTreeMap`] clé → valeur. L'ordre itératif est déterministe
+    /// (lexicographique sur les clés), condition nécessaire au calcul de hash.
+    pub fn metas(&self) -> &BTreeMap<String, String> {
+        match self {
+            Self::Donnee {
+                metas,
+                tags: _,
+                hash_donnee: _,
+            } => return &metas,
+            Self::Texte {
+                metas,
+                tags: _,
+                contenu: _,
+            } => return &metas,
+            Self::Repertoire {
+                metas,
+                tags: _,
+                hashs_enu: _,
+            } => return metas,
+        }
+    }
+
+    /// Retourne les tags libres, communs aux trois variantes.
+    ///
+    /// Un [`BTreeSet`] de chaînes. L'ordre itératif est déterministe
+    /// (lexicographique), condition nécessaire au calcul de hash.
+    pub fn tags(&self) -> &BTreeSet<String> {
+        match self {
+            Self::Donnee {
+                metas: _,
+                tags,
+                hash_donnee: _,
+            } => return &tags,
+            Self::Texte {
+                metas: _,
+                tags,
+                contenu: _,
+            } => return &tags,
+            Self::Repertoire {
+                metas: _,
+                tags,
+                hashs_enu: _,
+            } => return tags,
         }
     }
 

@@ -39,12 +39,17 @@
 //! - `feu_noyau` — `Option<FeuNoyau>` : `None` jusqu'à `commande_allumage_noeud`
 //! - `session` — état applicatif mis à jour à chaque commande noyau
 
+use secrecy::SecretString;
+
 pub use erreur::{ErreurFeuApplication, ResultFeuApplication};
 use feu_noyau::{FeuNoyau, InterfaceFeuNoyau};
-use secrecy::SecretString;
+use scribe::Scribe;
+/// Types ENU exposés en lecture seule à toutes les crates du workspace.
+///
+/// Contrat : champs privés, accesseurs publics — voir la doc du module
+/// `scribe::enu` pour le détail.
+pub use scribe::enu::{Carte, Enu};
 pub use session::SessionApplication;
-
-use crate::scribe::Scribe;
 
 mod commandes;
 pub mod erreur;
