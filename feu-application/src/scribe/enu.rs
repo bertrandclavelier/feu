@@ -95,6 +95,8 @@ const ERR_ENU_003: &str = "ENU-003 > Problème ouverture ENU";
 /// ajouter le hash d'une ENU enfant.
 const ERR_ENU_004: &str = "ENU-004 > Ce n'est pas une EnuR";
 
+const ERR_ENU_005: &str = "ENU-005 > Braise incorrecte";
+
 /// Enveloppe Numérique Universelle.
 ///
 /// Le `hash_carte` (SHA3-256 de la carte sérialisée) est le nom du fichier
@@ -118,20 +120,39 @@ pub struct Enu {
 }
 
 impl Enu {
-    /// Crée une ENU signée.
+    /// Crée une ENU signée pour le foyer désigné par `braise`.
     ///
-    /// Hash la carte (`creation_empreinte`), la signe avec la clé du foyer
-    /// désigné par `braise` (`signature_foyer_braise`), horodate. Le foyer doit
-    /// être ouvert — sa clé privée doit être présente en mémoire.
+    /// Hash la carte (`creation_empreinte`), la signe avec la clé du foyer,
+    /// horodate, et conserve la braise comme métadonnée de routage. Le foyer
+    /// doit être ouvert — sa clé privée doit être présente en mémoire.
     ///
-    /// La taille de la carte sérialisée est limitée à
+    /// La braise est résolue en position via [`SessionApplication::braise_vers_index`] :
+    /// c'est la frontière où la couche application traduit son adresse `.braise`
+    /// en `index_foyer`, seule monnaie comprise par le noyau (qui signe via
+    /// `signature_foyer`). La taille de la carte sérialisée est limitée à
     /// [`MAX_TAILLE_SIGNATURE`] (64 kio) par le noyau.
-    pub(super) fn new(carte: Carte, feu_noyau: &FeuNoyau, braise: &str) -> ResultScribe<Self> {
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurScribe::Interne`] (`ENU-005`) si la braise n'identifie
+    /// aucun foyer de la session. Propage toute erreur de signature du noyau —
+    /// notamment si le foyer est fermé ou si la carte dépasse
+    /// [`MAX_TAILLE_SIGNATURE`].
+    pub(super) fn new(
+        carte: Carte,
+        feu_noyau: &FeuNoyau,
+        session: &SessionApplication,
+        braise: &str,
+    ) -> ResultScribe<Self> {
+        let Some(index_foyer) = session.braise_vers_index(braise) else {
+            return Err(ErreurScribe::Interne(String::from(ERR_ENU_005)));
+        };
+
         let octets_carte = carte.vers_octets();
         Ok(Self {
             braise: String::from(braise),
             hash_carte: FeuNoyau::creation_empreinte(&octets_carte),
-            signature_carte: feu_noyau.signature_foyer_braise(braise, &octets_carte)?,
+            signature_carte: feu_noyau.signature_foyer(index_foyer, &octets_carte)?,
             date: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Horloge système antérieure à 1970")
@@ -379,7 +400,7 @@ impl Enu {
                     carte.ajout_tag(t);
                 }
 
-                let nouvelle_enu = Enu::new(carte, noyau, racine.braise())?;
+                let nouvelle_enu = Enu::new(carte, noyau, session, racine.braise())?;
                 nouvelle_enu.sauvegarder()?;
 
                 return Ok(nouvelle_enu);

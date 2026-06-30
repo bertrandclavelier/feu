@@ -183,7 +183,7 @@ impl FeuApplication {
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
         let mut recepteur = RecepteurNoyau::new(&mut self.session, interface_feu_application);
-        noyau.fermeture_foyer_index(&mut recepteur, index_foyer)?;
+        noyau.fermeture_foyer(&mut recepteur, index_foyer)?;
 
         interface_feu_application.recevoir_session_application(Some(self.session.clone()));
 
@@ -215,7 +215,7 @@ impl FeuApplication {
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
         let mut recepteur = RecepteurNoyau::new(&mut self.session, interface_feu_application);
-        noyau.secours_fermeture_foyer_index(&mut recepteur, index_foyer)?;
+        noyau.secours_fermeture_foyer(&mut recepteur, index_foyer)?;
 
         interface_feu_application.recevoir_session_application(Some(self.session.clone()));
 
@@ -487,7 +487,7 @@ impl FeuApplication {
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        Ok(noyau.signature_foyer_index(index_foyer, octets_a_signer)?)
+        Ok(noyau.signature_foyer(index_foyer, octets_a_signer)?)
     }
 
     /// Vérifie une signature ML-DSA-87.

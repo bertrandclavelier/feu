@@ -283,44 +283,29 @@ impl SessionFoyers {
     /// # Erreurs
     ///
     /// Retourne une erreur si `index >= MAX_FOYERS`.
-    fn index_vers_braise(&self, index: usize) -> ResultFeuNoyau<&str> {
-        if index >= MAX_FOYERS {
+    fn index_vers_braise(&self, index_foyer: usize) -> ResultFeuNoyau<&str> {
+        if index_foyer >= MAX_FOYERS {
             Err(ErreurFeuNoyau::BraiseIntrouvable)
         } else {
-            Ok(&self.foyers[index].braise)
+            Ok(&self.foyers[index_foyer].braise)
         }
     }
 
-    /// Retourne la position d'un foyer à partir de son adresse `.braise`.
+    /// Indique si le foyer à la position `index_foyer` est ouvert.
     ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si l'adresse n'est pas trouvée dans la session.
-    fn braise_vers_index(&self, braise: &str) -> ResultFeuNoyau<usize> {
-        for index in 0..MAX_FOYERS {
-            if self.foyers[index].braise == braise {
-                return Ok(index);
-            }
-        }
-        Err(ErreurFeuNoyau::BraiseIntrouvable)
+    /// L'index n'est pas contrôlé ici : les méthodes publiques valident la borne
+    /// `< MAX_FOYERS` en tête d'appel. Un index hors borne provoque une panique.
+    fn est_ouvert(&self, index_foyer: usize) -> ResultFeuNoyau<bool> {
+        Ok(self.foyers[index_foyer].est_ouvert)
     }
 
-    /// Indique si le foyer identifié par `braise` est actuellement ouvert.
+    /// Marque le foyer à la position `index_foyer` comme ouvert (`true`) ou
+    /// fermé (`false`).
     ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si l'adresse n'est pas trouvée dans la session.
-    fn braise_est_ouvert(&self, braise: &str) -> ResultFeuNoyau<bool> {
-        Ok(self.foyers[self.braise_vers_index(braise)?].est_ouvert)
-    }
-
-    /// Modifie le statut d'ouverture du foyer identifié par `braise`.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si l'adresse n'est pas trouvée dans la session.
-    fn change_statut_braise(&mut self, braise: &str, valeur: bool) -> ResultFeuNoyau<()> {
-        self.foyers[self.braise_vers_index(braise)?].est_ouvert = valeur;
+    /// Même contrat d'index que [`est_ouvert`](Self::est_ouvert) : la borne est
+    /// supposée déjà validée par l'appelant.
+    fn change_statut(&mut self, index_foyer: usize, valeur: bool) -> ResultFeuNoyau<()> {
+        self.foyers[index_foyer].est_ouvert = valeur;
 
         Ok(())
     }
@@ -362,7 +347,7 @@ impl Drop for FeuNoyau {
     /// dossiers clairs restent sur le disque et les archives `.feu` sont absentes.
     /// Le nœud reste utilisable au redémarrage, mais l'ouverture de ces foyers
     /// échouera. [`FeuNoyau::diagnostic_noeud`] permet de détecter cet état ;
-    /// [`FeuNoyau::secours_fermeture_foyer_index`] permet de le réparer en
+    /// [`FeuNoyau::secours_fermeture_foyer`] permet de le réparer en
     /// refermant proprement le foyer depuis son dossier clair.
     fn drop(&mut self) {
         if !self.session.est_tout_ferme() {
@@ -513,10 +498,7 @@ impl FeuNoyau {
 
             // Fermeture des foyers
             for i in 0..MAX_FOYERS {
-                noyau.fermeture_foyer(
-                    interface_feu_noyau,
-                    &noyau.session.foyers[i].braise.clone(),
-                )?;
+                noyau.fermeture_foyer(interface_feu_noyau, i)?;
             }
 
             Ok(noyau)
@@ -621,7 +603,7 @@ impl FeuNoyau {
 
         // Fermeture des foyers
         for i in 0..MAX_FOYERS {
-            noyau.fermeture_foyer(interface_feu_noyau, &noyau.session.foyers[i].braise.clone())?;
+            noyau.fermeture_foyer(interface_feu_noyau, i)?;
         }
 
         Ok(())
@@ -708,7 +690,7 @@ impl FeuNoyau {
     /// clair mais avant que le foyer ne soit marqué comme ouvert, le dossier
     /// clair reste sur disque sans archive associée — état que
     /// [`diagnostic_noeud`](Self::diagnostic_noeud) détecte et que
-    /// [`secours_fermeture_foyer_index`](Self::secours_fermeture_foyer_index)
+    /// [`secours_fermeture_foyer`](Self::secours_fermeture_foyer)
     /// permet de réparer.
     pub fn ouverture_foyer(
         &mut self,
@@ -720,7 +702,7 @@ impl FeuNoyau {
         }
         let braise = self.session.index_vers_braise(index_foyer)?;
 
-        if self.session.braise_est_ouvert(braise)? {
+        if self.session.est_ouvert(index_foyer)? {
             return Err(ErreurFeuNoyau::FoyerDejaOuvert);
         }
 
@@ -752,31 +734,49 @@ impl FeuNoyau {
         self.archivistes[index_foyer] =
             Some(Archiviste::new(self.gardien.donne_chemin_braise(braise))?);
 
-        self.session.foyers[index_foyer].est_ouvert = true;
+        self.session.change_statut(index_foyer, true)?;
         interface_feu_noyau.recevoir_etat_foyer(index_foyer, true);
         Ok(())
     }
 
-    /// Archive et chiffre le dossier d'un foyer, détruit l'Archiviste, puis supprime
-    /// le dossier clair.
+    /// Ferme le foyer à la position `index_foyer` — opération inverse de
+    /// [`ouverture_foyer`](Self::ouverture_foyer).
     ///
-    /// Orchestre quatre opérations séquentielles :
-    /// 1. Ouvre le fichier de destination `<braise>.feu` en écriture.
-    /// 2. Crée l'archive tar chiffrée AES-256-GCM-stream du dossier `<braise>`.
-    ///    L'archive inclut `registre/`, `classeur0/` à `classeur4/` et leur contenu.
-    /// 3. Supprime le dossier clair `<braise>` après vérification que l'archive existe.
-    /// 4. Détruit l'Archiviste du foyer.
+    /// Réarchive le dossier clair du foyer en une archive `.feu` chiffrée, efface
+    /// toute trace en clair du disque et libère les ressources mémoire associées.
+    ///
+    /// Enchaîne sept étapes séquentielles :
+    ///
+    /// 1. Valide l'index du foyer.
+    /// 2. Vérifie que le foyer est bien ouvert.
+    /// 3. Prépare l'archivage : produit le flux source (dossier clair) et la
+    ///    destination (archive chiffrée) via le Gardien.
+    /// 4. Chiffre le dossier du foyer dans l'archive `.feu` via le Cryptographe.
+    /// 5. Supprime l'archive `.tar` intermédiaire et le dossier clair du disque.
+    /// 6. Détruit l'Archiviste du foyer — son dossier vient d'être supprimé.
+    /// 7. Marque le foyer comme fermé dans la session et notifie la couche de
+    ///    présentation.
+    ///
+    /// # Invariant de sécurité
+    ///
+    /// À la fin de l'opération, aucune donnée du foyer ne subsiste en clair sur
+    /// le disque : seule demeure l'archive `.feu` chiffrée.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la création de l'archive échoue ou si la suppression
-    /// du dossier échoue.
-    fn fermeture_foyer(
+    /// Retourne une [`ErreurFeuNoyau`] si l'index est invalide, si le foyer est
+    /// déjà fermé, si le chiffrement échoue, ou si une opération disque échoue.
+    pub fn fermeture_foyer(
         &mut self,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
-        braise: &str,
+        index_foyer: usize,
     ) -> ResultFeuNoyau<()> {
-        if !self.session.braise_est_ouvert(braise)? {
+        if index_foyer >= MAX_FOYERS {
+            return Err(ErreurFeuNoyau::IndexInvalide);
+        }
+        let braise = self.session.index_vers_braise(index_foyer)?;
+
+        if !self.session.est_ouvert(index_foyer)? {
             return Err(ErreurFeuNoyau::FoyerFerme);
         }
 
@@ -784,7 +784,7 @@ impl FeuNoyau {
             self.gardien.preparation_archivage_chiffre_foyer(braise)?;
 
         self.cryptographe.donne_flux_chiffrement_foyer(
-            self.session.braise_vers_index(braise)?,
+            index_foyer,
             &mut source,
             &mut destination,
         )?;
@@ -793,32 +793,11 @@ impl FeuNoyau {
         self.gardien.suppression_dossier_braise(braise)?;
 
         // Destruction de l'archiviste — le dossier du foyer est déjà supprimé.
-        self.archivistes[self.session.braise_vers_index(braise)?] = None;
+        self.archivistes[index_foyer] = None;
 
-        self.session.change_statut_braise(braise, false)?;
-        interface_feu_noyau.recevoir_etat_foyer(self.session.braise_vers_index(braise)?, false);
-        Ok(())
-    }
+        self.session.change_statut(index_foyer, false)?;
+        interface_feu_noyau.recevoir_etat_foyer(index_foyer, false);
 
-    /// Ferme un foyer à partir de son index dans la session.
-    ///
-    /// Résout l'index en adresse `.braise` puis déclenche la fermeture : archive
-    /// et chiffre le dossier du foyer, détruit son archiviste et supprime le
-    /// dossier clair.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si `index >= MAX_FOYERS` ou si la fermeture échoue.
-    pub fn fermeture_foyer_index(
-        &mut self,
-        interface_feu_noyau: &mut impl InterfaceFeuNoyau,
-        index_foyer: usize,
-    ) -> ResultFeuNoyau<()> {
-        if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuNoyau::IndexInvalide);
-        }
-        let braise = String::from(self.session.index_vers_braise(index_foyer)?);
-        self.fermeture_foyer(interface_feu_noyau, &braise)?;
         Ok(())
     }
 
@@ -849,7 +828,7 @@ impl FeuNoyau {
     ///
     /// Retourne une erreur si l'index est invalide, si le diagnostic détecte une
     /// anomalie, si le mot de passe est incorrect, ou si une opération disque échoue.
-    pub fn secours_fermeture_foyer_index(
+    pub fn secours_fermeture_foyer(
         &mut self,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
         index_foyer: usize,
@@ -868,8 +847,8 @@ impl FeuNoyau {
             interface_feu_noyau,
         )?;
 
-        self.session.change_statut_braise(&braise, true)?;
-        self.fermeture_foyer(interface_feu_noyau, &braise)?;
+        self.session.change_statut(index_foyer, true)?;
+        self.fermeture_foyer(interface_feu_noyau, index_foyer)?;
 
         Ok(())
     }
@@ -1182,7 +1161,7 @@ impl FeuNoyau {
     /// Retourne une erreur si l'index est invalide,
     /// si le foyer n'est pas ouvert, si la taille dépasse [`MAX_TAILLE_SIGNATURE`],
     /// ou si la signature échoue.
-    pub fn signature_foyer_index(
+    pub fn signature_foyer(
         &self,
         index_foyer: usize,
         octets_a_signer: &[u8],
@@ -1200,32 +1179,6 @@ impl FeuNoyau {
         Ok(self
             .cryptographe
             .signature_foyer(index_foyer, octets_a_signer)?)
-    }
-
-    /// Signe des octets avec la clé du foyer identifié par son adresse `.braise`.
-    ///
-    /// Variante de [`signature_foyer_index`](Self::signature_foyer_index) prenant
-    /// la braise plutôt que l'index : elle résout la braise en position via la
-    /// session, puis délègue. C'est la voie d'entrée de la couche ENU — une ENU
-    /// porte la braise de son foyer signataire, jamais son index. Re-signer une
-    /// ENU (par exemple lors de la reconstruction d'une arborescence, où chaque
-    /// répertoire est réémis sous la braise qui le possède) part donc directement
-    /// de cette braise, sans table de correspondance côté appelant.
-    ///
-    /// Comme [`signature_foyer_index`](Self::signature_foyer_index), le foyer doit
-    /// être ouvert : sa clé privée doit être présente en mémoire.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la braise n'identifie aucun foyer de la session, si
-    /// ce foyer n'est pas ouvert, si la taille dépasse [`MAX_TAILLE_SIGNATURE`],
-    /// ou si la signature échoue.
-    pub fn signature_foyer_braise(
-        &self,
-        braise: &str,
-        octets_a_signer: &[u8],
-    ) -> ResultFeuNoyau<[u8; 4627]> {
-        self.signature_foyer_index(self.session.braise_vers_index(braise)?, octets_a_signer)
     }
 
     /// Vérifie une signature ML-DSA-87.

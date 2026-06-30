@@ -221,7 +221,7 @@ impl Scribe {
                 let mut carte = Carte::new_donnee(hash_fichier);
                 carte.ajout_meta("nom", &entree.file_name().to_string_lossy().to_string());
 
-                let enu = Enu::new(carte, noyau, braise)?;
+                let enu = Enu::new(carte, noyau, session, braise)?;
 
                 enu.sauvegarder()?;
 
@@ -243,7 +243,7 @@ impl Scribe {
 
                 carte.ajout_meta("nom", &entree.file_name().to_string_lossy().to_string());
 
-                let enu = Enu::new(carte, noyau, braise)?;
+                let enu = Enu::new(carte, noyau, session, braise)?;
 
                 enu.sauvegarder()?;
 
@@ -265,7 +265,8 @@ impl Scribe {
             nouvelle_carte.ajout_hash_donnee(h)?;
         }
 
-        let nouvelle_enu_racine_depot = Enu::new(nouvelle_carte, noyau, enu_racine_depot.braise())?;
+        let nouvelle_enu_racine_depot =
+            Enu::new(nouvelle_carte, noyau, session, enu_racine_depot.braise())?;
 
         nouvelle_enu_racine_depot.sauvegarder()?;
 
