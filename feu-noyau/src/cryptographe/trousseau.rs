@@ -67,6 +67,7 @@
 //!   dans `Option<SecretBox<[u8; 32]>>` — présente uniquement le temps du
 //!   chiffrement des clés, effacée dès que le trousseau persistable est constitué.
 
+use crate::Braise;
 use crate::MAX_CLASSEURS;
 use crate::MAX_FOYERS;
 
@@ -127,6 +128,7 @@ const ERR_TRO_006: &str = "TRO-006 > Erreur chiffrement";
 const ERR_TRO_007: &str = "TRO-007 > Erreur déchiffrement";
 const ERR_TRO_008: &str = "TRO-008 > Pas de trousseau pour cet indice";
 const ERR_TRO_009: &str = "TRO-009 > Problème de génération du trousseau public";
+const ERR_TRO_010: &str = "TRO-010 > Problème encodage braise";
 const ERR_TRO_011: &str = "TRO-011 > Pas de trousseau foyer";
 const ERR_TRO_012: &str = "TRO-012 > Pas de clé du classeur";
 const ERR_TRO_013: &str = "TRO-013 > Pas de clé de signature du nœud";
@@ -163,7 +165,7 @@ struct PaireClesChiffrement {
 /// de signature, la paire de chiffrement réseau et les clés des classeurs. Toutes les
 /// clés privées et symétriques sont encapsulées dans [`SecretBox`] ou protégées par `ZeroizeOnDrop`.
 struct TrousseauFoyer {
-    braise: String,
+    braise: Braise,
     cle_chiffrement: SecretBox<[u8; 32]>,
     paire_signature: PaireClesSignature,
     paire_chiffrement: PaireClesChiffrement,
@@ -176,7 +178,7 @@ impl TrousseauFoyer {
     /// Les slots de classeurs sont initialisés à `None` — ils sont peuplés
     /// après construction via [`ajoute_cle_classeur`](Self::ajoute_cle_classeur).
     fn new(
-        braise: String,
+        braise: Braise,
         cle_chiffrement: SecretBox<[u8; 32]>,
         paire_signature: PaireClesSignature,
         paire_chiffrement: PaireClesChiffrement,
@@ -213,7 +215,7 @@ impl TrousseauFoyer {
         trousseau: &Trousseau,
     ) -> ResultCryptographe<TrousseauPublicFoyer> {
         let mut trousseau_public_foyer = TrousseauPublicFoyer::new(
-            self.braise.clone(),
+            self.braise,
             trousseau.chiffre_cle(self.cle_chiffrement.expose_secret())?,
             trousseau.chiffre_cle(&self.paire_signature.privee.to_seed().into())?,
             self.paire_signature.publique.encode().into(),
@@ -425,6 +427,8 @@ impl Trousseau {
         // BASE32_NOPAD : alphabet `a-z2-7` sans padding `=`, l'adresse est donc
         // utilisable telle quelle comme nom de dossier (34 octets → 55 caractères).
         let braise = format!("{}{}", BASE32_NOPAD.encode(&data).to_lowercase(), ".braise");
+        let braise = Braise::try_from(braise.as_str())
+            .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_010)))?;
 
         // enregistrement de toutes les clés dans un TrousseauFoyer
         let trousseau_foyer = TrousseauFoyer {
@@ -1015,7 +1019,7 @@ impl Trousseau {
         };
 
         let mut trousseau_foyer = TrousseauFoyer::new(
-            String::from(trousseau_public_foyer.donne_braise()),
+            trousseau_public_foyer.donne_braise(),
             cle_chiffrement,
             paire_signature,
             paire_chiffrement,

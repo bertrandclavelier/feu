@@ -17,6 +17,7 @@
 //! présentation.
 
 use crate::erreur::{ErreurFeuApplication, ResultFeuApplication};
+use feu_noyau::{BRAISE_VIDE, Braise};
 use feu_noyau::{
     MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
     MAX_TAILLE_SIGNATURE,
@@ -46,7 +47,7 @@ pub struct SessionApplication {
     /// Taille maximum d'un message à signer.
     pub max_taille_signature: usize,
     /// Adresses `.braise` des foyers — indexées par position.
-    braise_foyers: [String; MAX_FOYERS],
+    braise_foyers: [Braise; MAX_FOYERS],
     /// État d'ouverture de chaque foyer — `true` si ouvert.
     etat_foyers: [bool; MAX_FOYERS],
     /// Clé publique de signature ML-DSA-87 du nœud — reçue à l'allumage.
@@ -68,7 +69,7 @@ impl SessionApplication {
             max_taille_blob: MAX_TAILLE_BLOB,
             max_taille_chiffrement_asymetrique: MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
             max_taille_signature: MAX_TAILLE_SIGNATURE,
-            braise_foyers: std::array::from_fn(|_| String::new()),
+            braise_foyers: [BRAISE_VIDE; MAX_FOYERS],
             etat_foyers: std::array::from_fn(|_| false),
             cle_publique_sig_noeud: [0u8; 2592],
             cle_publique_sig_foyers: std::array::from_fn(|_| [0u8; 2592]),
@@ -81,13 +82,13 @@ impl SessionApplication {
     /// # Erreurs
     ///
     /// Retourne une erreur si `index_foyer >= MAX_FOYERS`.
-    pub fn braise_foyer(&self, index_foyer: usize) -> ResultFeuApplication<&str> {
+    pub fn braise_foyer(&self, index_foyer: usize) -> ResultFeuApplication<Braise> {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuApplication::Standard(String::from(
                 "index_foyer trop élevé",
             )));
         }
-        Ok(&self.braise_foyers[index_foyer])
+        Ok(self.braise_foyers[index_foyer])
     }
 
     /// Résout une adresse `.braise` en position de foyer.
@@ -95,14 +96,14 @@ impl SessionApplication {
     /// Retourne `Some(index)` si la braise est celle d'un foyer connu dans la
     /// session, `None` si l'adresse est inconnue. Permet de retrouver la clé
     /// publique de signature d'un foyer à partir de la braise lue dans une ENU.
-    pub fn braise_vers_index(&self, braise: &str) -> Option<usize> {
-        self.braise_foyers.iter().position(|b| b == braise)
+    pub fn braise_vers_index(&self, braise: Braise) -> Option<usize> {
+        self.braise_foyers.iter().position(|b| *b == braise)
     }
 
     /// Enregistre l'adresse `.braise` du foyer à la position `index_foyer`.
     ///
     /// Appelé par [`RecepteurNoyau`] lors de l'allumage du nœud.
-    pub(crate) fn definit_braise_foyer(&mut self, index_foyer: usize, braise: String) {
+    pub(crate) fn definit_braise_foyer(&mut self, index_foyer: usize, braise: Braise) {
         self.braise_foyers[index_foyer] = braise;
     }
 

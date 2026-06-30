@@ -25,6 +25,7 @@ use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
+use crate::Braise;
 use crate::FeuNoyau;
 use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
 use crate::gardien::erreur::{ErreurGardien, ResultGardien};
@@ -81,17 +82,17 @@ impl Carnet {
     }
 
     /// Donne le chemin du dossier `~/.feu/adresse.braise`
-    pub(super) fn donne_chemin_braise(&self, braise: &str) -> PathBuf {
-        self.chemin_feu.join(PathBuf::from(braise))
+    pub(super) fn donne_chemin_braise(&self, braise: Braise) -> PathBuf {
+        self.chemin_feu.join(PathBuf::from(braise.to_string()))
     }
 
     /// Donne le chemin de l'archive chiffrée `~/.feu/<braise>.feu`.
-    pub(super) fn donne_chemin_archive_chiffree(&self, braise: &str) -> PathBuf {
+    pub(super) fn donne_chemin_archive_chiffree(&self, braise: Braise) -> PathBuf {
         self.chemin_feu.join(format!("{}.feu", braise))
     }
 
     /// Donne le chemin de l'archive tar intermédiaire `~/.feu/<braise>.tar`.
-    pub(super) fn donne_chemin_archive_tar(&self, braise: &str) -> PathBuf {
+    pub(super) fn donne_chemin_archive_tar(&self, braise: Braise) -> PathBuf {
         self.chemin_feu.join(format!("{}.tar", braise))
     }
 
@@ -152,7 +153,7 @@ impl Carnet {
     /// Contrôle `.cles/`, les paires de signature et de chiffrement,
     /// et les `MAX_CLASSEURS` clés de classeurs.
     /// N'inspecte pas le contenu des classeurs eux-mêmes — seules les clés sont vérifiées.
-    pub(super) fn verifier_arborescence_foyer(&self, braise: &str) -> Vec<Anomalie> {
+    pub(super) fn verifier_arborescence_foyer(&self, braise: Braise) -> Vec<Anomalie> {
         let mut resultat: Vec<Anomalie> = Vec::new();
 
         let chemin_cles = self.donne_chemin_braise(braise).join(".cles/");
@@ -196,7 +197,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le dossier est absent ou si la suppression échoue.
-    pub(super) fn supprime_dossier_braise(&self, braise: &str) -> ResultGardien<()> {
+    pub(super) fn supprime_dossier_braise(&self, braise: Braise) -> ResultGardien<()> {
         fs::remove_dir_all(self.donne_chemin_braise(braise))?;
         Ok(())
     }
@@ -292,7 +293,10 @@ impl Carnet {
                 }
             };
 
-            let chemin_foyer = &self.chemin_feu.join(foyer.donne_braise()).join(".cles/");
+            let chemin_foyer = &self
+                .chemin_feu
+                .join(foyer.donne_braise().to_string())
+                .join(".cles/");
 
             Self::creer_dossier(chemin_foyer)?;
 
@@ -359,7 +363,7 @@ impl Carnet {
     /// Retourne une erreur si un fichier est absent, illisible ou de taille incorrecte.
     pub(super) fn creer_trousseau_public_foyer(
         &self,
-        braise: &str,
+        braise: Braise,
     ) -> ResultGardien<TrousseauPublicFoyer> {
         let cle_chiffrement = std::fs::read(
             self.chemin_feu
@@ -369,7 +373,7 @@ impl Carnet {
         .try_into()
         .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
 
-        let chemin_foyer = &self.chemin_feu.join(braise).join(".cles/");
+        let chemin_foyer = &self.chemin_feu.join(braise.to_string()).join(".cles/");
 
         let cle_sig_privee = std::fs::read(chemin_foyer.join(CLE_FOYER_SIG_PRIV))?
             .try_into()
@@ -388,7 +392,7 @@ impl Carnet {
             .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
 
         let mut trousseau_public_foyer = TrousseauPublicFoyer::new(
-            String::from(braise),
+            braise,
             cle_chiffrement,
             cle_sig_privee,
             cle_sig_pub,
@@ -452,7 +456,7 @@ impl Carnet {
     /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 60 octets.
     pub(super) fn lire_pour_donner_cle_chiffrement_foyer(
         &self,
-        braise: &str,
+        braise: Braise,
     ) -> ResultGardien<[u8; 60]> {
         std::fs::read(
             self.chemin_feu
@@ -472,7 +476,7 @@ impl Carnet {
     /// Retourne une erreur si le fichier existe déjà ou si la création échoue.
     pub(super) fn ouvre_archive_chiffree_foyer_ecriture(
         &self,
-        braise: &str,
+        braise: Braise,
     ) -> ResultGardien<File> {
         Ok(OpenOptions::new()
             .write(true)
@@ -486,7 +490,10 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou illisible.
-    pub(super) fn ouvre_archive_chiffree_foyer_lecture(&self, braise: &str) -> ResultGardien<File> {
+    pub(super) fn ouvre_archive_chiffree_foyer_lecture(
+        &self,
+        braise: Braise,
+    ) -> ResultGardien<File> {
         Ok(OpenOptions::new()
             .read(true)
             .open(self.donne_chemin_archive_chiffree(braise))?)
@@ -497,7 +504,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou illisible.
-    pub(super) fn ouvre_archive_tar_foyer_lecture(&self, braise: &str) -> ResultGardien<File> {
+    pub(super) fn ouvre_archive_tar_foyer_lecture(&self, braise: Braise) -> ResultGardien<File> {
         Ok(OpenOptions::new()
             .read(true)
             .open(self.donne_chemin_archive_tar(braise))?)
@@ -511,7 +518,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier existe déjà ou si la création échoue.
-    pub(super) fn ouvre_archive_tar_vide_ecriture(&self, braise: &str) -> ResultGardien<File> {
+    pub(super) fn ouvre_archive_tar_vide_ecriture(&self, braise: Braise) -> ResultGardien<File> {
         Ok(OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -536,7 +543,7 @@ impl Carnet {
     ///
     /// Retourne une erreur si le fichier existe déjà, si la création échoue,
     /// si l'archivage tar échoue, ou si la finalisation échoue.
-    pub(super) fn archive_tar_foyer(&self, braise: &str) -> ResultGardien<()> {
+    pub(super) fn archive_tar_foyer(&self, braise: Braise) -> ResultGardien<()> {
         let fichier = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -560,7 +567,7 @@ impl Carnet {
     ///
     /// Retourne une erreur si `<braise>.tar` est absent, illisible,
     /// ou si l'extraction échoue.
-    pub(super) fn desarchive_tar_foyer(&self, braise: &str) -> ResultGardien<()> {
+    pub(super) fn desarchive_tar_foyer(&self, braise: Braise) -> ResultGardien<()> {
         let mut archive = tar::Archive::new(self.ouvre_archive_tar_foyer_lecture(braise)?);
 
         archive.unpack(self.donne_chemin_braise(braise))?;
@@ -572,7 +579,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
-    pub(super) fn supprime_archive_foyer_chiffree(&self, braise: &str) -> ResultGardien<()> {
+    pub(super) fn supprime_archive_foyer_chiffree(&self, braise: Braise) -> ResultGardien<()> {
         fs::remove_file(self.donne_chemin_archive_chiffree(braise))?;
         Ok(())
     }
@@ -582,7 +589,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
-    pub(super) fn supprime_archive_foyer_tar(&self, braise: &str) -> ResultGardien<()> {
+    pub(super) fn supprime_archive_foyer_tar(&self, braise: Braise) -> ResultGardien<()> {
         fs::remove_file(self.donne_chemin_archive_tar(braise))?;
         Ok(())
     }

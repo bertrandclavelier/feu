@@ -17,7 +17,7 @@
 //! Ces structures sont destinées à être écrites sur le disque par le gardien.
 
 use super::erreur::{ErreurCryptographe, ResultCryptographe};
-use crate::{MAX_CLASSEURS, MAX_FOYERS};
+use crate::{Braise, MAX_CLASSEURS, MAX_FOYERS};
 
 const ERR_TRP_001: &str = "TRP-001 > Pas de clé pour ce classeur";
 const ERR_TRP_002: &str = "TRP-002 > Pas de trousseau public disponible pour ce foyer";
@@ -31,7 +31,7 @@ const ERR_TRP_003: &str = "TRP-003 > Erreur d'ajout du trousseau public foyer";
 /// La plupart des clés font 32 o (→ 60 o chiffrées). La seed ML-KEM-1024 (privée)
 /// fait 64 o (→ 92 o chiffrées).
 pub(crate) struct TrousseauPublicFoyer {
-    braise: String,
+    braise: Braise,
 
     cle_chiffrement: [u8; 60], // chiffrée
     cle_sig_privee: [u8; 60],  // chiffrée
@@ -48,7 +48,7 @@ impl TrousseauPublicFoyer {
     /// Les clés de classeur sont ajoutées après construction via
     /// [`ajoute_cle_chiffrement_classeur`](Self::ajoute_cle_chiffrement_classeur).
     pub(crate) fn new(
-        braise: String,
+        braise: Braise,
         cle_chiffrement: [u8; 60],
         cle_sig_privee: [u8; 60],
         cle_sig_pub: [u8; 2592],
@@ -67,8 +67,8 @@ impl TrousseauPublicFoyer {
     }
 
     /// Retourne l'adresse `.braise` du foyer.
-    pub(crate) fn donne_braise(&self) -> &str {
-        &self.braise
+    pub(crate) fn donne_braise(&self) -> Braise {
+        self.braise
     }
 
     /// Retourne la clé symétrique AES-256-GCM du foyer — chiffrée, 60 octets.

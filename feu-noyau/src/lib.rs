@@ -48,7 +48,7 @@ use crate::archiviste::Archiviste;
 use crate::cryptographe::Cryptographe;
 pub use crate::erreur::{ErreurFeuNoyau, ResultFeuNoyau};
 use crate::gardien::Gardien;
-pub use braise::Braise;
+pub use braise::{BRAISE_VIDE, Braise};
 
 /// Nombre maximum de foyers dans le nœud.
 pub const MAX_FOYERS: usize = 3;
@@ -114,7 +114,7 @@ pub trait InterfaceFeuNoyau {
     /// `config.feu`, et à l'initialisation pour chaque foyer créé. Permet à
     /// l'interface de construire un index stable `index_foyer → braise` sans
     /// avoir à inspecter la configuration elle-même.
-    fn recevoir_braise_foyer(&mut self, index_foyer: usize, braise: &str);
+    fn recevoir_braise_foyer(&mut self, index_foyer: usize, braise: Braise);
 
     /// Notifie l'interface d'un changement d'état d'ouverture d'un foyer.
     ///
@@ -209,13 +209,13 @@ impl DonneesBlob {
 
 /// État d'un foyer dans la session courante.
 struct Foyer {
-    braise: String,
+    braise: Braise,
     est_ouvert: bool,
 }
 
 impl Foyer {
     /// Crée un [`Foyer`] avec l'adresse `.braise` et l'état d'ouverture fournis.
-    fn new(braise: String, est_ouvert: bool) -> Self {
+    fn new(braise: Braise, est_ouvert: bool) -> Self {
         Self { braise, est_ouvert }
     }
 }
@@ -237,7 +237,7 @@ impl SessionFoyers {
     fn new() -> Self {
         Self {
             foyers: std::array::from_fn(|_| Foyer {
-                braise: String::from(""),
+                braise: BRAISE_VIDE,
                 est_ouvert: false,
             }),
         }
@@ -270,11 +270,11 @@ impl SessionFoyers {
     fn definition_foyers(
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
-        t: [(bool, String); MAX_FOYERS],
+        t: [(bool, Braise); MAX_FOYERS],
     ) {
         for (i, foyer) in self.foyers.iter_mut().enumerate() {
-            interface.recevoir_braise_foyer(i, &t[i].1);
-            *foyer = Foyer::new(t[i].1.clone(), t[i].0);
+            interface.recevoir_braise_foyer(i, t[i].1);
+            *foyer = Foyer::new(t[i].1, t[i].0);
         }
     }
 
@@ -283,11 +283,11 @@ impl SessionFoyers {
     /// # Erreurs
     ///
     /// Retourne une erreur si `index >= MAX_FOYERS`.
-    fn index_vers_braise(&self, index_foyer: usize) -> ResultFeuNoyau<&str> {
+    fn index_vers_braise(&self, index_foyer: usize) -> ResultFeuNoyau<Braise> {
         if index_foyer >= MAX_FOYERS {
             Err(ErreurFeuNoyau::BraiseIntrouvable)
         } else {
-            Ok(&self.foyers[index_foyer].braise)
+            Ok(self.foyers[index_foyer].braise)
         }
     }
 
@@ -476,14 +476,12 @@ impl FeuNoyau {
 
             // Ajout des MAX_FOYERS foyers dans la configuration
             for i in 0..MAX_FOYERS {
-                let braise = String::from(
-                    trousseau_public_complet
-                        .donne_trousseau_public_foyer(i)?
-                        .donne_braise(),
-                );
-                gardien.ajout_nouveau_foyer_dans_configuration(braise.clone(), i);
-                session.foyers[i] = Foyer::new(braise.clone(), true);
-                interface_feu_noyau.recevoir_braise_foyer(i, &braise);
+                let braise = trousseau_public_complet
+                    .donne_trousseau_public_foyer(i)?
+                    .donne_braise();
+                gardien.ajout_nouveau_foyer_dans_configuration(braise, i);
+                session.foyers[i] = Foyer::new(braise, true);
+                interface_feu_noyau.recevoir_braise_foyer(i, braise);
             }
 
             // Enregistrement de config.feu
@@ -567,13 +565,11 @@ impl FeuNoyau {
 
         // Ajout des MAX_FOYERS foyers dans la configuration
         for i in 0..MAX_FOYERS {
-            let braise = String::from(
-                trousseau_public_complet
-                    .donne_trousseau_public_foyer(i)?
-                    .donne_braise(),
-            );
-            gardien.ajout_nouveau_foyer_dans_configuration(braise.clone(), i);
-            session.foyers[i] = Foyer::new(braise.clone(), false);
+            let braise = trousseau_public_complet
+                .donne_trousseau_public_foyer(i)?
+                .donne_braise();
+            gardien.ajout_nouveau_foyer_dans_configuration(braise, i);
+            session.foyers[i] = Foyer::new(braise, false);
         }
 
         // Enregistrement de config.feu
@@ -836,13 +832,13 @@ impl FeuNoyau {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::IndexInvalide);
         }
-        let braise = String::from(self.session.index_vers_braise(index_foyer)?);
-        if !self.gardien.diagnostic_foyer(&braise).is_empty() {
+        let braise = self.session.index_vers_braise(index_foyer)?;
+        if !self.gardien.diagnostic_foyer(braise).is_empty() {
             return Err(ErreurFeuNoyau::FermetureSecoursFoyerImpossible);
         }
 
         self.cryptographe.secours_recoit_trousseau_public_foyer(
-            self.gardien.creation_trousseau_foyer_public(&braise)?,
+            self.gardien.creation_trousseau_foyer_public(braise)?,
             index_foyer,
             interface_feu_noyau,
         )?;

@@ -29,6 +29,16 @@ use crate::{ErreurFeuNoyau, ResultFeuNoyau};
 /// 34 octets encodés en BASE32 sans padding donnent 55 caractères (`a-z2-7`).
 const LONGUEUR_BRAISE: usize = 55;
 
+/// Braise par défaut d'un slot de foyer non encore initialisé.
+///
+/// Les tableaux de foyers (`SessionFoyers`, `Configuration::adresses_braise`)
+/// réservent `MAX_FOYERS` emplacements ; ceux sans foyer réel portent cette
+/// valeur. Corps de 55 `a` — valide par construction (l'alphabet inclut `a`),
+/// d'où l'absence de validation. Elle ne désigne aucun foyer réel : une
+/// opération qui la rencontrerait échoue à la frontière disque (aucun fichier
+/// correspondant). D'où une braise par défaut plutôt qu'un `Option`.
+pub const BRAISE_VIDE: Braise = Braise([b'a'; LONGUEUR_BRAISE]);
+
 /// Adresse `.braise` d'un foyer, bien formée par construction.
 ///
 /// Encapsule les `LONGUEUR_BRAISE` caractères BASE32 de l'adresse, sans le
@@ -86,5 +96,116 @@ impl Debug for Braise {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // délègue au Display, enveloppé du nom du type
         write!(f, "Braise({self})")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `try_from` puis `Display` redonnent la chaîne d'origine : les deux
+    /// transformations sont réciproques (composée = identité).
+    #[test]
+    fn reciprocité_chaine() {
+        let corps = "a".repeat(LONGUEUR_BRAISE);
+        let braise = format!("{corps}.braise");
+
+        let b = Braise::try_from(braise.as_str()).unwrap();
+
+        assert_eq!(b.to_string(), braise);
+    }
+
+    /// Rejet d'une chaîne dépourvue du suffixe `.braise`.
+    #[test]
+    fn suffixe_absent() {
+        let corps = "a".repeat(LONGUEUR_BRAISE);
+
+        assert!(matches!(
+            Braise::try_from(corps.as_str()).unwrap_err(),
+            ErreurFeuNoyau::BraiseTryFromStr
+        ));
+    }
+
+    /// Rejet d'un corps plus court que `LONGUEUR_BRAISE`.
+    #[test]
+    fn corps_trop_court() {
+        let corps = "a".repeat(LONGUEUR_BRAISE - 2);
+        let braise = format!("{corps}.braise");
+
+        assert!(matches!(
+            Braise::try_from(braise.as_str()).unwrap_err(),
+            ErreurFeuNoyau::BraiseTryFromStr
+        ));
+    }
+
+    /// Rejet d'un corps plus long que `LONGUEUR_BRAISE`.
+    #[test]
+    fn corps_trop_long() {
+        let corps = "a".repeat(LONGUEUR_BRAISE + 2);
+        let braise = format!("{corps}.braise");
+
+        assert!(matches!(
+            Braise::try_from(braise.as_str()).unwrap_err(),
+            ErreurFeuNoyau::BraiseTryFromStr
+        ));
+    }
+
+    /// Rejet d'une majuscule : hors de l'alphabet BASE32 minuscule.
+    #[test]
+    fn corps_avec_masjuscule() {
+        let corps = "a".repeat(LONGUEUR_BRAISE - 1);
+        let braise = format!("A{corps}.braise");
+
+        assert!(matches!(
+            Braise::try_from(braise.as_str()).unwrap_err(),
+            ErreurFeuNoyau::BraiseTryFromStr
+        ));
+    }
+
+    /// Rejet du chiffre `0` : hors de l'alphabet BASE32 (`2-7` seulement).
+    #[test]
+    fn corps_avec_0() {
+        let corps = "a".repeat(LONGUEUR_BRAISE - 1);
+        let braise = format!("0{corps}.braise");
+
+        assert!(matches!(
+            Braise::try_from(braise.as_str()).unwrap_err(),
+            ErreurFeuNoyau::BraiseTryFromStr
+        ));
+    }
+
+    /// Rejet du chiffre `8` : hors de l'alphabet BASE32 (`2-7` seulement).
+    #[test]
+    fn corps_avec_8() {
+        let corps = "a".repeat(LONGUEUR_BRAISE - 1);
+        let braise = format!("8{corps}.braise");
+
+        assert!(matches!(
+            Braise::try_from(braise.as_str()).unwrap_err(),
+            ErreurFeuNoyau::BraiseTryFromStr
+        ));
+    }
+
+    /// Rejet d'un caractère spécial (`@`) : hors de l'alphabet BASE32.
+    #[test]
+    fn corps_avec_caractere_special() {
+        let corps = "a".repeat(LONGUEUR_BRAISE - 1);
+        let braise = format!("@{corps}.braise");
+
+        assert!(matches!(
+            Braise::try_from(braise.as_str()).unwrap_err(),
+            ErreurFeuNoyau::BraiseTryFromStr
+        ));
+    }
+
+    /// Rejet de la chaîne vide (ni suffixe, ni corps).
+    #[test]
+    fn chaine_vide() {
+        let braise = String::from("");
+
+        assert!(matches!(
+            Braise::try_from(braise.as_str()).unwrap_err(),
+            ErreurFeuNoyau::BraiseTryFromStr
+        ));
     }
 }

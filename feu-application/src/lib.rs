@@ -42,7 +42,7 @@
 use secrecy::SecretString;
 
 pub use erreur::{ErreurFeuApplication, ResultFeuApplication};
-use feu_noyau::{FeuNoyau, InterfaceFeuNoyau};
+use feu_noyau::{Braise, FeuNoyau, InterfaceFeuNoyau};
 use scribe::Scribe;
 /// Types ENU exposés en lecture seule à toutes les crates du workspace.
 ///
@@ -144,9 +144,9 @@ impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
     ///
     /// Appelée par le noyau à l'allumage pour chaque foyer connu, et à
     /// l'initialisation pour chaque foyer créé.
-    fn recevoir_braise_foyer(&mut self, index_foyer: usize, braise: &str) {
+    fn recevoir_braise_foyer(&mut self, index_foyer: usize, braise: Braise) {
         self.session_application
-            .definit_braise_foyer(index_foyer, String::from(braise));
+            .definit_braise_foyer(index_foyer, braise);
     }
 
     /// Met à jour l'état d'ouverture d'un foyer dans la session applicative.

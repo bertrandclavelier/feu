@@ -25,7 +25,9 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use crate::Anomalie;
+use crate::Braise;
 use crate::MAX_FOYERS;
+use crate::braise::BRAISE_VIDE;
 use crate::cryptographe::trousseaux_publics::{
     TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
 };
@@ -38,6 +40,7 @@ const ERR_GAR_001: &str = "GAR-001 > Aucune arborescence du nœud trouvée";
 const ERR_GAR_002: &str = "GAR-002 > Une arborescence existe déjà";
 const ERR_GAR_003: &str = "GAR-003 > Suppression du dossier impossible s'il n'est pas archivé";
 const ERR_GAR_004: &str = "GAR-004 > Manque au moins un élément dans config.feu";
+const ERR_GAR_005: &str = "GAR-005 > Problème encodage braise";
 
 /// Configuration globale du nœud — miroir de `config.feu` en mémoire.
 ///
@@ -50,7 +53,7 @@ struct Configuration {
     /// Prochain index de dérivation à attribuer au prochain foyer créé.
     prochain_index: u32,
     /// Adresses `.braise` des foyers — tableau de taille fixe `MAX_FOYERS`.
-    adresses_braise: [String; MAX_FOYERS],
+    adresses_braise: [Braise; MAX_FOYERS],
 }
 
 impl Configuration {
@@ -63,7 +66,7 @@ impl Configuration {
         Self {
             version: VERSION_CONFIGURATION,
             prochain_index: 1,
-            adresses_braise: std::array::from_fn(|_| String::from("")),
+            adresses_braise: [BRAISE_VIDE; MAX_FOYERS],
         }
     }
 
@@ -84,9 +87,10 @@ impl Configuration {
         let version = lignes.remove(0).parse::<u32>()?;
         let prochain_index = lignes.remove(0).parse::<u32>()?;
 
-        let mut tableau: [String; MAX_FOYERS] = std::array::from_fn(|_| String::from(""));
+        let mut tableau = [BRAISE_VIDE; MAX_FOYERS];
         for e in tableau.iter_mut() {
-            *e = String::from(lignes.remove(0));
+            *e = Braise::try_from(String::from(lignes.remove(0)).as_str())
+                .map_err(|_| ErreurGardien::Interne(String::from(ERR_GAR_005)))?;
         }
 
         Ok(Self {
@@ -103,14 +107,14 @@ impl Configuration {
     fn exporte_en_texte(&self) -> String {
         let mut resultat = format!("{}\n{}\n", self.version, self.prochain_index);
         for e in &self.adresses_braise {
-            resultat.push_str(e);
+            resultat.push_str(&e.to_string());
             resultat.push('\n');
         }
         resultat
     }
 
     /// Retourne le tableau des adresses `.braise` des foyers.
-    fn donne_adresses_braise(&self) -> &[String] {
+    fn donne_adresses_braise(&self) -> &[Braise] {
         &self.adresses_braise
     }
 }
@@ -171,19 +175,18 @@ impl Gardien {
     ///
     /// Retourne un tableau de `MAX_FOYERS` tuples `(false, adresse_braise)` —
     /// tous les foyers sont marqués fermés à l'allumage du nœud.
-    pub(super) fn creation_tableau_session_foyers(&self) -> [(bool, String); MAX_FOYERS] {
-        let mut t: [(bool, String); MAX_FOYERS] =
-            std::array::from_fn(|_| (false, String::from("")));
+    pub(super) fn creation_tableau_session_foyers(&self) -> [(bool, Braise); MAX_FOYERS] {
+        let mut t: [(bool, Braise); MAX_FOYERS] = std::array::from_fn(|_| (false, BRAISE_VIDE));
 
         for (i, e) in t.iter_mut().enumerate() {
-            *e = (false, self.configuration.adresses_braise[i].clone());
+            *e = (false, self.configuration.adresses_braise[i]);
         }
 
         t
     }
 
     /// Retourne le chemin du dossier `~/.feu/<braise>`.
-    pub(super) fn donne_chemin_braise(&self, braise: &str) -> PathBuf {
+    pub(super) fn donne_chemin_braise(&self, braise: Braise) -> PathBuf {
         self.carnet.donne_chemin_braise(braise)
     }
 
@@ -220,7 +223,7 @@ impl Gardien {
     ///
     /// Retourne une erreur si l'archive `<braise>.feu` est absente
     /// ou si la suppression récursive du dossier échoue.
-    pub(super) fn suppression_dossier_braise(&self, braise: &str) -> ResultGardien<()> {
+    pub(super) fn suppression_dossier_braise(&self, braise: Braise) -> ResultGardien<()> {
         // Vérification que l'archive existe avant de supprimer le dossier. Sinon impossible
         if self.carnet.donne_chemin_archive_chiffree(braise).exists() {
             self.carnet.supprime_dossier_braise(braise)?;
@@ -257,7 +260,7 @@ impl Gardien {
     /// [`Gardien::enregistrement_configuration`] pour persister l'état.
     pub(super) fn ajout_nouveau_foyer_dans_configuration(
         &mut self,
-        braise: String,
+        braise: Braise,
         position: usize,
     ) {
         self.configuration.adresses_braise[position] = braise;
@@ -312,7 +315,7 @@ impl Gardien {
     /// Retourne une erreur si un fichier de clé est absent, illisible ou de taille incorrecte.
     pub(super) fn creation_trousseau_foyer_public(
         &self,
-        braise: &str,
+        braise: Braise,
     ) -> ResultGardien<TrousseauPublicFoyer> {
         self.carnet.creer_trousseau_public_foyer(braise)
     }
@@ -337,7 +340,7 @@ impl Gardien {
     /// ou si une opération disque échoue.
     pub(super) fn preparation_archivage_chiffre_foyer(
         &self,
-        braise: &str,
+        braise: Braise,
     ) -> ResultGardien<(File, File)> {
         self.carnet.archive_tar_foyer(braise)?;
 
@@ -365,7 +368,7 @@ impl Gardien {
     /// si `<braise>.feu` est absent, ou si la création de `<braise>.tar` échoue.
     pub(super) fn preparation_desarchivage_chiffre_foyer(
         &self,
-        braise: &str,
+        braise: Braise,
     ) -> ResultGardien<([u8; 60], File, File)> {
         Ok((
             self.carnet.lire_pour_donner_cle_chiffrement_foyer(braise)?,
@@ -388,7 +391,7 @@ impl Gardien {
     ///
     /// Retourne une erreur si l'extraction échoue ou si la suppression d'un
     /// fichier intermédiaire échoue.
-    pub(super) fn desarchivage_chiffre_foyer(&self, braise: &str) -> ResultGardien<()> {
+    pub(super) fn desarchivage_chiffre_foyer(&self, braise: Braise) -> ResultGardien<()> {
         self.carnet.desarchive_tar_foyer(braise)?;
         self.carnet.supprime_archive_foyer_tar(braise)?;
         self.carnet.supprime_archive_foyer_chiffree(braise)?;
@@ -404,7 +407,7 @@ impl Gardien {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
-    pub(super) fn suppression_archive_foyer_tar(&self, braise: &str) -> ResultGardien<()> {
+    pub(super) fn suppression_archive_foyer_tar(&self, braise: Braise) -> ResultGardien<()> {
         self.carnet.supprime_archive_foyer_tar(braise)?;
 
         Ok(())
@@ -467,7 +470,7 @@ impl Gardien {
     /// Vérifie la présence des fichiers d'un foyer ouvert.
     ///
     /// Délègue la vérification de l'arborescence interne au carnet.
-    pub(super) fn diagnostic_foyer(&self, braise: &str) -> Vec<Anomalie> {
+    pub(super) fn diagnostic_foyer(&self, braise: Braise) -> Vec<Anomalie> {
         self.carnet.verifier_arborescence_foyer(braise)
     }
 }

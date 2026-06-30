@@ -76,7 +76,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use feu_noyau::FeuNoyau;
+use feu_noyau::{Braise, FeuNoyau};
 
 use crate::{
     SessionApplication,
@@ -107,7 +107,7 @@ const ERR_ENU_005: &str = "ENU-005 > Braise incorrecte";
 pub struct Enu {
     /// Adresse `.braise` du foyer signataire (non couverte par le hash ni la
     /// signature — métadonnée de routage).
-    braise: String,
+    braise: Braise,
 
     /// SHA3-256 de la carte sérialisée.
     hash_carte: [u8; 32],
@@ -142,7 +142,7 @@ impl Enu {
         carte: Carte,
         feu_noyau: &FeuNoyau,
         session: &SessionApplication,
-        braise: &str,
+        braise: Braise,
     ) -> ResultScribe<Self> {
         let Some(index_foyer) = session.braise_vers_index(braise) else {
             return Err(ErreurScribe::Interne(String::from(ERR_ENU_005)));
@@ -150,7 +150,7 @@ impl Enu {
 
         let octets_carte = carte.vers_octets();
         Ok(Self {
-            braise: String::from(braise),
+            braise,
             hash_carte: FeuNoyau::creation_empreinte(&octets_carte),
             signature_carte: feu_noyau.signature_foyer(index_foyer, &octets_carte)?,
             date: SystemTime::now()
@@ -165,8 +165,8 @@ impl Enu {
     ///
     /// Métadonnée de routage, hors hash et hors signature : sa valeur n'est pas
     /// authentifiée (voir le modèle de confiance du module).
-    pub fn braise(&self) -> &str {
-        &self.braise
+    pub fn braise(&self) -> Braise {
+        self.braise
     }
 
     /// Retourne le hash SHA3-256 de la carte — identifiant content-addressed
@@ -254,7 +254,7 @@ impl Enu {
         let enu = Self::octets_vers_enu(&read(&chemin)?)?;
         let octets_carte = enu.carte.vers_octets();
 
-        if let Some(index_foyer) = session.braise_vers_index(&enu.braise) {
+        if let Some(index_foyer) = session.braise_vers_index(enu.braise) {
             if FeuNoyau::verification_signature(
                 session.cle_publique_sig_foyer(index_foyer)?,
                 enu.signature_carte,
@@ -275,7 +275,7 @@ impl Enu {
     fn vers_octets(&self) -> Vec<u8> {
         let mut resultat = Vec::new();
 
-        resultat.extend(self.braise.as_bytes());
+        resultat.extend(self.braise.to_string().as_bytes());
         resultat.extend(self.hash_carte);
         resultat.extend(self.signature_carte);
         resultat.extend(&self.date.to_be_bytes());
@@ -297,13 +297,15 @@ impl Enu {
     /// # Erreurs
     ///
     /// Retourne [`ErreurScribe::Interne`] si le buffer est trop court
-    /// (`ENU-001`), si le discriminant de carte est inconnu (`ENU-001`) ou si un
-    /// champ texte n'est pas du UTF-8 valide (`ENU-002`).
+    /// (`ENU-001`), si le discriminant de carte est inconnu (`ENU-001`), si un
+    /// champ texte n'est pas du UTF-8 valide (`ENU-002`), ou si les 62 octets de
+    /// braise ne forment pas une adresse `.braise` bien formée (`ENU-005`).
     fn octets_vers_enu(octets: &[u8]) -> ResultScribe<Enu> {
         let (mut octets, mut reste) = prendre_octets(octets, 62)?;
-        let braise = str::from_utf8(octets)
-            .map_err(|_| ErreurScribe::Interne(String::from(ERR_ENU_002)))?
-            .to_string();
+        let braise = Braise::try_from(
+            str::from_utf8(octets).map_err(|_| ErreurScribe::Interne(String::from(ERR_ENU_002)))?,
+        )
+        .map_err(|_| ErreurScribe::Interne(String::from(ERR_ENU_005)))?;
 
         (octets, reste) = prendre_octets(reste, 32)?;
         let hash_carte: [u8; 32] = octets.try_into().unwrap(); // pas d'erreur possible
@@ -1070,7 +1072,9 @@ mod tests {
     /// Round-trip complet : Enu → octets → Enu, tous champs identiques.
     #[test]
     fn enu_vers_octets_et_retour() -> ResultScribe<()> {
-        let braise = String::from("aaaaabbbbbcccccdddddeeeeefffffggggghhhhhiiiiijjjjjkkkkk.braise");
+        let braise =
+            Braise::try_from("aaaaabbbbbcccccdddddeeeeefffffggggghhhhhiiiiijjjjjkkkkk.braise")
+                .unwrap();
 
         let hash_carte: [u8; 32] = std::array::from_fn(|i| i as u8);
         let signature_carte = [0u8; 4627];
