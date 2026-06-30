@@ -69,7 +69,7 @@
 use data_encoding::HEXLOWER;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{OpenOptions, read},
+    fs::{OpenOptions, read, remove_file},
     io::Write,
     os::unix::fs::OpenOptionsExt,
     path::PathBuf,
@@ -83,6 +83,14 @@ use crate::{
     scribe::erreur::{ErreurScribe, ResultScribe},
 };
 
+/// Plafond du contenu d'une [`Carte::Texte`], en octets UTF-8.
+///
+/// Bornée volontairement bien en deçà du plafond de signature du noyau
+/// (`MAX_TAILLE_SIGNATURE`, 64 kio) : la marge restante absorbe l'en-tête de la
+/// carte sérialisée (discriminant, métadonnées, tags, préfixe de longueur) sans
+/// avoir à le calculer finement. 60 kio reste très large pour du texte brut.
+const MAX_TAILLE_TEXTE: usize = 1024 * 60;
+
 /// Le buffer est trop court, porte un discriminant de carte inconnu, ou laisse
 /// des octets résiduels après désérialisation.
 const ERR_ENU_001: &str = "ENU-001 > Problème désérialisation";
@@ -95,7 +103,15 @@ const ERR_ENU_003: &str = "ENU-003 > Problème ouverture ENU";
 /// ajouter le hash d'une ENU enfant.
 const ERR_ENU_004: &str = "ENU-004 > Ce n'est pas une EnuR";
 
+/// Les 62 octets censés porter l'adresse `.braise` ne forment pas une braise
+/// bien formée, ou la braise annoncée n'identifie aucun foyer de la session.
 const ERR_ENU_005: &str = "ENU-005 > Braise incorrecte";
+
+/// Le contenu textuel dépasse [`MAX_TAILLE_TEXTE`] : la [`Carte::Texte`] est
+/// refusée avant même d'être mise sous enveloppe et signée.
+const ERR_ENU_006: &str = "ENU-006 > Texte pour EnuT trop long";
+
+const ERR_ENU_007: &str = "ENU-007 > Problème Enu racine ou remplacement";
 
 /// Enveloppe Numérique Universelle.
 ///
@@ -229,6 +245,15 @@ impl Enu {
         Ok(())
     }
 
+    pub(super) fn supprimer(&self) -> ResultScribe<()> {
+        let nom_fichier = format!("{}.enu", HEXLOWER.encode(&self.hash_carte));
+        let chemin = crate::scribe::donne_chemin_dossier_enu().join(nom_fichier);
+
+        remove_file(&chemin)?;
+
+        Ok(())
+    }
+
     /// Charge **et authentifie** une ENU depuis le disque.
     ///
     /// Là où [`Enu::octets_vers_enu`] ne valide que la structure, cette méthode
@@ -327,8 +352,58 @@ impl Enu {
         })
     }
 
-    /// Remplace une ENU dans un arbre de répertoires et reconstruit le chemin
-    /// jusqu'à la racine.
+    /// Remplace une ENU dans l'arbre du nœud, puis marque la nouvelle racine.
+    ///
+    /// Point d'entrée de la substitution. Délègue à
+    /// [`Self::remplacer_recursif`] la descente dans l'arbre et la reconstruction
+    /// du chemin, puis appose sur le sommet ainsi obtenu la métadonnée `_racine`
+    /// (valeur vide) qui distingue la racine du nœud de tout autre répertoire.
+    /// Cette racine taguée est re-signée sous sa propre braise ([`Enu::braise`])
+    /// et sauvegardée dans `~/.feu/enu/`.
+    ///
+    /// Poser le marqueur **ici, une seule fois**, et non dans la récursion, est
+    /// délibéré : [`Self::remplacer_recursif`] reconstruit *chaque* répertoire du
+    /// chemin et ne sait pas lequel est le sommet — seul le point d'entrée le
+    /// sait. L'ajout est idempotent : si la racine portait déjà `_racine`, la
+    /// carte est inchangée, donc le hash aussi, et la sauvegarde content-addressed
+    /// ne réécrit rien.
+    ///
+    /// # Retour
+    ///
+    /// La nouvelle ENU racine du nœud, porteuse de la métadonnée `_racine`.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage les erreurs de [`Self::remplacer_recursif`] (E/S, authentification,
+    /// signature — notamment si un foyer du chemin reconstruit est fermé) et de
+    /// [`Enu::new`] lors de la re-signature de la racine taguée.
+    pub(super) fn remplacer(
+        racine: &Enu,
+        hash_a_remplacer: &[u8; 32],
+        remplacement: &Enu,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+    ) -> ResultScribe<Enu> {
+        if racine.carte().metas().contains_key("_racine") || racine == remplacement {
+            return Err(ErreurScribe::Interne(ERR_ENU_007.to_string()));
+        }
+
+        let racine =
+            Self::remplacer_recursif(racine, hash_a_remplacer, remplacement, noyau, session)?;
+
+        let mut nouvelle_carte = racine.carte().clone();
+        nouvelle_carte.ajout_meta("_racine", "");
+        let racine_taguee = Enu::new(nouvelle_carte, noyau, session, racine.braise())?;
+
+        racine_taguee.sauvegarder()?;
+        racine.supprimer()?;
+
+        Ok(racine_taguee)
+    }
+
+    /// Cœur récursif de [`Self::remplacer`] : substitue la cible et reconstruit
+    /// le chemin jusqu'au sommet du sous-arbre, **sans** poser le marqueur
+    /// `_racine` (réservé au point d'entrée).
     ///
     /// Mise à jour **immuable** et content-addressed : `racine` n'est jamais
     /// modifiée en place. La fonction descend récursivement dans les
@@ -356,7 +431,7 @@ impl Enu {
     /// Propage les erreurs de [`Enu::charger`] (E/S, authentification) sur
     /// chaque enfant visité, et les erreurs de signature de [`Enu::new`] —
     /// notamment lorsqu'un foyer du chemin est fermé.
-    pub(super) fn remplacer(
+    fn remplacer_recursif(
         racine: &Enu,
         hash_a_remplacer: &[u8; 32],
         remplacement: &Enu,
@@ -431,7 +506,8 @@ pub enum Carte {
         hash_donnee: [u8; 32],
     },
 
-    /// CaT — texte brut, pas de limite de taille en v0.0.5.
+    /// CaT — texte brut embarqué directement dans la carte. Sa taille est
+    /// bornée à la construction (voir le constructeur `new_texte`).
     Texte {
         /// Métadonnées structurées clé → valeur (ordre déterministe pour le hash).
         metas: BTreeMap<String, String>,
@@ -512,13 +588,27 @@ impl Carte {
         }
     }
 
-    /// Construit une [`Carte::Texte`] — contient directement le texte.
-    pub(super) fn new_texte(contenu: String) -> Self {
-        Self::Texte {
+    /// Construit une [`Carte::Texte`] — le texte est embarqué directement dans
+    /// la carte, sans blob ni classeur.
+    ///
+    /// Le contenu est borné à [`MAX_TAILLE_TEXTE`] (mesuré en octets UTF-8) : la
+    /// vérification a lieu ici, avant toute mise sous enveloppe, pour échouer
+    /// proprement plutôt que de buter sur le plafond de signature du noyau.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurScribe::Interne`] (`ENU-006`) si `contenu` dépasse
+    /// [`MAX_TAILLE_TEXTE`].
+    pub(super) fn new_texte(contenu: &str) -> ResultScribe<Self> {
+        if contenu.len() > MAX_TAILLE_TEXTE {
+            return Err(ErreurScribe::Interne(String::from(ERR_ENU_006)));
+        }
+
+        Ok(Self::Texte {
             metas: BTreeMap::new(),
             tags: BTreeSet::new(),
-            contenu,
-        }
+            contenu: contenu.to_string(),
+        })
     }
 
     /// Construit une [`Carte::Repertoire`] — référence des ENU enfants

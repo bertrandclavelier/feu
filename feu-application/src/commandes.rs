@@ -222,6 +222,43 @@ impl FeuApplication {
         Ok(())
     }
 
+    /// Dépose un texte dans un foyer : crée une `EnuT` (une [`Enu`] portant une
+    /// `Carte::Texte`), l'accroche sous `enu_racine_depot`, puis propage la
+    /// nouvelle racine jusqu'à `enu_racine_noeud`.
+    ///
+    /// Le texte est embarqué dans la carte (aucun blob, aucun classeur) et borné
+    /// en taille. Le détail du rangement est porté par le Scribe.
+    ///
+    /// # Retour
+    ///
+    /// La nouvelle ENU racine du nœud, après propagation.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : texte trop long, répertoire d'accueil
+    /// invalide, E/S ou signature (notamment si un foyer du chemin reconstruit
+    /// est fermé).
+    pub fn commande_depot_enu_texte(
+        &mut self,
+        enu_racine_depot: &Enu,
+        enu_racine_noeud: &Enu,
+        contenu: &str,
+    ) -> ResultFeuApplication<Enu> {
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(self.scribe.depot_enu_texte(
+            noyau,
+            &self.session,
+            enu_racine_depot,
+            enu_racine_noeud,
+            contenu,
+        )?)
+    }
+
     /// Ouvre un comptoir de dépôt et retourne son identifiant.
     ///
     /// Crée un dossier au `chemin` donné, où l'utilisateur (ou un script, un

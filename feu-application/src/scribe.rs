@@ -145,8 +145,9 @@ impl Scribe {
     /// Toutes les ENU produites sont sauvegardées dans `~/.feu/enu/`.
     ///
     /// Le nom de chaque entrée (fichier ou dossier) est conservé comme
-    /// métadonnée `"nom"`. L'ENU racine enrichie reçoit la métadonnée
-    /// `"_racine"` (valeur vide).
+    /// métadonnée `"nom"`. Le marquage de la racine du nœud (`"_racine"`) n'est
+    /// **pas** posé ici : il l'est par [`Enu::remplacer`] sur le sommet final,
+    /// lors de la propagation jusqu'à `enu_racine_noeud`.
     ///
     /// Les entrées directement à la racine du comptoir (`depth == 1`) sont
     /// ajoutées comme enfants directs de `enu_racine_depot`. Les entrées plus
@@ -260,7 +261,6 @@ impl Scribe {
         // greffe : le contenu de premier niveau devient enfant du dépôt
         let mut nouvelle_carte = enu_racine_depot.carte().clone();
 
-        nouvelle_carte.ajout_meta("_racine", "");
         for h in &nouveaux_enfants {
             nouvelle_carte.ajout_hash_donnee(h)?;
         }
@@ -280,6 +280,73 @@ impl Scribe {
         )?;
 
         comptoir.supprimer()?;
+
+        Ok(racine_finale)
+    }
+
+    /// Dépose un texte dans un foyer en l'accrochant sous `enu_racine_depot`,
+    /// puis propage la nouvelle racine de dépôt jusqu'à `enu_racine_noeud`.
+    ///
+    /// Variante allégée de [`Self::fermeture_comptoir_depot`] : pas de comptoir,
+    /// pas de blob, pas de classeur. Le texte est embarqué dans une
+    /// [`Carte::Texte`] (bornée à `MAX_TAILLE_TEXTE`), mise sous enveloppe signée
+    /// — l'`EnuT` — et sauvegardée dans `~/.feu/enu/`. Son `hash_carte` est
+    /// ensuite ajouté aux enfants de `enu_racine_depot`, qui est reconstruit,
+    /// re-signé sous sa propre braise et sauvegardé à son tour. Comme le
+    /// `hash_carte` d'un répertoire dépend de ses enfants, cette nouvelle racine
+    /// de dépôt est enfin remontée via [`Enu::remplacer`] jusqu'à produire une
+    /// nouvelle racine de nœud.
+    ///
+    /// L'`EnuT` comme le répertoire d'accueil sont signés sous la braise de
+    /// `enu_racine_depot` : le texte appartient au foyer qui possède le
+    /// répertoire de destination. Ce foyer — et tout foyer présent sur le chemin
+    /// remonté par [`Enu::remplacer`] — doit donc être ouvert.
+    ///
+    /// # Retour
+    ///
+    /// La nouvelle ENU racine du nœud, après propagation.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage [`ErreurScribe::Interne`] si le texte dépasse `MAX_TAILLE_TEXTE`
+    /// (`ENU-006`, via [`Carte::new_texte`]) ou si `enu_racine_depot` n'est pas
+    /// un répertoire (`ENU-004`, via `ajout_hash_donnee`), ainsi que toute erreur
+    /// d'E/S, d'authentification ou de signature — notamment si un foyer du
+    /// chemin reconstruit est fermé.
+    pub(super) fn depot_enu_texte(
+        &self,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+        enu_racine_depot: &Enu,
+        enu_racine_noeud: &Enu,
+        contenu: &str,
+    ) -> ResultScribe<Enu> {
+        let enu_texte = Enu::new(
+            Carte::new_texte(contenu)?,
+            noyau,
+            session,
+            enu_racine_depot.braise(),
+        )?;
+
+        enu_texte.sauvegarder()?;
+
+        let mut nouvelle_carte = enu_racine_depot.carte().clone();
+
+        nouvelle_carte.ajout_hash_donnee(&enu_texte.hash_carte())?;
+
+        let nouvelle_enu_racine_depot =
+            Enu::new(nouvelle_carte, noyau, session, enu_racine_depot.braise())?;
+
+        nouvelle_enu_racine_depot.sauvegarder()?;
+
+        // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
+        let racine_finale = Enu::remplacer(
+            enu_racine_noeud,
+            &enu_racine_depot.hash_carte(),
+            &nouvelle_enu_racine_depot,
+            noyau,
+            session,
+        )?;
 
         Ok(racine_finale)
     }
