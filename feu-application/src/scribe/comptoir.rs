@@ -104,3 +104,74 @@ impl ComptoirDepot {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs::{OpenOptions, metadata},
+        io::Write,
+        os::unix::fs::PermissionsExt,
+    };
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    /// Cycle de vie complet : construction sans dossier, ouverture, refus
+    /// d'écraser un dossier existant, dépôt de contenu, suppression, refus de
+    /// supprimer un dossier déjà absent.
+    #[test]
+    fn cycle_vie_comptoir_depot() -> ResultScribe<()> {
+        let tmp = TempDir::new()?;
+
+        // Création du chemin et du comptoir
+        let chemin = tmp.path().to_path_buf().join("test_comptoir_depot");
+        let comptoir = ComptoirDepot::new(chemin.clone(), 2, 5);
+
+        // Le dossier n'existe pas encore
+        assert!(!comptoir.chemin().exists());
+
+        // Le comptoir existe bien
+        assert_eq!(comptoir.chemin(), &chemin);
+        assert_eq!(comptoir.index_foyer(), 2);
+        assert_eq!(comptoir.index_classeur(), 5);
+
+        // Création du dossier
+        comptoir.ouvrir()?;
+
+        assert!(comptoir.chemin().exists());
+
+        let mode = metadata(comptoir.chemin())?.permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+
+        // On peut pas créer un comptoir sur le même chemin
+        assert!(matches!(comptoir.ouvrir(), Err(ErreurScribe::Interne(_))));
+
+        // Création d'une petite arborescence dans le dossier du comptoir
+        let chemin2 = chemin.join("sous-dossier");
+        let chemin3 = chemin2.join("test.txt");
+
+        DirBuilder::new()
+            .mode(0o700)
+            .recursive(true)
+            .create(&chemin2)?;
+
+        let mut fichier = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(chemin3)?;
+
+        fichier.write_all("test".as_bytes())?;
+
+        // Suppression du dossier
+        comptoir.supprimer()?;
+
+        // Le dossier n'existe plus
+        assert!(!comptoir.chemin().exists());
+
+        // Erreur quand on veut supprimer le comptoir déjà supprimé
+        assert!(comptoir.supprimer().is_err());
+
+        Ok(())
+    }
+}

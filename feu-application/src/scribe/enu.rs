@@ -1198,4 +1198,142 @@ mod tests {
 
         Ok(())
     }
+
+    /// Cycle complet sur `Carte::Donnee` : hash conservé à la construction,
+    /// refus de `ajout_hash_donnee` (`ERR_ENU_004`), tags et metas insérés
+    /// puis relus via les accesseurs communs.
+    #[test]
+    fn carte_donnee() -> ResultScribe<()> {
+        let hash_donnee = [0u8; 32];
+        let mut carte = Carte::new_donnee(hash_donnee);
+
+        assert!(matches!(
+            carte.ajout_hash_donnee(&hash_donnee),
+            Err(ErreurScribe::Interne(_))
+        ));
+
+        if let Carte::Donnee {
+            metas: _,
+            tags: _,
+            hash_donnee: h,
+        } = &carte
+        {
+            assert_eq!(h, &hash_donnee);
+        }
+
+        assert!(carte.tags().is_empty() && carte.metas().is_empty());
+
+        carte.ajout_tag("tag1");
+        carte.ajout_tag("tag2");
+
+        assert_eq!(carte.tags().len(), 2);
+        assert!(carte.tags().contains("tag1") && carte.tags().contains("tag2"));
+
+        carte.ajout_meta("meta1", "valeur1");
+        carte.ajout_meta("meta2", "valeur2");
+
+        assert_eq!(carte.metas().len(), 2);
+        assert!(carte.metas().contains_key("meta1") && carte.metas().contains_key("meta2"));
+
+        Ok(())
+    }
+
+    /// Cycle complet sur `Carte::Texte` : contenu conservé à la construction,
+    /// refus de `ajout_hash_donnee` (`ERR_ENU_004`), tags et metas insérés
+    /// puis relus via les accesseurs communs.
+    #[test]
+    fn carte_texte() -> ResultScribe<()> {
+        let hash_donnee = [0u8; 32];
+        let mut carte = Carte::new_texte("Contenu court de test")?;
+
+        assert!(matches!(
+            carte.ajout_hash_donnee(&hash_donnee),
+            Err(ErreurScribe::Interne(_))
+        ));
+
+        if let Carte::Texte {
+            metas: _,
+            tags: _,
+            contenu: c,
+        } = &carte
+        {
+            assert_eq!(c, "Contenu court de test");
+        }
+
+        assert!(carte.tags().is_empty() && carte.metas().is_empty());
+
+        carte.ajout_tag("tag1");
+        carte.ajout_tag("tag2");
+
+        assert_eq!(carte.tags().len(), 2);
+        assert!(carte.tags().contains("tag1") && carte.tags().contains("tag2"));
+
+        carte.ajout_meta("meta1", "valeur1");
+        carte.ajout_meta("meta2", "valeur2");
+
+        assert_eq!(carte.metas().len(), 2);
+        assert!(carte.metas().contains_key("meta1") && carte.metas().contains_key("meta2"));
+
+        Ok(())
+    }
+
+    /// Contenu dépassant `MAX_TAILLE_TEXTE` d'un octet → refus (`ERR_ENU_006`).
+    #[test]
+    fn carte_texte_trop_grande() -> ResultScribe<()> {
+        let contenu = "a".repeat(MAX_TAILLE_TEXTE + 1);
+
+        assert!(matches!(
+            Carte::new_texte(&contenu),
+            Err(ErreurScribe::Interne(_))
+        ));
+
+        Ok(())
+    }
+
+    /// Cycle complet sur `Carte::Repertoire` : hashs enfants insérés via
+    /// `ajout_hash_donnee`, tags et metas insérés puis relus via les
+    /// accesseurs communs.
+    #[test]
+    fn carte_repertoire() -> ResultScribe<()> {
+        let hash_donnee1 = [0u8; 32];
+        let hash_donnee2 = [1u8; 32];
+        let mut carte = Carte::new_repertoire(BTreeSet::new());
+
+        if let Carte::Repertoire {
+            metas: _,
+            tags: _,
+            hashs_enu: h,
+        } = &carte
+        {
+            assert!(h.is_empty());
+        }
+
+        carte.ajout_hash_donnee(&hash_donnee1)?;
+        carte.ajout_hash_donnee(&hash_donnee2)?;
+
+        if let Carte::Repertoire {
+            metas: _,
+            tags: _,
+            hashs_enu: h,
+        } = &carte
+        {
+            assert_eq!(h.len(), 2);
+        }
+
+        assert!(carte.tags().is_empty() && carte.metas().is_empty());
+
+        carte.ajout_tag("tag1");
+        carte.ajout_tag("tag2");
+
+        assert_eq!(carte.tags().len(), 2);
+        assert!(carte.tags().contains("tag1") && carte.tags().contains("tag2"));
+
+        carte.ajout_meta("meta1", "valeur1");
+        carte.ajout_meta("meta2", "valeur2");
+
+        assert_eq!(carte.metas().len(), 2);
+        assert!(carte.metas().contains_key("meta1") && carte.metas().contains_key("meta2"));
+
+        Ok(())
+    }
 }
