@@ -23,6 +23,7 @@
 //! Aucun état n'est partagé entre les deux threads — toute communication
 //! transite par ces canaux typés.
 
+use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{JoinHandle, spawn};
 
@@ -202,8 +203,11 @@ impl ConnecteurVersTui {
     /// La boucle se termine sur [`MessageTuiCoeur::Quitter`] ou fermeture du
     /// canal (`Err`). La poignée retournée permet à `main` d'attendre la fin
     /// propre du thread via `.join()` — aucun thread orphelin.
-    pub(crate) fn lancer_thread_coeur(mut self) -> JoinHandle<()> {
-        let mut feu_application = FeuApplication::new();
+    ///
+    /// `chemin_feu` est le chemin racine du nœud, calculé par `main` (seul point
+    /// de lecture de l'environnement) et transmis à [`FeuApplication::new`].
+    pub(crate) fn lancer_thread_coeur(mut self, chemin_feu: &Path) -> JoinHandle<()> {
+        let mut feu_application = FeuApplication::new(chemin_feu);
         spawn(move || {
             loop {
                 match self.recepteur.recv() {

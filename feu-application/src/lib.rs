@@ -39,6 +39,8 @@
 //! - `feu_noyau` — `Option<FeuNoyau>` : `None` jusqu'à `commande_allumage_noeud`
 //! - `session` — état applicatif mis à jour à chaque commande noyau
 
+use std::path::{Path, PathBuf};
+
 use secrecy::SecretString;
 
 pub use erreur::{ErreurFeuApplication, ResultFeuApplication};
@@ -187,6 +189,12 @@ impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
 /// stable vers la couche de présentation. Toute interaction avec `feu-noyau` passe par cette
 /// structure — jamais directement depuis la couche de présentation.
 pub struct FeuApplication {
+    /// Chemin racine du nœud (`~/.feu` en usage nominal), reçu du binaire à la
+    /// construction. Détenu ici puis distribué à ses deux consommateurs — le
+    /// [`Scribe`] et, à l'allumage, [`FeuNoyau`] — pour qu'aucune couche sous la
+    /// présentation ne lise l'environnement.
+    chemin_feu: PathBuf,
+
     /// Instance du noyau — `None` jusqu'à [`commande_allumage_noeud`](FeuApplication::commande_allumage_noeud).
     /// Les commandes reçoivent un [`RecepteurNoyau`] éphémère à chaque appel ; elles retournent
     /// [`ErreurFeuApplication::NoeudEteint`] si le noyau n'est pas encore allumé.
@@ -203,18 +211,16 @@ impl FeuApplication {
     /// Initialise la session. Le noyau est absent (`None`) —
     /// appeler [`commande_allumage_noeud`](Self::commande_allumage_noeud) est nécessaire
     /// avant toute autre commande.
-    pub fn new() -> Self {
+    ///
+    /// `chemin_feu` est le chemin racine du nœud (`~/.feu` en usage nominal),
+    /// fourni par le binaire. Il est conservé et distribué au scribe dès
+    /// maintenant, puis au [`FeuNoyau`] à l'allumage.
+    pub fn new(chemin_feu: &Path) -> Self {
         Self {
+            chemin_feu: chemin_feu.to_path_buf(),
             feu_noyau: None,
             session: SessionApplication::new(),
-            scribe: Scribe::new(),
+            scribe: Scribe::new(chemin_feu),
         }
-    }
-}
-
-impl Default for FeuApplication {
-    /// Délègue à [`FeuApplication::new`].
-    fn default() -> Self {
-        Self::new()
     }
 }

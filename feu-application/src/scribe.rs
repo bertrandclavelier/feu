@@ -28,7 +28,7 @@ use std::{
     collections::HashMap,
     fs::{DirBuilder, read, read_dir},
     os::unix::fs::DirBuilderExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use feu_noyau::FeuNoyau;
@@ -56,6 +56,10 @@ pub(super) struct Scribe {
     /// `true` si le Scribe a été activé (nœud allumé).
     est_actif: bool,
 
+    /// Chemin du dossier des ENU — `~/.feu/enu/`, dérivé du chemin racine reçu à
+    /// la construction.
+    chemin_enu: PathBuf,
+
     /// Comptoirs de dépôt actifs, indexés par leur identifiant.
     comptoirs_depot: HashMap<usize, ComptoirDepot>,
 
@@ -66,11 +70,14 @@ pub(super) struct Scribe {
 impl Scribe {
     /// Construit un [`Scribe`] inactif.
     ///
-    /// Le chemin `~/.feu` est résolu une fois via [`FeuNoyau::chemin_feu`]
-    /// et stocké — pas de relecture de `$HOME` à chaque utilisation.
-    pub(super) fn new() -> Self {
+    /// `chemin_feu` est le chemin racine du nœud (`~/.feu` en usage nominal),
+    /// reçu de [`FeuApplication`]. Le Scribe en dérive une fois pour toutes le
+    /// chemin de son dossier `enu/` (`chemin_enu`) — aucune relecture de
+    /// l'environnement à l'usage.
+    pub(super) fn new(chemin_feu: &Path) -> Self {
         Self {
             est_actif: false,
+            chemin_enu: chemin_feu.join("enu/"),
             comptoirs_depot: HashMap::new(),
             prochain_id: 0,
         }
@@ -91,11 +98,11 @@ impl Scribe {
     pub(super) fn activation(&mut self) -> ResultScribe<()> {
         self.est_actif = true;
 
-        if !donne_chemin_dossier_enu().exists() {
+        if !&self.chemin_enu.exists() {
             DirBuilder::new()
                 .mode(0o700)
                 .recursive(true)
-                .create(donne_chemin_dossier_enu())?;
+                .create(&self.chemin_enu)?;
         }
 
         Ok(())
@@ -220,11 +227,11 @@ impl Scribe {
                     .unwrap();
 
                 let mut carte = Carte::new_donnee(hash_fichier);
-                carte.ajout_meta("nom", &entree.file_name().to_string_lossy().to_string());
+                carte.ajout_meta("nom", entree.file_name().to_string_lossy().as_ref());
 
                 let enu = Enu::new(carte, noyau, session, braise)?;
 
-                enu.sauvegarder()?;
+                enu.sauvegarder(&self.chemin_enu)?;
 
                 let hash_carte = enu.hash_carte();
 
@@ -242,11 +249,11 @@ impl Scribe {
 
                 let mut carte = Carte::new_repertoire(hashs.into_iter().collect());
 
-                carte.ajout_meta("nom", &entree.file_name().to_string_lossy().to_string());
+                carte.ajout_meta("nom", entree.file_name().to_string_lossy().as_ref());
 
                 let enu = Enu::new(carte, noyau, session, braise)?;
 
-                enu.sauvegarder()?;
+                enu.sauvegarder(&self.chemin_enu)?;
 
                 let hash_carte = enu.hash_carte();
                 if entree.depth() == 1 {
@@ -268,10 +275,11 @@ impl Scribe {
         let nouvelle_enu_racine_depot =
             Enu::new(nouvelle_carte, noyau, session, enu_racine_depot.braise())?;
 
-        nouvelle_enu_racine_depot.sauvegarder()?;
+        nouvelle_enu_racine_depot.sauvegarder(&self.chemin_enu)?;
 
         // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
         let racine_finale = Enu::remplacer(
+            &self.chemin_enu,
             enu_racine_noeud,
             &enu_racine_depot.hash_carte(),
             &nouvelle_enu_racine_depot,
@@ -328,7 +336,7 @@ impl Scribe {
             enu_racine_depot.braise(),
         )?;
 
-        enu_texte.sauvegarder()?;
+        enu_texte.sauvegarder(&self.chemin_enu)?;
 
         let mut nouvelle_carte = enu_racine_depot.carte().clone();
 
@@ -337,10 +345,11 @@ impl Scribe {
         let nouvelle_enu_racine_depot =
             Enu::new(nouvelle_carte, noyau, session, enu_racine_depot.braise())?;
 
-        nouvelle_enu_racine_depot.sauvegarder()?;
+        nouvelle_enu_racine_depot.sauvegarder(&self.chemin_enu)?;
 
         // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
         let racine_finale = Enu::remplacer(
+            &self.chemin_enu,
             enu_racine_noeud,
             &enu_racine_depot.hash_carte(),
             &nouvelle_enu_racine_depot,
@@ -350,9 +359,4 @@ impl Scribe {
 
         Ok(racine_finale)
     }
-}
-
-/// Retourne le chemin `~/.feu/enu/`.
-fn donne_chemin_dossier_enu() -> PathBuf {
-    FeuNoyau::chemin_feu().join("enu/")
 }

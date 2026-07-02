@@ -37,9 +37,8 @@ mod cryptographe;
 mod erreur;
 mod gardien;
 
-use std::env;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use secrecy::SecretString;
@@ -357,26 +356,17 @@ impl Drop for FeuNoyau {
 }
 
 impl FeuNoyau {
-    /// Retourne le chemin racine du nœud — `~/.feu`.
-    ///
-    /// Point de vérité unique pour `~/.feu` dans tout le crate. Centralise la
-    /// lecture de `$HOME` de manière à ne pas la dupliquer entre `Carnet` et
-    /// les autres composants. La résolution a lieu une fois, au premier appel
-    /// (le cache est implicite — appelée depuis `Carnet::new`).
-    ///
-    /// # Panics
-    ///
-    /// Panique si la variable d'environnement `HOME` est absente.
-    pub fn chemin_feu() -> PathBuf {
-        PathBuf::from(env::var("HOME").expect("HOME absente")).join(".feu/")
-    }
-
     /// Crée une instance de [`FeuNoyau`] prête à l'emploi — nœud allumé, foyers fermés.
     ///
     /// Détecte automatiquement l'état du nœud en vérifiant l'existence de l'arborescence
     /// `~/.feu`. Selon le cas, exécute l'initialisation ou l'allumage. Dans les deux cas,
     /// retourne un [`FeuNoyau`] pleinement opérationnel avec le nœud allumé et tous les
     /// foyers fermés.
+    ///
+    /// `chemin_feu` est le chemin racine du nœud (`~/.feu` en usage nominal). Le
+    /// noyau ne lit jamais l'environnement lui-même : l'emplacement lui est fourni
+    /// par l'appelant, ce qui permet notamment de l'enraciner dans un dossier
+    /// temporaire pour les tests.
     ///
     /// # Initialisation (première utilisation — arborescence absente)
     ///
@@ -411,24 +401,25 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une [`ErreurFeuNoyau`] si `HOME` est absente, si `config.feu` est
-    /// illisible, si un fichier de clé est absent ou corrompu, ou si le mot de passe
-    /// est incorrect. Retourne [`ErreurFeuNoyau::InitialisationNoeudImpossible`] si
+    /// Retourne une [`ErreurFeuNoyau`] si `config.feu` est illisible, si un
+    /// fichier de clé est absent ou corrompu, ou si le mot de passe est
+    /// incorrect. Retourne [`ErreurFeuNoyau::InitialisationNoeudImpossible`] si
     /// `phrase_seed` est fournie alors que l'arborescence existe déjà. Si `phrase_seed`
     /// est fournie, retourne une erreur si le compte de mots est invalide, si un mot
     /// est absent du dictionnaire BIP39 français, ou si le checksum est incorrect.
     pub fn new(
+        chemin_feu: &Path,
         phrase_seed: Option<SecretString>,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
     ) -> ResultFeuNoyau<Self> {
-        let mut gardien = Gardien::new()?;
+        let mut gardien = Gardien::new(chemin_feu);
 
         if gardien.existence_arborescence() {
             if phrase_seed.is_some() {
                 return Err(ErreurFeuNoyau::InitialisationNoeudImpossible);
             }
 
-            let gardien = Gardien::ouvre_nouveau()?;
+            let gardien = Gardien::ouvre_nouveau(chemin_feu)?;
             let mut cryptographe = Cryptographe::new();
 
             let trousseau_public_noeud = &gardien.lecture_pour_creation_trousseau_public_noeud()?;
@@ -550,10 +541,11 @@ impl FeuNoyau {
     /// d'erreur en cours de traitement, certains foyers peuvent rester désarchivés
     /// sur le disque.
     pub fn demarrage_secours(
+        chemin_feu: &Path,
         phrase_seed: SecretString,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
     ) -> ResultFeuNoyau<()> {
-        let mut gardien = Gardien::new()?;
+        let mut gardien = Gardien::new(chemin_feu);
 
         let mut cryptographe = Cryptographe::new();
 
@@ -1214,20 +1206,20 @@ impl FeuNoyau {
     /// clés du nœud, archives et clés de chaque foyer connu.
     ///
     /// Fonction associée — utilisable sans nœud allumé, notamment pour
-    /// diagnostiquer pourquoi [`FeuNoyau::new`] échoue.
+    /// diagnostiquer pourquoi [`FeuNoyau::new`] échoue. `chemin_feu` est le chemin
+    /// racine du nœud à inspecter (`~/.feu` en usage nominal), fourni par
+    /// l'appelant.
     ///
     /// # Retour
     ///
-    /// `Ok(vec![])` si le nœud est dans un état nominal.
-    /// `Ok(vec![...])` avec la liste des anomalies détectées sinon.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la variable d'environnement `HOME` est absente.
-    pub fn diagnostic_noeud() -> ResultFeuNoyau<Vec<Anomalie>> {
-        let gardien = Gardien::new()?;
+    /// Un vecteur vide si le nœud est dans un état nominal ; la liste des
+    /// anomalies détectées sinon. Ne peut pas échouer : l'inspection se limite à
+    /// des tests de présence et une config illisible est signalée comme une
+    /// anomalie ([`Anomalie::ConfigurationIllisible`]), pas comme une erreur.
+    pub fn diagnostic_noeud(chemin_feu: &Path) -> Vec<Anomalie> {
+        let gardien = Gardien::new(chemin_feu);
 
-        Ok(gardien.diagnostic_noeud()?)
+        gardien.diagnostic_noeud()
     }
 
     /// Diagnostique l'état d'un foyer ouvert sans modifier quoi que ce soit.

@@ -22,6 +22,7 @@ mod carnet;
 pub(super) mod erreur;
 
 use std::fs::File;
+use std::path::Path;
 use std::path::PathBuf;
 
 use crate::Anomalie;
@@ -130,31 +131,30 @@ pub(super) struct Gardien {
 }
 
 impl Gardien {
-    /// Crée le gardien de [`FeuNoyau`].
+    /// Crée le gardien de [`FeuNoyau`] pour le nœud enraciné à `chemin_feu`.
     ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si le carnet ne peut pas être initialisé —
-    /// notamment si la variable d'environnement `HOME` est absente.
-    pub(super) fn new() -> ResultGardien<Self> {
-        Ok(Self {
-            carnet: Carnet::new()?,
+    /// `chemin_feu` est le chemin racine du nœud (`~/.feu` en usage nominal),
+    /// fourni par l'appelant et transmis tel quel au [`Carnet`].
+    pub(super) fn new(chemin_feu: &Path) -> Self {
+        Self {
+            carnet: Carnet::new(chemin_feu),
             configuration: Configuration::new(),
-        })
+        }
     }
 
     /// Ouvre un nœud Feu existant en chargeant sa configuration depuis `config.feu`.
     ///
-    /// Crée le carnet à partir de `HOME`, vérifie que l'arborescence `~/.feu`
-    /// existe, lit `config.feu` sur le disque et reconstruit la [`Configuration`] en mémoire.
+    /// Crée le carnet à partir de `chemin_feu`, vérifie que l'arborescence
+    /// `~/.feu` existe, lit `config.feu` sur le disque et reconstruit la
+    /// [`Configuration`] en mémoire.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si `HOME` est absente, si l'arborescence `~/.feu`
-    /// est introuvable, si `config.feu` est absent ou illisible, ou si son
-    /// contenu ne peut pas être parsé.
-    pub(super) fn ouvre_nouveau() -> ResultGardien<Self> {
-        let carnet = Carnet::new()?;
+    /// Retourne une erreur si l'arborescence `~/.feu` est introuvable, si
+    /// `config.feu` est absent ou illisible, ou si son contenu ne peut pas
+    /// être parsé.
+    pub(super) fn ouvre_nouveau(chemin_feu: &Path) -> ResultGardien<Self> {
+        let carnet = Carnet::new(chemin_feu);
         if !carnet.existe_arborescence_noeud() {
             return Err(ErreurGardien::Interne(String::from(ERR_GAR_001)));
         }
@@ -421,8 +421,8 @@ impl Gardien {
     /// et parser `config.feu` pour vérifier les fichiers de chaque foyer connu.
     /// Si la config est illisible, les foyers ne peuvent pas être vérifiés —
     /// `ConfigurationIllisible` est ajoutée et la boucle foyers est ignorée.
-    pub(super) fn diagnostic_noeud(&self) -> ResultGardien<Vec<Anomalie>> {
-        let mut resultat = self.carnet.verifier_arborescence_noeud()?;
+    pub(super) fn diagnostic_noeud(&self) -> Vec<Anomalie> {
+        let mut resultat = self.carnet.verifier_arborescence_noeud();
 
         match self.carnet.ouvre_configuration() {
             Err(_) => {
@@ -464,7 +464,7 @@ impl Gardien {
                 }
             },
         }
-        Ok(resultat)
+        resultat
     }
 
     /// Vérifie la présence des fichiers d'un foyer ouvert.

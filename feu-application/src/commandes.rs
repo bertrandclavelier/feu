@@ -46,9 +46,9 @@ impl FeuApplication {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si `HOME` est absente, si les fichiers de clés sont absents
-    /// ou corrompus, si le mot de passe est incorrect, ou si `phrase_seed` est fournie
-    /// alors que le nœud existe déjà.
+    /// Retourne une erreur si les fichiers de clés sont absents ou corrompus, si
+    /// le mot de passe est incorrect, ou si `phrase_seed` est fournie alors que le
+    /// nœud existe déjà.
     pub fn commande_allumage_noeud(
         &mut self,
         interface_feu_application: &mut impl InterfaceFeuApplication,
@@ -57,7 +57,7 @@ impl FeuApplication {
         self.feu_noyau = Some({
             let mut recepteur_noyau =
                 RecepteurNoyau::new(&mut self.session, interface_feu_application);
-            FeuNoyau::new(phrase_seed, &mut recepteur_noyau)?
+            FeuNoyau::new(&self.chemin_feu, phrase_seed, &mut recepteur_noyau)?
         });
 
         interface_feu_application.recevoir_session_application(Some(self.session.clone()));
@@ -551,14 +551,11 @@ impl FeuApplication {
 
     /// Diagnostique la présence et la cohérence des fichiers du nœud.
     ///
-    /// Méthode associée — ne requiert pas d'instance de [`FeuApplication`].
-    /// Retourne la liste des anomalies détectées ; vide si tout est en ordre.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si le diagnostic ne peut pas être conduit.
-    pub fn commande_diagnostic_noeud() -> ResultFeuApplication<Vec<Anomalie>> {
-        Ok(FeuNoyau::diagnostic_noeud()?)
+    /// Utilisable nœud éteint : le diagnostic s'appuie sur le seul chemin racine,
+    /// pas sur une instance de [`FeuNoyau`] allumée. Retourne la liste des
+    /// anomalies détectées ; vide si tout est en ordre. Ne peut pas échouer.
+    pub fn commande_diagnostic_noeud(&self) -> Vec<Anomalie> {
+        FeuNoyau::diagnostic_noeud(&self.chemin_feu)
     }
 
     /// Diagnostique la présence et la cohérence des fichiers d'un foyer.

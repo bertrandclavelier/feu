@@ -72,7 +72,7 @@ use std::{
     fs::{OpenOptions, read, remove_file},
     io::Write,
     os::unix::fs::OpenOptionsExt,
-    path::PathBuf,
+    path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -228,9 +228,9 @@ impl Enu {
     ///
     /// Propage une [`ErreurScribe::IoError`] si le dossier `~/.feu/enu/` est
     /// absent ou sur tout autre échec d'écriture.
-    pub(super) fn sauvegarder(&self) -> ResultScribe<()> {
+    pub(super) fn sauvegarder(&self, chemin_enu: &Path) -> ResultScribe<()> {
         let nom_fichier = format!("{}.enu", HEXLOWER.encode(&self.hash_carte));
-        let chemin = crate::scribe::donne_chemin_dossier_enu().join(nom_fichier);
+        let chemin = chemin_enu.join(nom_fichier);
 
         if !chemin.exists() {
             let mut fichier = OpenOptions::new()
@@ -245,9 +245,9 @@ impl Enu {
         Ok(())
     }
 
-    pub(super) fn supprimer(&self) -> ResultScribe<()> {
+    pub(super) fn supprimer(&self, chemin_enu: &Path) -> ResultScribe<()> {
         let nom_fichier = format!("{}.enu", HEXLOWER.encode(&self.hash_carte));
-        let chemin = crate::scribe::donne_chemin_dossier_enu().join(nom_fichier);
+        let chemin = chemin_enu.join(nom_fichier);
 
         remove_file(&chemin)?;
 
@@ -275,20 +275,21 @@ impl Enu {
     /// authentifiable, et propage toute erreur d'E/S
     /// ([`ErreurScribe::IoError`]), de désérialisation ou cryptographique
     /// ([`ErreurScribe::FeuNoyau`]) rencontrée en chemin.
-    pub(super) fn charger(chemin: PathBuf, session: &SessionApplication) -> ResultScribe<Enu> {
-        let enu = Self::octets_vers_enu(&read(&chemin)?)?;
+    pub(super) fn charger(chemin: &Path, session: &SessionApplication) -> ResultScribe<Enu> {
+        let enu = Self::octets_vers_enu(&read(chemin)?)?;
         let octets_carte = enu.carte.vers_octets();
 
-        if let Some(index_foyer) = session.braise_vers_index(enu.braise) {
-            if FeuNoyau::verification_signature(
+        if let Some(index_foyer) = session.braise_vers_index(enu.braise)
+            && FeuNoyau::verification_signature(
                 session.cle_publique_sig_foyer(index_foyer)?,
                 enu.signature_carte,
                 &octets_carte,
-            )? && FeuNoyau::creation_empreinte(&octets_carte) == enu.hash_carte
-            {
-                return Ok(enu);
-            }
+            )?
+            && FeuNoyau::creation_empreinte(&octets_carte) == enu.hash_carte
+        {
+            return Ok(enu);
         }
+
         Err(ErreurScribe::Interne(String::from(ERR_ENU_003)))
     }
 
@@ -378,6 +379,7 @@ impl Enu {
     /// signature — notamment si un foyer du chemin reconstruit est fermé) et de
     /// [`Enu::new`] lors de la re-signature de la racine taguée.
     pub(super) fn remplacer(
+        chemin_enu: &Path,
         racine: &Enu,
         hash_a_remplacer: &[u8; 32],
         remplacement: &Enu,
@@ -388,15 +390,21 @@ impl Enu {
             return Err(ErreurScribe::Interne(ERR_ENU_007.to_string()));
         }
 
-        let racine =
-            Self::remplacer_recursif(racine, hash_a_remplacer, remplacement, noyau, session)?;
+        let racine = Self::remplacer_recursif(
+            chemin_enu,
+            racine,
+            hash_a_remplacer,
+            remplacement,
+            noyau,
+            session,
+        )?;
 
         let mut nouvelle_carte = racine.carte().clone();
         nouvelle_carte.ajout_meta("_racine", "");
         let racine_taguee = Enu::new(nouvelle_carte, noyau, session, racine.braise())?;
 
-        racine_taguee.sauvegarder()?;
-        racine.supprimer()?;
+        racine_taguee.sauvegarder(chemin_enu)?;
+        racine.supprimer(chemin_enu)?;
 
         Ok(racine_taguee)
     }
@@ -432,6 +440,7 @@ impl Enu {
     /// chaque enfant visité, et les erreurs de signature de [`Enu::new`] —
     /// notamment lorsqu'un foyer du chemin est fermé.
     fn remplacer_recursif(
+        chemin_enu: &Path,
         racine: &Enu,
         hash_a_remplacer: &[u8; 32],
         remplacement: &Enu,
@@ -453,12 +462,18 @@ impl Enu {
             let mut modifie = false;
             for h in &hashs_enu.clone() {
                 let nom_fichier = format!("{}.enu", HEXLOWER.encode(h));
-                let chemin = crate::scribe::donne_chemin_dossier_enu().join(nom_fichier);
+                let chemin = chemin_enu.join(nom_fichier);
 
-                let enu_enfant = Self::charger(chemin, session)?;
+                let enu_enfant = Self::charger(&chemin, session)?;
 
-                let enu_enfant_modifie =
-                    Self::remplacer(&enu_enfant, hash_a_remplacer, remplacement, noyau, session)?;
+                let enu_enfant_modifie = Self::remplacer(
+                    chemin_enu,
+                    &enu_enfant,
+                    hash_a_remplacer,
+                    remplacement,
+                    noyau,
+                    session,
+                )?;
 
                 // un enfant a changé → on échange son hash dans ce dossier
                 if enu_enfant_modifie.hash_carte() != enu_enfant.hash_carte() {
@@ -478,7 +493,6 @@ impl Enu {
                 }
 
                 let nouvelle_enu = Enu::new(carte, noyau, session, racine.braise())?;
-                nouvelle_enu.sauvegarder()?;
 
                 return Ok(nouvelle_enu);
             }
@@ -550,17 +564,17 @@ impl Carte {
                 metas,
                 tags: _,
                 hash_donnee: _,
-            } => return &metas,
+            } => metas,
             Self::Texte {
                 metas,
                 tags: _,
                 contenu: _,
-            } => return &metas,
+            } => metas,
             Self::Repertoire {
                 metas,
                 tags: _,
                 hashs_enu: _,
-            } => return metas,
+            } => metas,
         }
     }
 
@@ -574,17 +588,17 @@ impl Carte {
                 metas: _,
                 tags,
                 hash_donnee: _,
-            } => return &tags,
+            } => tags,
             Self::Texte {
                 metas: _,
                 tags,
                 contenu: _,
-            } => return &tags,
+            } => tags,
             Self::Repertoire {
                 metas: _,
                 tags,
                 hashs_enu: _,
-            } => return tags,
+            } => tags,
         }
     }
 
@@ -704,9 +718,9 @@ impl Carte {
         } = self
         {
             hashs_enu.insert(*hash);
-            return Ok(());
+            Ok(())
         } else {
-            return Err(ErreurScribe::Interne(String::from(ERR_ENU_004)));
+            Err(ErreurScribe::Interne(String::from(ERR_ENU_004)))
         }
     }
 

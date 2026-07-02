@@ -26,7 +26,6 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::Braise;
-use crate::FeuNoyau;
 use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
 use crate::gardien::erreur::{ErreurGardien, ResultGardien};
 use crate::{Anomalie, MAX_CLASSEURS, MAX_FOYERS};
@@ -59,19 +58,16 @@ pub(super) struct Carnet {
 }
 
 impl Carnet {
-    /// Initialise le registre à partir de [`FeuNoyau::chemin_feu`].
+    /// Initialise le registre avec le chemin racine du nœud reçu en argument.
     ///
-    /// Le chemin racine `~/.feu` est centralisé dans cette méthode —
-    /// voir son implémentation pour le détail de la résolution.
-    ///
-    /// # Panics
-    ///
-    /// Panique si la variable d'environnement `HOME` est absente
-    /// (propagé depuis `FeuNoyau::chemin_feu`).
-    pub(super) fn new() -> ResultGardien<Self> {
-        Ok(Carnet {
-            chemin_feu: FeuNoyau::chemin_feu(),
-        })
+    /// Le `Carnet` ne résout plus lui-même l'emplacement de `~/.feu` : le chemin
+    /// lui est fourni par l'appelant, remonté depuis le binaire (`feu-tui`) qui
+    /// est le seul à lire l'environnement. Le `Carnet` se contente de le conserver
+    /// et d'en dériver tous les chemins de fichiers du nœud.
+    pub(super) fn new(chemin_feu: &Path) -> Self {
+        Carnet {
+            chemin_feu: chemin_feu.to_path_buf(),
+        }
     }
 
     // ── Arborescence ─────────────────────────────────────────────────────────
@@ -106,7 +102,7 @@ impl Carnet {
     /// Contrôle `~/.feu/`, `.cles/`, `config.feu` et les trois clés du nœud.
     /// N'inspecte pas les foyers — leurs fichiers dépendent de la config,
     /// lue séparément par [`super::Gardien::diagnostic_noeud`].
-    pub(super) fn verifier_arborescence_noeud(&self) -> ResultGardien<Vec<Anomalie>> {
+    pub(super) fn verifier_arborescence_noeud(&self) -> Vec<Anomalie> {
         let mut resultat: Vec<Anomalie> = Vec::new();
         if !self.chemin_feu.exists() {
             resultat.push(Anomalie::ElementAbsent(self.chemin_feu.clone()));
@@ -145,7 +141,7 @@ impl Carnet {
             ));
         }
 
-        Ok(resultat)
+        resultat
     }
 
     /// Vérifie la présence des fichiers de clés d'un foyer.

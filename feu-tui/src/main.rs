@@ -25,7 +25,9 @@
 mod connecteurs;
 mod tui;
 
+use std::env;
 use std::io::Error;
+use std::path::PathBuf;
 use std::sync::mpsc::channel;
 
 use crate::connecteurs::{
@@ -34,6 +36,12 @@ use crate::connecteurs::{
 use crate::tui::Tui;
 
 fn main() -> Result<(), Error> {
+    // Unique point de lecture de l'environnement dans tout Feu : le chemin racine
+    // du nœud est résolu ici, au bord du programme, puis injecté vers le bas
+    // (application, noyau, scribe). Aucune couche en aval ne touche à `$HOME` —
+    // ce qui les rend testables en les enracinant dans un dossier temporaire.
+    let chemin_feu = PathBuf::from(env::var("HOME").expect("HOME absente")).join(".feu/");
+
     // Canal Tui -> Coeur
     let (emetteur_tui_coeur, recepteur_tui_coeur) = channel::<MessageTuiCoeur>();
 
@@ -44,7 +52,7 @@ fn main() -> Result<(), Error> {
     let connecteur_vers_coeur = ConnecteurVersCoeur::new(emetteur_tui_coeur, recepteur_coeur_tui);
     let connecteur_vers_tui = ConnecteurVersTui::new(emetteur_coeur_tui, recepteur_tui_coeur);
 
-    let poignee_thread_coeur = connecteur_vers_tui.lancer_thread_coeur();
+    let poignee_thread_coeur = connecteur_vers_tui.lancer_thread_coeur(&chemin_feu);
 
     let mut tui = Tui::new(connecteur_vers_coeur);
     ratatui::run(|terminal| tui.lancer(terminal))?;

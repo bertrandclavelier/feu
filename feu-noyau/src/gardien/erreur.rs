@@ -24,8 +24,10 @@
 //! automatiquement leur conversion. Le type original est préservé dans la
 //! variante et peut être inspecté ou ré-affiché.
 //!
-//! La lecture de `$HOME` a été centralisée dans [`FeuNoyau::chemin_feu`] —
-//! le `VarError` ne fait donc plus partie de ce type d'erreur.
+//! Le chemin racine du nœud est fourni au gardien par l'appelant (en dernier
+//! ressort le binaire `feu-tui`, seul à lire l'environnement) : aucune lecture
+//! de `$HOME` n'a lieu ici, et le `VarError` ne fait pas partie de ce type
+//! d'erreur.
 
 use thiserror::Error;
 
