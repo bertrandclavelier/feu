@@ -23,6 +23,9 @@ mod comptoir;
 pub mod enu;
 pub(super) mod erreur;
 
+#[cfg(test)]
+mod tests;
+
 use data_encoding::HEXLOWER;
 use std::{
     collections::HashMap,
