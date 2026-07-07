@@ -71,7 +71,7 @@ fn cree_noyau_et_foyer_ouvert() -> (TempDir, PathBuf, FeuNoyau, Scribe, SessionA
 
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut recepteur).unwrap();
     let mut scribe = Scribe::new(&chemin_feu);
-    scribe.activation().unwrap();
+    scribe.activation(&noyau).unwrap();
 
     noyau.ouverture_foyer(&mut recepteur, 0).unwrap();
 

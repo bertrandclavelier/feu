@@ -35,7 +35,9 @@ impl FeuApplication {
     /// Initialise ou allume le nœud et stocke l'instance dans [`FeuApplication`].
     ///
     /// Délègue à [`FeuNoyau::new`] qui détecte automatiquement l'état du nœud :
-    /// initialisation si `~/.feu` est absent, allumage sinon.
+    /// initialisation si `~/.feu` est absent, allumage sinon. Active ensuite le
+    /// Scribe — qui, à la toute première activation, amorce l'arborescence ENU
+    /// (racine origine signée par le nœud, symlink `_DERNIERE_RACINE`).
     ///
     /// `interface_feu_application` est utilisée pour collecter le mot de passe et,
     /// à l'initialisation, transmettre et confirmer la seed mnémotechnique.
@@ -54,15 +56,20 @@ impl FeuApplication {
         interface_feu_application: &mut impl InterfaceFeuApplication,
         phrase_seed: Option<SecretString>,
     ) -> ResultFeuApplication<()> {
-        self.feu_noyau = Some({
+        let feu_noyau = {
             let mut recepteur_noyau =
                 RecepteurNoyau::new(&mut self.session, interface_feu_application);
             FeuNoyau::new(&self.chemin_feu, phrase_seed, &mut recepteur_noyau)?
-        });
+        };
+
+        // le Scribe est activé avant de ranger le noyau dans `self` : l'amorce
+        // de l'arborescence (signature de la racine origine) a besoin d'une
+        // référence au noyau, plus simple à prendre tant qu'il est local
+        self.scribe.activation(&feu_noyau)?;
+
+        self.feu_noyau = Some(feu_noyau);
 
         interface_feu_application.recevoir_session_application(Some(self.session.clone()));
-
-        self.scribe.activation()?;
 
         Ok(())
     }

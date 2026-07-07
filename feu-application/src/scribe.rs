@@ -86,19 +86,23 @@ impl Scribe {
         }
     }
 
-    /// Active le Scribe et crée le dossier `~/.feu/enu/` s'il est absent.
+    /// Active le Scribe et, à la première activation, amorce l'arborescence.
     ///
     /// Appelé par [`commande_allumage_noeud`](crate::FeuApplication::commande_allumage_noeud)
-    /// après que le noyau a été allumé avec succès. Si le dossier `enu/` existe
-    /// déjà (allumages ultérieurs), la création est sautée.
+    /// après que le noyau a été allumé avec succès. Si le dossier `enu/` est
+    /// absent (tout premier allumage du nœud), il est créé en `rwx------`
+    /// (0o700), puis la **racine origine** est forgée et posée en sommet
+    /// courant via [`Enu::new_racine`] (carte `None` : répertoire vide, signé
+    /// par le nœud, symlink `_DERNIERE_RACINE` pointé dessus). `feu_noyau` est
+    /// requis pour cette signature de genèse.
     ///
-    /// Le dossier est créé avec les permissions `rwx------` (0o700).
+    /// Aux allumages ultérieurs (`enu/` déjà présent), cette amorce est sautée.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si la création du dossier échoue (permissions
-    /// insuffisantes, système de fichiers en lecture seule).
-    pub(super) fn activation(&mut self) -> ResultScribe<()> {
+    /// Retourne une erreur si la création du dossier, la signature de la racine
+    /// origine, sa sauvegarde ou la pose du symlink échoue.
+    pub(super) fn activation(&mut self, feu_noyau: &FeuNoyau) -> ResultScribe<()> {
         self.est_actif = true;
 
         if !&self.chemin_enu.exists() {
@@ -106,6 +110,8 @@ impl Scribe {
                 .mode(0o700)
                 .recursive(true)
                 .create(&self.chemin_enu)?;
+
+            Enu::new_racine(feu_noyau, &self.chemin_enu, None)?;
         }
 
         Ok(())

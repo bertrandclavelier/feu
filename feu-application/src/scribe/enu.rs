@@ -11,7 +11,9 @@
 //! Une [`Enu`] est une enveloppe signée contenant une [`Carte`]. La carte
 //! porte le contenu métier (données, texte, répertoire). L'enveloppe ajoute
 //! l'identité (hash), l'authenticité (signature ML-DSA-87) et la braise du
-//! foyer signataire.
+//! signataire. Deux signataires possibles : un **foyer** (ENU de contenu,
+//! braise du foyer) ou le **nœud** lui-même (racines de l'arborescence,
+//! braise sentinelle [`BRAISE_VIDE`] — voir [`Enu::new_racine`]).
 //!
 //! Les types ENU sont **content-addressed** : le hash de la carte sert de nom
 //! de fichier sur disque (`<hash_hex>.enu`). Aucune carte n'a de nom stable.
@@ -40,8 +42,9 @@
 //! `lib.rs`).
 //!
 //! - **`Enu`** — champs privés, accesseurs publics. Seule la crate
-//!   `feu-application` peut construire une enveloppe (via [`Enu::new`],
-//!   `pub(super)`) ou la persister sur disque ([`Enu::sauvegarder`],
+//!   `feu-application` peut construire une enveloppe ([`Enu::new`] pour le
+//!   contenu signé foyer, [`Enu::new_racine`] pour les racines signées nœud —
+//!   tous deux `pub(super)`) ou la persister sur disque ([`Enu::sauvegarder`],
 //!   `pub(super)`). Une [`Enu`] lue depuis l'extérieur a obligatoirement
 //!   transité par [`Enu::charger`] (`pub(super)`) qui valide le hash et la
 //!   signature — son intégrité cryptographique est garantie.
@@ -67,16 +70,18 @@
 //!   redondants.
 
 use data_encoding::HEXLOWER;
+use std::fs::rename;
+use std::os::unix::fs::symlink;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{OpenOptions, read, remove_file},
     io::Write,
     os::unix::fs::OpenOptionsExt,
-    path::Path,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use feu_noyau::{Braise, FeuNoyau};
+use feu_noyau::{BRAISE_VIDE, Braise, FeuNoyau};
 
 use crate::{
     SessionApplication,
@@ -118,11 +123,14 @@ const ERR_ENU_007: &str = "ENU-007 > Problème Enu racine ou remplacement";
 /// Le `hash_carte` (SHA3-256 de la carte sérialisée) est le nom du fichier
 /// dans `~/.feu/enu/`. La `signature_carte` (ML-DSA-87) couvre la carte
 /// sérialisée directement. La `date` est le timestamp Unix de mise sous
-/// enveloppe. La `braise` identifie le foyer signataire pour la vérification.
+/// enveloppe. La `braise` identifie le signataire pour la vérification :
+/// l'adresse d'un foyer, ou [`BRAISE_VIDE`] quand le signataire est le nœud
+/// (racines de l'arborescence).
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Enu {
-    /// Adresse `.braise` du foyer signataire (non couverte par le hash ni la
-    /// signature — métadonnée de routage).
+    /// Adresse `.braise` du signataire — un foyer, ou [`BRAISE_VIDE`] pour une
+    /// racine signée par le nœud (non couverte par le hash ni la signature —
+    /// métadonnée de routage).
     braise: Braise,
 
     /// SHA3-256 de la carte sérialisée.
@@ -177,7 +185,82 @@ impl Enu {
         })
     }
 
-    /// Retourne l'adresse `.braise` du foyer signataire.
+    /// Forge une racine du nœud, la sauvegarde et repointe le sommet courant.
+    ///
+    /// Une racine est signée par le **nœud** ([`FeuNoyau::signature_noeud`]),
+    /// non par un foyer — le sommet de l'arbre appartient au nœud. Sa braise
+    /// vaut [`BRAISE_VIDE`], sentinelle qui marque un signataire nœud (aucun
+    /// foyer réel ne la porte) et oriente [`Enu::charger`] vers la clé publique
+    /// de signature du nœud.
+    ///
+    /// Le paramètre `carte` distingue les deux usages :
+    ///
+    /// - `None` — **genèse** : un [`Carte::Repertoire`] vide portant `_racine`
+    ///   = `""` (racine sans parent, arborescence initiale vide). Le marqueur
+    ///   distingue aussi cette carte d'un répertoire de contenu vide, qui
+    ///   aurait sinon le même hash content-addressed.
+    /// - `Some(carte)` — le nouveau sommet reconstruit, fourni par l'appelant
+    ///   (typiquement [`Enu::remplacer`]). La carte **doit** porter la méta
+    ///   `_racine` (valeur = hash de la racine précédente), sans quoi
+    ///   [`Enu::charger`] ne la reconnaîtra pas comme racine et la rejettera.
+    ///
+    /// Après signature, l'ENU est sauvegardée, puis le symlink
+    /// `_DERNIERE_RACINE` est repointé sur elle de façon atomique (lien
+    /// temporaire puis `rename`). L'ENU forgée est retournée.
+    ///
+    /// Le nœud doit être allumé (sa clé de signature disponible) ; aucun foyer
+    /// n'a besoin d'être ouvert pour signer une racine.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage toute erreur de signature du nœud, de sauvegarde de l'ENU, ou de
+    /// pose du symlink.
+    pub(super) fn new_racine(
+        feu_noyau: &FeuNoyau,
+        chemin_enu: &Path,
+        carte: Option<Carte>,
+    ) -> ResultScribe<Enu> {
+        let carte = {
+            if let Some(carte) = carte {
+                carte
+            } else {
+                let mut carte = Carte::new_repertoire(BTreeSet::new());
+                carte.ajout_meta("_racine", "");
+                carte
+            }
+        };
+
+        let octets_carte = carte.vers_octets();
+
+        let enu_racine = Self {
+            braise: BRAISE_VIDE,
+            hash_carte: FeuNoyau::creation_empreinte(&octets_carte),
+            signature_carte: feu_noyau.signature_noeud(&octets_carte)?,
+            date: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Horloge système antérieure à 1970")
+                .as_secs(),
+            carte,
+        };
+
+        let chemin = enu_racine.sauvegarder(chemin_enu)?;
+
+        // repointage atomique : le lien temporaire est renommé par-dessus
+        // l'ancien (rename POSIX) — `_DERNIERE_RACINE` n'est jamais absent ni
+        // à moitié posé, même si le processus est coupé entre les deux appels.
+        // La cible est relative (nom de fichier seul) : le lien survit à un
+        // déplacement de `~/.feu`.
+        let tmp = chemin_enu.join("_DERNIERE_RACINE.tmp");
+        let lien = chemin_enu.join("_DERNIERE_RACINE");
+
+        symlink(chemin.file_name().unwrap(), &tmp)?;
+        rename(tmp, lien)?;
+
+        Ok(enu_racine)
+    }
+
+    /// Retourne l'adresse `.braise` du signataire — un foyer, ou
+    /// [`BRAISE_VIDE`] pour une racine signée par le nœud.
     ///
     /// Métadonnée de routage, hors hash et hors signature : sa valeur n'est pas
     /// authentifiée (voir le modèle de confiance du module).
@@ -216,19 +299,25 @@ impl Enu {
     /// mode `0o600` (lecture/écriture réservées au propriétaire).
     ///
     /// **Idempotent.** Si le fichier existe déjà, l'écriture est shuntée et la
-    /// méthode renvoie `Ok(())` sans rien faire : le nom étant le hash de la
-    /// carte, un fichier de même nom encode forcément la même carte — il n'y a
-    /// rien à réécrire. Une `date` ou une `signature` différentes dans la
+    /// méthode renvoie son chemin sans rien réécrire : le nom étant le hash de
+    /// la carte, un fichier de même nom encode forcément la même carte — il n'y
+    /// a rien à réécrire. Une `date` ou une `signature` différentes dans la
     /// nouvelle enveloppe sont sans incidence : ces champs ne participent ni au
     /// hash ni au nom. Un contenu identique n'est donc stocké qu'une fois et
     /// peut être référencé par autant d'ENU que nécessaire (déduplication à
     /// l'échelle du nœud).
     ///
+    /// # Retour
+    ///
+    /// Le chemin du fichier `.enu` — existant ou nouvellement créé. Utile pour
+    /// l'appelant qui a besoin de le désigner ensuite, par exemple pour y faire
+    /// pointer le symlink de la dernière racine.
+    ///
     /// # Erreurs
     ///
     /// Propage une [`ErreurScribe::IoError`] si le dossier `~/.feu/enu/` est
     /// absent ou sur tout autre échec d'écriture.
-    pub(super) fn sauvegarder(&self, chemin_enu: &Path) -> ResultScribe<()> {
+    pub(super) fn sauvegarder(&self, chemin_enu: &Path) -> ResultScribe<PathBuf> {
         let nom_fichier = format!("{}.enu", HEXLOWER.encode(&self.hash_carte));
         let chemin = chemin_enu.join(nom_fichier);
 
@@ -237,14 +326,26 @@ impl Enu {
                 .write(true)
                 .create_new(true)
                 .mode(0o600)
-                .open(chemin)?;
+                .open(&chemin)?;
 
             fichier.write_all(&self.vers_octets())?;
         }
 
-        Ok(())
+        Ok(chemin)
     }
 
+    /// Supprime le fichier `.enu` de cette ENU du disque.
+    ///
+    /// Sans appelant de production depuis que [`Enu::remplacer`] conserve les
+    /// anciens sommets (historique des versions) : seul un test l'exerce
+    /// aujourd'hui, d'où le `#[allow(dead_code)]`. Elle servira au futur
+    /// chantier de ménage (reset), qui élague les versions abandonnées.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage une [`ErreurScribe::IoError`] si le fichier est absent ou si la
+    /// suppression échoue.
+    #[allow(dead_code)]
     pub(super) fn supprimer(&self, chemin_enu: &Path) -> ResultScribe<()> {
         let nom_fichier = format!("{}.enu", HEXLOWER.encode(&self.hash_carte));
         let chemin = chemin_enu.join(nom_fichier);
@@ -257,17 +358,27 @@ impl Enu {
     /// Charge **et authentifie** une ENU depuis le disque.
     ///
     /// Là où [`Enu::octets_vers_enu`] ne valide que la structure, cette méthode
-    /// reconstruit l'enveloppe puis franchit la frontière de confiance : elle ne
-    /// renvoie une ENU que si les trois conditions suivantes sont réunies.
+    /// reconstruit l'enveloppe puis franchit la frontière de confiance. Le
+    /// signataire est déterminé par la `braise` — le champ de routage qui
+    /// annonce qui a signé — et la clé de vérification en découle :
     ///
-    /// 1. La `braise` annoncée désigne un foyer connu de la session.
-    /// 2. La signature ML-DSA-87 est valide pour la clé publique de ce foyer.
-    /// 3. Le hash recalculé de la carte égale le `hash_carte` stocké.
+    /// - **Racine du nœud** — braise [`BRAISE_VIDE`] : le nœud est le
+    ///   signataire, la signature est validée contre [`cle_publique_sig_noeud`].
+    ///   Sa carte porte par ailleurs la méta `_racine` (marqueur de racine dans
+    ///   l'arbre des versions).
+    /// - **Contenu** — braise d'un foyer connu de la session : la clé publique
+    ///   de ce foyer valide la signature.
     ///
-    /// Une enveloppe au signataire inconnu, falsifiée ou corrompue ne passe
-    /// jamais cette barrière. Rappel du modèle de confiance : `braise` et `date`
-    /// restant hors signature, leur intégrité n'est pas garantie — seules
-    /// l'identité et l'authenticité de la **carte** le sont.
+    /// Dans les deux cas, une condition commune s'ajoute : le hash recalculé de
+    /// la carte doit égaler le `hash_carte` stocké — sans quoi le nom
+    /// content-addressed de l'ENU mentirait sur son contenu (le `hash_carte`
+    /// est hors signature).
+    ///
+    /// La `braise` restant hors signature, la falsifier ne peut que router vers
+    /// la mauvaise clé et faire **échouer** la vérification — jamais faire
+    /// accepter une ENU. C'est le modèle de confiance du module : la braise est
+    /// un indice de routage, la signature est le contrôle. Une enveloppe au
+    /// signataire inconnu, falsifiée ou corrompue ne passe jamais la barrière.
     ///
     /// # Erreurs
     ///
@@ -279,6 +390,20 @@ impl Enu {
         let enu = Self::octets_vers_enu(&read(chemin)?)?;
         let octets_carte = enu.carte.vers_octets();
 
+        // racine du nœud : braise sentinelle → vérification contre la clé du nœud
+        if enu.braise == BRAISE_VIDE
+            && enu.carte().metas().contains_key("_racine")
+            && FeuNoyau::verification_signature(
+                session.cle_publique_sig_noeud(),
+                enu.signature_carte,
+                &octets_carte,
+            )?
+            && FeuNoyau::creation_empreinte(&octets_carte) == enu.hash_carte
+        {
+            return Ok(enu);
+        }
+
+        // ENU de contenu : la braise doit résoudre vers un foyer connu de la session
         if let Some(index_foyer) = session.braise_vers_index(enu.braise)
             && FeuNoyau::verification_signature(
                 session.cle_publique_sig_foyer(index_foyer)?,
@@ -353,31 +478,39 @@ impl Enu {
         })
     }
 
-    /// Remplace une ENU dans l'arbre du nœud, puis marque la nouvelle racine.
+    /// Remplace une ENU dans l'arbre du nœud et produit la version suivante.
     ///
-    /// Point d'entrée de la substitution. Délègue à
-    /// [`Self::remplacer_recursif`] la descente dans l'arbre et la reconstruction
-    /// du chemin, puis appose sur le sommet ainsi obtenu la métadonnée `_racine`
-    /// (valeur vide) qui distingue la racine du nœud de tout autre répertoire.
-    /// Cette racine taguée est re-signée sous sa propre braise ([`Enu::braise`])
-    /// et sauvegardée dans `~/.feu/enu/`.
+    /// Point d'entrée de la substitution. `racine` est le sommet courant de
+    /// l'arborescence (celui pointé par `_DERNIERE_RACINE`). La fonction
+    /// délègue à [`Self::remplacer_recursif`] la descente dans l'arbre et la
+    /// reconstruction du chemin, puis forge le nouveau sommet via
+    /// [`Enu::new_racine`] : sa carte est celle remontée par la récursion,
+    /// avec la méta `_racine` mise au **hash de l'ancien sommet** — c'est le
+    /// maillon de la lignée des versions, capturé avant la descente. La
+    /// signature (nœud), la sauvegarde et le repointage du symlink
+    /// `_DERNIERE_RACINE` sont portés par `new_racine`.
     ///
-    /// Poser le marqueur **ici, une seule fois**, et non dans la récursion, est
-    /// délibéré : [`Self::remplacer_recursif`] reconstruit *chaque* répertoire du
-    /// chemin et ne sait pas lequel est le sommet — seul le point d'entrée le
-    /// sait. L'ajout est idempotent : si la racine portait déjà `_racine`, la
-    /// carte est inchangée, donc le hash aussi, et la sauvegarde content-addressed
-    /// ne réécrit rien.
+    /// Poser la lignée **ici, une seule fois**, et non dans la récursion, est
+    /// délibéré : [`Self::remplacer_recursif`] reconstruit *chaque* répertoire
+    /// du chemin et ne sait pas lequel est le sommet — seul le point d'entrée
+    /// le sait. L'écrasement de l'ancienne valeur de `_racine` (héritée de la
+    /// carte clonée) fait avancer la chaîne d'un cran.
+    ///
+    /// L'ancien sommet n'est **pas** supprimé : c'est la version précédente de
+    /// l'arborescence, conservée pour l'historique (chaîne des `_racine`).
     ///
     /// # Retour
     ///
-    /// La nouvelle ENU racine du nœud, porteuse de la métadonnée `_racine`.
+    /// La nouvelle ENU racine du nœud — nouveau sommet de l'arborescence,
+    /// pointé par `_DERNIERE_RACINE`.
     ///
     /// # Erreurs
     ///
-    /// Propage les erreurs de [`Self::remplacer_recursif`] (E/S, authentification,
-    /// signature — notamment si un foyer du chemin reconstruit est fermé) et de
-    /// [`Enu::new`] lors de la re-signature de la racine taguée.
+    /// Retourne [`ErreurScribe::Interne`] (`ENU-007`) si `remplacement` est
+    /// identique à `racine`. Propage les erreurs de
+    /// [`Self::remplacer_recursif`] (E/S, authentification, signature —
+    /// notamment si un foyer du chemin reconstruit est fermé) et de
+    /// [`Enu::new_racine`] (signature du nœud, sauvegarde, symlink).
     pub(super) fn remplacer(
         chemin_enu: &Path,
         racine: &Enu,
@@ -386,9 +519,13 @@ impl Enu {
         noyau: &FeuNoyau,
         session: &SessionApplication,
     ) -> ResultScribe<Enu> {
-        if racine.carte().metas().contains_key("_racine") || racine == remplacement {
+        if racine == remplacement {
             return Err(ErreurScribe::Interne(ERR_ENU_007.to_string()));
         }
+
+        // capturé avant la descente : `racine` est ensuite masquée par le
+        // sommet reconstruit, dont le hash n'est pas celui du parent
+        let hash_ancienne_racine = racine.hash_carte();
 
         let racine = Self::remplacer_recursif(
             chemin_enu,
@@ -400,30 +537,38 @@ impl Enu {
         )?;
 
         let mut nouvelle_carte = racine.carte().clone();
-        nouvelle_carte.ajout_meta("_racine", "");
-        let racine_taguee = Enu::new(nouvelle_carte, noyau, session, racine.braise())?;
+        nouvelle_carte.ajout_meta("_racine", &HEXLOWER.encode(&hash_ancienne_racine));
 
-        racine_taguee.sauvegarder(chemin_enu)?;
-        racine.supprimer(chemin_enu)?;
+        let nouvelle_racine = Enu::new_racine(noyau, chemin_enu, Some(nouvelle_carte))?;
 
-        Ok(racine_taguee)
+        Ok(nouvelle_racine)
     }
 
     /// Cœur récursif de [`Self::remplacer`] : substitue la cible et reconstruit
-    /// le chemin jusqu'au sommet du sous-arbre, **sans** poser le marqueur
-    /// `_racine` (réservé au point d'entrée).
+    /// le chemin jusqu'au sommet du sous-arbre, **sans** poser la lignée
+    /// `_racine` (réservée au point d'entrée).
     ///
     /// Mise à jour **immuable** et content-addressed : `racine` n'est jamais
     /// modifiée en place. La fonction descend récursivement dans les
     /// [`Carte::Repertoire`] à la recherche de l'ENU dont le `hash_carte` vaut
     /// `hash_a_remplacer`. Lorsqu'elle la trouve, elle y substitue
     /// `remplacement`, puis reconstruit chaque répertoire situé sur le chemin
-    /// entre la racine et le nœud remplacé : métadonnées et tags conservés,
-    /// **re-signé sous sa propre braise** ([`Enu::braise`]), et sauvegardé dans
-    /// `~/.feu/enu/`. Chaque répertoire reste ainsi signé par le foyer qui le
-    /// possède — c'est ce qui autorise un arbre mêlant plusieurs foyers. Comme le
-    /// `hash_carte` d'un répertoire dépend du hash de ses enfants, modifier une
-    /// feuille fait remonter de nouveaux hashs jusqu'à une nouvelle racine.
+    /// entre la racine et le nœud remplacé (métadonnées et tags conservés),
+    /// avec un traitement selon le signataire :
+    ///
+    /// - **Répertoire de contenu** (braise d'un foyer) — re-signé sous sa
+    ///   propre braise ([`Enu::braise`]) et sauvegardé dans `~/.feu/enu/`.
+    ///   Chaque répertoire reste ainsi signé par le foyer qui le possède —
+    ///   c'est ce qui autorise un arbre mêlant plusieurs foyers.
+    /// - **Sommet du nœud** (braise [`BRAISE_VIDE`]) — **ni re-signé, ni
+    ///   sauvegardé** ici : la signature est du ressort du nœud, pas d'un
+    ///   foyer, et c'est [`Self::remplacer`] qui la pose via
+    ///   [`Enu::new_racine`]. La récursion renvoie alors une ENU
+    ///   **temporaire** : clone du sommet dont seule la carte est à jour —
+    ///   son `hash_carte` et sa signature, périmés, ne doivent pas être lus.
+    ///
+    /// Comme le `hash_carte` d'un répertoire dépend du hash de ses enfants,
+    /// modifier une feuille fait remonter de nouveaux hashs jusqu'au sommet.
     ///
     /// Corollaire du modèle mixte : **tout foyer présent sur le chemin
     /// reconstruit doit être ouvert**, sans quoi la re-signature de son
@@ -431,8 +576,9 @@ impl Enu {
     ///
     /// # Retour
     ///
-    /// La nouvelle ENU racine si le sous-arbre contenait la cible ; sinon un
-    /// clone inchangé de `racine` (cible absente de ce sous-arbre).
+    /// La racine du sous-arbre après substitution — éventuellement l'ENU
+    /// temporaire décrite ci-dessus si cette racine est le sommet du nœud ;
+    /// un clone inchangé de `racine` si la cible est absente du sous-arbre.
     ///
     /// # Erreurs
     ///
@@ -466,7 +612,7 @@ impl Enu {
 
                 let enu_enfant = Self::charger(&chemin, session)?;
 
-                let enu_enfant_modifie = Self::remplacer(
+                let enu_enfant_modifie = Self::remplacer_recursif(
                     chemin_enu,
                     &enu_enfant,
                     hash_a_remplacer,
@@ -483,7 +629,7 @@ impl Enu {
                 }
             }
             if modifie {
-                // dossier reconstruit et re-signé sous SA braise (arbre multi-foyers)
+                // dossier reconstruit : mêmes métas et tags, hashs enfants à jour
                 let mut carte = Carte::new_repertoire(hashs_enu.clone());
                 for (cle, valeur) in &metas {
                     carte.ajout_meta(cle, valeur);
@@ -492,7 +638,22 @@ impl Enu {
                     carte.ajout_tag(t);
                 }
 
+                // sommet du nœud : la signature appartient au nœud, pas à un
+                // foyer — c'est `remplacer` qui la posera via `new_racine`.
+                // ENU temporaire : seule sa carte est à jour, hash et signature
+                // périmés → ne jamais la sauvegarder ni la faire sortir de
+                // `remplacer`.
+                if racine.braise() == BRAISE_VIDE {
+                    let mut enu_temp = racine.clone();
+                    enu_temp.carte = carte;
+                    return Ok(enu_temp);
+                }
+
+                // répertoire de contenu : re-signé sous SA braise (arbre
+                // multi-foyers), sauvegardé — le chemin reconstruit doit
+                // exister sur disque avant que le nouveau sommet le référence
                 let nouvelle_enu = Enu::new(carte, noyau, session, racine.braise())?;
+                nouvelle_enu.sauvegarder(chemin_enu)?;
 
                 return Ok(nouvelle_enu);
             }
