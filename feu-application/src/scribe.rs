@@ -63,6 +63,13 @@ pub(super) struct Scribe {
     /// la construction.
     chemin_enu: PathBuf,
 
+    /// Chemin du symlink `.DERNIERE_RACINE` — le sommet courant de
+    /// l'arborescence, dans `enu/`. Dérivé une fois à la construction et
+    /// transmis à [`Enu::new_racine`] / [`Enu::remplacer`], qui le repointent
+    /// atomiquement à chaque nouvelle racine. Le Scribe est ainsi la source
+    /// unique de cet emplacement.
+    chemin_derniere_racine: PathBuf,
+
     /// Comptoirs de dépôt actifs, indexés par leur identifiant.
     comptoirs_depot: HashMap<usize, ComptoirDepot>,
 
@@ -81,6 +88,7 @@ impl Scribe {
         Self {
             est_actif: false,
             chemin_enu: chemin_feu.join("enu/"),
+            chemin_derniere_racine: chemin_feu.join("enu/").join(".DERNIERE_RACINE"),
             comptoirs_depot: HashMap::new(),
             prochain_id: 0,
         }
@@ -93,7 +101,7 @@ impl Scribe {
     /// absent (tout premier allumage du nœud), il est créé en `rwx------`
     /// (0o700), puis la **racine origine** est forgée et posée en sommet
     /// courant via [`Enu::new_racine`] (carte `None` : répertoire vide, signé
-    /// par le nœud, symlink `_DERNIERE_RACINE` pointé dessus). `feu_noyau` est
+    /// par le nœud, symlink `.DERNIERE_RACINE` pointé dessus). `feu_noyau` est
     /// requis pour cette signature de genèse.
     ///
     /// Aux allumages ultérieurs (`enu/` déjà présent), cette amorce est sautée.
@@ -111,7 +119,12 @@ impl Scribe {
                 .recursive(true)
                 .create(&self.chemin_enu)?;
 
-            Enu::new_racine(feu_noyau, &self.chemin_enu, None)?;
+            Enu::new_racine(
+                feu_noyau,
+                &self.chemin_enu,
+                &self.chemin_derniere_racine,
+                None,
+            )?;
         }
 
         Ok(())
@@ -289,6 +302,7 @@ impl Scribe {
         // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
         let racine_finale = Enu::remplacer(
             &self.chemin_enu,
+            &self.chemin_derniere_racine,
             enu_racine_noeud,
             &enu_racine_depot.hash_carte(),
             &nouvelle_enu_racine_depot,
@@ -359,6 +373,7 @@ impl Scribe {
         // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
         let racine_finale = Enu::remplacer(
             &self.chemin_enu,
+            &self.chemin_derniere_racine,
             enu_racine_noeud,
             &enu_racine_depot.hash_carte(),
             &nouvelle_enu_racine_depot,

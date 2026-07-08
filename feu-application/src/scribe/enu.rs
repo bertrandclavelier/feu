@@ -204,9 +204,10 @@ impl Enu {
     ///   `_racine` (valeur = hash de la racine précédente), sans quoi
     ///   [`Enu::charger`] ne la reconnaîtra pas comme racine et la rejettera.
     ///
-    /// Après signature, l'ENU est sauvegardée, puis le symlink
-    /// `_DERNIERE_RACINE` est repointé sur elle de façon atomique (lien
-    /// temporaire puis `rename`). L'ENU forgée est retournée.
+    /// Après signature, l'ENU est sauvegardée, puis le symlink pointé par
+    /// `chemin_derniere_racine` (`.DERNIERE_RACINE`, fourni par le
+    /// [`Scribe`]) est repointé sur elle de façon atomique
+    /// (lien temporaire puis `rename`). L'ENU forgée est retournée.
     ///
     /// Le nœud doit être allumé (sa clé de signature disponible) ; aucun foyer
     /// n'a besoin d'être ouvert pour signer une racine.
@@ -218,6 +219,7 @@ impl Enu {
     pub(super) fn new_racine(
         feu_noyau: &FeuNoyau,
         chemin_enu: &Path,
+        chemin_derniere_racine: &Path,
         carte: Option<Carte>,
     ) -> ResultScribe<Enu> {
         let carte = {
@@ -246,15 +248,20 @@ impl Enu {
         let chemin = enu_racine.sauvegarder(chemin_enu)?;
 
         // repointage atomique : le lien temporaire est renommé par-dessus
-        // l'ancien (rename POSIX) — `_DERNIERE_RACINE` n'est jamais absent ni
+        // l'ancien (rename POSIX) — `.DERNIERE_RACINE` n'est jamais absent ni
         // à moitié posé, même si le processus est coupé entre les deux appels.
         // La cible est relative (nom de fichier seul) : le lien survit à un
         // déplacement de `~/.feu`.
-        let tmp = chemin_enu.join("_DERNIERE_RACINE.tmp");
-        let lien = chemin_enu.join("_DERNIERE_RACINE");
+        //
+        // Le temporaire est dérivé de la cible, pas recalculé : garantit qu'il
+        // en est le voisin exact (même dossier, même nom + `.tmp`), condition du
+        // `rename` atomique. `with_extension` *ajoute* `.tmp` au lieu de le
+        // substituer, car le point de tête de `.DERNIERE_RACINE` n'est pas vu
+        // comme une extension par `Path`.
+        let tmp = chemin_derniere_racine.with_extension("tmp");
 
         symlink(chemin.file_name().unwrap(), &tmp)?;
-        rename(tmp, lien)?;
+        rename(tmp, chemin_derniere_racine)?;
 
         Ok(enu_racine)
     }
@@ -481,14 +488,15 @@ impl Enu {
     /// Remplace une ENU dans l'arbre du nœud et produit la version suivante.
     ///
     /// Point d'entrée de la substitution. `racine` est le sommet courant de
-    /// l'arborescence (celui pointé par `_DERNIERE_RACINE`). La fonction
+    /// l'arborescence (celui pointé par `.DERNIERE_RACINE`). La fonction
     /// délègue à [`Self::remplacer_recursif`] la descente dans l'arbre et la
     /// reconstruction du chemin, puis forge le nouveau sommet via
     /// [`Enu::new_racine`] : sa carte est celle remontée par la récursion,
     /// avec la méta `_racine` mise au **hash de l'ancien sommet** — c'est le
     /// maillon de la lignée des versions, capturé avant la descente. La
     /// signature (nœud), la sauvegarde et le repointage du symlink
-    /// `_DERNIERE_RACINE` sont portés par `new_racine`.
+    /// `.DERNIERE_RACINE` (via `chemin_derniere_racine`) sont portés par
+    /// `new_racine`.
     ///
     /// Poser la lignée **ici, une seule fois**, et non dans la récursion, est
     /// délibéré : [`Self::remplacer_recursif`] reconstruit *chaque* répertoire
@@ -502,7 +510,7 @@ impl Enu {
     /// # Retour
     ///
     /// La nouvelle ENU racine du nœud — nouveau sommet de l'arborescence,
-    /// pointé par `_DERNIERE_RACINE`.
+    /// pointé par `.DERNIERE_RACINE`.
     ///
     /// # Erreurs
     ///
@@ -513,6 +521,7 @@ impl Enu {
     /// [`Enu::new_racine`] (signature du nœud, sauvegarde, symlink).
     pub(super) fn remplacer(
         chemin_enu: &Path,
+        chemin_derniere_racine: &Path,
         racine: &Enu,
         hash_a_remplacer: &[u8; 32],
         remplacement: &Enu,
@@ -539,7 +548,12 @@ impl Enu {
         let mut nouvelle_carte = racine.carte().clone();
         nouvelle_carte.ajout_meta("_racine", &HEXLOWER.encode(&hash_ancienne_racine));
 
-        let nouvelle_racine = Enu::new_racine(noyau, chemin_enu, Some(nouvelle_carte))?;
+        let nouvelle_racine = Enu::new_racine(
+            noyau,
+            chemin_enu,
+            chemin_derniere_racine,
+            Some(nouvelle_carte),
+        )?;
 
         Ok(nouvelle_racine)
     }
@@ -890,7 +904,7 @@ impl Carte {
     /// Format : discriminant `u8` (0x00=CaD, 0x01=CaT, 0x02=CaR), métadonnées,
     /// tags, puis les champs spécifiques à chaque variant. Le résultat est
     /// déterministe : même carte → mêmes octets → même hash.
-    fn vers_octets(&self) -> Vec<u8> {
+    pub(super) fn vers_octets(&self) -> Vec<u8> {
         let mut resultat = Vec::new();
         match self {
             Carte::Donnee {

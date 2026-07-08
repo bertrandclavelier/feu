@@ -16,7 +16,7 @@
 //! `tests/`, parce que les fonctions couvertes (`Enu::sauvegarder`, `charger`,
 //! `supprimer`…) sont `pub(super)` : invisibles depuis un crate de test externe.
 
-use std::fs::write;
+use std::{collections::BTreeSet, fs::write};
 
 use data_encoding::HEXLOWER;
 use secrecy::SecretString;
@@ -58,7 +58,14 @@ impl InterfaceFeuApplication for InterfaceTest {
 /// sinon son `Drop` effacerait le dossier avant même l'exécution. Le décor
 /// laisse un foyer ouvert (clé privée en mémoire), sans quoi aucune ENU ne
 /// pourrait être signée.
-fn cree_noyau_et_foyer_ouvert() -> (TempDir, PathBuf, FeuNoyau, Scribe, SessionApplication) {
+fn cree_noyau_et_foyer_ouvert() -> (
+    TempDir,
+    PathBuf,
+    PathBuf,
+    FeuNoyau,
+    Scribe,
+    SessionApplication,
+) {
     let tmp = TempDir::new().unwrap();
     // Sous-chemin encore inexistant : le noyau l'initialise lui-même. Lui passer
     // un dossier déjà créé le ferait basculer en « ouverture d'un nœud existant ».
@@ -75,7 +82,14 @@ fn cree_noyau_et_foyer_ouvert() -> (TempDir, PathBuf, FeuNoyau, Scribe, SessionA
 
     noyau.ouverture_foyer(&mut recepteur, 0).unwrap();
 
-    (tmp, chemin_feu.join("enu/"), noyau, scribe, session)
+    (
+        tmp,
+        scribe.chemin_enu.clone(),
+        scribe.chemin_derniere_racine.clone(),
+        noyau,
+        scribe,
+        session,
+    )
 }
 
 /// Referme le foyer et consomme le décor en fin de test.
@@ -104,7 +118,7 @@ fn creer_enu(noyau: &FeuNoyau, session: &SessionApplication) -> Enu {
 /// (round-trip) puis suppression.
 #[test]
 fn cycle_disque_enu() {
-    let (_tmp, chemin_enu, noyau, _, session) = cree_noyau_et_foyer_ouvert();
+    let (_tmp, chemin_enu, _, noyau, _, session) = cree_noyau_et_foyer_ouvert();
 
     let enu = creer_enu(&noyau, &session);
 
@@ -133,7 +147,7 @@ fn cycle_disque_enu() {
 /// qui ne vérifierait rien.
 #[test]
 fn falsification_avant_chargement_enu() {
-    let (_tmp, chemin_enu, noyau, _, session) = cree_noyau_et_foyer_ouvert();
+    let (_tmp, chemin_enu, _, noyau, _, session) = cree_noyau_et_foyer_ouvert();
 
     let enu = creer_enu(&noyau, &session);
 
@@ -155,6 +169,68 @@ fn falsification_avant_chargement_enu() {
         Enu::charger(&chemin, &session),
         Err(ErreurScribe::Interne(m)) if m.contains("ENU-003")
     ));
+
+    fermer_foyer(noyau, session);
+}
+
+/// Cycle de vie de la racine du nœud, sur les trois fonctions qui la portent.
+///
+/// - `activation` : amorce de l'arborescence à la genèse (dossier `enu/`,
+///   racine origine signée nœud, symlink `.DERNIERE_RACINE`), puis saut de
+///   cette amorce à une réactivation — prouvé par l'égalité des deux racines
+///   chargées : une nouvelle amorce donnerait une date différente.
+/// - `desactivation` : bascule `est_actif`.
+/// - `new_racine` : les deux cas — genèse (`None`, répertoire vide + `_racine`)
+///   et racine de suite (`Some(carte)`), avec repointage atomique du symlink
+///   éprouvé via un `charger` qui suit le lien vers la racine courante.
+#[test]
+fn cycle_racine() {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, mut scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    // Test 1ère activation
+    assert!(scribe.est_actif);
+    assert!(chemin_enu.is_dir());
+    assert!(chemin_derniere_racine.is_symlink());
+
+    let enu_racine = Enu::charger(&chemin_derniere_racine, &session).unwrap();
+    let octets_carte = enu_racine.carte().vers_octets();
+
+    assert!(
+        FeuNoyau::verification_signature(
+            session.cle_publique_sig_noeud(),
+            enu_racine.signature_carte(),
+            &octets_carte
+        )
+        .unwrap()
+    );
+
+    assert_eq!(
+        enu_racine.carte().metas().get_key_value("_racine"),
+        Some((&"_racine".to_string(), &"".to_string()))
+    );
+
+    // 2e activation
+    scribe.desactivation();
+    assert!(!scribe.est_actif);
+    scribe.activation(&noyau).unwrap();
+    assert!(scribe.est_actif);
+
+    let enu_racine_2 = Enu::charger(&chemin_derniere_racine, &session).unwrap();
+
+    assert_eq!(enu_racine, enu_racine_2);
+
+    // Nouvelle racine
+    let mut carte = Carte::new_repertoire(BTreeSet::from([[0u8; 32]]));
+    let hash_str = &HEXLOWER.encode(&enu_racine_2.hash_carte());
+    carte.ajout_meta("_racine", hash_str);
+
+    let nouvelle_racine =
+        Enu::new_racine(&noyau, &chemin_enu, &chemin_derniere_racine, Some(carte)).unwrap();
+
+    let enu_racine_3 = Enu::charger(&chemin_derniere_racine, &session).unwrap();
+
+    assert_eq!(nouvelle_racine, enu_racine_3);
 
     fermer_foyer(noyau, session);
 }

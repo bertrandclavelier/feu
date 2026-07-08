@@ -37,7 +37,7 @@ impl FeuApplication {
     /// Délègue à [`FeuNoyau::new`] qui détecte automatiquement l'état du nœud :
     /// initialisation si `~/.feu` est absent, allumage sinon. Active ensuite le
     /// Scribe — qui, à la toute première activation, amorce l'arborescence ENU
-    /// (racine origine signée par le nœud, symlink `_DERNIERE_RACINE`).
+    /// (racine origine signée par le nœud, symlink `.DERNIERE_RACINE`).
     ///
     /// `interface_feu_application` est utilisée pour collecter le mot de passe et,
     /// à l'initialisation, transmettre et confirmer la seed mnémotechnique.

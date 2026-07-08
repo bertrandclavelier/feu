@@ -459,6 +459,18 @@ impl FeuNoyau {
             // Le cryptographe génère le trousseau public pour le gardien
             let trousseau_public_complet = cryptographe.donne_trousseau_public_complet()?;
 
+            // Propagation de la clé publique de signature du nœud, comme à
+            // l'allumage (branche ci-dessus). Contrairement aux clés de foyer —
+            // poussées à l'ouverture d'un foyer — la clé du nœud n'a pas d'autre
+            // point d'injection : sans cet appel, la première session après
+            // genèse garderait une clé nœud à zéro et toute vérification d'une
+            // racine (signée nœud) échouerait.
+            interface_feu_noyau.recevoir_cle_publique_noeud(
+                trousseau_public_complet
+                    .donne_trousseau_public_noeud()
+                    .donne_cle_sig_pub(),
+            );
+
             // 2- LE GARDIEN TRAVAILLE SUR LE DISQUE
 
             gardien.cree_premiere_arborescence(&trousseau_public_complet)?;
