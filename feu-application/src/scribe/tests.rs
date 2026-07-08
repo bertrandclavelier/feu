@@ -107,11 +107,32 @@ fn fermer_foyer(mut noyau: FeuNoyau, mut session: SessionApplication) {
 ///
 /// Carte Donnée minimale : le contenu est indifférent aux comportements
 /// éprouvés ici (enveloppe, signature), agnostiques à la variante de carte.
-fn creer_enu(noyau: &FeuNoyau, session: &SessionApplication) -> Enu {
-    let hash_donnee = [0u8; 32];
-    let carte = Carte::new_donnee(hash_donnee);
+fn creer_enu_donnee(
+    chemin_enu: &Path,
+    noyau: &FeuNoyau,
+    session: &SessionApplication,
+    marqueur: u8,
+) -> Enu {
+    let carte = Carte::new_donnee([marqueur; 32]);
 
-    Enu::new(carte, noyau, session, session.braise_foyer(0).unwrap()).unwrap()
+    let enu = Enu::new(carte, noyau, session, session.braise_foyer(0).unwrap()).unwrap();
+    enu.sauvegarder(chemin_enu).unwrap();
+
+    enu
+}
+
+fn creer_enu_repertoire(
+    chemin_enu: &Path,
+    noyau: &FeuNoyau,
+    session: &SessionApplication,
+    enfants: &[&Enu],
+) -> Enu {
+    let carte = Carte::new_repertoire(enfants.iter().map(|e| e.hash_carte()).collect());
+
+    let enu = Enu::new(carte, noyau, session, session.braise_foyer(0).unwrap()).unwrap();
+    enu.sauvegarder(chemin_enu).unwrap();
+
+    enu
 }
 
 /// Cycle de vie disque d'une ENU : sauvegarde, relecture authentifiée
@@ -120,21 +141,17 @@ fn creer_enu(noyau: &FeuNoyau, session: &SessionApplication) -> Enu {
 fn cycle_disque_enu() {
     let (_tmp, chemin_enu, _, noyau, _, session) = cree_noyau_et_foyer_ouvert();
 
-    let enu = creer_enu(&noyau, &session);
+    let enu = creer_enu_donnee(&chemin_enu, &noyau, &session, 0u8);
 
-    enu.sauvegarder(&chemin_enu).unwrap();
-    let nom_fichier = format!("{}.enu", HEXLOWER.encode(&enu.hash_carte()));
-    let chemin = chemin_enu.join(nom_fichier);
+    assert!(enu.chemin(&chemin_enu).exists());
 
-    assert!(chemin.exists());
-
-    let enu2 = Enu::charger(&chemin, &session).unwrap();
+    let enu2 = Enu::charger(&chemin_enu, &session, &enu.hash_carte()).unwrap();
 
     assert_eq!(enu, enu2);
 
     enu.supprimer(&chemin_enu).unwrap();
 
-    assert!(!chemin.exists());
+    assert!(!enu.chemin(&chemin_enu).exists());
 
     fermer_foyer(noyau, session);
 }
@@ -149,24 +166,20 @@ fn cycle_disque_enu() {
 fn falsification_avant_chargement_enu() {
     let (_tmp, chemin_enu, _, noyau, _, session) = cree_noyau_et_foyer_ouvert();
 
-    let enu = creer_enu(&noyau, &session);
+    let enu = creer_enu_donnee(&chemin_enu, &noyau, &session, 0u8);
 
-    enu.sauvegarder(&chemin_enu).unwrap();
-    let nom_fichier = format!("{}.enu", HEXLOWER.encode(&enu.hash_carte()));
-    let chemin = chemin_enu.join(nom_fichier);
-
-    let mut octets = read(&chemin).unwrap();
+    let mut octets = read(enu.chemin(&chemin_enu)).unwrap();
     // Octet dans la zone de signature (elle débute à 62 + 32 = 94). XOR 0xFF
     // garantit une modification, là où une inversion de bits laisserait un
     // octet palindrome inchangé.
     octets[97] ^= 0xFF;
 
-    write(&chemin, octets).unwrap();
+    write(enu.chemin(&chemin_enu), octets).unwrap();
 
     // Cibler ENU-003 : d'autres causes (braise inconnue, désérialisation)
     // sortent aussi en `Interne` — seul ce code prouve le rejet par la signature.
     assert!(matches!(
-        Enu::charger(&chemin, &session),
+        Enu::charger(&chemin_enu, &session, &enu.hash_carte()),
         Err(ErreurScribe::Interne(m)) if m.contains("ENU-003")
     ));
 
@@ -193,7 +206,7 @@ fn cycle_racine() {
     assert!(chemin_enu.is_dir());
     assert!(chemin_derniere_racine.is_symlink());
 
-    let enu_racine = Enu::charger(&chemin_derniere_racine, &session).unwrap();
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session).unwrap();
     let octets_carte = enu_racine.carte().vers_octets();
 
     assert!(
@@ -216,7 +229,7 @@ fn cycle_racine() {
     scribe.activation(&noyau).unwrap();
     assert!(scribe.est_actif);
 
-    let enu_racine_2 = Enu::charger(&chemin_derniere_racine, &session).unwrap();
+    let enu_racine_2 = Enu::charger_derniere_racine(&chemin_derniere_racine, &session).unwrap();
 
     assert_eq!(enu_racine, enu_racine_2);
 
@@ -225,12 +238,142 @@ fn cycle_racine() {
     let hash_str = &HEXLOWER.encode(&enu_racine_2.hash_carte());
     carte.ajout_meta("_racine", hash_str);
 
-    let nouvelle_racine =
-        Enu::new_racine(&noyau, &chemin_enu, &chemin_derniere_racine, Some(carte)).unwrap();
+    Enu::new_racine(
+        &noyau,
+        &chemin_enu,
+        &chemin_derniere_racine,
+        Some(carte.clone()),
+    )
+    .unwrap();
 
-    let enu_racine_3 = Enu::charger(&chemin_derniere_racine, &session).unwrap();
+    let enu_racine_3 = Enu::charger_derniere_racine(&chemin_derniere_racine, &session).unwrap();
 
-    assert_eq!(nouvelle_racine, enu_racine_3);
+    assert_eq!(&carte, enu_racine_3.carte());
+
+    fermer_foyer(noyau, session);
+}
+
+/// Éprouve [`Enu::remplacer`] sur trois substitutions, de la plus triviale à la
+/// plus profonde.
+///
+/// - **Garde `ENU-007`** : refuser un remplacement dont la carte est déjà celle
+///   de la racine courante — aucune nouvelle version à produire.
+/// - **Cible = la racine** : cas de base de la récursion — le sommet (vide, issu
+///   de la genèse) est remplacé par une arborescence entière, dont la carte
+///   devient le nouveau sommet nœud, lignée `_racine` posée.
+/// - **Cible en profondeur** : substituer un nœud à deux niveaux force la
+///   reconstruction et la re-signature (sous braise foyer) de chaque répertoire
+///   du chemin jusqu'au sommet. Le répertoire intermédiaire reconstruit ayant un
+///   nouveau hash, on le retrouve par élimination parmi les enfants du sommet et
+///   on vérifie qu'il porte le greffon. On vérifie enfin que les versions
+///   précédentes ne sont pas supprimées (historique).
+#[test]
+fn cycle_remplacements() {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, _, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session).unwrap();
+
+    // garde : remplacement de même hash de carte que la racine courante → refus
+    assert!(matches!(
+        Enu::remplacer(&chemin_enu, &chemin_derniere_racine,  &enu_racine.hash_carte(), &enu_racine, &noyau, &session),
+        Err(ErreurScribe::Interne(m)) if m.contains("ENU-007")
+    ));
+
+    // Première arborescence : deux niveaux de répertoires foyer (enur_1 → enur_2
+    // → enur_3), avec des feuilles à chaque étage.
+    let enur_3 = creer_enu_repertoire(&chemin_enu, &noyau, &session, &[]);
+    let enud_2 = creer_enu_donnee(&chemin_enu, &noyau, &session, 2u8);
+    let enur_2 = creer_enu_repertoire(&chemin_enu, &noyau, &session, &[&enud_2, &enur_3]);
+    let enud_1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+    let enur_1 = creer_enu_repertoire(&chemin_enu, &noyau, &session, &[&enur_2, &enud_1]);
+
+    // cible = la racine (vide) : cas de base, la carte de enur_1 devient le sommet
+    Enu::remplacer(
+        &chemin_enu,
+        &chemin_derniere_racine,
+        &enu_racine.hash_carte(),
+        &enur_1,
+        &noyau,
+        &session,
+    )
+    .unwrap();
+
+    let nouvelle_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session).unwrap();
+
+    assert_eq!(
+        nouvelle_racine.carte().metas().get("_racine"),
+        Some(&HEXLOWER.encode(&enu_racine.hash_carte()))
+    );
+
+    let h = nouvelle_racine.carte().hashs_enu().unwrap();
+    assert_eq!(h.len(), 2);
+    assert!(h.contains(&enur_2.hash_carte()) && h.contains(&enud_1.hash_carte()));
+
+    assert_eq!(
+        Enu::charger(&chemin_enu, &session, &enur_2.hash_carte()).unwrap(),
+        enur_2
+    );
+    assert_eq!(
+        Enu::charger(&chemin_enu, &session, &enud_1.hash_carte()).unwrap(),
+        enud_1
+    );
+
+    let h2 = enur_2.carte().hashs_enu().unwrap();
+    assert_eq!(h2.len(), 2);
+    assert!(h2.contains(&enud_2.hash_carte()) && h2.contains(&enur_3.hash_carte()));
+
+    assert_eq!(
+        Enu::charger(&chemin_enu, &session, &enud_2.hash_carte()).unwrap(),
+        enud_2
+    );
+
+    assert_eq!(
+        Enu::charger(&chemin_enu, &session, &enur_3.hash_carte()).unwrap(),
+        enur_3
+    );
+
+    // Greffe en profondeur : enur_3 (niveau 2, sous enur_2) est remplacé par
+    // enu_depot. La récursion doit reconstruire et re-signer enur_2 au-dessus.
+    let derniere_enu = creer_enu_donnee(&chemin_enu, &noyau, &session, 9u8);
+    let enu_depot = creer_enu_repertoire(&chemin_enu, &noyau, &session, &[&derniere_enu]);
+
+    Enu::remplacer(
+        &chemin_enu,
+        &chemin_derniere_racine,
+        &enur_3.hash_carte(),
+        &enu_depot,
+        &noyau,
+        &session,
+    )
+    .unwrap();
+
+    let nouvelle_racine2 = Enu::charger_derniere_racine(&chemin_derniere_racine, &session).unwrap();
+
+    assert_eq!(
+        nouvelle_racine2.carte().metas().get("_racine"),
+        Some(&HEXLOWER.encode(&nouvelle_racine.hash_carte()))
+    );
+
+    // enur_2 reconstruit a un nouveau hash, inconnu du test : on le retrouve par
+    // élimination — l'enfant du sommet qui n'est pas enud_1 (branche inchangée).
+    let mut h = nouvelle_racine2.carte().hashs_enu().unwrap();
+    assert_eq!(h.len(), 2);
+    h.remove(&enud_1.hash_carte());
+    let hash_enur_2n = h.first().unwrap();
+
+    let enur_2n = Enu::charger(&chemin_enu, &session, hash_enur_2n).unwrap();
+
+    let h2 = enur_2n.carte().hashs_enu().unwrap();
+
+    assert!(h2.contains(&enu_depot.hash_carte())); // le greffon est là
+    assert!(h2.contains(&enud_2.hash_carte())); // enud_2 conservé
+    assert!(!h2.contains(&enur_3.hash_carte()));
+
+    // versions précédentes non supprimées : ancien répertoire et ancien sommet
+    // restent sur disque (historique des versions)
+    assert!(enur_2.chemin(&chemin_enu).exists());
+    assert!(nouvelle_racine.chemin(&chemin_enu).exists());
 
     fermer_foyer(noyau, session);
 }

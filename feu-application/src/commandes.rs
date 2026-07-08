@@ -231,14 +231,14 @@ impl FeuApplication {
 
     /// Dépose un texte dans un foyer : crée une `EnuT` (une [`Enu`] portant une
     /// `Carte::Texte`), l'accroche sous `enu_racine_depot`, puis propage la
-    /// nouvelle racine jusqu'à `enu_racine_noeud`.
+    /// nouvelle racine jusqu'à la racine du nœud.
     ///
     /// Le texte est embarqué dans la carte (aucun blob, aucun classeur) et borné
     /// en taille. Le détail du rangement est porté par le Scribe.
     ///
     /// # Retour
     ///
-    /// La nouvelle ENU racine du nœud, après propagation.
+    /// Rien : le nouveau sommet du nœud devient la cible de `.DERNIERE_RACINE`.
     ///
     /// # Erreurs
     ///
@@ -249,21 +249,17 @@ impl FeuApplication {
     pub fn commande_depot_enu_texte(
         &mut self,
         enu_racine_depot: &Enu,
-        enu_racine_noeud: &Enu,
         contenu: &str,
-    ) -> ResultFeuApplication<Enu> {
+    ) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        Ok(self.scribe.depot_enu_texte(
-            noyau,
-            &self.session,
-            enu_racine_depot,
-            enu_racine_noeud,
-            contenu,
-        )?)
+        self.scribe
+            .depot_enu_texte(noyau, &self.session, enu_racine_depot, contenu)?;
+
+        Ok(())
     }
 
     /// Ouvre un comptoir de dépôt et retourne son identifiant.
@@ -293,7 +289,7 @@ impl FeuApplication {
     }
 
     /// Ferme un comptoir de dépôt : range son contenu, le greffe sous
-    /// `enu_racine_depot`, puis propage la nouvelle racine jusqu'à `enu_racine_noeud`.
+    /// `enu_racine_depot`, puis propage la nouvelle racine jusqu'à la racine du nœud.
     ///
     /// Parcourt le dossier du comptoir, dépose chaque fichier chiffré dans le
     /// classeur de destination, encapsule fichiers et sous-dossiers dans des ENU
@@ -303,8 +299,8 @@ impl FeuApplication {
     ///
     /// # Retour
     ///
-    /// La nouvelle ENU racine du nœud — `enu_racine_noeud` inchangé si le
-    /// comptoir était vide.
+    /// Rien : le nouveau sommet du nœud devient la cible de `.DERNIERE_RACINE`,
+    /// la racine courante restant inchangée si le comptoir était vide.
     ///
     /// # Erreurs
     ///
@@ -315,20 +311,20 @@ impl FeuApplication {
         &mut self,
         index_comptoir: usize,
         enu_racine_depot: &Enu,
-        enu_racine_noeud: &Enu,
-    ) -> ResultFeuApplication<Enu> {
+    ) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
             .as_mut()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        Ok(self.scribe.fermeture_comptoir_depot(
+        self.scribe.fermeture_comptoir_depot(
             noyau,
             &self.session,
             index_comptoir,
             enu_racine_depot,
-            enu_racine_noeud,
-        )?)
+        )?;
+
+        Ok(())
     }
 
     /// Lit et déchiffre un blob depuis un classeur d'un foyer ouvert.

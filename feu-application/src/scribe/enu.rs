@@ -63,10 +63,12 @@
 //!   ([`Carte::ajout_meta`], [`Carte::ajout_tag`],
 //!   [`Carte::ajout_hash_donnee`]) restent `pub(super)`.
 //!
-//!   Les accesseurs [`Carte::metas`] et [`Carte::tags`] sont maintenus parce
-//!   qu'ils évitent de répéter le match sur les trois variantes pour des
-//!   champs communs. Les getters spécifiques (`hash_donnee()`, `contenu()`,
-//!   `hashs_enu()`) ont été supprimés — le pattern matching les rend
+//!   Les accesseurs [`Carte::metas`] et [`Carte::tags`], communs aux trois
+//!   variantes, sont maintenus : ils évitent de répéter le match pour des
+//!   champs présents partout. L'accesseur `hashs_enu()` ne concerne que la
+//!   variante [`Carte::Repertoire`] et renvoie donc un `ResultScribe` (erreur
+//!   `ENU-004` sur une `Donnee` ou une `Texte`). Les getters `hash_donnee()` et
+//!   `contenu()`, eux, ont été supprimés — le pattern matching les rend
 //!   redondants.
 
 use data_encoding::HEXLOWER;
@@ -207,7 +209,9 @@ impl Enu {
     /// Après signature, l'ENU est sauvegardée, puis le symlink pointé par
     /// `chemin_derniere_racine` (`.DERNIERE_RACINE`, fourni par le
     /// [`Scribe`]) est repointé sur elle de façon atomique
-    /// (lien temporaire puis `rename`). L'ENU forgée est retournée.
+    /// (lien temporaire puis `rename`). L'ENU forgée n'est **pas** retournée :
+    /// elle vit désormais sur disque et c'est le symlink qui la désigne — un
+    /// appelant qui en a besoin la relit via [`Enu::charger_derniere_racine`].
     ///
     /// Le nœud doit être allumé (sa clé de signature disponible) ; aucun foyer
     /// n'a besoin d'être ouvert pour signer une racine.
@@ -221,7 +225,7 @@ impl Enu {
         chemin_enu: &Path,
         chemin_derniere_racine: &Path,
         carte: Option<Carte>,
-    ) -> ResultScribe<Enu> {
+    ) -> ResultScribe<()> {
         let carte = {
             if let Some(carte) = carte {
                 carte
@@ -263,7 +267,29 @@ impl Enu {
         symlink(chemin.file_name().unwrap(), &tmp)?;
         rename(tmp, chemin_derniere_racine)?;
 
-        Ok(enu_racine)
+        Ok(())
+    }
+
+    /// Chemin du fichier `.enu` de cette enveloppe sous `chemin_enu`.
+    ///
+    /// Raccourci sur [`Self::hash_carte_vers_chemin`] à partir du hash de la
+    /// carte : le nom du fichier *étant* ce hash (content-addressing), une ENU
+    /// désigne toujours le même fichier, quelle que soit l'enveloppe qui la
+    /// transporte.
+    pub(super) fn chemin(&self, chemin_enu: &Path) -> PathBuf {
+        Self::hash_carte_vers_chemin(&self.hash_carte(), chemin_enu)
+    }
+
+    /// Construit le chemin `<hash_carte_hex>.enu` sous `chemin_enu`.
+    ///
+    /// Seul endroit où s'écrit la règle de nommage content-addressed (empreinte
+    /// hexadécimale + extension `.enu`). [`Self::sauvegarder`],
+    /// [`Self::supprimer`] et [`Self::charger`] passent tous par ici : aucune
+    /// divergence de nommage ne peut ainsi s'installer entre l'écriture d'une
+    /// ENU et sa relecture.
+    pub(super) fn hash_carte_vers_chemin(hash_carte: &[u8; 32], chemin_enu: &Path) -> PathBuf {
+        let nom_fichier = format!("{}.enu", HEXLOWER.encode(hash_carte));
+        chemin_enu.join(nom_fichier)
     }
 
     /// Retourne l'adresse `.braise` du signataire — un foyer, ou
@@ -325,8 +351,7 @@ impl Enu {
     /// Propage une [`ErreurScribe::IoError`] si le dossier `~/.feu/enu/` est
     /// absent ou sur tout autre échec d'écriture.
     pub(super) fn sauvegarder(&self, chemin_enu: &Path) -> ResultScribe<PathBuf> {
-        let nom_fichier = format!("{}.enu", HEXLOWER.encode(&self.hash_carte));
-        let chemin = chemin_enu.join(nom_fichier);
+        let chemin = self.chemin(chemin_enu);
 
         if !chemin.exists() {
             let mut fichier = OpenOptions::new()
@@ -354,8 +379,7 @@ impl Enu {
     /// suppression échoue.
     #[allow(dead_code)]
     pub(super) fn supprimer(&self, chemin_enu: &Path) -> ResultScribe<()> {
-        let nom_fichier = format!("{}.enu", HEXLOWER.encode(&self.hash_carte));
-        let chemin = chemin_enu.join(nom_fichier);
+        let chemin = self.chemin(chemin_enu);
 
         remove_file(&chemin)?;
 
@@ -364,8 +388,12 @@ impl Enu {
 
     /// Charge **et authentifie** une ENU depuis le disque.
     ///
-    /// Là où [`Enu::octets_vers_enu`] ne valide que la structure, cette méthode
-    /// reconstruit l'enveloppe puis franchit la frontière de confiance. Le
+    /// L'ENU est localisée par content-addressing : `hash_carte` reconstruit son
+    /// nom de fichier `<hash>.enu` sous `chemin_enu` (via
+    /// [`Self::hash_carte_vers_chemin`]) — la désigner par son hash, c'est déjà
+    /// affirmer quel contenu on attend, que la vérification finale confirme ou
+    /// dément. Là où [`Enu::octets_vers_enu`] ne valide que la structure, cette
+    /// méthode reconstruit l'enveloppe puis franchit la frontière de confiance. Le
     /// signataire est déterminé par la `braise` — le champ de routage qui
     /// annonce qui a signé — et la clé de vérification en découle :
     ///
@@ -393,7 +421,13 @@ impl Enu {
     /// authentifiable, et propage toute erreur d'E/S
     /// ([`ErreurScribe::IoError`]), de désérialisation ou cryptographique
     /// ([`ErreurScribe::FeuNoyau`]) rencontrée en chemin.
-    pub(super) fn charger(chemin: &Path, session: &SessionApplication) -> ResultScribe<Enu> {
+    pub(super) fn charger(
+        chemin_enu: &Path,
+        session: &SessionApplication,
+        hash_carte: &[u8; 32],
+    ) -> ResultScribe<Enu> {
+        let chemin = Self::hash_carte_vers_chemin(hash_carte, chemin_enu);
+
         let enu = Self::octets_vers_enu(&read(chemin)?)?;
         let octets_carte = enu.carte.vers_octets();
 
@@ -414,6 +448,49 @@ impl Enu {
         if let Some(index_foyer) = session.braise_vers_index(enu.braise)
             && FeuNoyau::verification_signature(
                 session.cle_publique_sig_foyer(index_foyer)?,
+                enu.signature_carte,
+                &octets_carte,
+            )?
+            && FeuNoyau::creation_empreinte(&octets_carte) == enu.hash_carte
+        {
+            return Ok(enu);
+        }
+
+        Err(ErreurScribe::Interne(String::from(ERR_ENU_003)))
+    }
+
+    /// Charge et authentifie la racine **courante** du nœud, atteinte par le
+    /// symlink `.DERNIERE_RACINE` (`chemin_derniere_racine`).
+    ///
+    /// Entrée distincte de [`Self::charger`] pour une raison structurelle :
+    /// cette dernière localise une ENU par son `hash_carte`, or le hash de la
+    /// racine courante est précisément ce qu'on ignore — seul le symlink la
+    /// désigne. Le lien est donc lu directement (il est suivi jusqu'au fichier
+    /// cible).
+    ///
+    /// Volontairement **plus stricte** que [`Self::charger`] : elle n'authentifie
+    /// que le cas racine nœud (braise [`BRAISE_VIDE`] + méta `_racine`, signature
+    /// du nœud, hash de carte concordant) et rejette tout le reste. Le sommet de
+    /// l'arbre appartient toujours au nœud ; une braise de foyer à cet endroit
+    /// serait une anomalie, pas un contenu à accepter.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurScribe::Interne`] (`ENU-003`) si la cible n'est pas une
+    /// racine nœud authentique, et propage toute erreur d'E/S, de désérialisation
+    /// ou cryptographique ([`ErreurScribe::FeuNoyau`]) rencontrée en chemin.
+    pub(super) fn charger_derniere_racine(
+        chemin_derniere_racine: &Path,
+        session: &SessionApplication,
+    ) -> ResultScribe<Enu> {
+        let enu = Self::octets_vers_enu(&read(chemin_derniere_racine)?)?;
+        let octets_carte = enu.carte.vers_octets();
+
+        // racine du nœud : braise sentinelle → vérification contre la clé du nœud
+        if enu.braise == BRAISE_VIDE
+            && enu.carte().metas().contains_key("_racine")
+            && FeuNoyau::verification_signature(
+                session.cle_publique_sig_noeud(),
                 enu.signature_carte,
                 &octets_carte,
             )?
@@ -485,50 +562,57 @@ impl Enu {
         })
     }
 
-    /// Remplace une ENU dans l'arbre du nœud et produit la version suivante.
+    /// Remplace une ENU de l'arbre du nœud et produit la version suivante.
     ///
-    /// Point d'entrée de la substitution. `racine` est le sommet courant de
-    /// l'arborescence (celui pointé par `.DERNIERE_RACINE`). La fonction
-    /// délègue à [`Self::remplacer_recursif`] la descente dans l'arbre et la
-    /// reconstruction du chemin, puis forge le nouveau sommet via
-    /// [`Enu::new_racine`] : sa carte est celle remontée par la récursion,
-    /// avec la méta `_racine` mise au **hash de l'ancien sommet** — c'est le
-    /// maillon de la lignée des versions, capturé avant la descente. La
-    /// signature (nœud), la sauvegarde et le repointage du symlink
-    /// `.DERNIERE_RACINE` (via `chemin_derniere_racine`) sont portés par
-    /// `new_racine`.
+    /// Un « chercher-remplacer » par hash : cherche, dans l'arborescence
+    /// courante (le sommet pointé par `.DERNIERE_RACINE`), l'ENU dont le
+    /// `hash_carte` vaut `hash_a_remplacer`, et lui substitue `remplacement`.
     ///
-    /// Poser la lignée **ici, une seule fois**, et non dans la récursion, est
-    /// délibéré : [`Self::remplacer_recursif`] reconstruit *chaque* répertoire
-    /// du chemin et ne sait pas lequel est le sommet — seul le point d'entrée
-    /// le sait. L'écrasement de l'ancienne valeur de `_racine` (héritée de la
-    /// carte clonée) fait avancer la chaîne d'un cran.
+    /// - `hash_a_remplacer` — la **cible**, une ENU déjà **présente dans
+    ///   l'arbre**. Si aucune ENU ne porte ce hash, l'arbre reste inchangé
+    ///   (seule une nouvelle génération à l'identique est produite).
+    /// - `remplacement` — la **nouvelle** ENU qui prend sa place ; elle doit
+    ///   déjà être sauvegardée sur disque (cette fonction ne l'écrit pas).
     ///
-    /// L'ancien sommet n'est **pas** supprimé : c'est la version précédente de
-    /// l'arborescence, conservée pour l'historique (chaîne des `_racine`).
+    /// Le `hash_carte` d'un répertoire dépendant de ses enfants, la substitution
+    /// fait remonter de nouveaux hashs : chaque répertoire du chemin cible →
+    /// racine est reconstruit ([`Self::remplacer_recursif`]), puis un nouveau
+    /// sommet est forgé, signé par le nœud et posé sur `.DERNIERE_RACINE`
+    /// ([`Enu::new_racine`]).
+    ///
+    /// La méta `_racine` du nouveau sommet reçoit le **hash de l'ancien
+    /// sommet** — maillon de la lignée des versions. Elle est posée ici, au
+    /// point d'entrée, une seule fois : la récursion reconstruit *chaque*
+    /// répertoire du chemin sans savoir lequel est le sommet, elle ne peut donc
+    /// pas s'en charger.
+    ///
+    /// L'ancien sommet et les anciens répertoires du chemin ne sont **pas**
+    /// supprimés : ce sont les versions précédentes, conservées pour
+    /// l'historique (chaîne des `_racine`).
     ///
     /// # Retour
     ///
-    /// La nouvelle ENU racine du nœud — nouveau sommet de l'arborescence,
-    /// pointé par `.DERNIERE_RACINE`.
+    /// Rien : le nouveau sommet devient la cible de `.DERNIERE_RACINE`. Un
+    /// appelant qui en a besoin le relit via [`Self::charger_derniere_racine`].
     ///
     /// # Erreurs
     ///
     /// Retourne [`ErreurScribe::Interne`] (`ENU-007`) si `remplacement` est
-    /// identique à `racine`. Propage les erreurs de
-    /// [`Self::remplacer_recursif`] (E/S, authentification, signature —
+    /// identique (même hash de carte) à la racine courante. Propage les erreurs
+    /// de [`Self::remplacer_recursif`] (E/S, authentification, signature —
     /// notamment si un foyer du chemin reconstruit est fermé) et de
-    /// [`Enu::new_racine`] (signature du nœud, sauvegarde, symlink).
+    /// [`Enu::new_racine`].
     pub(super) fn remplacer(
         chemin_enu: &Path,
         chemin_derniere_racine: &Path,
-        racine: &Enu,
         hash_a_remplacer: &[u8; 32],
         remplacement: &Enu,
         noyau: &FeuNoyau,
         session: &SessionApplication,
-    ) -> ResultScribe<Enu> {
-        if racine == remplacement {
+    ) -> ResultScribe<()> {
+        let racine = Enu::charger_derniere_racine(chemin_derniere_racine, session)?;
+
+        if racine.hash_carte() == remplacement.hash_carte() {
             return Err(ErreurScribe::Interne(ERR_ENU_007.to_string()));
         }
 
@@ -538,7 +622,7 @@ impl Enu {
 
         let racine = Self::remplacer_recursif(
             chemin_enu,
-            racine,
+            &racine,
             hash_a_remplacer,
             remplacement,
             noyau,
@@ -548,14 +632,14 @@ impl Enu {
         let mut nouvelle_carte = racine.carte().clone();
         nouvelle_carte.ajout_meta("_racine", &HEXLOWER.encode(&hash_ancienne_racine));
 
-        let nouvelle_racine = Enu::new_racine(
+        Enu::new_racine(
             noyau,
             chemin_enu,
             chemin_derniere_racine,
             Some(nouvelle_carte),
         )?;
 
-        Ok(nouvelle_racine)
+        Ok(())
     }
 
     /// Cœur récursif de [`Self::remplacer`] : substitue la cible et reconstruit
@@ -621,10 +705,7 @@ impl Enu {
         {
             let mut modifie = false;
             for h in &hashs_enu.clone() {
-                let nom_fichier = format!("{}.enu", HEXLOWER.encode(h));
-                let chemin = chemin_enu.join(nom_fichier);
-
-                let enu_enfant = Self::charger(&chemin, session)?;
+                let enu_enfant = Self::charger(chemin_enu, session, h)?;
 
                 let enu_enfant_modifie = Self::remplacer_recursif(
                     chemin_enu,
@@ -750,6 +831,39 @@ impl Carte {
                 tags: _,
                 hashs_enu: _,
             } => metas,
+        }
+    }
+
+    #[allow(dead_code)]
+    /// Retourne les hashs des ENU enfants — spécifique à [`Carte::Repertoire`].
+    ///
+    /// Contrairement à [`Self::metas`] et [`Self::tags`], communs aux trois
+    /// variantes, les enfants n'existent que pour un répertoire : appelée sur
+    /// une [`Carte::Donnee`] ou une [`Carte::Texte`], la méthode échoue plutôt
+    /// que de renvoyer un ensemble vide qui laisserait croire à un répertoire
+    /// sans enfant.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurScribe::Interne`] (`ENU-004`) si la carte n'est pas un
+    /// répertoire.
+    pub(super) fn hashs_enu(&self) -> ResultScribe<BTreeSet<[u8; 32]>> {
+        match self {
+            Self::Donnee {
+                metas: _,
+                tags: _,
+                hash_donnee: _,
+            } => Err(ErreurScribe::Interne(String::from(ERR_ENU_004))),
+            Self::Texte {
+                metas: _,
+                tags: _,
+                contenu: _,
+            } => Err(ErreurScribe::Interne(String::from(ERR_ENU_004))),
+            Self::Repertoire {
+                metas: _,
+                tags: _,
+                hashs_enu,
+            } => Ok(hashs_enu.clone()),
         }
     }
 

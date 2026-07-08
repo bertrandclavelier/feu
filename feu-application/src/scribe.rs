@@ -164,7 +164,7 @@ impl Scribe {
     }
 
     /// Ferme un comptoir de dépôt : greffe son contenu sous `enu_racine_depot`,
-    /// puis propage la nouvelle racine de dépôt jusqu'à `enu_racine_noeud`.
+    /// puis propage la nouvelle racine de dépôt jusqu'à la racine du nœud.
     ///
     /// Parcourt le dossier en bottom-up (`contents_first(true)`) : chaque
     /// fichier est déposé dans le classeur du comptoir via
@@ -176,7 +176,7 @@ impl Scribe {
     /// Le nom de chaque entrée (fichier ou dossier) est conservé comme
     /// métadonnée `"nom"`. Le marquage de la racine du nœud (`"_racine"`) n'est
     /// **pas** posé ici : il l'est par [`Enu::remplacer`] sur le sommet final,
-    /// lors de la propagation jusqu'à `enu_racine_noeud`.
+    /// lors de la propagation jusqu'à la racine du nœud.
     ///
     /// Les entrées directement à la racine du comptoir (`depth == 1`) sont
     /// ajoutées comme enfants directs de `enu_racine_depot`. Les entrées plus
@@ -187,8 +187,10 @@ impl Scribe {
     ///
     /// # Retour
     ///
-    /// La nouvelle ENU racine du nœud, après propagation — identique à
-    /// `enu_racine_noeud` si le comptoir était vide.
+    /// Rien : le nouveau sommet du nœud est signé, sauvegardé et devient la
+    /// cible de `.DERNIERE_RACINE`. Un comptoir vide laisse la racine courante
+    /// inchangée. L'appelant qui a besoin de la racine à jour la relit via
+    /// [`Enu::charger_derniere_racine`].
     ///
     /// # Erreurs
     ///
@@ -202,8 +204,7 @@ impl Scribe {
         session: &SessionApplication,
         index_comptoir: usize,
         enu_racine_depot: &Enu,
-        enu_racine_noeud: &Enu,
-    ) -> ResultScribe<Enu> {
+    ) -> ResultScribe<()> {
         let Some(comptoir) = self.comptoirs_depot.remove(&index_comptoir) else {
             return Err(ErreurScribe::Interne(String::from(ERR_SCR_001)));
         };
@@ -216,7 +217,7 @@ impl Scribe {
             // comptoir vide : rien à greffer, le nœud est inchangé
             comptoir.supprimer()?;
 
-            return Ok(enu_racine_noeud.clone());
+            return Ok(());
         }
 
         // depth 1 → enfants directs du dépôt ; plus profond → rattachés à leur parent
@@ -300,10 +301,9 @@ impl Scribe {
         nouvelle_enu_racine_depot.sauvegarder(&self.chemin_enu)?;
 
         // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
-        let racine_finale = Enu::remplacer(
+        Enu::remplacer(
             &self.chemin_enu,
             &self.chemin_derniere_racine,
-            enu_racine_noeud,
             &enu_racine_depot.hash_carte(),
             &nouvelle_enu_racine_depot,
             noyau,
@@ -312,11 +312,11 @@ impl Scribe {
 
         comptoir.supprimer()?;
 
-        Ok(racine_finale)
+        Ok(())
     }
 
     /// Dépose un texte dans un foyer en l'accrochant sous `enu_racine_depot`,
-    /// puis propage la nouvelle racine de dépôt jusqu'à `enu_racine_noeud`.
+    /// puis propage la nouvelle racine de dépôt jusqu'à la racine du nœud.
     ///
     /// Variante allégée de [`Self::fermeture_comptoir_depot`] : pas de comptoir,
     /// pas de blob, pas de classeur. Le texte est embarqué dans une
@@ -335,7 +335,9 @@ impl Scribe {
     ///
     /// # Retour
     ///
-    /// La nouvelle ENU racine du nœud, après propagation.
+    /// Rien : le nouveau sommet du nœud est signé, sauvegardé et devient la
+    /// cible de `.DERNIERE_RACINE` ; l'appelant qui en a besoin le relit via
+    /// [`Enu::charger_derniere_racine`].
     ///
     /// # Erreurs
     ///
@@ -349,9 +351,8 @@ impl Scribe {
         noyau: &FeuNoyau,
         session: &SessionApplication,
         enu_racine_depot: &Enu,
-        enu_racine_noeud: &Enu,
         contenu: &str,
-    ) -> ResultScribe<Enu> {
+    ) -> ResultScribe<()> {
         let enu_texte = Enu::new(
             Carte::new_texte(contenu)?,
             noyau,
@@ -371,16 +372,15 @@ impl Scribe {
         nouvelle_enu_racine_depot.sauvegarder(&self.chemin_enu)?;
 
         // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
-        let racine_finale = Enu::remplacer(
+        Enu::remplacer(
             &self.chemin_enu,
             &self.chemin_derniere_racine,
-            enu_racine_noeud,
             &enu_racine_depot.hash_carte(),
             &nouvelle_enu_racine_depot,
             noyau,
             session,
         )?;
 
-        Ok(racine_finale)
+        Ok(())
     }
 }
