@@ -912,9 +912,19 @@ impl FeuNoyau {
         Ok(hash)
     }
 
-    /// Lit et déchiffre un blob depuis un classeur d'un foyer ouvert.
+    /// Lit et déchiffre un blob d'un foyer ouvert, sans en connaître le classeur.
     ///
-    /// Orchestre trois opérations séquentielles :
+    /// Le classeur n'est pas fourni : il est **découvert** en balayant les
+    /// classeurs du foyer ([`existence_blob`](Self::existence_blob)) jusqu'à
+    /// celui qui détient `classeurN/<hash>.dat`. Le nommage étant
+    /// content-addressed sur le hash du clair, l'appelant (couche ENU) connaît le
+    /// `hash` mais pas l'emplacement ; le noyau lève cette indétermination. Le
+    /// classeur trouvé sert aux deux temps qui suivent — localiser le `.dat` et
+    /// fournir la clé de déchiffrement (propre à chaque classeur) — et les deux
+    /// sont nécessairement cohérents, le blob ayant été chiffré sous la clé du
+    /// classeur où il réside.
+    ///
+    /// Orchestre ensuite trois opérations séquentielles :
     ///
     /// 1. Charge le blob chiffré depuis `classeurN/<hash>.dat` via l'Archiviste du foyer.
     /// 2. Déchiffre le blob avec la clé du classeur (AES-256-GCM) et vérifie son
@@ -928,21 +938,32 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
-    /// ouvert, si le Cryptographe ou l'Archiviste est absent, si aucun fichier
-    /// ne correspond au `hash`, si le déchiffrement ou la vérification d'intégrité
-    /// échoue, ou si l'écriture dans `destination` échoue.
+    /// La validation du foyer est déléguée à `archiviste_foyer_ouvert`, appelé en
+    /// tête : c'est lui qui teste les bornes de `index_foyer`
+    /// ([`ErreurFeuNoyau::IndexInvalide`]), le foyer fermé
+    /// ([`ErreurFeuNoyau::FoyerFerme`]) et l'Archiviste manquant
+    /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]) — tout cela **avant** le
+    /// balayage. Vient ensuite [`ErreurFeuNoyau::BlobIntrouvable`] si aucun
+    /// classeur du foyer ne détient `hash`. Propage enfin l'absence du
+    /// Cryptographe, l'échec de déchiffrement ou de vérification d'intégrité, et
+    /// l'échec d'écriture dans `destination`.
     pub fn lecture_donnees(
         &mut self,
         index_foyer: usize,
-        index_classeur: usize,
         hash: &str,
         destination: impl Write,
     ) -> ResultFeuNoyau<()> {
-        if index_classeur >= MAX_CLASSEURS {
-            return Err(ErreurFeuNoyau::IndexInvalide);
-        }
+        // Valide le foyer (bornes, ouverture, archiviste) et remonte la cause
+        // précise avant tout balayage.
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
+
+        // Classeur inconnu de l'appelant (nommage content-addressed) : on balaie
+        // le foyer. `unwrap_or(false)` est ici sans conséquence — le foyer étant
+        // déjà validé, `existence_blob` ne peut plus échouer sur ces index ;
+        // l'absence réelle du blob dans tous les classeurs donne BlobIntrouvable.
+        let index_classeur = (0..MAX_CLASSEURS)
+            .find(|&c| self.existence_blob(index_foyer, c, hash).unwrap_or(false))
+            .ok_or(ErreurFeuNoyau::BlobIntrouvable)?;
 
         let mut tiroir = archiviste.donne_tiroir_plein(index_classeur, hash)?;
 

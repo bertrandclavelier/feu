@@ -234,7 +234,9 @@ impl FeuApplication {
     /// nouvelle racine jusqu'à la racine du nœud.
     ///
     /// Le texte est embarqué dans la carte (aucun blob, aucun classeur) et borné
-    /// en taille. Le détail du rangement est porté par le Scribe.
+    /// en taille. `nom` nommera le fichier lors d'un retrait sur disque — il est
+    /// validé comme composant de chemin dès la construction. Le détail du
+    /// rangement est porté par le Scribe.
     ///
     /// # Retour
     ///
@@ -243,12 +245,13 @@ impl FeuApplication {
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : texte trop long, répertoire d'accueil
-    /// invalide, E/S ou signature (notamment si un foyer du chemin reconstruit
-    /// est fermé).
+    /// propage les erreurs du Scribe : texte trop long, nom invalide,
+    /// répertoire d'accueil invalide, E/S ou signature (notamment si un foyer
+    /// du chemin reconstruit est fermé).
     pub fn commande_depot_enu_texte(
         &mut self,
         enu_racine_depot: &Enu,
+        nom: &str,
         contenu: &str,
     ) -> ResultFeuApplication<()> {
         let noyau = self
@@ -257,7 +260,7 @@ impl FeuApplication {
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
         self.scribe
-            .depot_enu_texte(noyau, &self.session, enu_racine_depot, contenu)?;
+            .depot_enu_texte(noyau, &self.session, enu_racine_depot, nom, contenu)?;
 
         Ok(())
     }
@@ -327,23 +330,58 @@ impl FeuApplication {
         Ok(())
     }
 
-    /// Lit et déchiffre un blob depuis un classeur d'un foyer ouvert.
+    /// Matérialise l'arborescence d'une `EnuR` dans un dossier OS, en lecture
+    /// seule — opération inverse du dépôt par comptoir.
     ///
-    /// Déchiffre `<hash>.dat` avec la clé du classeur (AES-256-GCM) et écrit
-    /// le clair dans `destination`. L'intégrité est doublement vérifiée : par le
-    /// tag d'authentification AES-GCM, puis par recalcul du hash SHA3-256 du clair,
-    /// qui doit correspondre à `hash` — une divergence est traitée comme une
-    /// donnée corrompue et retourne une erreur.
+    /// Crée le dossier `chemin_retrait` (qui ne doit pas exister) et y
+    /// reconstruit ce que décrit `enu_r` : fichiers depuis les blobs déchiffrés
+    /// et les textes embarqués, sous-dossiers depuis les répertoires. Chaque ENU
+    /// est authentifiée avant d'être écrite. Le détail est porté par le Scribe.
+    ///
+    /// Sans reprise : Feu écrit le dossier puis s'en désintéresse — aucune
+    /// fermeture, rien n'est réinjecté dans le nœud. Tout foyer signataire d'un
+    /// blob rencontré doit être **ouvert** pour le déchiffrement.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas ouvert,
-    /// si le blob est introuvable, si le déchiffrement échoue, ou si le hash recalculé
-    /// ne correspond pas à `hash` (donnée corrompue).
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : dossier de sortie déjà existant, `enu_r`
+    /// qui n'est pas un répertoire, nom absent ou invalide, braise inconnue,
+    /// authentification, E/S ou lecture de blob (foyer fermé, blob introuvable).
+    pub fn commande_retrait_lecture_seule(
+        &mut self,
+        chemin_retrait: &Path,
+        enu_r: &Enu,
+    ) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_mut()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        self.scribe
+            .retrait_lecture_seule(noyau, &self.session, chemin_retrait, enu_r)?;
+
+        Ok(())
+    }
+
+    /// Lit et déchiffre un blob d'un foyer ouvert, sans en connaître le classeur.
+    ///
+    /// Le classeur détenant le blob est découvert par le noyau (balayage sur le
+    /// hash, content-addressed). Déchiffre `<hash>.dat` avec la clé du classeur
+    /// (AES-256-GCM) et écrit le clair dans `destination`. L'intégrité est
+    /// doublement vérifiée : par le tag d'authentification AES-GCM, puis par
+    /// recalcul du hash SHA3-256 du clair, qui doit correspondre à `hash` — une
+    /// divergence est traitée comme une donnée corrompue et retourne une erreur.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si `index_foyer` est invalide, si le foyer n'est pas
+    /// ouvert, si aucun classeur du foyer ne détient `hash`, si le déchiffrement
+    /// échoue, ou si le hash recalculé ne correspond pas à `hash` (donnée
+    /// corrompue).
     pub fn commande_lecture_donnees(
         &mut self,
         index_foyer: usize,
-        index_classeur: usize,
         hash: &str,
         destination: impl Write,
     ) -> ResultFeuApplication<()> {
@@ -352,7 +390,7 @@ impl FeuApplication {
             .as_mut()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        noyau.lecture_donnees(index_foyer, index_classeur, hash, destination)?;
+        noyau.lecture_donnees(index_foyer, hash, destination)?;
         Ok(())
     }
 

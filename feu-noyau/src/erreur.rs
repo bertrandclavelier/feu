@@ -107,6 +107,12 @@ pub enum ErreurFeuNoyau {
     /// `.braise` absent, longueur incorrecte, ou caractère hors alphabet BASE32.
     #[error("NOY > TryFrom : mauvais format de &str pour Braise")]
     BraiseTryFromStr,
+
+    /// Le balayage de [`crate::FeuNoyau::lecture_donnees`] n'a trouvé aucun
+    /// classeur du foyer détenant le blob visé : le foyer est valide et ouvert
+    /// (vérifié en amont), mais aucun `classeurN/<hash>.dat` ne correspond.
+    #[error("NOY > Blob introuvable dans ce foyer")]
+    BlobIntrouvable,
 }
 
 impl From<ErreurGardien> for ErreurFeuNoyau {

@@ -120,6 +120,13 @@ const ERR_ENU_006: &str = "ENU-006 > Texte pour EnuT trop long";
 
 const ERR_ENU_007: &str = "ENU-007 > Problème Enu racine ou remplacement";
 
+/// La carte ne porte pas de méta `"nom"` : impossible de la matérialiser sur le
+/// système de fichiers.
+const ERR_ENU_008: &str = "ENU-008 > Nom de fichier introuvable";
+/// Le nom refusé comme composant de chemin : vide, contenant un séparateur
+/// `/`, ou valant `.` / `..` (voir [`Carte::nom_fichier_valide`]).
+const ERR_ENU_009: &str = "ENU-009 > Nom de fichier invalide";
+
 /// Enveloppe Numérique Universelle.
 ///
 /// Le `hash_carte` (SHA3-256 de la carte sérialisée) est le nom du fichier
@@ -891,6 +898,43 @@ impl Carte {
         }
     }
 
+    /// Retourne le nom de l'entrée (méta `"nom"`), validé comme composant de
+    /// chemin.
+    ///
+    /// Point de passage obligé avant de matérialiser une carte sur le système
+    /// de fichiers (retrait) : le nom vient d'une ENU lue sur disque, et même
+    /// signé il reste une entrée non fiable pour un `Path::join` — un nom
+    /// absolu **remplacerait** le chemin cible, un `..` en sortirait. La
+    /// validation ([`Self::nom_fichier_valide`]) garantit un composant unique
+    /// et inoffensif.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurScribe::Interne`] si la méta `"nom"` est absente
+    /// (`ENU-008`) ou si le nom est refusé comme composant de chemin
+    /// (`ENU-009`).
+    pub(super) fn nom_fichier(&self) -> ResultScribe<String> {
+        let Some(nom) = self.metas().get("nom") else {
+            return Err(ErreurScribe::Interne(String::from(ERR_ENU_008)));
+        };
+
+        if !Self::nom_fichier_valide(nom) {
+            return Err(ErreurScribe::Interne(String::from(ERR_ENU_009)));
+        }
+
+        Ok(nom.to_string())
+    }
+
+    /// `true` si `nom` est un composant de chemin unique et inoffensif.
+    ///
+    /// Garde anti-traversée, pas un filtre d'affichage : elle écarte le vide,
+    /// tout séparateur `/` (le seul, le protocole étant Unix-only) et les deux
+    /// composants spéciaux `.` / `..`. Les noms cachés (`.bashrc`) restent
+    /// acceptés — seule l'égalité stricte avec `.` ou `..` est refusée.
+    fn nom_fichier_valide(nom: &str) -> bool {
+        !nom.is_empty() && !nom.contains('/') && nom != "." && nom != ".."
+    }
+
     /// Construit une [`Carte::Texte`] — le texte est embarqué directement dans
     /// la carte, sans blob ni classeur.
     ///
@@ -898,20 +942,34 @@ impl Carte {
     /// vérification a lieu ici, avant toute mise sous enveloppe, pour échouer
     /// proprement plutôt que de buter sur le plafond de signature du noyau.
     ///
+    /// Le `nom` est posé en méta `"nom"` — comme pour les entrées d'un comptoir
+    /// de dépôt, c'est lui qui nommera le fichier au retrait. Contrairement à
+    /// elles, il ne vient pas du système de fichiers mais de l'appelant : il est
+    /// donc validé dès la construction ([`Self::nom_fichier_valide`]), pour
+    /// refuser d'emblée une carte qu'aucun retrait ne saurait matérialiser.
+    ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] (`ENU-006`) si `contenu` dépasse
-    /// [`MAX_TAILLE_TEXTE`].
-    pub(super) fn new_texte(contenu: &str) -> ResultScribe<Self> {
+    /// Retourne [`ErreurScribe::Interne`] si `contenu` dépasse
+    /// [`MAX_TAILLE_TEXTE`] (`ENU-006`) ou si `nom` est refusé comme composant
+    /// de chemin (`ENU-009`).
+    pub(super) fn new_texte(nom: &str, contenu: &str) -> ResultScribe<Self> {
         if contenu.len() > MAX_TAILLE_TEXTE {
             return Err(ErreurScribe::Interne(String::from(ERR_ENU_006)));
         }
 
-        Ok(Self::Texte {
+        if !Self::nom_fichier_valide(nom) {
+            return Err(ErreurScribe::Interne(String::from(ERR_ENU_009)));
+        }
+
+        let mut enu = Self::Texte {
             metas: BTreeMap::new(),
             tags: BTreeSet::new(),
             contenu: contenu.to_string(),
-        })
+        };
+        enu.ajout_meta("nom", nom);
+
+        Ok(enu)
     }
 
     /// Construit une [`Carte::Repertoire`] — référence des ENU enfants
@@ -1541,13 +1599,13 @@ mod tests {
         Ok(())
     }
 
-    /// Cycle complet sur `Carte::Texte` : contenu conservé à la construction,
-    /// refus de `ajout_hash_donnee` (`ERR_ENU_004`), tags et metas insérés
-    /// puis relus via les accesseurs communs.
+    /// Cycle complet sur `Carte::Texte` : contenu conservé et méta `"nom"`
+    /// posée dès la construction, refus de `ajout_hash_donnee` (`ERR_ENU_004`),
+    /// tags et metas insérés puis relus via les accesseurs communs.
     #[test]
     fn carte_texte() -> ResultScribe<()> {
         let hash_donnee = [0u8; 32];
-        let mut carte = Carte::new_texte("Contenu court de test")?;
+        let mut carte = Carte::new_texte("Test", "Contenu court de test")?;
 
         assert!(matches!(
             carte.ajout_hash_donnee(&hash_donnee),
@@ -1563,7 +1621,7 @@ mod tests {
             assert_eq!(c, "Contenu court de test");
         }
 
-        assert!(carte.tags().is_empty() && carte.metas().is_empty());
+        assert!(carte.tags().is_empty() && carte.metas().get("nom").is_some());
 
         carte.ajout_tag("tag1");
         carte.ajout_tag("tag2");
@@ -1574,7 +1632,7 @@ mod tests {
         carte.ajout_meta("meta1", "valeur1");
         carte.ajout_meta("meta2", "valeur2");
 
-        assert_eq!(carte.metas().len(), 2);
+        assert_eq!(carte.metas().len(), 3);
         assert!(carte.metas().contains_key("meta1") && carte.metas().contains_key("meta2"));
 
         Ok(())
@@ -1586,7 +1644,7 @@ mod tests {
         let contenu = "a".repeat(MAX_TAILLE_TEXTE + 1);
 
         assert!(matches!(
-            Carte::new_texte(&contenu),
+            Carte::new_texte("test", &contenu),
             Err(ErreurScribe::Interne(_))
         ));
 

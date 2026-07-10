@@ -29,8 +29,9 @@ mod tests;
 use data_encoding::HEXLOWER;
 use std::{
     collections::HashMap,
-    fs::{DirBuilder, read, read_dir},
-    os::unix::fs::DirBuilderExt,
+    fs::{DirBuilder, OpenOptions, read, read_dir},
+    io::Write,
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 
@@ -49,6 +50,15 @@ use crate::{
 /// L'ID fourni ne correspond à aucun comptoir de dépôt actif dans
 /// [`Scribe::comptoirs_depot`].
 const ERR_SCR_001: &str = "SCR-001 > Index du comptoir invalide";
+/// Le chemin visé par un retrait est déjà un dossier — le retrait refuse
+/// d'écrire dans un dossier existant, il crée toujours le sien.
+const ERR_SCR_002: &str = "SCR-002 > Le dossier existe déjà";
+/// L'ENU fournie comme racine de retrait n'est pas une `EnuR`
+/// ([`Carte::Repertoire`]) : seul un répertoire peut ouvrir une arborescence.
+const ERR_SCR_003: &str = "SCR-003 > Ce doit être une EnuR";
+/// La braise de l'ENU n'identifie aucun foyer de la session — impossible de
+/// résoudre l'`index_foyer` nécessaire à la lecture du blob.
+const ERR_SCR_004: &str = "SCR-004 > Braise inconnue";
 
 /// Tenant de la couche ENU — créé et maintient `~/.feu/enu/`.
 ///
@@ -320,7 +330,8 @@ impl Scribe {
     ///
     /// Variante allégée de [`Self::fermeture_comptoir_depot`] : pas de comptoir,
     /// pas de blob, pas de classeur. Le texte est embarqué dans une
-    /// [`Carte::Texte`] (bornée à `MAX_TAILLE_TEXTE`), mise sous enveloppe signée
+    /// [`Carte::Texte`] (bornée à `MAX_TAILLE_TEXTE`, nommée par la méta `"nom"`
+    /// — validée à la construction), mise sous enveloppe signée
     /// — l'`EnuT` — et sauvegardée dans `~/.feu/enu/`. Son `hash_carte` est
     /// ensuite ajouté aux enfants de `enu_racine_depot`, qui est reconstruit,
     /// re-signé sous sa propre braise et sauvegardé à son tour. Comme le
@@ -342,7 +353,8 @@ impl Scribe {
     /// # Erreurs
     ///
     /// Propage [`ErreurScribe::Interne`] si le texte dépasse `MAX_TAILLE_TEXTE`
-    /// (`ENU-006`, via [`Carte::new_texte`]) ou si `enu_racine_depot` n'est pas
+    /// (`ENU-006`) ou si `nom` est refusé comme composant de chemin (`ENU-009`)
+    /// — les deux via [`Carte::new_texte`] — ou si `enu_racine_depot` n'est pas
     /// un répertoire (`ENU-004`, via `ajout_hash_donnee`), ainsi que toute erreur
     /// d'E/S, d'authentification ou de signature — notamment si un foyer du
     /// chemin reconstruit est fermé.
@@ -351,10 +363,11 @@ impl Scribe {
         noyau: &FeuNoyau,
         session: &SessionApplication,
         enu_racine_depot: &Enu,
+        nom: &str,
         contenu: &str,
     ) -> ResultScribe<()> {
         let enu_texte = Enu::new(
-            Carte::new_texte(contenu)?,
+            Carte::new_texte(nom, contenu)?,
             noyau,
             session,
             enu_racine_depot.braise(),
@@ -382,5 +395,191 @@ impl Scribe {
         )?;
 
         Ok(())
+    }
+
+    /// Matérialise l'arborescence d'une `EnuR` dans un dossier OS, en lecture
+    /// seule — opération inverse du dépôt par comptoir.
+    ///
+    /// Crée `chemin_retrait` (0o700) puis y reconstruit récursivement ce que
+    /// décrit `enu_r` : chaque [`Carte::Donnee`] redevient un fichier (blob
+    /// déchiffré via le noyau), chaque [`Carte::Texte`] un fichier portant son
+    /// contenu embarqué, chaque [`Carte::Repertoire`] un sous-dossier. Chaque
+    /// enfant est chargé **et authentifié** ([`Enu::charger`]) avant d'être
+    /// écrit.
+    ///
+    /// **Lecture seule, sans reprise.** Contrairement au comptoir de dépôt,
+    /// aucun état n'est retenu et aucune « fermeture » ne relira le dossier :
+    /// Feu écrit puis s'en désintéresse — d'où une simple méthode, sans type
+    /// comptoir dédié. Le dossier appartient ensuite à l'utilisateur.
+    ///
+    /// `enu_r` est traitée comme le dossier de sortie lui-même : son éventuel
+    /// nom est ignoré, seuls ses enfants sont matérialisés — la récursion ne
+    /// voit jamais la racine, qui peut donc être le sommet du nœud (sans méta
+    /// `"nom"`).
+    ///
+    /// Tout foyer signataire d'une `Donnee` rencontrée doit être **ouvert**
+    /// (déchiffrement du blob) ; naviguer les répertoires, eux, ne demande
+    /// aucune ouverture.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurScribe::Interne`] si `chemin_retrait` est un dossier
+    /// existant (`SCR-002`) ou si `enu_r` n'est pas un répertoire (`SCR-003`).
+    /// Propage les erreurs de la descente : authentification d'un enfant,
+    /// nom absent ou invalide (`ENU-008`/`ENU-009`), braise inconnue
+    /// (`SCR-004`), E/S et lecture de blob (foyer fermé, blob introuvable).
+    pub(super) fn retrait_lecture_seule(
+        &self,
+        noyau: &mut FeuNoyau,
+        session: &SessionApplication,
+        chemin_retrait: &Path,
+        enu_r: &Enu,
+    ) -> ResultScribe<()> {
+        if chemin_retrait.is_dir() {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_002)));
+        }
+        let Carte::Repertoire {
+            metas: _,
+            tags: _,
+            hashs_enu,
+        } = enu_r.carte()
+        else {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_003)));
+        };
+
+        DirBuilder::new()
+            .mode(0o700)
+            .recursive(true)
+            .create(chemin_retrait)?;
+
+        // la racine est le dossier de sortie : on matérialise ses enfants,
+        // jamais elle — la récursion ne reçoit que des entrées nommées
+        for h in hashs_enu {
+            let enu = Enu::charger(&self.chemin_enu, session, h)?;
+            self.retrait_lecture_seule_recursif(noyau, session, chemin_retrait, &enu)?;
+        }
+
+        Ok(())
+    }
+
+    /// Cœur récursif de [`Self::retrait_lecture_seule`] : matérialise **une**
+    /// entrée nommée dans un dossier parent existant.
+    ///
+    /// Invariant d'entrée : `enu_courante` est un enfant — jamais la racine du
+    /// retrait — et porte donc une méta `"nom"`, validée comme composant de
+    /// chemin par [`Carte::nom_fichier`] avant tout `join`. Le chemin final
+    /// passe par [`Self::chemin_libre`] : deux enfants homonymes d'un même
+    /// répertoire coexistent par suffixage au lieu d'entrer en collision.
+    ///
+    /// Par variante :
+    ///
+    /// - [`Carte::Donnee`] — la braise résout l'`index_foyer` (elle seule en a
+    ///   besoin), puis [`FeuNoyau::lecture_donnees`] retrouve le classeur du
+    ///   blob, le déchiffre et écrit le clair directement dans le fichier de
+    ///   sortie (0o600). Le `File` est consommé par l'appel — flush et
+    ///   fermeture au drop, rien à reprendre ensuite.
+    /// - [`Carte::Texte`] — le contenu embarqué est écrit tel quel, sans
+    ///   passage par le noyau.
+    /// - [`Carte::Repertoire`] — sous-dossier créé (0o700), puis récursion sur
+    ///   chaque enfant chargé et authentifié.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurScribe::Interne`] si le nom est absent ou invalide
+    /// (`ENU-008`/`ENU-009`) ou si la braise d'une `Donnee` est inconnue de la
+    /// session (`SCR-004`). Propage les erreurs d'E/S, d'authentification d'un
+    /// enfant ([`Enu::charger`]) et de lecture de blob — notamment foyer fermé
+    /// ou blob introuvable.
+    fn retrait_lecture_seule_recursif(
+        &self,
+        noyau: &mut FeuNoyau,
+        session: &SessionApplication,
+        chemin_courant: &Path,
+        enu_courante: &Enu,
+    ) -> ResultScribe<()> {
+        // nom validé (anti-traversée) avant tout join, quelle que soit la variante
+        let nom_fichier = enu_courante.carte().nom_fichier()?;
+
+        match enu_courante.carte() {
+            Carte::Donnee {
+                metas: _,
+                tags: _,
+                hash_donnee,
+            } => {
+                // seule la lecture du blob exige un foyer : résolution ici,
+                // pas en tête — un répertoire n'en a pas besoin
+                let Some(index_foyer) = session.braise_vers_index(enu_courante.braise()) else {
+                    return Err(ErreurScribe::Interne(String::from(ERR_SCR_004)));
+                };
+
+                let chemin = Self::chemin_libre(chemin_courant, &nom_fichier);
+
+                let fichier = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(&chemin)?;
+
+                // le noyau écrit le clair directement dans le fichier, qui est
+                // consommé — fermé au drop, aucun suivi ensuite
+                noyau.lecture_donnees(index_foyer, &HEXLOWER.encode(hash_donnee), fichier)?;
+            }
+            Carte::Texte {
+                metas: _,
+                tags: _,
+                contenu,
+            } => {
+                let chemin = Self::chemin_libre(chemin_courant, &nom_fichier);
+
+                let mut fichier = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(&chemin)?;
+
+                // contenu en clair dans la carte : écriture directe, sans noyau
+                fichier.write_all(contenu.as_bytes())?;
+            }
+            Carte::Repertoire {
+                metas: _,
+                tags: _,
+                hashs_enu,
+            } => {
+                let chemin = Self::chemin_libre(chemin_courant, &nom_fichier);
+                DirBuilder::new()
+                    .mode(0o700)
+                    .recursive(true)
+                    .create(&chemin)?;
+
+                for h in hashs_enu {
+                    let enu = Enu::charger(&self.chemin_enu, session, h)?;
+                    self.retrait_lecture_seule_recursif(noyau, session, &chemin, &enu)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Retourne un chemin encore libre pour `nom` dans `parent` : le chemin nu,
+    /// ou suffixé `nom_1`, `nom_2`… si déjà pris.
+    ///
+    /// Deux enfants d'un même répertoire peuvent porter la même méta `"nom"`
+    /// (les hashs sont uniques, pas les noms) : sans suffixage, le second
+    /// fichier échouerait sur `create_new` et deux dossiers homonymes
+    /// **fusionneraient silencieusement** (`DirBuilder` récursif ne signale pas
+    /// l'existant). Le suffixe s'ajoute en fin de nom, après l'extension —
+    /// simplicité assumée.
+    ///
+    /// Pas de course possible entre le test et la création : le retrait est la
+    /// seule écriture dans ce dossier, qu'il vient de créer.
+    fn chemin_libre(parent: &Path, nom: &str) -> PathBuf {
+        let mut chemin_candidat = parent.join(nom);
+        let mut i = 1;
+        while chemin_candidat.exists() {
+            chemin_candidat = parent.join(format!("{nom}_{i}"));
+            i += 1;
+        }
+
+        chemin_candidat
     }
 }
