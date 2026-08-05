@@ -78,9 +78,15 @@ fn cree_noyau_et_foyer_ouvert() -> (
 
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut recepteur).unwrap();
     let mut scribe = Scribe::new(&chemin_feu);
-    scribe.activation(&noyau).unwrap();
 
     noyau.ouverture_foyer(&mut recepteur, 0).unwrap();
+
+    // Après l'ouverture du foyer, et non avant comme en production : `recepteur`
+    // emprunte `session` en mutable, or `activation` en veut une référence
+    // partagée. L'emprunt n'est libéré qu'au dernier usage du récepteur, ici
+    // `ouverture_foyer`. L'ordre est sans effet — une racine est signée par le
+    // nœud, aucun foyer n'a besoin d'être ouvert.
+    scribe.activation(&noyau, &session).unwrap();
 
     (
         tmp,
@@ -226,7 +232,7 @@ fn cycle_racine() {
     // 2e activation
     scribe.desactivation();
     assert!(!scribe.est_actif);
-    scribe.activation(&noyau).unwrap();
+    scribe.activation(&noyau, &session).unwrap();
     assert!(scribe.est_actif);
 
     let enu_racine_2 = Enu::charger_derniere_racine(&chemin_derniere_racine, &session).unwrap();
@@ -235,11 +241,11 @@ fn cycle_racine() {
 
     // Nouvelle racine
     let mut carte = Carte::new_repertoire(BTreeSet::from([[0u8; 32]]));
-    let hash_str = &HEXLOWER.encode(&enu_racine_2.hash_carte());
-    carte.ajout_meta("_racine", hash_str);
+    carte.ajout_meta("_racine", "valeur qui devrait être écrasée");
 
     Enu::new_racine(
         &noyau,
+        &session,
         &chemin_enu,
         &chemin_derniere_racine,
         Some(carte.clone()),
@@ -248,7 +254,18 @@ fn cycle_racine() {
 
     let enu_racine_3 = Enu::charger_derniere_racine(&chemin_derniere_racine, &session).unwrap();
 
-    assert_eq!(&carte, enu_racine_3.carte());
+    // la méta posée par l'appelant est écrasée : new_racine impose le hash
+    // de la racine qu'elle remplace
+    assert_eq!(
+        enu_racine_3.carte().metas().get("_racine"),
+        Some(&HEXLOWER.encode(&enu_racine_2.hash_carte()))
+    );
+
+    // le reste de la carte fournie est conservé tel quel
+    assert_eq!(
+        enu_racine_3.carte().hashs_enu().unwrap(),
+        BTreeSet::from([[0u8; 32]])
+    );
 
     fermer_foyer(noyau, session);
 }

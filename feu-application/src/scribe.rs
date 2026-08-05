@@ -35,7 +35,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use feu_noyau::FeuNoyau;
+use feu_noyau::{BRAISE_VIDE, FeuNoyau};
 use walkdir::WalkDir;
 
 use crate::{
@@ -112,7 +112,9 @@ impl Scribe {
     /// (0o700), puis la **racine origine** est forgée et posée en sommet
     /// courant via [`Enu::new_racine`] (carte `None` : répertoire vide, signé
     /// par le nœud, symlink `.DERNIERE_RACINE` pointé dessus). `feu_noyau` est
-    /// requis pour cette signature de genèse.
+    /// requis pour cette signature de genèse ; `session` n'est que transmis à
+    /// [`Enu::new_racine`], qui n'en fait rien dans le cas `None` — il n'y a pas
+    /// encore de racine précédente à relire.
     ///
     /// Aux allumages ultérieurs (`enu/` déjà présent), cette amorce est sautée.
     ///
@@ -120,7 +122,11 @@ impl Scribe {
     ///
     /// Retourne une erreur si la création du dossier, la signature de la racine
     /// origine, sa sauvegarde ou la pose du symlink échoue.
-    pub(super) fn activation(&mut self, feu_noyau: &FeuNoyau) -> ResultScribe<()> {
+    pub(super) fn activation(
+        &mut self,
+        feu_noyau: &FeuNoyau,
+        session: &SessionApplication,
+    ) -> ResultScribe<()> {
         self.est_actif = true;
 
         if !&self.chemin_enu.exists() {
@@ -131,6 +137,7 @@ impl Scribe {
 
             Enu::new_racine(
                 feu_noyau,
+                session,
                 &self.chemin_enu,
                 &self.chemin_derniere_racine,
                 None,
@@ -185,8 +192,19 @@ impl Scribe {
     ///
     /// Le nom de chaque entrée (fichier ou dossier) est conservé comme
     /// métadonnée `"nom"`. Le marquage de la racine du nœud (`"_racine"`) n'est
-    /// **pas** posé ici : il l'est par [`Enu::remplacer`] sur le sommet final,
-    /// lors de la propagation jusqu'à la racine du nœud.
+    /// **pas** posé ici : il l'est par [`Enu::new_racine`] sur le sommet final.
+    ///
+    /// Deux destinations possibles, selon le signataire de `enu_racine_depot` :
+    ///
+    /// - **répertoire d'un foyer** — il est reconstruit avec ses nouveaux
+    ///   enfants, re-signé sous sa propre braise, puis remonté jusqu'au sommet
+    ///   par [`Enu::remplacer`] ;
+    /// - **racine du nœud** ([`BRAISE_VIDE`], que seule une racine porte) — la
+    ///   greffe se fait à même le sommet : sa carte enrichie repart directement
+    ///   en [`Enu::new_racine`], qui la signe *nœud*. Passer par [`Enu::new`]
+    ///   échouerait (`ENU-005`) — cette braise ne désigne aucun foyer — et
+    ///   re-signer une racine sous un foyer serait un contresens : le sommet
+    ///   appartient au nœud, quel que soit le foyer qui reçoit les blobs.
     ///
     /// Les entrées directement à la racine du comptoir (`depth == 1`) sont
     /// ajoutées comme enfants directs de `enu_racine_depot`. Les entrées plus
@@ -305,20 +323,30 @@ impl Scribe {
             nouvelle_carte.ajout_hash_donnee(h)?;
         }
 
-        let nouvelle_enu_racine_depot =
-            Enu::new(nouvelle_carte, noyau, session, enu_racine_depot.braise())?;
+        if enu_racine_depot.braise() == BRAISE_VIDE {
+            Enu::new_racine(
+                noyau,
+                session,
+                &self.chemin_enu,
+                &self.chemin_derniere_racine,
+                Some(nouvelle_carte),
+            )?;
+        } else {
+            let nouvelle_enu_racine_depot =
+                Enu::new(nouvelle_carte, noyau, session, enu_racine_depot.braise())?;
 
-        nouvelle_enu_racine_depot.sauvegarder(&self.chemin_enu)?;
+            nouvelle_enu_racine_depot.sauvegarder(&self.chemin_enu)?;
 
-        // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
-        Enu::remplacer(
-            &self.chemin_enu,
-            &self.chemin_derniere_racine,
-            &enu_racine_depot.hash_carte(),
-            &nouvelle_enu_racine_depot,
-            noyau,
-            session,
-        )?;
+            // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
+            Enu::remplacer(
+                &self.chemin_enu,
+                &self.chemin_derniere_racine,
+                &enu_racine_depot.hash_carte(),
+                &nouvelle_enu_racine_depot,
+                noyau,
+                session,
+            )?;
+        }
 
         comptoir.supprimer()?;
 
@@ -331,18 +359,29 @@ impl Scribe {
     /// Variante allégée de [`Self::fermeture_comptoir_depot`] : pas de comptoir,
     /// pas de blob, pas de classeur. Le texte est embarqué dans une
     /// [`Carte::Texte`] (bornée à `MAX_TAILLE_TEXTE`, nommée par la méta `"nom"`
-    /// — validée à la construction), mise sous enveloppe signée
-    /// — l'`EnuT` — et sauvegardée dans `~/.feu/enu/`. Son `hash_carte` est
-    /// ensuite ajouté aux enfants de `enu_racine_depot`, qui est reconstruit,
-    /// re-signé sous sa propre braise et sauvegardé à son tour. Comme le
-    /// `hash_carte` d'un répertoire dépend de ses enfants, cette nouvelle racine
-    /// de dépôt est enfin remontée via [`Enu::remplacer`] jusqu'à produire une
-    /// nouvelle racine de nœud.
+    /// — validée à la construction), mise sous enveloppe signée — l'`EnuT` — et
+    /// sauvegardée dans `~/.feu/enu/`. Son `hash_carte` rejoint ensuite les
+    /// enfants de `enu_racine_depot`, dont la carte enrichie devient une nouvelle
+    /// version : le `hash_carte` d'un répertoire dépendant de ses enfants, la
+    /// modification remonte jusqu'à produire une nouvelle racine de nœud.
     ///
-    /// L'`EnuT` comme le répertoire d'accueil sont signés sous la braise de
-    /// `enu_racine_depot` : le texte appartient au foyer qui possède le
-    /// répertoire de destination. Ce foyer — et tout foyer présent sur le chemin
-    /// remonté par [`Enu::remplacer`] — doit donc être ouvert.
+    /// L'`EnuT` est signée sous la braise d'`index_foyer` — le foyer demandé,
+    /// pas celui du répertoire d'accueil, à l'image du comptoir qui porte son
+    /// propre foyer de destination. Un texte peut ainsi être rangé dans un foyer
+    /// tout en étant accroché sous le répertoire d'un autre.
+    ///
+    /// Le répertoire d'accueil, lui, suit son signataire — deux destinations
+    /// possibles, comme dans [`Self::fermeture_comptoir_depot`] :
+    ///
+    /// - **répertoire d'un foyer** — reconstruit, re-signé sous sa propre
+    ///   braise, puis remonté jusqu'au sommet par [`Enu::remplacer`] ;
+    /// - **racine du nœud** ([`BRAISE_VIDE`]) — sa carte enrichie repart
+    ///   directement en [`Enu::new_racine`], qui la signe *nœud*. Passer par
+    ///   [`Enu::new`] échouerait (`ENU-005`) : cette braise ne désigne aucun
+    ///   foyer.
+    ///
+    /// Le foyer du texte, celui du répertoire d'accueil et tout foyer présent
+    /// sur le chemin remonté par [`Enu::remplacer`] doivent être **ouverts**.
     ///
     /// # Retour
     ///
@@ -355,14 +394,16 @@ impl Scribe {
     /// Propage [`ErreurScribe::Interne`] si le texte dépasse `MAX_TAILLE_TEXTE`
     /// (`ENU-006`) ou si `nom` est refusé comme composant de chemin (`ENU-009`)
     /// — les deux via [`Carte::new_texte`] — ou si `enu_racine_depot` n'est pas
-    /// un répertoire (`ENU-004`, via `ajout_hash_donnee`), ainsi que toute erreur
-    /// d'E/S, d'authentification ou de signature — notamment si un foyer du
-    /// chemin reconstruit est fermé.
+    /// un répertoire (`ENU-004`, via `ajout_hash_donnee`). Propage également
+    /// l'erreur de [`SessionApplication::braise_foyer`] si `index_foyer` sort
+    /// des bornes, ainsi que toute erreur d'E/S, d'authentification ou de
+    /// signature — notamment si un foyer du chemin reconstruit est fermé.
     pub(super) fn depot_enu_texte(
         &self,
         noyau: &FeuNoyau,
         session: &SessionApplication,
         enu_racine_depot: &Enu,
+        index_foyer: usize,
         nom: &str,
         contenu: &str,
     ) -> ResultScribe<()> {
@@ -370,7 +411,7 @@ impl Scribe {
             Carte::new_texte(nom, contenu)?,
             noyau,
             session,
-            enu_racine_depot.braise(),
+            session.braise_foyer(index_foyer)?,
         )?;
 
         enu_texte.sauvegarder(&self.chemin_enu)?;
@@ -379,20 +420,30 @@ impl Scribe {
 
         nouvelle_carte.ajout_hash_donnee(&enu_texte.hash_carte())?;
 
-        let nouvelle_enu_racine_depot =
-            Enu::new(nouvelle_carte, noyau, session, enu_racine_depot.braise())?;
+        if enu_racine_depot.braise() == BRAISE_VIDE {
+            Enu::new_racine(
+                noyau,
+                session,
+                &self.chemin_enu,
+                &self.chemin_derniere_racine,
+                Some(nouvelle_carte),
+            )?;
+        } else {
+            let nouvelle_enu_racine_depot =
+                Enu::new(nouvelle_carte, noyau, session, enu_racine_depot.braise())?;
 
-        nouvelle_enu_racine_depot.sauvegarder(&self.chemin_enu)?;
+            nouvelle_enu_racine_depot.sauvegarder(&self.chemin_enu)?;
 
-        // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
-        Enu::remplacer(
-            &self.chemin_enu,
-            &self.chemin_derniere_racine,
-            &enu_racine_depot.hash_carte(),
-            &nouvelle_enu_racine_depot,
-            noyau,
-            session,
-        )?;
+            // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
+            Enu::remplacer(
+                &self.chemin_enu,
+                &self.chemin_derniere_racine,
+                &enu_racine_depot.hash_carte(),
+                &nouvelle_enu_racine_depot,
+                noyau,
+                session,
+            )?;
+        }
 
         Ok(())
     }

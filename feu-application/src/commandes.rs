@@ -65,7 +65,7 @@ impl FeuApplication {
         // le Scribe est activé avant de ranger le noyau dans `self` : l'amorce
         // de l'arborescence (signature de la racine origine) a besoin d'une
         // référence au noyau, plus simple à prendre tant qu'il est local
-        self.scribe.activation(&feu_noyau)?;
+        self.scribe.activation(&feu_noyau, &self.session)?;
 
         self.feu_noyau = Some(feu_noyau);
 
@@ -238,6 +238,12 @@ impl FeuApplication {
     /// validé comme composant de chemin dès la construction. Le détail du
     /// rangement est porté par le Scribe.
     ///
+    /// `index_foyer` désigne le foyer **propriétaire du texte**, indépendamment
+    /// du répertoire où il est accroché : `enu_racine_depot` peut appartenir à un
+    /// autre foyer, ou être la racine du nœud. Tout foyer concerné — celui du
+    /// texte, celui du répertoire d'accueil s'il en a un, ceux du chemin remonté
+    /// — doit être ouvert.
+    ///
     /// # Retour
     ///
     /// Rien : le nouveau sommet du nœud devient la cible de `.DERNIERE_RACINE`.
@@ -246,11 +252,12 @@ impl FeuApplication {
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : texte trop long, nom invalide,
-    /// répertoire d'accueil invalide, E/S ou signature (notamment si un foyer
-    /// du chemin reconstruit est fermé).
+    /// `index_foyer` hors bornes, répertoire d'accueil invalide, E/S ou
+    /// signature (notamment si un foyer du chemin reconstruit est fermé).
     pub fn commande_depot_enu_texte(
         &mut self,
         enu_racine_depot: &Enu,
+        index_foyer: usize,
         nom: &str,
         contenu: &str,
     ) -> ResultFeuApplication<()> {
@@ -259,8 +266,14 @@ impl FeuApplication {
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        self.scribe
-            .depot_enu_texte(noyau, &self.session, enu_racine_depot, nom, contenu)?;
+        self.scribe.depot_enu_texte(
+            noyau,
+            &self.session,
+            enu_racine_depot,
+            index_foyer,
+            nom,
+            contenu,
+        )?;
 
         Ok(())
     }

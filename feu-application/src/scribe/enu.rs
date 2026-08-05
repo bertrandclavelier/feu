@@ -205,13 +205,22 @@ impl Enu {
     /// Le paramètre `carte` distingue les deux usages :
     ///
     /// - `None` — **genèse** : un [`Carte::Repertoire`] vide portant `_racine`
-    ///   = `""` (racine sans parent, arborescence initiale vide). Le marqueur
-    ///   distingue aussi cette carte d'un répertoire de contenu vide, qui
-    ///   aurait sinon le même hash content-addressed.
+    ///   = `""`, la marque « pas de racine précédente » qui termine la chaîne.
+    ///   Le symlink n'existe pas encore à cet instant : il n'y a rien à lire, et
+    ///   c'est cet appel qui le pose. Le marqueur distingue aussi cette carte
+    ///   d'un répertoire de contenu vide, qui aurait sinon le même hash
+    ///   content-addressed.
     /// - `Some(carte)` — le nouveau sommet reconstruit, fourni par l'appelant
-    ///   (typiquement [`Enu::remplacer`]). La carte **doit** porter la méta
-    ///   `_racine` (valeur = hash de la racine précédente), sans quoi
-    ///   [`Enu::charger`] ne la reconnaîtra pas comme racine et la rejettera.
+    ///   (typiquement [`Enu::remplacer`] ou une greffe directe sous la racine).
+    ///   La méta `_racine` est **posée ici**, avec le hash de la racine courante
+    ///   lue via `chemin_derniere_racine` — une valeur que l'appelant aurait
+    ///   placée est écrasée. Le chaînage des versions est ainsi tenu au seul
+    ///   endroit qui repointe le symlink, plutôt que confié à chaque appelant :
+    ///   une carte sans `_racine` produisait une racine que [`Enu::charger`]
+    ///   rejette, faute décelable seulement à la relecture suivante.
+    ///
+    /// `session` ne sert qu'à cette relecture (authentification de la racine
+    /// courante) : aucun foyer n'est sollicité.
     ///
     /// Après signature, l'ENU est sauvegardée, puis le symlink pointé par
     /// `chemin_derniere_racine` (`.DERNIERE_RACINE`, fourni par le
@@ -229,12 +238,21 @@ impl Enu {
     /// pose du symlink.
     pub(super) fn new_racine(
         feu_noyau: &FeuNoyau,
+        session: &SessionApplication,
         chemin_enu: &Path,
         chemin_derniere_racine: &Path,
         carte: Option<Carte>,
     ) -> ResultScribe<()> {
         let carte = {
-            if let Some(carte) = carte {
+            if let Some(mut carte) = carte {
+                let derniere_racine_noeud =
+                    Enu::charger_derniere_racine(chemin_derniere_racine, session)?;
+
+                carte.ajout_meta(
+                    "_racine",
+                    &HEXLOWER.encode(&derniere_racine_noeud.hash_carte()),
+                );
+
                 carte
             } else {
                 let mut carte = Carte::new_repertoire(BTreeSet::new());
@@ -587,11 +605,11 @@ impl Enu {
     /// sommet est forgé, signé par le nœud et posé sur `.DERNIERE_RACINE`
     /// ([`Enu::new_racine`]).
     ///
-    /// La méta `_racine` du nouveau sommet reçoit le **hash de l'ancien
-    /// sommet** — maillon de la lignée des versions. Elle est posée ici, au
-    /// point d'entrée, une seule fois : la récursion reconstruit *chaque*
-    /// répertoire du chemin sans savoir lequel est le sommet, elle ne peut donc
-    /// pas s'en charger.
+    /// La méta `_racine` du nouveau sommet — maillon de la lignée des versions —
+    /// n'est pas posée ici : [`Enu::new_racine`] s'en charge, en relisant le
+    /// symlink. Rien dans la descente ne le repointe (`remplacer_recursif` ne
+    /// reçoit même pas son chemin), la valeur lue après reconstruction est donc
+    /// bien celle du sommet remplacé.
     ///
     /// L'ancien sommet et les anciens répertoires du chemin ne sont **pas**
     /// supprimés : ce sont les versions précédentes, conservées pour
@@ -623,10 +641,6 @@ impl Enu {
             return Err(ErreurScribe::Interne(ERR_ENU_007.to_string()));
         }
 
-        // capturé avant la descente : `racine` est ensuite masquée par le
-        // sommet reconstruit, dont le hash n'est pas celui du parent
-        let hash_ancienne_racine = racine.hash_carte();
-
         let racine = Self::remplacer_recursif(
             chemin_enu,
             &racine,
@@ -636,11 +650,11 @@ impl Enu {
             session,
         )?;
 
-        let mut nouvelle_carte = racine.carte().clone();
-        nouvelle_carte.ajout_meta("_racine", &HEXLOWER.encode(&hash_ancienne_racine));
+        let nouvelle_carte = racine.carte().clone();
 
         Enu::new_racine(
             noyau,
+            session,
             chemin_enu,
             chemin_derniere_racine,
             Some(nouvelle_carte),
