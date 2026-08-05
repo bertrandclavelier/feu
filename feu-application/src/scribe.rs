@@ -497,7 +497,8 @@ impl Scribe {
         chemin_courant: &Path,
         enu_courante: &Enu,
     ) -> ResultScribe<()> {
-        // nom validé (anti-traversée) avant tout join, quelle que soit la variante
+        // nom validé avant tout join — il vient du disque et pourrait sinon
+        // faire écrire hors du dossier de retrait, quelle que soit la variante
         let nom_fichier = enu_courante.carte().nom_fichier()?;
 
         match enu_courante.carte() {

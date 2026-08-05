@@ -927,10 +927,11 @@ impl Carte {
 
     /// `true` si `nom` est un composant de chemin unique et inoffensif.
     ///
-    /// Garde anti-traversée, pas un filtre d'affichage : elle écarte le vide,
-    /// tout séparateur `/` (le seul, le protocole étant Unix-only) et les deux
-    /// composants spéciaux `.` / `..`. Les noms cachés (`.bashrc`) restent
-    /// acceptés — seule l'égalité stricte avec `.` ou `..` est refusée.
+    /// Empêche un nom d'entraîner l'écriture hors du dossier de retrait, pas un
+    /// filtre d'affichage : elle écarte le vide, tout séparateur `/` (le seul,
+    /// le protocole étant Unix-only) et les deux composants spéciaux `.` / `..`.
+    /// Les noms cachés (`.bashrc`) restent acceptés — seule l'égalité stricte
+    /// avec `.` ou `..` est refusée.
     fn nom_fichier_valide(nom: &str) -> bool {
         !nom.is_empty() && !nom.contains('/') && nom != "." && nom != ".."
     }
@@ -1694,6 +1695,123 @@ mod tests {
 
         assert_eq!(carte.metas().len(), 2);
         assert!(carte.metas().contains_key("meta1") && carte.metas().contains_key("meta2"));
+
+        Ok(())
+    }
+
+    /// Validation du nom par `nom_fichier`, sur ses deux refus et son corpus
+    /// accepté.
+    ///
+    /// - `ENU-008` : méta `"nom"` absente — éprouvé en premier, sur une carte
+    ///   neuve, seul moment où elle l'est.
+    /// - `ENU-009` : vide, et toute forme de `/` (en tête, au milieu, en queue,
+    ///   multiple) — le nom vient d'une ENU lue sur disque, un `/` en tête
+    ///   remplacerait le chemin cible d'un `join` au lieu de s'y ajouter.
+    /// - `ENU-009` : `.` et `..` **exacts**, les deux composants spéciaux.
+    ///
+    /// Les cas acceptés portent tous des points sans être ces composants
+    /// (`.test`, `..test`, `test..`, `test..2`…) : ils distinguent l'égalité
+    /// stricte d'un `starts_with` ou d'un `contains`, qui rejetterait à tort des
+    /// noms légitimes — un fichier caché en particulier. On y vérifie le nom
+    /// rendu, pas seulement l'absence d'erreur : la garde ne doit rien réécrire.
+    ///
+    /// Une seule carte traverse le test, la méta `"nom"` étant écrasée à chaque
+    /// cas (`BTreeMap::insert`).
+    #[test]
+    fn nom_fichier() -> ResultScribe<()> {
+        let hash_donnee = [0u8; 32];
+
+        let mut carte = Carte::new_donnee(hash_donnee);
+
+        // Pas de meta nom
+        assert!(matches!(
+                carte.nom_fichier(),
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-008")
+        ));
+
+        // Nom vide
+        carte.ajout_meta("nom", "");
+
+        assert!(matches!(
+                carte.nom_fichier(),
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+        ));
+
+        // Nom commence par '/'
+        carte.ajout_meta("nom", "/azerty");
+
+        assert!(matches!(
+                carte.nom_fichier(),
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+        ));
+
+        // Nom contient '/'
+        carte.ajout_meta("nom", "aa/bbb");
+
+        assert!(matches!(
+                carte.nom_fichier(),
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+        ));
+
+        // Nom contient plusieurs '/'
+        carte.ajout_meta("nom", "/aa/bbb/");
+
+        assert!(matches!(
+                carte.nom_fichier(),
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+        ));
+
+        // Nom termine par '/'
+        carte.ajout_meta("nom", "azerty/");
+
+        assert!(matches!(
+                carte.nom_fichier(),
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+        ));
+
+        // Nom est '.'
+        carte.ajout_meta("nom", ".");
+
+        assert!(matches!(
+                carte.nom_fichier(),
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+        ));
+
+        // Nom est '..'
+        carte.ajout_meta("nom", "..");
+
+        assert!(matches!(
+                carte.nom_fichier(),
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+        ));
+
+        // Nom débute par '.'
+        carte.ajout_meta("nom", ".test");
+        assert_eq!(carte.nom_fichier()?, ".test");
+
+        // Nom termine par '.'
+        carte.ajout_meta("nom", "test.");
+        assert_eq!(carte.nom_fichier()?, "test.");
+
+        // Nom contient '.'
+        carte.ajout_meta("nom", "test.2");
+        assert_eq!(carte.nom_fichier()?, "test.2");
+
+        // Nom débute par '..'
+        carte.ajout_meta("nom", "..test");
+        assert_eq!(carte.nom_fichier()?, "..test");
+
+        // Nom termine par '..'
+        carte.ajout_meta("nom", "test..");
+        assert_eq!(carte.nom_fichier()?, "test..");
+
+        // Nom contient '..'
+        carte.ajout_meta("nom", "test..2");
+        assert_eq!(carte.nom_fichier()?, "test..2");
+
+        // Nom contient '.' et '..'
+        carte.ajout_meta("nom", ".te.st..test.te.st..");
+        assert_eq!(carte.nom_fichier()?, ".te.st..test.te.st..");
 
         Ok(())
     }
