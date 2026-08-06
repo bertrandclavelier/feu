@@ -394,3 +394,76 @@ fn cycle_remplacements() {
 
     fermer_foyer(noyau, session);
 }
+
+/// Dépôt d'une EnuT à la **racine du nœud** — la branche `BRAISE_VIDE` de
+/// `Scribe::depot_enu_texte`, qui greffe à même le sommet via `Enu::new_racine`.
+///
+/// L'EnuT est forgée en double côté test : le `hash_carte` étant l'empreinte de
+/// la seule carte (ni la braise, ni la date, ni la signature n'y entrent), cette
+/// copie locale sert d'oracle pour retrouver sur le disque celle qu'a déposée le
+/// Scribe, qui ne rend rien. Seules les **cartes** sont comparables — deux
+/// enveloppes du même contenu diffèrent par leur date et par leur signature,
+/// non déterministe.
+///
+/// Le test couvre, dans l'ordre :
+///
+/// - **refus `ENU-004`** : une `Carte::Texte` passée comme racine de dépôt n'est
+///   pas un répertoire. Son contenu diffère volontairement de celui du dépôt
+///   nominal — même texte, même carte, donc même fichier, et l'écriture faite
+///   avant l'échec masquerait celle du dépôt réussi ;
+/// - **dépôt nominal** : l'EnuT est sur le disque, authentifiée par `charger`,
+///   signée sous la braise du foyer demandé, et son contenu est intact ;
+/// - **greffe** : son `hash_carte` figure parmi les enfants du sommet courant ;
+/// - **nouveau sommet** : la racine a changé et sa méta `_racine` chaîne vers la
+///   précédente — sans quoi un dépôt repartant d'une racine de genèse fraîche
+///   passerait inaperçu.
+#[test]
+fn depot_enu_texte() -> ResultScribe<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    let enu_texte = Enu::new(
+        Carte::new_texte("test", "contenu de test")?,
+        &noyau,
+        &session,
+        session.braise_foyer(0)?,
+    )?;
+
+    // L'Enu de dépôt n'est pas une EnuR
+    assert!(
+        matches!(scribe.depot_enu_texte(&noyau, &session, &enu_texte, 0, "test", "ce n'est pas une EnuR"), Err(ErreurScribe::Interne(m)) if m.contains("ENU-004"))
+    );
+
+    // Dépôt à la racine du noeud
+    scribe.depot_enu_texte(&noyau, &session, &enu_racine, 0, "test", "contenu de test")?;
+
+    let enu_texte_relue = Enu::charger(&chemin_enu, &session, &enu_texte.hash_carte())?;
+
+    assert_eq!(enu_texte_relue.braise(), session.braise_foyer(0)?);
+    assert_eq!(enu_texte.carte(), enu_texte_relue.carte());
+
+    let nouvelle_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    // l'EnuT est bien fille de la nouvelle racine
+    assert!(
+        nouvelle_enu_racine
+            .carte()
+            .hashs_enu()?
+            .contains(&enu_texte.hash_carte())
+    );
+
+    // La nouvelle racine est différente de la première
+    assert_ne!(enu_racine.hash_carte(), nouvelle_enu_racine.hash_carte());
+
+    // La nouvelle racine pointe vers l'ancienne
+    assert_eq!(
+        nouvelle_enu_racine.carte().metas().get("_racine"),
+        Some(&HEXLOWER.encode(&enu_racine.hash_carte()))
+    );
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}

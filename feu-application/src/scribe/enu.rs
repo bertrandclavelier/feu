@@ -1660,10 +1660,24 @@ mod tests {
 
         assert!(matches!(
             Carte::new_texte("test", &contenu),
-            Err(ErreurScribe::Interne(_))
-        ));
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-006")));
 
         Ok(())
+    }
+
+    /// Nom contenant un séparateur de chemin → refus (`ERR_ENU_009`).
+    ///
+    /// Éprouve la validation à la **construction**, distincte de celle de
+    /// `nom_fichier` (couverte par le test du même nom) : `new_texte` reçoit son
+    /// nom de l'appelant, pas du disque, et refuse d'emblée une carte qu'aucun
+    /// retrait ne saurait matérialiser. Un seul cas suffit ici — les deux
+    /// chemins partagent `nom_fichier_valide`, éprouvé exhaustivement ailleurs.
+    #[test]
+    fn carte_texte_mauvais_nom() {
+        assert!(matches!(
+            Carte::new_texte("te/st", "contenu"),
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+        ));
     }
 
     /// Cycle complet sur `Carte::Repertoire` : hashs enfants insérés via
