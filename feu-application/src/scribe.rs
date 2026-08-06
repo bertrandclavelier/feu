@@ -343,6 +343,29 @@ impl Scribe {
     /// Tout foyer présent sur le chemin reconstruit doit être **ouvert**, sa
     /// re-signature l'exigeant.
     ///
+    /// # Greffe sans effet
+    ///
+    /// Si la carte augmentée égale celle de départ, la méthode rend `Ok(())`
+    /// sans rien forger : les hashs étaient tous déjà présents — la carte est un
+    /// ensemble — ou la liste était vide. Produire une version pour un contenu
+    /// identique n'ajouterait qu'un maillon mort à la lignée des `_racine`. Le
+    /// cas se présente réellement lorsqu'un même fichier est redéposé par le
+    /// comptoir : contenu et nom inchangés donnent la même carte, donc le même
+    /// `hash_carte`.
+    ///
+    /// L'appelant ne peut pas distinguer ce cas d'une greffe effective. Aucun
+    /// n'en a besoin aujourd'hui ; le jour où l'un d'eux le demandera, ce sera
+    /// au type de retour de le dire.
+    ///
+    /// # Invariants tenus par les appelants
+    ///
+    /// Cette méthode intervient **en fin de chaîne** — les blobs sont déposés,
+    /// les ENU signées et sauvegardées. Refuser à ce stade invaliderait un
+    /// travail déjà accompli sans moyen de le défaire ; elle absorbe donc les
+    /// cas dégénérés au lieu de les rejeter. Les appelants gardent en amont :
+    /// [`Self::fermeture_comptoir_depot`] sort avant l'appel si le comptoir est
+    /// vide, [`Self::depot_enu`] passe toujours exactement un hash.
+    ///
     /// # Erreurs
     ///
     /// Retourne [`ErreurScribe::Interne`] (`ENU-004`) si `enu_racine_depot`
@@ -359,6 +382,10 @@ impl Scribe {
 
         for h in hashs_nouveaux_enfants {
             nouvelle_carte.ajout_hash_donnee(h)?;
+        }
+
+        if nouvelle_carte == *enu_racine_depot.carte() {
+            return Ok(());
         }
 
         if enu_racine_depot.braise() == BRAISE_VIDE {

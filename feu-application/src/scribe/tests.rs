@@ -6,8 +6,9 @@
 // FeuApplication is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 // You should have received a copy of the GNU General Public License along with FeuApplication. If not, see <https://www.gnu.org/licenses/>.
 
-//! Tests d'intégration du Scribe : cycle de vie disque des ENU et barrière de
-//! confiance de `charger`.
+//! Tests d'intégration du Scribe : cycle de vie disque des ENU, barrière de
+//! confiance de `charger`, et tenue de l'arborescence — racine du nœud,
+//! remplacements, greffe d'enfants, dépôt.
 //!
 //! Ces tests montent une pile réelle — noyau allumé depuis une seed neuve dans
 //! un `TempDir`, foyer ouvert, scribe activé — plutôt que des composants isolés :
@@ -15,6 +16,11 @@
 //! authentifiée. Ils vivent dans un `mod` sous `scribe`, et non dans un dossier
 //! `tests/`, parce que les fonctions couvertes (`Enu::sauvegarder`, `charger`,
 //! `supprimer`…) sont `pub(super)` : invisibles depuis un crate de test externe.
+//!
+//! Les tests portant sur une même fonction se répartissent le travail plutôt que
+//! de le répéter : un test éprouve le comportement d'une fonction, un autre se
+//! contente de prouver qu'un appelant l'invoque. La doc de chacun dit lequel des
+//! deux rôles il tient.
 
 use std::{collections::BTreeSet, fs::write};
 
@@ -127,6 +133,11 @@ fn creer_enu_donnee(
     enu
 }
 
+/// Signe une EnuR de test sur le foyer 0, portant les `enfants` donnés.
+///
+/// Signée sous une braise de foyer, et non sous celle du nœud : c'est ce qui
+/// l'oriente vers la branche non triviale de `Scribe::greffe_enfants`, celle qui
+/// re-signe et remonte le chemin. Une racine, elle, porte `BRAISE_VIDE`.
 fn creer_enu_repertoire(
     chemin_enu: &Path,
     noyau: &FeuNoyau,
@@ -395,6 +406,286 @@ fn cycle_remplacements() {
     fermer_foyer(noyau, session);
 }
 
+/// Greffe à même le sommet du nœud — la branche `BRAISE_VIDE` de
+/// `Scribe::greffe_enfants`, qui forge une nouvelle racine par `Enu::new_racine`
+/// au lieu de reconstruire un chemin sous un foyer.
+///
+/// Deux greffes successives, parce qu'elles n'éprouvent pas la même chose : la
+/// première part de la racine de genèse, dont la carte est **vide** — les
+/// enfants greffés sont alors les seuls ; la seconde part d'une racine déjà
+/// peuplée et prouve l'*union*, à savoir que les trois enfants précédents
+/// survivent à l'arrivée du quatrième.
+///
+/// Chaque greffe vérifie :
+///
+/// - **chaînage** : la méta `_racine` du nouveau sommet pointe vers celui qu'il
+///   remplace — sans quoi une racine de genèse fraîche, elle aussi valide et
+///   signée nœud, passerait pour une greffe réussie ;
+/// - **enfants** : cardinal attendu *et* présence de chacun. Le cardinal seul
+///   laisserait passer une substitution, la présence seule un hash parasite ;
+/// - **nouveau sommet** : le `hash_carte` a changé, donc la racine a bien été
+///   re-forgée et `.DERNIERE_RACINE` repointé, plutôt que l'ancienne complétée
+///   en place.
+#[test]
+fn greffe_enfants_racine() -> ResultScribe<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    let enu1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+    let enu2 = creer_enu_donnee(&chemin_enu, &noyau, &session, 2u8);
+    let enu3 = creer_enu_donnee(&chemin_enu, &noyau, &session, 3u8);
+
+    scribe.greffe_enfants(
+        &noyau,
+        &session,
+        &enu_racine,
+        &[enu1.hash_carte(), enu2.hash_carte(), enu3.hash_carte()],
+    )?;
+
+    let deuxieme_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    // La deuxieme racine pointe vers la première
+    assert_eq!(
+        deuxieme_enu_racine.carte().metas().get("_racine"),
+        Some(&HEXLOWER.encode(&enu_racine.hash_carte()))
+    );
+
+    assert_eq!(deuxieme_enu_racine.carte().hashs_enu()?.len(), 3);
+    assert!(
+        deuxieme_enu_racine
+            .carte()
+            .hashs_enu()?
+            .contains(&enu1.hash_carte())
+    );
+    assert!(
+        deuxieme_enu_racine
+            .carte()
+            .hashs_enu()?
+            .contains(&enu2.hash_carte())
+    );
+    assert!(
+        deuxieme_enu_racine
+            .carte()
+            .hashs_enu()?
+            .contains(&enu3.hash_carte())
+    );
+
+    // La deuxieme racine est différente de la première
+    assert_ne!(enu_racine.hash_carte(), deuxieme_enu_racine.hash_carte());
+
+    let enu4 = creer_enu_donnee(&chemin_enu, &noyau, &session, 4u8);
+
+    scribe.greffe_enfants(&noyau, &session, &deuxieme_enu_racine, &[enu4.hash_carte()])?;
+
+    let troisieme_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    // La troisieme racine pointe vers la deuxième
+    assert_eq!(
+        troisieme_enu_racine.carte().metas().get("_racine"),
+        Some(&HEXLOWER.encode(&deuxieme_enu_racine.hash_carte()))
+    );
+
+    assert_eq!(troisieme_enu_racine.carte().hashs_enu()?.len(), 4);
+    assert!(
+        troisieme_enu_racine
+            .carte()
+            .hashs_enu()?
+            .contains(&enu1.hash_carte())
+    );
+    assert!(
+        troisieme_enu_racine
+            .carte()
+            .hashs_enu()?
+            .contains(&enu2.hash_carte())
+    );
+    assert!(
+        troisieme_enu_racine
+            .carte()
+            .hashs_enu()?
+            .contains(&enu3.hash_carte())
+    );
+    assert!(
+        troisieme_enu_racine
+            .carte()
+            .hashs_enu()?
+            .contains(&enu4.hash_carte())
+    );
+
+    // La troisieme racine est différente de la deuxieme
+    assert_ne!(
+        deuxieme_enu_racine.hash_carte(),
+        troisieme_enu_racine.hash_carte()
+    );
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}
+
+/// Greffe sous un répertoire de foyer — la branche non triviale de
+/// `Scribe::greffe_enfants`, celle qui re-signe l'EnuR sous sa propre braise
+/// puis remonte jusqu'au sommet par `Enu::remplacer`.
+///
+/// L'EnuR doit être réellement accrochée sous la racine avant la greffe : c'est
+/// en descendant depuis `.DERNIERE_RACINE` que `remplacer` la retrouve, et une
+/// EnuR seulement présente sur le disque serait introuvable. Le décor emprunte
+/// donc la branche `BRAISE_VIDE`, déjà éprouvée par [`greffe_enfants_racine`].
+///
+/// La greffe ne modifie pas l'EnuR : elle en forge une nouvelle, de carte
+/// augmentée, donc de `hash_carte` différent. La variable `enur` du test désigne
+/// dès lors une version périmée — la version courante se retrouve comme unique
+/// enfant du sommet reconstruit.
+///
+/// Le test vérifie :
+///
+/// - **union** : les cinq enfants — les trois d'origine conservés, les deux
+///   greffés ajoutés. C'est le comportement propre à cette branche, la racine
+///   de genèse partant nécessairement d'une carte vide ;
+/// - **braise inchangée** : la nouvelle EnuR reste signée sous le foyer de
+///   l'ancienne. Une greffe qui changerait de braise déplacerait silencieusement
+///   un contenu d'un foyer vers un autre — l'invariant du tiroir l'interdit ;
+/// - **remontée** : le sommet a été reconstruit et n'a toujours qu'un enfant,
+///   la nouvelle EnuR ayant remplacé l'ancienne au lieu de s'y ajouter.
+#[test]
+fn greffe_enfants() -> ResultScribe<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    let enu1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+    let enu2 = creer_enu_donnee(&chemin_enu, &noyau, &session, 2u8);
+    let enu3 = creer_enu_donnee(&chemin_enu, &noyau, &session, 3u8);
+
+    let enur = creer_enu_repertoire(&chemin_enu, &noyau, &session, &[&enu1, &enu2, &enu3]);
+
+    // décor : accroche l'EnuR sous le sommet, faute de quoi `remplacer` ne la
+    // trouverait pas en descendant depuis `.DERNIERE_RACINE`. Voie déjà éprouvée
+    // par greffe_enfants_racine.
+    scribe.greffe_enfants(&noyau, &session, &enu_racine, &[enur.hash_carte()])?;
+
+    let enu4 = creer_enu_donnee(&chemin_enu, &noyau, &session, 4u8);
+    let enu5 = creer_enu_donnee(&chemin_enu, &noyau, &session, 5u8);
+
+    scribe.greffe_enfants(
+        &noyau,
+        &session,
+        &enur,
+        &[enu4.hash_carte(), enu5.hash_carte()],
+    )?;
+
+    let troisieme_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    // l'EnuR reconstruite a remplacé l'ancienne sous le sommet, elle ne s'y est
+    // pas ajoutée : le fils unique est donc sa version courante
+    assert_eq!(troisieme_enu_racine.carte().hashs_enu()?.len(), 1);
+
+    let nouvelle_enur = Enu::charger(
+        &chemin_enu,
+        &session,
+        troisieme_enu_racine.carte().hashs_enu()?.first().unwrap(),
+    )?;
+
+    // greffer ne déplace pas : le contenu reste sous le foyer d'origine
+    assert_eq!(nouvelle_enur.braise(), enur.braise());
+
+    // les trois enfants d'origine survivent aux deux greffés
+    assert_eq!(nouvelle_enur.carte().hashs_enu()?.len(), 5);
+
+    assert!(
+        nouvelle_enur
+            .carte()
+            .hashs_enu()?
+            .contains(&enu1.hash_carte())
+    );
+    assert!(
+        nouvelle_enur
+            .carte()
+            .hashs_enu()?
+            .contains(&enu2.hash_carte())
+    );
+    assert!(
+        nouvelle_enur
+            .carte()
+            .hashs_enu()?
+            .contains(&enu3.hash_carte())
+    );
+    assert!(
+        nouvelle_enur
+            .carte()
+            .hashs_enu()?
+            .contains(&enu4.hash_carte())
+    );
+    assert!(
+        nouvelle_enur
+            .carte()
+            .hashs_enu()?
+            .contains(&enu5.hash_carte())
+    );
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}
+
+/// Greffe sans effet : re-greffer un enfant déjà présent ne produit aucune
+/// version.
+///
+/// La carte étant un ensemble, un hash déjà là est absorbé sans rien changer.
+/// Forger malgré tout une nouvelle racine allongerait la lignée des `_racine`
+/// d'un maillon identique au précédent — d'où la sortie anticipée de
+/// `greffe_enfants` lorsque la carte augmentée égale celle de départ.
+///
+/// Le cas n'est pas théorique : le comptoir reforge la carte d'un fichier à
+/// partir de son contenu et de son nom, si bien qu'un même fichier redéposé
+/// produit le même `hash_carte`.
+///
+/// La première greffe n'est pas là pour être vérifiée — `greffe_enfants_racine`
+/// s'en charge — mais pour **établir le décor** : son contrôle de chaînage
+/// prouve qu'une version a bien été produite. Sans lui, l'égalité qui suit
+/// passerait tout aussi bien si rien n'avait jamais fonctionné.
+///
+/// L'égalité porte sur les ENU **entières**, pas sur leur `hash_carte` : une
+/// racine re-forgée à contenu identique se trahirait par sa date et par sa
+/// signature, qu'une comparaison de cartes seules laisserait passer.
+#[test]
+fn greffe_enfants_doublon() -> ResultScribe<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    let enu1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+
+    scribe.greffe_enfants(&noyau, &session, &enu_racine, &[enu1.hash_carte()])?;
+
+    let deuxieme_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    assert_eq!(
+        deuxieme_enu_racine.carte().metas().get("_racine"),
+        Some(&HEXLOWER.encode(&enu_racine.hash_carte()))
+    );
+
+    scribe.greffe_enfants(&noyau, &session, &deuxieme_enu_racine, &[enu1.hash_carte()])?;
+
+    let troisieme_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    assert_eq!(deuxieme_enu_racine, troisieme_enu_racine);
+    assert_eq!(troisieme_enu_racine.carte().hashs_enu()?.len(), 1);
+    assert!(
+        troisieme_enu_racine
+            .carte()
+            .hashs_enu()?
+            .contains(&enu1.hash_carte())
+    );
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}
+
 /// Dépôt d'une EnuT à la **racine du nœud** — la branche `BRAISE_VIDE` de
 /// `Scribe::depot_enu_texte`, qui greffe à même le sommet via `Enu::new_racine`.
 ///
@@ -413,10 +704,12 @@ fn cycle_remplacements() {
 ///   avant l'échec masquerait celle du dépôt réussi ;
 /// - **dépôt nominal** : l'EnuT est sur le disque, authentifiée par `charger`,
 ///   signée sous la braise du foyer demandé, et son contenu est intact ;
-/// - **greffe** : son `hash_carte` figure parmi les enfants du sommet courant ;
-/// - **nouveau sommet** : la racine a changé et sa méta `_racine` chaîne vers la
-///   précédente — sans quoi un dépôt repartant d'une racine de genèse fraîche
-///   passerait inaperçu.
+/// - **délégation de la greffe** : son `hash_carte` figure parmi les enfants du
+///   sommet courant. Une seule assertion, et non l'inspection complète du
+///   nouveau sommet : le comportement de `greffe_enfants` est éprouvé par ses
+///   propres tests, il n'y a ici qu'à prouver que le dépôt l'appelle. Sans elle,
+///   supprimer cet appel laisserait l'EnuT sur le disque, orpheline et
+///   inatteignable depuis la racine, sans qu'aucun test ne bronche.
 #[test]
 fn depot_enu_texte() -> ResultScribe<()> {
     let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
@@ -446,21 +739,13 @@ fn depot_enu_texte() -> ResultScribe<()> {
 
     let nouvelle_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
 
-    // l'EnuT est bien fille de la nouvelle racine
+    // témoin du câblage : le dépôt délègue bien la greffe, dont le comportement
+    // propre est éprouvé par greffe_enfants_racine
     assert!(
         nouvelle_enu_racine
             .carte()
             .hashs_enu()?
             .contains(&enu_texte.hash_carte())
-    );
-
-    // La nouvelle racine est différente de la première
-    assert_ne!(enu_racine.hash_carte(), nouvelle_enu_racine.hash_carte());
-
-    // La nouvelle racine pointe vers l'ancienne
-    assert_eq!(
-        nouvelle_enu_racine.carte().metas().get("_racine"),
-        Some(&HEXLOWER.encode(&enu_racine.hash_carte()))
     );
 
     fermer_foyer(noyau, session);
