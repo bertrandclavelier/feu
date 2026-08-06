@@ -194,17 +194,9 @@ impl Scribe {
     /// métadonnée `"nom"`. Le marquage de la racine du nœud (`"_racine"`) n'est
     /// **pas** posé ici : il l'est par [`Enu::new_racine`] sur le sommet final.
     ///
-    /// Deux destinations possibles, selon le signataire de `enu_racine_depot` :
-    ///
-    /// - **répertoire d'un foyer** — il est reconstruit avec ses nouveaux
-    ///   enfants, re-signé sous sa propre braise, puis remonté jusqu'au sommet
-    ///   par [`Enu::remplacer`] ;
-    /// - **racine du nœud** ([`BRAISE_VIDE`], que seule une racine porte) — la
-    ///   greffe se fait à même le sommet : sa carte enrichie repart directement
-    ///   en [`Enu::new_racine`], qui la signe *nœud*. Passer par [`Enu::new`]
-    ///   échouerait (`ENU-005`) — cette braise ne désigne aucun foyer — et
-    ///   re-signer une racine sous un foyer serait un contresens : le sommet
-    ///   appartient au nœud, quel que soit le foyer qui reçoit les blobs.
+    /// L'accrochage sous `enu_racine_depot` et la remontée jusqu'au sommet sont
+    /// délégués à [`Self::greffe_enfants`], qui traite les deux destinations
+    /// possibles selon le signataire du répertoire d'accueil.
     ///
     /// Les entrées directement à la racine du comptoir (`depth == 1`) sont
     /// ajoutées comme enfants directs de `enu_racine_depot`. Les entrées plus
@@ -316,10 +308,56 @@ impl Scribe {
             }
         }
 
-        // greffe : le contenu de premier niveau devient enfant du dépôt
+        self.greffe_enfants(noyau, session, enu_racine_depot, &nouveaux_enfants)?;
+
+        comptoir.supprimer()?;
+
+        Ok(())
+    }
+
+    /// Accroche des ENU déjà signées sous `enu_racine_depot`, puis propage la
+    /// nouvelle racine de dépôt jusqu'à la racine du nœud.
+    ///
+    /// Point de passage unique des deux voies de dépôt : le comptoir y greffe
+    /// les N entrées de son premier niveau, un dépôt unitaire un seul hash. Les
+    /// enfants sont supposés **déjà signés et sauvegardés** dans `~/.feu/enu/` —
+    /// cette méthode ne touche qu'au répertoire d'accueil et à ce qui le
+    /// surplombe.
+    ///
+    /// Le `hash_carte` d'un répertoire dépendant de ses enfants, enrichir la
+    /// carte d'accueil en produit une nouvelle version, et la modification
+    /// remonte de proche en proche jusqu'à un nouveau sommet du nœud.
+    ///
+    /// Deux destinations, selon le signataire de `enu_racine_depot` — c'est
+    /// l'unique endroit où se décide qui signe le sommet :
+    ///
+    /// - **répertoire d'un foyer** — reconstruit avec ses nouveaux enfants,
+    ///   re-signé sous sa propre braise, puis remonté par [`Enu::remplacer`] ;
+    /// - **racine du nœud** ([`BRAISE_VIDE`], que seule une racine porte) — la
+    ///   greffe se fait à même le sommet : sa carte enrichie repart directement
+    ///   en [`Enu::new_racine`], qui la signe *nœud*. Passer par [`Enu::new`]
+    ///   échouerait (`ENU-005`) — cette braise ne désigne aucun foyer — et
+    ///   re-signer une racine sous un foyer serait un contresens : le sommet
+    ///   appartient au nœud, quel que soit le foyer qui reçoit les contenus.
+    ///
+    /// Tout foyer présent sur le chemin reconstruit doit être **ouvert**, sa
+    /// re-signature l'exigeant.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurScribe::Interne`] (`ENU-004`) si `enu_racine_depot`
+    /// n'est pas un répertoire. Propage toute erreur d'E/S, d'authentification
+    /// ou de signature — notamment un foyer fermé sur le chemin remonté.
+    fn greffe_enfants(
+        &self,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+        enu_racine_depot: &Enu,
+        hashs_nouveaux_enfants: &[[u8; 32]],
+    ) -> ResultScribe<()> {
         let mut nouvelle_carte = enu_racine_depot.carte().clone();
 
-        for h in &nouveaux_enfants {
+        for h in hashs_nouveaux_enfants {
             nouvelle_carte.ajout_hash_donnee(h)?;
         }
 
@@ -347,8 +385,31 @@ impl Scribe {
                 session,
             )?;
         }
+        Ok(())
+    }
 
-        comptoir.supprimer()?;
+    /// Dépose une ENU déjà signée sous `enu_racine_depot` : sauvegarde dans
+    /// `~/.feu/enu/`, puis greffe via [`Self::greffe_enfants`].
+    ///
+    /// Voie unitaire du dépôt, par opposition à celle du comptoir : une ENU à
+    /// la fois, quelle que soit sa carte. Elle ne signe rien — l'appelant a
+    /// choisi le foyer signataire en construisant l'enveloppe, ce qui permet de
+    /// ranger un contenu dans un foyer tout en l'accrochant sous le répertoire
+    /// d'un autre.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage les erreurs de sauvegarde et celles de [`Self::greffe_enfants`].
+    pub(super) fn depot_enu(
+        &self,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+        enu_racine_depot: &Enu,
+        enu: &Enu,
+    ) -> ResultScribe<()> {
+        enu.sauvegarder(&self.chemin_enu)?;
+
+        self.greffe_enfants(noyau, session, enu_racine_depot, &[enu.hash_carte()])?;
 
         Ok(())
     }
@@ -359,29 +420,17 @@ impl Scribe {
     /// Variante allégée de [`Self::fermeture_comptoir_depot`] : pas de comptoir,
     /// pas de blob, pas de classeur. Le texte est embarqué dans une
     /// [`Carte::Texte`] (bornée à `MAX_TAILLE_TEXTE`, nommée par la méta `"nom"`
-    /// — validée à la construction), mise sous enveloppe signée — l'`EnuT` — et
-    /// sauvegardée dans `~/.feu/enu/`. Son `hash_carte` rejoint ensuite les
-    /// enfants de `enu_racine_depot`, dont la carte enrichie devient une nouvelle
-    /// version : le `hash_carte` d'un répertoire dépendant de ses enfants, la
-    /// modification remonte jusqu'à produire une nouvelle racine de nœud.
+    /// — validée à la construction), mise sous enveloppe signée — l'`EnuT` —
+    /// puis confiée à [`Self::depot_enu`], qui la sauvegarde et la greffe.
+    ///
+    /// Elle survit à l'existence de [`Self::depot_enu`], plus général, parce
+    /// qu'elle est la **seule** voie pour une `EnuT` : un texte n'existe pas
+    /// comme fichier, il ne peut donc pas passer par un comptoir de dépôt.
     ///
     /// L'`EnuT` est signée sous la braise d'`index_foyer` — le foyer demandé,
     /// pas celui du répertoire d'accueil, à l'image du comptoir qui porte son
-    /// propre foyer de destination. Un texte peut ainsi être rangé dans un foyer
-    /// tout en étant accroché sous le répertoire d'un autre.
-    ///
-    /// Le répertoire d'accueil, lui, suit son signataire — deux destinations
-    /// possibles, comme dans [`Self::fermeture_comptoir_depot`] :
-    ///
-    /// - **répertoire d'un foyer** — reconstruit, re-signé sous sa propre
-    ///   braise, puis remonté jusqu'au sommet par [`Enu::remplacer`] ;
-    /// - **racine du nœud** ([`BRAISE_VIDE`]) — sa carte enrichie repart
-    ///   directement en [`Enu::new_racine`], qui la signe *nœud*. Passer par
-    ///   [`Enu::new`] échouerait (`ENU-005`) : cette braise ne désigne aucun
-    ///   foyer.
-    ///
-    /// Le foyer du texte, celui du répertoire d'accueil et tout foyer présent
-    /// sur le chemin remonté par [`Enu::remplacer`] doivent être **ouverts**.
+    /// propre foyer de destination. Le foyer du texte doit donc être ouvert, en
+    /// plus de ceux qu'exige la greffe.
     ///
     /// # Retour
     ///
@@ -414,36 +463,7 @@ impl Scribe {
             session.braise_foyer(index_foyer)?,
         )?;
 
-        enu_texte.sauvegarder(&self.chemin_enu)?;
-
-        let mut nouvelle_carte = enu_racine_depot.carte().clone();
-
-        nouvelle_carte.ajout_hash_donnee(&enu_texte.hash_carte())?;
-
-        if enu_racine_depot.braise() == BRAISE_VIDE {
-            Enu::new_racine(
-                noyau,
-                session,
-                &self.chemin_enu,
-                &self.chemin_derniere_racine,
-                Some(nouvelle_carte),
-            )?;
-        } else {
-            let nouvelle_enu_racine_depot =
-                Enu::new(nouvelle_carte, noyau, session, enu_racine_depot.braise())?;
-
-            nouvelle_enu_racine_depot.sauvegarder(&self.chemin_enu)?;
-
-            // remonte la nouvelle racine de dépôt jusqu'à la racine du nœud
-            Enu::remplacer(
-                &self.chemin_enu,
-                &self.chemin_derniere_racine,
-                &enu_racine_depot.hash_carte(),
-                &nouvelle_enu_racine_depot,
-                noyau,
-                session,
-            )?;
-        }
+        self.depot_enu(noyau, session, enu_racine_depot, &enu_texte)?;
 
         Ok(())
     }
