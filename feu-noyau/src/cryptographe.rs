@@ -464,6 +464,20 @@ impl Cryptographe {
     /// recalcule le hash SHA3-256 du résultat. Si le hash recalculé ne correspond
     /// pas à `hash`, la donnée est considérée corrompue et une erreur est retournée.
     ///
+    /// Cette comparaison n'est pas redondante avec l'auth tag AES-GCM, contrairement
+    /// à ce qu'elle peut laisser croire. L'auth tag atteste que le contenu n'a pas
+    /// été modifié, pas qu'il s'agit du contenu demandé : le chiffrement se fait
+    /// sans données associées, donc rien ne lie un blob au hash sous lequel il est
+    /// rangé. Deux blobs d'un même classeur, chiffrés avec la même clé, sont
+    /// interchangeables aux yeux d'AES-GCM. Le hash est ce qui les distingue —
+    /// c'est aussi lui qui fonde l'adressage par contenu du classeur.
+    ///
+    /// Aucun test ne couvre cette branche : la comparaison se réduit à un `!=`
+    /// entre deux tableaux de 32 octets, sans logique à prendre en défaut, et le
+    /// seul scénario qui l'atteint sans buter d'abord sur l'auth tag est la
+    /// permutation de deux blobs du même classeur du même foyer. Ailleurs, les
+    /// clés diffèrent et le déchiffrement échoue avant.
+    ///
     /// # Erreurs
     ///
     /// Retourne une erreur si le foyer ou le classeur est absent du trousseau,
@@ -722,5 +736,194 @@ impl Cryptographe {
     fn efface_mdp_et_cle_ephemere(&mut self) {
         self.trousseau.efface_mdp();
         self.trousseau.efface_cle_ephemere();
+    }
+}
+
+// Couvert ici : les deux primitives de bout en bout, la signature ML-DSA-87 et
+// le chiffrement asymétrique ML-KEM-1024. Rien ne les prouvait jusqu'ici, alors
+// que le protocole ENU repose entièrement dessus.
+//
+// `empreinte` n'a pas de test propre : elle ne fait qu'appeler SHA3-256, déjà
+// testé dans sa crate. Un test ici ne vérifierait que l'absence de faute de
+// frappe dans une ligne. Même raisonnement pour la garde d'intégrité de
+// `dechiffrement_blob`, dont la doc porte le détail.
+//
+// Non couvert ici, car exige une `InterfaceFeuNoyau` et le disque :
+//
+// - l'initialisation du nœud (`initialise_noeud_a_partir_*`), qui passe par
+//   les saisies de seed et de mot de passe ;
+// - le rechargement des trousseaux publics (`recoit_trousseau_public_*`) et le
+//   `changement_mdp` ;
+// - les flux de chiffrement des archives de foyer (`donne_flux_*`), qui
+//   délèguent au chiffrement par chunks de `Trousseau`.
+//
+// Tous relèvent des tests d'intégration.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Monte un cryptographe utilisable et rend son [`TrousseauPublicComplet`].
+    ///
+    /// Le mot de passe et le sel n'ont ici aucun rôle propre : ils ne servent
+    /// qu'à rendre possible `donne_trousseau_public_complet`, qui dérive une
+    /// clé éphémère Argon2id. Or c'est l'unique chemin d'accès aux clés
+    /// publiques depuis ce module — les accesseurs de [`Trousseau`] sont privés
+    /// au sien. Posés directement plutôt que collectés, ils dispensent les
+    /// tests d'une [`InterfaceFeuNoyau`] factice.
+    ///
+    /// Deux foyers sont dérivés, pas un : chaque test a besoin d'une seconde
+    /// identité pour son cas négatif — clé de vérification étrangère pour la
+    /// signature, index de déchiffrement étranger pour le chiffrement
+    /// asymétrique. Retirer le foyer 1 les ferait passer sans plus rien
+    /// prouver.
+    ///
+    /// Appelable une seule fois par cryptographe : `donne_trousseau_public_complet`
+    /// efface le mot de passe avant de rendre la main. Les clés privées, elles,
+    /// restent en place — signature et déchiffrement fonctionnent après.
+    fn monte_cryptographe_de_test(
+        cryptographe: &mut Cryptographe,
+    ) -> ResultCryptographe<TrousseauPublicComplet> {
+        let seed = SecretBox::new(Box::new([0x22; 64]));
+        cryptographe
+            .trousseau
+            .definit_mdp(SecretString::from("mot de passe"));
+        cryptographe.trousseau.definit_sel([0x33; 16]);
+        cryptographe.trousseau.ajouter_paire_noeud(&seed)?;
+        cryptographe.trousseau.ajouter_trousseau_foyer(&seed, 0)?;
+        cryptographe.trousseau.ajouter_trousseau_foyer(&seed, 1)?;
+
+        cryptographe.donne_trousseau_public_complet()
+    }
+
+    /// Vérifie le cycle signature/vérification ML-DSA-87, pour le nœud et pour
+    /// un foyer.
+    ///
+    /// Rien ne prouvait jusqu'ici que la primitive de signature était
+    /// correctement câblée — or tout le protocole ENU repose dessus : c'est
+    /// elle qui atteste l'origine d'un message. Une vérification qui rendrait
+    /// systématiquement `true` passerait aujourd'hui inaperçue.
+    ///
+    /// Les deux cas négatifs portent chacun une propriété distincte, aucun
+    /// n'est le doublon de l'autre :
+    /// - clé publique étrangère (foyer 1 pour une signature du foyer 0) — la
+    ///   signature est liée à la clé, les foyers ne se couvrent pas entre eux ;
+    /// - message altéré — la signature est liée au contenu, on ne peut pas
+    ///   signer une chose et en transmettre une autre.
+    ///
+    /// La branche d'erreur `ERR_CRY_005` (encodage de signature mal formé)
+    /// reste volontairement non couverte : altérer les octets d'une signature
+    /// donne tantôt `Ok(false)`, tantôt `Err`, selon l'octet touché et l'étape
+    /// du décodage ML-DSA qu'il fait échouer. Un test non déterministe coûte
+    /// plus qu'il ne prouve — d'où l'altération portée sur le message.
+    #[test]
+    fn cycle_signature_verification() -> ResultCryptographe<()> {
+        let mut cryptographe = Cryptographe::new();
+        let trousseau_public = monte_cryptographe_de_test(&mut cryptographe)?;
+
+        let message = b"message a signer et verifier";
+
+        // Cas nominal du nœud. Sa clé de signature suit un chemin de dérivation
+        // distinct de celui des foyers : la couvrir séparément n'est pas un
+        // doublon.
+        let signature = cryptographe.signature_noeud(message)?;
+
+        assert!(Cryptographe::verification_signature(
+            trousseau_public
+                .donne_trousseau_public_noeud()
+                .donne_cle_sig_pub(),
+            signature,
+            message
+        )?);
+
+        // Cas nominal d'un foyer. Cette signature sert aussi de témoin aux deux
+        // cas négatifs qui suivent : seule la clé de vérification, puis le
+        // message, y changent — l'échec ne peut donc venir que de là.
+        let signature = cryptographe.signature_foyer(0, message)?;
+
+        assert!(Cryptographe::verification_signature(
+            trousseau_public
+                .donne_trousseau_public_foyer(0)?
+                .donne_cle_sig_pub(),
+            signature,
+            message
+        )?);
+
+        // Clé publique d'un autre foyer, signature et message inchangés.
+        assert!(!Cryptographe::verification_signature(
+            trousseau_public
+                .donne_trousseau_public_foyer(1)?
+                .donne_cle_sig_pub(),
+            signature,
+            message
+        )?);
+
+        // Bonne clé, bonne signature, message amputé de son dernier octet.
+        let message_altere = b"message a signer et verifie";
+
+        assert!(!Cryptographe::verification_signature(
+            trousseau_public
+                .donne_trousseau_public_foyer(0)?
+                .donne_cle_sig_pub(),
+            signature,
+            message_altere
+        )?);
+
+        Ok(())
+    }
+
+    /// Vérifie le cycle chiffrement/déchiffrement asymétrique ML-KEM-1024.
+    ///
+    /// La chaîne encapsulation ML-KEM → dérivation HKDF-SHA3-256 → AES-256-GCM
+    /// est assemblée à la main dans `chiffrement_asymetrique`, puis refaite en
+    /// miroir dans `dechiffrement_asymetrique`. Rien ne garantissait que les
+    /// deux moitiés s'accordaient — même label HKDF, même découpe du format de
+    /// sortie. C'est le round-trip qui l'établit.
+    ///
+    /// Le cas négatif rend une **erreur**, non un `false`, et elle ne vient pas
+    /// d'où on l'attendrait : ML-KEM ne rejette jamais un ciphertext (rejet
+    /// implicite). Décapsuler avec la mauvaise clé privée réussit et rend un
+    /// secret partagé pseudo-aléatoire, sans broncher. C'est l'auth tag
+    /// AES-GCM, un cran plus loin, qui refuse.
+    ///
+    /// `is_err()` suffit, sans inspection de la variante : `dechiffrement_asymetrique`
+    /// n'a que deux causes d'échec, et le foyer 1 étant présent dans le
+    /// trousseau monté, celle du foyer absent est exclue par construction. Le
+    /// round-trip qui précède sert de témoin — il attribue l'échec au
+    /// changement d'index plutôt qu'à un chiffrement raté. C'est cette
+    /// combinaison, pas la seule assertion, qui rend le test concluant.
+    #[test]
+    fn cycle_chiffrement_dechiffrement_asymetrique() -> ResultCryptographe<()> {
+        let mut cryptographe = Cryptographe::new();
+
+        let trousseau_public = monte_cryptographe_de_test(&mut cryptographe)?;
+
+        let message = b"message a chiffrer et dechiffrer";
+
+        // En usage réel, l'expéditeur est un nœud tiers. Ici le même
+        // cryptographe chiffre et déchiffre : `chiffrement_asymetrique` ne
+        // consomme que la clé publique du destinataire, aucun secret de
+        // l'expéditeur n'entre dans le schéma — un second cryptographe
+        // n'apporterait rien au test.
+        let message_chiffre = cryptographe.chiffrement_asymetrique(
+            &trousseau_public
+                .donne_trousseau_public_foyer(0)?
+                .donne_cle_chiff_pub(),
+            message,
+        )?;
+
+        assert_eq!(
+            cryptographe.dechiffrement_asymetrique(0, &message_chiffre)?,
+            message
+        );
+
+        // Même ciphertext, index du foyer 1 : seul le foyer 0 détient la clé
+        // privée capable d'en retrouver le bon secret partagé.
+        assert!(
+            cryptographe
+                .dechiffrement_asymetrique(1, &message_chiffre)
+                .is_err()
+        );
+
+        Ok(())
     }
 }
