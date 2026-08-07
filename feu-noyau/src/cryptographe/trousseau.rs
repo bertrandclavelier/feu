@@ -1259,3 +1259,152 @@ impl Trousseau {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Vérifie qu'une même seed redonne toujours exactement le même matériau.
+    ///
+    /// C'est l'invariant sur lequel repose `demarrage_secours` : reconstruire un
+    /// nœud à partir de la seed doit rendre les mêmes clés et les mêmes braises.
+    /// S'il cède, les données déjà déposées deviennent illisibles et les foyers
+    /// changent d'adresse.
+    #[test]
+    fn derivation_deterministe_meme_seed() -> ResultCryptographe<()> {
+        let seed = SecretBox::new(Box::new([0x42; 64]));
+
+        // Les trois appels reproduisent la séquence de
+        // `Cryptographe::genere_trousseau_a_partir_seed` — sel et matériau des
+        // foyers sortent tous de la seed, par des labels HKDF distincts.
+
+        // Génération trousseau 1
+        let mut trousseau1 = Trousseau::new();
+        trousseau1.genere_sel(&seed)?;
+        trousseau1.ajouter_paire_noeud(&seed)?;
+        for i in 0..MAX_FOYERS {
+            trousseau1.ajouter_trousseau_foyer(&seed, i)?;
+        }
+
+        // Génération trousseau 2
+        let mut trousseau2 = Trousseau::new();
+        trousseau2.genere_sel(&seed)?;
+        trousseau2.ajouter_paire_noeud(&seed)?;
+        for i in 0..MAX_FOYERS {
+            trousseau2.ajouter_trousseau_foyer(&seed, i)?;
+        }
+
+        assert_eq!(
+            trousseau1.sel.as_ref().unwrap(),
+            trousseau2.sel.as_ref().unwrap()
+        );
+
+        assert_eq!(
+            trousseau1.donne_cle_privee_signature_noeud()?,
+            trousseau2.donne_cle_privee_signature_noeud()?
+        );
+
+        for i in 0..MAX_FOYERS {
+            let trousseau_foyer1 = trousseau1.trousseaux_foyers[i].as_ref().unwrap();
+            let trousseau_foyer2 = trousseau2.trousseaux_foyers[i].as_ref().unwrap();
+
+            assert_eq!(trousseau_foyer1.braise, trousseau_foyer2.braise);
+            assert_eq!(
+                trousseau_foyer1.donne_cle_privee_signature(),
+                trousseau_foyer2.donne_cle_privee_signature()
+            );
+            assert_eq!(
+                trousseau_foyer1.donne_cle_privee_chiffrement(),
+                trousseau_foyer2.donne_cle_privee_chiffrement()
+            );
+            assert_eq!(
+                trousseau_foyer1.donne_cle_chiffrement().expose_secret(),
+                trousseau_foyer2.donne_cle_chiffrement().expose_secret(),
+            );
+
+            for j in 0..MAX_CLASSEURS {
+                let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[j]
+                    .as_ref()
+                    .unwrap();
+                let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[j]
+                    .as_ref()
+                    .unwrap();
+
+                assert_eq!(cle1.expose_secret(), cle2.expose_secret());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Vérifie que deux seeds distinctes ne partagent aucun élément dérivé.
+    ///
+    /// Sel, clés du nœud, clés et braises de chaque foyer : rien ne doit
+    /// coïncider entre deux nœuds nés de seeds différentes.
+    #[test]
+    fn derivation_deterministe_seeds_differentes() -> ResultCryptographe<()> {
+        // Contrepartie du test précédent : une dérivation qui ignorerait la seed
+        // serait parfaitement « déterministe », mais rendrait le même matériau
+        // pour tous les nœuds. Seules deux seeds distinctes attrapent ce cas.
+        let seed1 = SecretBox::new(Box::new([0x42; 64]));
+        let seed2 = SecretBox::new(Box::new([0x43; 64]));
+
+        // Génération trousseau 1
+        let mut trousseau1 = Trousseau::new();
+        trousseau1.genere_sel(&seed1)?;
+        trousseau1.ajouter_paire_noeud(&seed1)?;
+        for i in 0..MAX_FOYERS {
+            trousseau1.ajouter_trousseau_foyer(&seed1, i)?;
+        }
+
+        // Génération trousseau 2
+        let mut trousseau2 = Trousseau::new();
+        trousseau2.genere_sel(&seed2)?;
+        trousseau2.ajouter_paire_noeud(&seed2)?;
+        for i in 0..MAX_FOYERS {
+            trousseau2.ajouter_trousseau_foyer(&seed2, i)?;
+        }
+
+        assert_ne!(
+            trousseau1.sel.as_ref().unwrap(),
+            trousseau2.sel.as_ref().unwrap()
+        );
+
+        assert_ne!(
+            trousseau1.donne_cle_privee_signature_noeud()?,
+            trousseau2.donne_cle_privee_signature_noeud()?
+        );
+
+        for i in 0..MAX_FOYERS {
+            let trousseau_foyer1 = trousseau1.trousseaux_foyers[i].as_ref().unwrap();
+            let trousseau_foyer2 = trousseau2.trousseaux_foyers[i].as_ref().unwrap();
+
+            assert_ne!(trousseau_foyer1.braise, trousseau_foyer2.braise);
+            assert_ne!(
+                trousseau_foyer1.donne_cle_privee_signature(),
+                trousseau_foyer2.donne_cle_privee_signature()
+            );
+            assert_ne!(
+                trousseau_foyer1.donne_cle_privee_chiffrement(),
+                trousseau_foyer2.donne_cle_privee_chiffrement()
+            );
+            assert_ne!(
+                trousseau_foyer1.donne_cle_chiffrement().expose_secret(),
+                trousseau_foyer2.donne_cle_chiffrement().expose_secret(),
+            );
+
+            for j in 0..MAX_CLASSEURS {
+                let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[j]
+                    .as_ref()
+                    .unwrap();
+                let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[j]
+                    .as_ref()
+                    .unwrap();
+
+                assert_ne!(cle1.expose_secret(), cle2.expose_secret());
+            }
+        }
+
+        Ok(())
+    }
+}
