@@ -42,7 +42,7 @@
 //!
 //! # État initial
 //!
-//! À l'instanciation, le trousseau est vide : `mdp` et
+//! À l'instanciation, le trousseau est vide : `mdp`, `cle_ephemere`, `sel` et
 //! `paire_signature_noeud` sont à `None`, `trousseaux_foyers` est un tableau fixe
 //! de `None`. Les champs sont peuplés au fil du cycle de vie de la session.
 //!
@@ -60,7 +60,8 @@
 //! - [`PaireClesChiffrement`] — paire de clés ML-KEM-1024 ; `privee` protégée par
 //!   `ZeroizeOnDrop` (exception : `DecapsulationKey` n'implémente pas `Zeroize`)
 //! - `cle_chiffrement` — clé symétrique dans `SecretBox<[u8; 32]>` (pas de newtype)
-//! - `mdp` — mot de passe dans `Option<SecretBox<String>>` (pas de newtype)
+//! - `mdp` — mot de passe dans `Option<SecretString>`, alias de
+//!   `SecretBox<str>` dans `secrecy` (pas de newtype)
 //! - `sel` — sel Argon2id dans `Option<[u8; 16]>` (pas secret — dérivé de manière déterministe
 //!   depuis la seed par HKDF, re-dérivable en cas de perte du disque)
 //! - `cle_ephemere` — clé AES-256-GCM dérivée du mot de passe via Argon2id,
@@ -482,7 +483,7 @@ impl Trousseau {
 
     /// Définit le mot de passe du trousseau.
     ///
-    /// `mot` est un [`SecretBox<String>`] déjà construit par l'appelant —
+    /// `mot` est un [`SecretString`] déjà construit par l'appelant —
     /// la méthode se contente de le stocker. Tout mot de passe précédemment
     /// défini est remplacé et zéroïsé au drop.
     pub(super) fn definit_mdp(&mut self, mot: SecretString) {
@@ -491,7 +492,7 @@ impl Trousseau {
 
     /// Efface le mot de passe du trousseau.
     ///
-    /// Met `mdp` à `None` — la destruction du [`SecretBox<String>`] déclenche
+    /// Met `mdp` à `None` — la destruction du [`SecretString`] déclenche
     /// la zéroïsation automatique de la mémoire.
     pub(super) fn efface_mdp(&mut self) {
         self.mdp = None;
@@ -1260,8 +1261,27 @@ impl Trousseau {
     }
 }
 
+// Couvert ici : la dérivation des clés depuis la seed, le chiffrement
+// symétrique AES-256-GCM, et le rejet d'un mauvais mot de passe.
+//
+// `chiffre_cle`, `chiffre_seed` et `chiffre_blob` n'ont pas de test propre :
+// toutes délèguent à `chiffrement_generique_avec_cle`, seul endroit où le
+// chiffrement a réellement lieu. Elles ne font que choisir la clé et resserrer
+// le type de sortie — les tester séparément reviendrait à tester trois fois le
+// même chemin de code.
+//
+// Non couvert ici, car impossible à exercer sans écrire sur le disque :
+//
+// - le chiffrement de flux par chunks (`chiffre_avec_cle` et sa réciproque),
+//   employé pour les archives de foyer ;
+// - la persistance des trousseaux publics (`genere_trousseau_public_complet`
+//   et les `trousseau_public_*_vers_*`).
+//
+// Ces deux mécanismes relèvent des tests d'intégration.
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     /// Vérifie qu'une même seed redonne toujours exactement le même matériau.
@@ -1404,6 +1424,141 @@ mod tests {
                 assert_ne!(cle1.expose_secret(), cle2.expose_secret());
             }
         }
+
+        Ok(())
+    }
+
+    /// Vérifie le cycle chiffrement/déchiffrement AES-256-GCM.
+    ///
+    /// `chiffrement_generique_avec_cle` est le point de passage unique de tout
+    /// le chiffrement symétrique du trousseau : `chiffre_cle`, `chiffre_seed` et
+    /// `chiffre_blob` y délèguent, en ne changeant que la clé fournie et le type
+    /// de sortie. Le tester une fois les couvre tous les trois.
+    #[test]
+    fn cycle_chiffrement_dechiffrement_generique() -> ResultCryptographe<()> {
+        let cle = [0x11u8; 32];
+        let contenu = b"contenu de test";
+
+        let chiffre1 = Trousseau::chiffrement_generique_avec_cle(&cle, contenu)?;
+        let chiffre2 = Trousseau::chiffrement_generique_avec_cle(&cle, contenu)?;
+
+        let dechiffre1 = Trousseau::dechiffrement_generique_avec_cle(&cle, &chiffre1)?;
+        let dechiffre2 = Trousseau::dechiffrement_generique_avec_cle(&cle, &chiffre2)?;
+
+        // Le nonce est tiré d'`OsRng` à chaque appel : deux chiffrements du même
+        // contenu ne peuvent pas coïncider. Un nonce figé briserait AES-GCM.
+        assert_ne!(chiffre1, chiffre2);
+        assert_eq!(dechiffre1, dechiffre2);
+        assert_eq!(dechiffre1, contenu);
+
+        Ok(())
+    }
+
+    /// Vérifie qu'un mot de passe incorrect fait échouer le déchiffrement.
+    ///
+    /// C'est le mécanisme réel de vérification du mot de passe Feu : aucun mot
+    /// de passe n'est stocké, ni en clair ni en hash. La clé éphémère est
+    /// dérivée par Argon2id du mot de passe et du sel — un mot de passe erroné
+    /// donne une clé différente, et AES-GCM rejette l'auth tag.
+    #[test]
+    fn mauvais_mot_de_passe() -> ResultCryptographe<()> {
+        let mut trousseau = Trousseau::new();
+        trousseau.definit_sel([0x22; 16]);
+        trousseau.definit_mdp(SecretString::from("bon mot de passe"));
+        trousseau.derive_cle_ephemere()?;
+
+        let cle = [0x32; 32];
+
+        let cle_chiffree = trousseau.chiffre_cle(&cle)?;
+
+        // Témoin : établit que le déchiffrement fonctionne avec le bon mot de
+        // passe. Sans lui, l'échec attendu plus bas pourrait venir d'un
+        // chiffrement raté plutôt que du changement de mot de passe.
+        let cle_dechiffree = trousseau.dechiffre_cle(&cle_chiffree)?;
+
+        assert_eq!(&cle, cle_dechiffree.expose_secret());
+
+        // Le sel reste inchangé : seul le mot de passe varie, donc seule la clé
+        // éphémère change.
+        trousseau.definit_mdp(SecretString::from("mauvais mot de passe"));
+        trousseau.derive_cle_ephemere()?;
+
+        assert!(trousseau.dechiffre_cle(&cle_chiffree).is_err());
+
+        Ok(())
+    }
+
+    /// Vérifie que chaque dérivation produit une clé distincte de toutes les autres.
+    ///
+    /// Preuve de la séparation de domaine HKDF : chaque clé est tirée d'un `info`
+    /// qui lui est propre — label, index du foyer, et index du classeur le cas
+    /// échéant. Un label dupliqué ferait collisionner deux clés, et deux foyers
+    /// partageraient alors leur matériau.
+    #[test]
+    fn derivation_cles_distinctes() -> ResultCryptographe<()> {
+        // Un ensemble par famille : seules des valeurs de même nature et de même
+        // taille peuvent réellement collisionner. Confronter une clé symétrique
+        // de 32 octets à une clé publique de plusieurs milliers ne prouverait
+        // rien.
+        let seed = SecretBox::new(Box::new([0x11; 64]));
+
+        // Génération trousseau
+        let mut trousseau = Trousseau::new();
+        trousseau.ajouter_paire_noeud(&seed)?;
+        for i in 0..MAX_FOYERS {
+            trousseau.ajouter_trousseau_foyer(&seed, i)?;
+        }
+
+        let mut cles_publiques_signature_vues = HashSet::new();
+        assert!(
+            cles_publiques_signature_vues.insert(
+                trousseau
+                    .paire_signature_noeud
+                    .as_ref()
+                    .unwrap()
+                    .publique
+                    .encode()
+            )
+        );
+
+        let mut cles_chiffrement_vues = HashSet::new();
+        let mut cles_publiques_chiffrement_vues = HashSet::new();
+
+        for i in 0..MAX_FOYERS {
+            let trousseau_foyer = trousseau.trousseaux_foyers[i].as_ref().unwrap();
+
+            assert!(
+                cles_publiques_signature_vues
+                    .insert(trousseau_foyer.paire_signature.publique.encode())
+            );
+
+            assert!(
+                cles_publiques_chiffrement_vues
+                    .insert(trousseau_foyer.paire_chiffrement.publique.to_bytes())
+            );
+
+            assert!(
+                cles_chiffrement_vues
+                    .insert(*trousseau_foyer.donne_cle_chiffrement().expose_secret())
+            );
+
+            for j in 0..MAX_CLASSEURS {
+                let cle = trousseau_foyer.cles_chiffrement_classeurs[j]
+                    .as_ref()
+                    .unwrap();
+
+                assert!(cles_chiffrement_vues.insert(*cle.expose_secret()));
+            }
+        }
+
+        assert_eq!(cles_publiques_signature_vues.len(), MAX_FOYERS + 1);
+
+        assert_eq!(cles_publiques_chiffrement_vues.len(), MAX_FOYERS);
+
+        assert_eq!(
+            cles_chiffrement_vues.len(),
+            MAX_FOYERS * MAX_CLASSEURS + MAX_FOYERS
+        );
 
         Ok(())
     }
