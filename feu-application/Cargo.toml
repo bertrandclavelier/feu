@@ -15,4 +15,5 @@ walkdir = "2.5"
 workspace = true
 
 [dev-dependencies]
+rand = "0.8"
 tempfile = "3.27.0"

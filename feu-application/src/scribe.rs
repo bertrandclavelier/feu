@@ -56,9 +56,6 @@ const ERR_SCR_002: &str = "SCR-002 > Le dossier existe déjà";
 /// L'ENU fournie comme racine de retrait n'est pas une `EnuR`
 /// ([`Carte::Repertoire`]) : seul un répertoire peut ouvrir une arborescence.
 const ERR_SCR_003: &str = "SCR-003 > Ce doit être une EnuR";
-/// La braise de l'ENU n'identifie aucun foyer de la session — impossible de
-/// résoudre l'`index_foyer` nécessaire à la lecture du blob.
-const ERR_SCR_004: &str = "SCR-004 > Braise inconnue";
 
 /// Tenant de la couche ENU — créé et maintient `~/.feu/enu/`.
 ///
@@ -524,8 +521,8 @@ impl Scribe {
     /// Retourne [`ErreurScribe::Interne`] si `chemin_retrait` est un dossier
     /// existant (`SCR-002`) ou si `enu_r` n'est pas un répertoire (`SCR-003`).
     /// Propage les erreurs de la descente : authentification d'un enfant,
-    /// nom absent ou invalide (`ENU-008`/`ENU-009`), braise inconnue
-    /// (`SCR-004`), E/S et lecture de blob (foyer fermé, blob introuvable).
+    /// nom absent ou invalide (`ENU-008`/`ENU-009`), E/S et lecture de blob
+    /// (foyer fermé, blob introuvable).
     pub(super) fn retrait_lecture_seule(
         &self,
         noyau: &mut FeuNoyau,
@@ -572,10 +569,11 @@ impl Scribe {
     /// Par variante :
     ///
     /// - [`Carte::Donnee`] — la braise résout l'`index_foyer` (elle seule en a
-    ///   besoin), puis [`FeuNoyau::lecture_donnees`] retrouve le classeur du
-    ///   blob, le déchiffre et écrit le clair directement dans le fichier de
-    ///   sortie (0o600). Le `File` est consommé par l'appel — flush et
-    ///   fermeture au drop, rien à reprendre ensuite.
+    ///   besoin, déjà garanti par [`Enu::charger`] sur `enu_courante`), puis
+    ///   [`FeuNoyau::lecture_donnees`] retrouve le classeur du blob, le
+    ///   déchiffre et écrit le clair directement dans le fichier de sortie
+    ///   (0o600). Le `File` est consommé par l'appel — flush et fermeture au
+    ///   drop, rien à reprendre ensuite.
     /// - [`Carte::Texte`] — le contenu embarqué est écrit tel quel, sans
     ///   passage par le noyau.
     /// - [`Carte::Repertoire`] — sous-dossier créé (0o700), puis récursion sur
@@ -584,10 +582,9 @@ impl Scribe {
     /// # Erreurs
     ///
     /// Retourne [`ErreurScribe::Interne`] si le nom est absent ou invalide
-    /// (`ENU-008`/`ENU-009`) ou si la braise d'une `Donnee` est inconnue de la
-    /// session (`SCR-004`). Propage les erreurs d'E/S, d'authentification d'un
-    /// enfant ([`Enu::charger`]) et de lecture de blob — notamment foyer fermé
-    /// ou blob introuvable.
+    /// (`ENU-008`/`ENU-009`). Propage les erreurs d'E/S, d'authentification
+    /// d'un enfant ([`Enu::charger`]) et de lecture de blob — notamment foyer
+    /// fermé ou blob introuvable.
     fn retrait_lecture_seule_recursif(
         &self,
         noyau: &mut FeuNoyau,
@@ -607,9 +604,9 @@ impl Scribe {
             } => {
                 // seule la lecture du blob exige un foyer : résolution ici,
                 // pas en tête — un répertoire n'en a pas besoin
-                let Some(index_foyer) = session.braise_vers_index(enu_courante.braise()) else {
-                    return Err(ErreurScribe::Interne(String::from(ERR_SCR_004)));
-                };
+                let index_foyer = session
+                    .braise_vers_index(enu_courante.braise())
+                    .expect("Braise déjà validée par Enu::charger avant d'atteindre ce point");
 
                 let chemin = Self::chemin_libre(chemin_courant, &nom_fichier);
 

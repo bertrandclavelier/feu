@@ -22,9 +22,13 @@
 //! contente de prouver qu'un appelant l'invoque. La doc de chacun dit lequel des
 //! deux rôles il tient.
 
-use std::{collections::BTreeSet, fs::write};
+use std::{
+    collections::{BTreeSet, HashSet},
+    fs::{create_dir, write},
+};
 
 use data_encoding::HEXLOWER;
+use rand::{Rng, distributions::Alphanumeric};
 use secrecy::SecretString;
 use tempfile::TempDir;
 
@@ -102,6 +106,84 @@ fn cree_noyau_et_foyer_ouvert() -> (
         scribe,
         session,
     )
+}
+
+/// Peuple `chemin` d'une arborescence à trois niveaux : un fichier et un
+/// dossier à la racine, ce dossier contenant lui-même un fichier et un
+/// dossier, jusqu'à un troisième niveau ne contenant qu'un fichier.
+///
+/// Sert à éprouver [`Scribe::fermeture_comptoir_depot`], qui traite
+/// différemment les enfants directs du comptoir (`depth == 1`) et les
+/// sous-arbres plus profonds (`depth > 1`) : la structure doit donc exercer
+/// les deux cas.
+///
+/// Noms et contenus sont aléatoires, ce qui permet d'appeler la fonction
+/// plusieurs fois dans un même test sans collision entre les arborescences
+/// produites.
+///
+/// # Erreurs
+///
+/// Propage toute erreur d'E/S — dossier déjà présent, permissions.
+fn remplir_dossier(chemin: &Path) -> ResultScribe<()> {
+    let chaine_aleatoire = |n: usize| -> String {
+        rand::thread_rng()
+            .sample_iter(Alphanumeric)
+            .take(n)
+            .map(char::from)
+            .collect()
+    };
+
+    // Niveau 1
+    // fichier 1
+    write(chemin.join(chaine_aleatoire(10)), chaine_aleatoire(100))?;
+
+    // Dossier 1
+    let chemin_dossier1 = chemin.join(chaine_aleatoire(10));
+    create_dir(&chemin_dossier1)?;
+
+    // Niveau 2
+    // fichier 2
+    write(
+        chemin_dossier1.join(chaine_aleatoire(10)),
+        chaine_aleatoire(100),
+    )?;
+
+    // dossier 2
+    let chemin_dossier2 = chemin_dossier1.join(chaine_aleatoire(10));
+    create_dir(&chemin_dossier2)?;
+
+    // Niveau 3
+    // fichier 3
+    write(
+        chemin_dossier2.join(chaine_aleatoire(10)),
+        chaine_aleatoire(100),
+    )?;
+
+    Ok(())
+}
+
+/// Relit récursivement `chemin` en un ensemble `(chemin relatif, contenu)`,
+/// un par fichier — les dossiers n'ont pas d'entrée propre, leur chemin relatif
+/// dans celui de leurs fichiers suffit à les distinguer.
+///
+/// Sert à comparer deux arborescences sans dépendre de l'ordre de parcours,
+/// notamment le contenu d'un comptoir avant fermeture face à celui d'un
+/// retrait après coup — l'ordre des enfants dans l'arbre ENU suit les hashs,
+/// pas les noms.
+fn lire_arborescence(chemin: &Path) -> ResultScribe<HashSet<(PathBuf, String)>> {
+    let mut resultat = HashSet::new();
+
+    for entree in WalkDir::new(chemin).min_depth(1) {
+        let entree = entree?;
+
+        if entree.file_type().is_file() {
+            let chemin_relatif = entree.path().strip_prefix(chemin).unwrap().to_path_buf();
+            let contenu = std::fs::read_to_string(entree.path())?;
+            resultat.insert((chemin_relatif, contenu));
+        }
+    }
+
+    Ok(resultat)
 }
 
 /// Referme le foyer et consomme le décor en fin de test.
@@ -196,8 +278,8 @@ fn falsification_avant_chargement_enu() {
     // Cibler ENU-003 : d'autres causes (braise inconnue, désérialisation)
     // sortent aussi en `Interne` — seul ce code prouve le rejet par la signature.
     assert!(matches!(
-        Enu::charger(&chemin_enu, &session, &enu.hash_carte()),
-        Err(ErreurScribe::Interne(m)) if m.contains("ENU-003")
+            Enu::charger(&chemin_enu, &session, &enu.hash_carte()),
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-003")
     ));
 
     fermer_foyer(noyau, session);
@@ -304,8 +386,8 @@ fn cycle_remplacements() {
 
     // garde : remplacement de même hash de carte que la racine courante → refus
     assert!(matches!(
-        Enu::remplacer(&chemin_enu, &chemin_derniere_racine,  &enu_racine.hash_carte(), &enu_racine, &noyau, &session),
-        Err(ErreurScribe::Interne(m)) if m.contains("ENU-007")
+            Enu::remplacer(&chemin_enu, &chemin_derniere_racine,  &enu_racine.hash_carte(), &enu_racine, &noyau, &session),
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-007")
     ));
 
     // Première arborescence : deux niveaux de répertoires foyer (enur_1 → enur_2
@@ -747,6 +829,122 @@ fn depot_enu_texte() -> ResultScribe<()> {
             .hashs_enu()?
             .contains(&enu_texte.hash_carte())
     );
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}
+
+/// Deux appels successifs pour le même nom dans le même dossier : le premier
+/// obtient le nom nu, chaque appel suivant un suffixe incrémental — tant que
+/// le chemin retourné reste occupé par l'appelant entre deux appels.
+#[test]
+fn chemin_libre_suffixe_les_homonymes() {
+    let tmp = TempDir::new().unwrap();
+
+    // rien n'existe : le nom nu
+    let chemin1 = Scribe::chemin_libre(tmp.path(), "photo.jpg");
+    assert_eq!(chemin1, tmp.path().join("photo.jpg"));
+
+    write(&chemin1, "premier").unwrap();
+
+    // le nom nu est pris : suffixe _1
+    let chemin2 = Scribe::chemin_libre(tmp.path(), "photo.jpg");
+    assert_eq!(chemin2, tmp.path().join("photo.jpg_1"));
+
+    write(&chemin2, "second").unwrap();
+
+    // les deux pris : suffixe _2
+    let chemin3 = Scribe::chemin_libre(tmp.path(), "photo.jpg");
+    assert_eq!(chemin3, tmp.path().join("photo.jpg_2"));
+}
+
+/// Cycle complet dépôt par comptoir → retrait, sur `fermeture_comptoir_depot`
+/// et `retrait_lecture_seule` — jusqu'ici le plus gros trou de couverture du
+/// fichier.
+///
+/// Dans l'ordre :
+///
+/// - **comptoir vide** : fermé sans greffe, la racine du nœud ne bouge pas ;
+/// - **dépôt réel** : arborescence à trois niveaux (voir [`remplir_dossier`]),
+///   déposée puis greffée sous la racine du nœud ; la nouvelle racine chaîne
+///   bien vers l'ancienne via la méta `"_racine"` ;
+/// - **`SCR-002`** : retrait visé sur un dossier déjà existant, refusé ;
+/// - **retrait nominal** : l'arborescence relue depuis le disque après retrait
+///   est identique (chemins relatifs + contenus, comparés en ensembles pour
+///   ignorer l'ordre de parcours) à celle déposée dans le comptoir — capturée
+///   *avant* la fermeture, qui supprime le dossier du comptoir.
+#[test]
+fn cycle_depot_retrait_simple() -> ResultScribe<()> {
+    let (_tmp, _, chemin_derniere_racine, mut noyau, mut scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    let dossier_temporaire = TempDir::new().unwrap();
+
+    //
+    // Premier dépôt vide
+    //
+    let chemin_comptoir1 = dossier_temporaire.path().join("comptoir_depot1");
+
+    let index_comptoir1 = scribe.ouverture_comptoir_depot(chemin_comptoir1.to_path_buf(), 0, 0)?;
+    assert_eq!(index_comptoir1, 0);
+
+    // Fermeture comptoir vide
+    scribe.fermeture_comptoir_depot(&mut noyau, &session, index_comptoir1, &enu_racine)?;
+
+    let deuxieme_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    // Pas de nouvelle racine
+    assert_eq!(enu_racine, deuxieme_enu_racine);
+
+    //
+    // Deuxième dépôt non vide
+    //
+    let chemin_comptoir2 = dossier_temporaire.path().join("comptoir_depot2");
+
+    let index_comptoir2 = scribe.ouverture_comptoir_depot(chemin_comptoir2.to_path_buf(), 0, 0)?;
+    assert_eq!(index_comptoir2, 1);
+
+    remplir_dossier(&chemin_comptoir2)?;
+
+    let arborescence_origine = lire_arborescence(&chemin_comptoir2)?;
+
+    scribe.fermeture_comptoir_depot(&mut noyau, &session, index_comptoir2, &enu_racine)?;
+
+    let deuxieme_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    assert_eq!(
+        deuxieme_enu_racine.carte().metas().get("_racine"),
+        Some(&HEXLOWER.encode(&enu_racine.hash_carte()))
+    );
+
+    //
+    // Premier retrait avec un chemin déjà existant
+    //
+    let dossier_temporaire2 = TempDir::new().unwrap();
+
+    assert!(matches!(
+        scribe.retrait_lecture_seule(
+            &mut noyau,
+            &session,
+            dossier_temporaire2.path(),
+            &deuxieme_enu_racine
+        ),
+        Err(ErreurScribe::Interne(m)) if m.contains("SCR-002")));
+
+    //
+    // Deuxième retrait avec un chemin correct
+    //
+    let chemin_retrait = dossier_temporaire.path().join("retrait");
+
+    scribe.retrait_lecture_seule(&mut noyau, &session, &chemin_retrait, &deuxieme_enu_racine)?;
+
+    let arborescence_relue = lire_arborescence(&chemin_retrait)?;
+
+    // Les deux arborescences doivent être identiques
+    assert_eq!(arborescence_origine, arborescence_relue);
 
     fermer_foyer(noyau, session);
 

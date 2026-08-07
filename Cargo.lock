@@ -548,6 +548,7 @@ version = "0.0.5"
 dependencies = [
  "data-encoding",
  "feu-noyau",
+ "rand",
  "secrecy",
  "tempfile",
  "thiserror 2.0.18",
