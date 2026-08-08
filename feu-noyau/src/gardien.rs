@@ -47,6 +47,7 @@ const ERR_GAR_005: &str = "GAR-005 > Problème encodage braise";
 ///
 /// Contient la version du format de fichier, le prochain index de dérivation
 /// et les adresses `.braise` des `MAX_FOYERS` foyers du nœud.
+#[derive(Debug, PartialEq)]
 struct Configuration {
     /// Version du format de `config.feu` — incrémentée à chaque changement
     /// de structure incompatible.
@@ -472,5 +473,43 @@ impl Gardien {
     /// Délègue la vérification de l'arborescence interne au carnet.
     pub(super) fn diagnostic_foyer(&self, braise: Braise) -> Vec<Anomalie> {
         self.carnet.verifier_arborescence_foyer(braise)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::braise::LONGUEUR_BRAISE;
+
+    /// Une configuration sérialisée puis reparsée redonne les mêmes valeurs,
+    /// adresses `.braise` comprises et dans le même ordre.
+    #[test]
+    fn cycle_configuration() -> ResultGardien<()> {
+        // Des braises toutes égales laisseraient passer une lecture qui mélange
+        // l'ordre des lignes. Chaque corps dérive donc de l'indice, écrit en
+        // binaire sur `LONGUEUR_BRAISE` caractères puis traduit `0`/`1` en
+        // `b`/`c` — l'alphabet BASE32 n'a ni `0` ni `1`.
+        let adresses_braise = std::array::from_fn(|i| {
+            let corps: String = format!("{i:0>LONGUEUR_BRAISE$b}")
+                .chars()
+                .map(|c| if c == '0' { 'b' } else { 'c' })
+                .collect();
+
+            Braise::try_from(format!("{corps}.braise").as_str()).expect("braise valide")
+        });
+
+        let configuration = Configuration {
+            version: 1111,
+            prochain_index: 2222,
+            adresses_braise,
+        };
+
+        let export = configuration.exporte_en_texte();
+
+        let configuration_relue = Configuration::new_from_string(&export)?;
+
+        assert_eq!(configuration, configuration_relue);
+
+        Ok(())
     }
 }

@@ -27,7 +27,7 @@ use crate::{ErreurFeuNoyau, ResultFeuNoyau};
 /// Nombre de caractères d'une adresse `.braise`, hors suffixe.
 ///
 /// 34 octets encodés en BASE32 sans padding donnent 55 caractères (`a-z2-7`).
-const LONGUEUR_BRAISE: usize = 55;
+pub(super) const LONGUEUR_BRAISE: usize = 55;
 
 /// Braise par défaut d'un slot de foyer non encore initialisé.
 ///
