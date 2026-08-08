@@ -6,18 +6,24 @@
 // FeuNoyau is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 // You should have received a copy of the GNU General Public License along with FeuNoyau. If not, see <https://www.gnu.org/licenses/>.
 
-//! Test de bout en bout du noyau : allumage, dépôt, extinction, rallumage.
+//! Tests de bout en bout du noyau.
 //!
 //! Une pile réelle est montée dans un `TempDir` — seed neuve, dérivation des
 //! clés post-quantiques, arborescence sur disque, chiffrement effectif — plutôt
 //! que des composants isolés. Seule une pile complète permet d'éprouver ce qui
-//! fait la valeur du noyau : qu'un blob déposé dans un foyer se relise à
-//! l'identique après que le noyau a été détruit, puis reconstruit du disque et
-//! du seul mot de passe.
+//! fait la valeur du noyau : qu'une donnée confiée à un foyer se retrouve
+//! intacte après extinction, et qu'elle reste hors de portée de qui n'a pas le
+//! mot de passe.
 //!
-//! Les assertions portent sur ce que le noyau **remonte à l'interface**, jamais
-//! sur son état interne : [`InterfaceTest`] enregistre chaque rappel pour le
-//! rendre observable.
+//! Deux cycles, chacun repartant d'un nœud neuf. [`cycle_vie_noyau`] suit
+//! l'allumage, le dépôt et la relecture après rallumage ;
+//! [`cycle_mot_de_passe`] éprouve le rechiffrement du trousseau et le rejet de
+//! l'ancien mot de passe.
+//!
+//! Les assertions portent sur ce que le noyau **rend observable** — rappels à
+//! l'interface, valeurs et erreurs de retour —, jamais sur son état interne :
+//! [`InterfaceTest`] enregistre chaque rappel pour le rendre lisible depuis le
+//! test.
 
 use std::fs::{File, read_to_string, write};
 
@@ -68,9 +74,10 @@ impl InterfaceTest {
 }
 
 impl InterfaceFeuNoyau for InterfaceTest {
-    // Constant : la fermeture d'un foyer doit retrouver le mot de passe qui a
-    // servi à l'ouvrir, et le second allumage celui du premier — sinon le
-    // déchiffrement échoue.
+    // Constant : le mot de passe est redemandé à chaque allumage du nœud et à
+    // chaque ouverture de foyer, deux fois lors d'un changement. Le figer fait
+    // concorder toutes ces saisies ; en faire varier la valeur d'une interface
+    // à l'autre est ce qu'éprouve `cycle_mot_de_passe`.
     fn demander_mdp(&self) -> Option<SecretString> {
         Some(SecretString::from(self.mot_de_passe.clone()))
     }
@@ -113,6 +120,9 @@ impl InterfaceFeuNoyau for InterfaceTest {
 /// Un blob déposé dans chacun des trois foyers se relit à l'identique après que
 /// le noyau a été détruit puis reconstruit, braises et clé publique de nœud
 /// retrouvées à partir du seul mot de passe.
+///
+/// Établit au passage l'unicité d'un blob dans un foyer : redéposé dans un autre
+/// classeur, il n'est pas dupliqué et le dépôt rend celui qui le détient déjà.
 #[test]
 fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -143,10 +153,20 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
         assert!(interface.cles_pub_sig[i].is_some());
         assert!(interface.cles_pub_chif[i].is_some());
 
-        // Source rouverte à chaque tour : `remplir` lit jusqu'à EOF, un handle
-        // partagé entre les foyers déposerait un blob vide dès le deuxième.
+        // Chaque dépôt exige une source neuve : `remplir` lit jusqu'à EOF, un
+        // handle réutilisé ne rendrait plus qu'un blob vide.
         let source_donnees = File::open(&chemin_donnees).unwrap();
         (hash_donnees, _) = noyau.depot_donnees(i, 0, &source_donnees)?;
+
+        // Même contenu, autre classeur demandé : le blob ne doit pas être
+        // dupliqué, et le dépôt rendre le classeur 0 où il réside déjà. Le hash
+        // identique le confirme — il ne dépend que du clair, jamais de la clé du
+        // classeur sous laquelle il vient d'être chiffré.
+        let source_donnees = File::open(&chemin_donnees).unwrap();
+        let (hash_donnees2, index) = noyau.depot_donnees(i, 1, &source_donnees)?;
+
+        assert_eq!(index, 0);
+        assert_eq!(hash_donnees, hash_donnees2);
 
         noyau.fermeture_foyer(&mut interface, i)?;
 
@@ -186,5 +206,77 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
 
         assert!(!interface2.etats[i]);
     }
+    Ok(())
+}
+
+/// Après un changement de mot de passe, l'ancien n'ouvre plus rien et le nouveau
+/// ouvre tout — aux deux points où le mot de passe est saisi.
+///
+/// Le mot de passe est demandé deux fois dans la vie d'un foyer : à l'allumage
+/// du nœud, pour déverrouiller les clés, puis à chaque
+/// [`ouverture_foyer`](FeuNoyau::ouverture_foyer), pour déchiffrer l'archive.
+/// Les deux dérivent leur clé éphémère du même Argon2id, mais empruntent des
+/// chemins distincts : le test éprouve les deux plutôt que d'inférer l'un de
+/// l'autre.
+#[test]
+fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
+    let tmp = TempDir::new().unwrap();
+
+    let chemin_feu = tmp.path().join(".feu");
+
+    let mut interface = InterfaceTest::new("mot de passe");
+
+    let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
+
+    // `changement_mdp` exige les trois foyers ouverts — leurs clés doivent être
+    // en mémoire pour être rechiffrées, sinon `TousFoyersNonOuverts`.
+    for i in 0..MAX_FOYERS {
+        noyau.ouverture_foyer(&mut interface, i)?;
+    }
+
+    // Le nouveau mot de passe est porté par une interface distincte : le
+    // changement le collecte par deux appels à `demander_mdp` et les exige
+    // égaux, ce qu'une interface à mot de passe fixe satisfait par construction.
+    let mut interface2 = InterfaceTest::new("nouveau mot de passe");
+
+    noyau.changement_mdp(&mut interface2)?;
+
+    // L'interface passée ici est indifférente : la fermeture rechiffre avec les
+    // clés déjà en mémoire et ne redemande jamais le mot de passe.
+    for i in 0..MAX_FOYERS {
+        noyau.fermeture_foyer(&mut interface, i)?;
+    }
+
+    // Extinction explicite : ce qui suit doit tout relire du disque, sans
+    // bénéficier du trousseau que le premier noyau gardait en mémoire.
+    drop(noyau);
+
+    // Premier point de saisie : l'ancien mot de passe ne déverrouille plus les
+    // clés du nœud, l'allumage échoue avant tout accès aux foyers. La variante
+    // seule suffit à situer la panne dans la crypto — discriminer plus finement
+    // demanderait de s'appuyer sur le `Display` d'`aes-gcm`, hors du contrôle
+    // de Feu.
+    let mut interface = InterfaceTest::new("mot de passe");
+
+    assert!(matches!(
+        FeuNoyau::new(&chemin_feu, None, &mut interface),
+        Err(ErreurFeuNoyau::Cryptographe(_))
+    ));
+
+    let mut interface2 = InterfaceTest::new("nouveau mot de passe");
+
+    let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface2)?;
+
+    noyau.ouverture_foyer(&mut interface2, 0)?;
+    noyau.fermeture_foyer(&mut interface2, 0)?;
+
+    // Second point de saisie : nœud allumé avec le bon mot de passe, foyer 0
+    // refermé juste avant. L'échec ne peut donc venir que de l'ancien mot de
+    // passe présenté à l'ouverture.
+    assert!(matches!(
+        noyau.ouverture_foyer(&mut interface, 0),
+        Err(ErreurFeuNoyau::Cryptographe(_))
+    ));
+
     Ok(())
 }
