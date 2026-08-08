@@ -858,7 +858,7 @@ impl FeuNoyau {
 
     // ── Données ──────────────────────────────────────────────────────────────
 
-    /// Stocke un blob dans un classeur d'un foyer ouvert.
+    /// Stocke un blob dans un classeur d'un foyer ouvert, sans jamais le dupliquer.
     ///
     /// Orchestre six opérations séquentielles :
     ///
@@ -867,10 +867,28 @@ impl FeuNoyau {
     /// 3. Lit `source` dans le tiroir par chunks — erreur si la taille dépasse
     ///    [`MAX_TAILLE_BLOB`].
     /// 4. Calcule le hash SHA3-256 du clair et chiffre le blob avec la clé du
-    ///    classeur (AES-256-GCM) via le Cryptographe.
-    /// 5. Si un blob portant ce hash existe déjà dans le classeur, retourne le
-    ///    hash en silence sans réécriture — invariant content-addressable.
-    /// 6. Écrit le blob chiffré dans `classeurN/<hash>.dat` via l'Archiviste.
+    ///    classeur **demandé** (AES-256-GCM) via le Cryptographe.
+    /// 5. Balaie **tous** les classeurs du foyer : si l'un détient déjà ce hash,
+    ///    retourne son index sans rien écrire — le chiffré préparé à l'étape 4
+    ///    est alors abandonné.
+    /// 6. Sinon écrit le blob chiffré dans `classeurN/<hash>.dat` via l'Archiviste.
+    ///
+    /// # Unicité dans le foyer
+    ///
+    /// Une ENU référence une donnée par le couple `(foyer, hash)` — le classeur
+    /// n'y figure pas, et [`lecture_donnees`](Self::lecture_donnees) le retrouve
+    /// en balayant. Deux copies du même blob dans deux classeurs resteraient
+    /// donc parfaitement lisibles, le hash désignant un contenu et non un
+    /// fichier ; mais [`suppression_donnees`](Self::suppression_donnees), qui
+    /// vise un classeur nommé, n'en effacerait qu'une et laisserait l'autre
+    /// lisible. Le balayage de l'étape 5 écarte le cas à la source : un hash
+    /// donné n'existe qu'à un seul endroit du foyer.
+    ///
+    /// La contrepartie est que **le classeur demandé n'est pas garanti**. Si le
+    /// blob se trouve déjà ailleurs, il y reste, chiffré sous la clé de son
+    /// classeur d'origine et non sous celle qui vient d'être employée à
+    /// l'étape 4. D'où le second membre du retour, qui dit où la donnée réside
+    /// réellement.
     ///
     /// # Invariants de sécurité
     ///
@@ -879,8 +897,10 @@ impl FeuNoyau {
     ///
     /// # Retour
     ///
-    /// Retourne le hash SHA3-256 du blob en clair — identifiant content-addressable
-    /// à conserver pour relire la donnée via [`lecture_donnees`](Self::lecture_donnees).
+    /// Le couple `(hash, classeur)` : le hash SHA3-256 du blob en clair —
+    /// identifiant content-addressable à conserver pour relire la donnée via
+    /// [`lecture_donnees`](Self::lecture_donnees) — et l'index du classeur qui
+    /// détient le blob, celui demandé ou celui où il résidait déjà.
     ///
     /// # Erreurs
     ///
@@ -893,7 +913,7 @@ impl FeuNoyau {
         index_foyer: usize,
         index_classeur: usize,
         source: impl Read,
-    ) -> ResultFeuNoyau<String> {
+    ) -> ResultFeuNoyau<(String, usize)> {
         if index_classeur >= MAX_CLASSEURS {
             return Err(ErreurFeuNoyau::IndexInvalide);
         }
@@ -905,14 +925,14 @@ impl FeuNoyau {
             self.cryptographe
                 .chiffrement_blob(index_foyer, index_classeur, tiroir.lire_blob())?;
 
-        if archiviste.existe_blob(index_classeur, &hash) {
-            return Ok(hash);
+        if let Some(classeur) = (0..MAX_CLASSEURS).find(|&c| archiviste.existe_blob(c, &hash)) {
+            return Ok((hash, classeur));
         }
 
         tiroir.remplace_blob(blob_chiffre);
         tiroir.definit_hash(&hash);
         archiviste.ecrit_blob(tiroir)?;
-        Ok(hash)
+        Ok((hash, index_classeur))
     }
 
     /// Lit et déchiffre un blob d'un foyer ouvert, sans en connaître le classeur.

@@ -187,6 +187,13 @@ impl Scribe {
     /// [`Carte::Repertoire`] référençant ses enfants par leur `hash_carte`.
     /// Toutes les ENU produites sont sauvegardées dans `~/.feu/enu/`.
     ///
+    /// Le classeur du comptoir n'est qu'une demande : si la donnée existe déjà
+    /// dans un autre classeur du foyer, [`FeuNoyau::depot_donnees`] l'y laisse et
+    /// rend l'index réel. Le traitement se poursuit sans rien changer et l'ENU
+    /// produite reste valable — elle référence un hash, pas un emplacement —
+    /// mais l'écart n'est **remonté nulle part** : le classeur réel est ignoré
+    /// ici, et le comptoir croira avoir déposé dans le sien.
+    ///
     /// Le nom de chaque entrée (fichier ou dossier) est conservé comme
     /// métadonnée `"nom"`. Le marquage de la racine du nœud (`"_racine"`) n'est
     /// **pas** posé ici : il l'est par [`Enu::new_racine`] sur le sommet final.
@@ -254,7 +261,7 @@ impl Scribe {
             if entree.file_type().is_file() {
                 let contenu = read(&chemin_entree)?;
 
-                let hash_fichier = noyau.depot_donnees(
+                let (hash_fichier, _) = noyau.depot_donnees(
                     comptoir.index_foyer(),
                     comptoir.index_classeur(),
                     &contenu[..],

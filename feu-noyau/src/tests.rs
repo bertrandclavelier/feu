@@ -146,7 +146,7 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
         // Source rouverte à chaque tour : `remplir` lit jusqu'à EOF, un handle
         // partagé entre les foyers déposerait un blob vide dès le deuxième.
         let source_donnees = File::open(&chemin_donnees).unwrap();
-        hash_donnees = noyau.depot_donnees(i, 0, &source_donnees)?;
+        (hash_donnees, _) = noyau.depot_donnees(i, 0, &source_donnees)?;
 
         noyau.fermeture_foyer(&mut interface, i)?;
 
