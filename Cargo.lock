@@ -571,6 +571,7 @@ dependencies = [
  "secrecy",
  "sha3 0.10.9",
  "tar",
+ "tempfile",
  "thiserror 2.0.18",
  "zeroize",
 ]

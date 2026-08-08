@@ -37,6 +37,9 @@ mod cryptographe;
 mod erreur;
 mod gardien;
 
+#[cfg(test)]
+mod tests;
+
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
