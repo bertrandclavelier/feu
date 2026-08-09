@@ -20,7 +20,8 @@
 //! [`cycle_mot_de_passe`] éprouve le rechiffrement du trousseau et le rejet de
 //! l'ancien mot de passe ; [`erreurs_usage`] rassemble les refus opposés à un
 //! appelant qui s'y prend mal ; [`drop_foyer_ouvert`] et [`fermeture_secours`]
-//! prennent le nœud là où une terminaison anormale l'a laissé.
+//! prennent le nœud là où une terminaison anormale l'a laissé ;
+//! [`cycle_demarrage_seed`] le reconstruit de rien, seed en main.
 //!
 //! Les assertions portent sur ce que le noyau **rend observable**, jamais sur
 //! son état interne : les rappels à l'interface — [`InterfaceTest`] les
@@ -29,7 +30,7 @@
 //! déduisent de la seule braise.
 
 use std::{
-    fs::{File, read_dir, read_to_string, symlink_metadata, write},
+    fs::{File, read_dir, read_to_string, remove_dir_all, remove_file, symlink_metadata, write},
     mem::forget,
     os::unix::fs::PermissionsExt,
 };
@@ -575,6 +576,111 @@ fn fermeture_secours() -> ResultFeuNoyau<()> {
     ));
 
     noyau.secours_fermeture_foyer(&mut interface, 0)?;
+    noyau.ouverture_foyer(&mut interface, 0)?;
+
+    let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
+
+    noyau.lecture_donnees(0, &hash_donnees, &fichier_recuperation)?;
+
+    let contenu_recupere = read_to_string(tmp.path().join("temp")).unwrap();
+
+    assert_eq!(contenu, contenu_recupere);
+
+    noyau.fermeture_foyer(&mut interface, 0)?;
+
+    Ok(())
+}
+
+/// La seed suffit à tout reconstruire : effacé jusqu'au dernier fichier, le nœud
+/// renaît d'elle avec les mêmes clés, et une donnée déposée ensuite survit à un
+/// démarrage de secours.
+///
+/// La preuve du déterminisme passe par une signature produite avant l'effacement
+/// et vérifiée après, plutôt que par la comparaison de deux clés publiques :
+/// seule la vérification engage la clé **privée**, la seule qui compte. Deux
+/// signatures du même message ne se comparent pas — ML-DSA-87 est libre de
+/// randomiser.
+///
+/// Les braises sont contrôlées à part : elles descendent d'une autre branche de
+/// dérivation que la clé de signature du nœud, qui ne dit donc rien d'elles.
+///
+/// La relecture finale du blob est le seul chemin qui traverse
+/// [`demarrage_secours`](FeuNoyau::demarrage_secours) avec une donnée réelle.
+/// Elle porte sur les clés de classeur, que le secours réécrit dans l'archive :
+/// mal redérivées, elles laisseraient le foyer s'ouvrir sans encombre — celui-ci
+/// ne dépend que de la clé du foyer — et ne rendraient les blobs illisibles
+/// qu'ensuite, sans que rien ne l'ait signalé.
+#[test]
+fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
+    let tmp = TempDir::new().unwrap();
+
+    let chemin_feu = tmp.path().join(".feu");
+    let message = "message à signer";
+
+    let chemin_donnees = tmp.path().join("fichier.txt");
+    let contenu = "contenu de test";
+    write(&chemin_donnees, contenu).unwrap();
+
+    let mut interface = InterfaceTest::new("mot de passe");
+
+    let noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
+
+    let seed = SecretString::from(interface.seed.join(" "));
+    let braises = interface.braises;
+
+    let message_signe = noyau.signature_noeud(message.as_bytes())?;
+
+    // Table rase : sans cet effacement, une seed fournie à `new` serait refusée
+    // sur une arborescence existante.
+    drop(noyau);
+    remove_dir_all(&chemin_feu).unwrap();
+
+    // Renaissance depuis la seed seule.
+    let mut interface = InterfaceTest::new("mot de passe");
+    let mut noyau = FeuNoyau::new(&chemin_feu, Some(seed.clone()), &mut interface)?;
+
+    assert!(FeuNoyau::verification_signature(
+        interface.cle_publique_noeud.unwrap(),
+        message_signe,
+        message.as_bytes(),
+    )?);
+
+    // Une donnée confiée au nœud reconstruit — c'est elle qui devra survivre au
+    // secours plus bas.
+    noyau.ouverture_foyer(&mut interface, 0)?;
+
+    let source_donnees = File::open(&chemin_donnees).unwrap();
+    let (hash_donnees, _) = noyau.depot_donnees(0, 0, &source_donnees)?;
+
+    noyau.fermeture_foyer(&mut interface, 0)?;
+
+    // Nœud amputé de la clé privée de signature : plus rien ne s'allume.
+    remove_file(chemin_feu.join(".cles").join("feu_sig.priv")).unwrap();
+
+    assert!(matches!(
+        FeuNoyau::new(&chemin_feu, None, &mut interface),
+        Err(ErreurFeuNoyau::Gardien(_))
+    ));
+
+    // Le secours réécrit le disque : aucune instance ne doit rester en vie.
+    drop(noyau);
+
+    let mut interface = InterfaceTest::new("mot de passe");
+    FeuNoyau::demarrage_secours(&chemin_feu, seed.clone(), &mut interface)?;
+
+    let mut interface = InterfaceTest::new("mot de passe");
+    let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
+
+    let braises2 = interface.braises;
+
+    assert_eq!(braises, braises2);
+
+    assert!(FeuNoyau::verification_signature(
+        interface.cle_publique_noeud.unwrap(),
+        message_signe,
+        message.as_bytes(),
+    )?);
+
     noyau.ouverture_foyer(&mut interface, 0)?;
 
     let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
