@@ -15,10 +15,11 @@
 //! intacte après extinction, et qu'elle reste hors de portée de qui n'a pas le
 //! mot de passe.
 //!
-//! Deux cycles, chacun repartant d'un nœud neuf. [`cycle_vie_noyau`] suit
+//! Trois tests, chacun repartant d'un nœud neuf. [`cycle_vie_noyau`] suit
 //! l'allumage, le dépôt et la relecture après rallumage ;
 //! [`cycle_mot_de_passe`] éprouve le rechiffrement du trousseau et le rejet de
-//! l'ancien mot de passe.
+//! l'ancien mot de passe ; [`erreurs_usage`] rassemble les refus opposés à un
+//! appelant qui s'y prend mal.
 //!
 //! Les assertions portent sur ce que le noyau **rend observable**, jamais sur
 //! son état interne : les rappels à l'interface — [`InterfaceTest`] les
@@ -399,6 +400,107 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
     // cette réouverture sur son existence, avant même la saisie du mot de passe.
     noyau.ouverture_foyer(&mut interface2, 0)?;
     noyau.fermeture_foyer(&mut interface2, 0)?;
+
+    Ok(())
+}
+
+/// Chaque opération refusée à un appelant qui s'y prend mal rend la variante
+/// d'erreur qui nomme la cause, et non une erreur générique.
+///
+/// Les cas sont réunis dans un test unique parce qu'ils partagent la seule chose
+/// coûteuse ici — le montage d'un nœud et l'Argon2id de ses ouvertures. Ils
+/// s'enchaînent sur le même foyer, chacun le laissant dans l'état qu'attend le
+/// suivant.
+///
+/// [`ErreurFeuNoyau::IndexInvalide`] en est absente délibérément : c'est une
+/// comparaison de borne répétée à l'entrée d'une dizaine de méthodes, sans
+/// logique qu'un test puisse prendre en défaut.
+#[test]
+fn erreurs_usage() -> ResultFeuNoyau<()> {
+    let tmp = TempDir::new().unwrap();
+
+    let chemin_feu = tmp.path().join(".feu");
+
+    let mut interface = InterfaceTest::new("mot de passe");
+
+    let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
+
+    // Tous les foyers sont fermés à l'allumage : le refus de fermer est le seul
+    // qui s'éprouve sans rien préparer.
+    assert!(matches!(
+        noyau.fermeture_foyer(&mut interface, 0),
+        Err(ErreurFeuNoyau::FoyerFerme)
+    ));
+
+    noyau.ouverture_foyer(&mut interface, 0)?;
+
+    assert!(matches!(
+        noyau.ouverture_foyer(&mut interface, 0),
+        Err(ErreurFeuNoyau::FoyerDejaOuvert)
+    ));
+
+    // Un seul foyer ouvert sur les trois : le rechiffrement du trousseau exige
+    // que toutes les clés soient en mémoire, il refuse d'en laisser une derrière.
+    assert!(matches!(
+        noyau.changement_mdp(&mut interface),
+        Err(ErreurFeuNoyau::TousFoyersNonOuverts)
+    ));
+
+    // Hash bien formé — 64 caractères, la longueur d'un SHA3-256 en hexadécimal
+    // — mais qu'aucun classeur ne détient. Le foyer doit rester ouvert : la
+    // garde d'état passe avant le balayage, et le refuserait en premier.
+    let hash = "1".repeat(64);
+
+    let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
+
+    assert!(matches!(
+        noyau.lecture_donnees(0, &hash, &fichier_recuperation),
+        Err(ErreurFeuNoyau::BlobIntrouvable)
+    ));
+
+    noyau.fermeture_foyer(&mut interface, 0)?;
+
+    let chemin_donnees = tmp.path().join("fichier.txt");
+    let contenu = "contenu de test";
+    write(&chemin_donnees, contenu).unwrap();
+
+    // Le foyer vient d'être refermé. La garde est centralisée dans
+    // `archiviste_foyer_ouvert` : l'éprouver sur le dépôt vaut pour toutes les
+    // opérations qui en dépendent.
+    let source_donnees = File::open(&chemin_donnees).unwrap();
+    assert!(matches!(
+        noyau.depot_donnees(0, 0, &source_donnees),
+        Err(ErreurFeuNoyau::FoyerFerme)
+    ));
+
+    // Une clé factice suffit : la borne est contrôlée à l'entrée, avant que la
+    // clé serve à quoi que ce soit.
+    let message = vec![0u8; MAX_TAILLE_SIGNATURE + 1];
+
+    assert!(matches!(
+        noyau.signature_noeud(&message),
+        Err(ErreurFeuNoyau::TailleMaxDepassee)
+    ));
+
+    let message = vec![0u8; MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE + 1];
+    let cle = [1u8; 1568];
+
+    assert!(matches!(
+        noyau.chiffrement_asymetrique(&cle, &message),
+        Err(ErreurFeuNoyau::TailleMaxDepassee)
+    ));
+
+    drop(noyau);
+
+    // L'arborescence est là, sur le disque : c'est elle qui rend la seed
+    // illégitime, et le refus tombe avant même qu'elle soit examinée — deux mots
+    // suffisent à le montrer.
+    let seed = SecretString::from("mot1 mot2");
+
+    assert!(matches!(
+        FeuNoyau::new(&chemin_feu, Some(seed), &mut interface),
+        Err(ErreurFeuNoyau::InitialisationNoeudImpossible)
+    ));
 
     Ok(())
 }
