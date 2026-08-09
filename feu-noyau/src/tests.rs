@@ -20,10 +20,11 @@
 //! [`cycle_mot_de_passe`] éprouve le rechiffrement du trousseau et le rejet de
 //! l'ancien mot de passe.
 //!
-//! Les assertions portent sur ce que le noyau **rend observable** — rappels à
-//! l'interface, valeurs et erreurs de retour —, jamais sur son état interne :
-//! [`InterfaceTest`] enregistre chaque rappel pour le rendre lisible depuis le
-//! test.
+//! Les assertions portent sur ce que le noyau **rend observable**, jamais sur
+//! son état interne : les rappels à l'interface — [`InterfaceTest`] les
+//! enregistre pour les rendre lisibles depuis le test —, les valeurs et erreurs
+//! de retour, et les fichiers laissés sur le disque, dont les chemins se
+//! déduisent de la seule braise.
 
 use std::fs::{File, read_to_string, write};
 
@@ -218,6 +219,10 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
 /// Les deux dérivent leur clé éphémère du même Argon2id, mais empruntent des
 /// chemins distincts : le test éprouve les deux plutôt que d'inférer l'un de
 /// l'autre.
+///
+/// Établit en outre qu'une ouverture refusée ne coûte rien : l'arborescence
+/// reste celle d'un foyer fermé, et le bon mot de passe rouvre ensuite
+/// normalement.
 #[test]
 fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -267,8 +272,51 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
 
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface2)?;
 
+    // L'état d'un foyer se lit sur le disque, et ce triplet le fixe : dossier
+    // clair s'il est ouvert, archive `.feu` s'il est fermé, jamais les deux — et
+    // jamais de `.tar`, qui ne survit à aucune opération, réussie ou non. Il est
+    // rejoué après chaque transition qui suit.
+    for i in 0..MAX_FOYERS {
+        assert!(!chemin_feu.join(interface2.braises[i].to_string()).is_dir());
+        assert!(
+            chemin_feu
+                .join(format!("{}.feu", interface2.braises[i]))
+                .exists()
+        );
+        assert!(
+            !chemin_feu
+                .join(format!("{}.tar", interface2.braises[i]))
+                .exists()
+        );
+    }
+
     noyau.ouverture_foyer(&mut interface2, 0)?;
+
+    assert!(chemin_feu.join(interface2.braises[0].to_string()).is_dir());
+    assert!(
+        !chemin_feu
+            .join(format!("{}.feu", interface2.braises[0]))
+            .exists()
+    );
+    assert!(
+        !chemin_feu
+            .join(format!("{}.tar", interface2.braises[0]))
+            .exists()
+    );
+
     noyau.fermeture_foyer(&mut interface2, 0)?;
+
+    assert!(!chemin_feu.join(interface2.braises[0].to_string()).is_dir());
+    assert!(
+        chemin_feu
+            .join(format!("{}.feu", interface2.braises[0]))
+            .exists()
+    );
+    assert!(
+        !chemin_feu
+            .join(format!("{}.tar", interface2.braises[0]))
+            .exists()
+    );
 
     // Second point de saisie : nœud allumé avec le bon mot de passe, foyer 0
     // refermé juste avant. L'échec ne peut donc venir que de l'ancien mot de
@@ -277,6 +325,23 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
         noyau.ouverture_foyer(&mut interface, 0),
         Err(ErreurFeuNoyau::Cryptographe(_))
     ));
+
+    assert!(!chemin_feu.join(interface2.braises[0].to_string()).is_dir());
+    assert!(
+        chemin_feu
+            .join(format!("{}.feu", interface2.braises[0]))
+            .exists()
+    );
+    assert!(
+        !chemin_feu
+            .join(format!("{}.tar", interface2.braises[0]))
+            .exists()
+    );
+
+    // Le refus n'a rien laissé derrière lui : un `.tar` résiduel ferait échouer
+    // cette réouverture sur son existence, avant même la saisie du mot de passe.
+    noyau.ouverture_foyer(&mut interface2, 0)?;
+    noyau.fermeture_foyer(&mut interface2, 0)?;
 
     Ok(())
 }

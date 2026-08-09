@@ -399,17 +399,36 @@ impl Gardien {
         Ok(())
     }
 
-    /// Supprime l'archive tar intermédiaire `<braise>.tar` après chiffrement.
+    /// Supprime l'archive tar intermédiaire `<braise>.tar`.
     ///
-    /// Doit être appelé immédiatement après [`preparation_archivage_chiffre_foyer`](Self::preparation_archivage_chiffre_foyer)
-    /// et le chiffrement — le `.tar` est un fichier temporaire qui ne doit pas
-    /// persister sur le disque.
+    /// Le `.tar` n'est qu'une forme de passage entre le dossier clair du foyer et
+    /// son archive chiffrée, empruntée dans un sens comme dans l'autre : il ne
+    /// doit jamais survivre à la conversion en cours, ni sur le chemin nominal
+    /// ni sur un chemin d'erreur. Ouvert en création exclusive, un `.tar`
+    /// résiduel bloque aussi bien l'ouverture que la fermeture du foyer.
     ///
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
     pub(super) fn suppression_archive_foyer_tar(&self, braise: Braise) -> ResultGardien<()> {
         self.carnet.supprime_archive_foyer_tar(braise)?;
+
+        Ok(())
+    }
+
+    /// Supprime l'archive chiffrée `<braise>.feu`.
+    ///
+    /// N'est appelée que sur les chemins d'erreur de
+    /// [`fermeture_foyer`](crate::FeuNoyau::fermeture_foyer), tant que le
+    /// chiffrement n'a pas abouti : le `.feu` n'y est encore que partiel, et le
+    /// dossier clair reste la source de vérité du foyer. Passé ce point, le
+    /// supprimer détruirait les données.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
+    pub(super) fn suppression_archive_foyer_chiffree(&self, braise: Braise) -> ResultGardien<()> {
+        self.carnet.supprime_archive_foyer_chiffree(braise)?;
 
         Ok(())
     }

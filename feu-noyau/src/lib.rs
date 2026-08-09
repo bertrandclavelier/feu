@@ -661,8 +661,8 @@ impl FeuNoyau {
     /// 4. Crée un flux de lecture déchiffré AES-256-GCM-stream.
     ///
     /// **Phase disque — gardien**
-    /// 5. Extrait l'archive `<braise>.feu` dans `~/.feu/` via le flux déchiffré.
-    ///    Supprime l'archive après extraction.
+    /// 5. Déchiffre `<braise>.feu` vers l'archive intermédiaire `<braise>.tar`,
+    ///    l'extrait dans `~/.feu/<braise>/`, puis supprime les deux fichiers.
     /// 6. Lit les clés chiffrées du foyer depuis le dossier extrait.
     ///
     /// **Phase mémoire — cryptographe**
@@ -676,6 +676,16 @@ impl FeuNoyau {
     ///
     /// **SessionFoyers**
     /// 10. Marque le foyer comme ouvert.
+    ///
+    /// # Archive `.tar` intermédiaire
+    ///
+    /// Un `.tar` laissé derrière une erreur rend le foyer impossible à rouvrir,
+    /// même avec le bon mot de passe : il est créé en mode exclusif, la
+    /// tentative suivante échoue donc sur son existence. Les deux étapes qui
+    /// peuvent échouer alors qu'il existe le suppriment avant de propager.
+    ///
+    /// L'échec de cette suppression est ignoré — le fichier peut avoir déjà
+    /// disparu, et c'est l'erreur d'origine qui renseigne l'appelant.
     ///
     /// # Erreurs
     ///
@@ -713,14 +723,24 @@ impl FeuNoyau {
             .gardien
             .preparation_desarchivage_chiffre_foyer(braise)?;
 
-        self.cryptographe.donne_flux_dechiffrement_foyer(
+        // Cas courant : mot de passe erroné ou saisie annulée. Le `.tar` a déjà
+        // été créé — vide, puisque rien n'y a été écrit.
+        if let Err(e) = self.cryptographe.donne_flux_dechiffrement_foyer(
             &cle,
             &mut source,
             &mut destination,
             interface_feu_noyau,
-        )?;
+        ) {
+            let _ = self.gardien.suppression_archive_foyer_tar(braise);
+            return Err(e.into());
+        }
 
-        self.gardien.desarchivage_chiffre_foyer(braise)?;
+        // Un échec en cours d'extraction laisse le `.tar` derrière lui.
+        if let Err(e) = self.gardien.desarchivage_chiffre_foyer(braise) {
+            let _ = self.gardien.suppression_archive_foyer_tar(braise);
+            return Err(e.into());
+        };
+
         let trousseau_public_foyer = self.gardien.creation_trousseau_foyer_public(braise)?;
 
         interface_feu_noyau.recevoir_cles_publiques_foyer(
@@ -752,8 +772,8 @@ impl FeuNoyau {
     ///
     /// 1. Valide l'index du foyer.
     /// 2. Vérifie que le foyer est bien ouvert.
-    /// 3. Prépare l'archivage : produit le flux source (dossier clair) et la
-    ///    destination (archive chiffrée) via le Gardien.
+    /// 3. Prépare l'archivage : empaquette le dossier clair en `<braise>.tar`,
+    ///    source du chiffrement, et crée `<braise>.feu`, sa destination.
     /// 4. Chiffre le dossier du foyer dans l'archive `.feu` via le Cryptographe.
     /// 5. Supprime l'archive `.tar` intermédiaire et le dossier clair du disque.
     /// 6. Détruit l'Archiviste du foyer — son dossier vient d'être supprimé.
@@ -764,6 +784,19 @@ impl FeuNoyau {
     ///
     /// À la fin de l'opération, aucune donnée du foyer ne subsiste en clair sur
     /// le disque : seule demeure l'archive `.feu` chiffrée.
+    ///
+    /// # Fichiers laissés par une erreur
+    ///
+    /// `.tar` et `.feu` sont tous deux créés en mode exclusif : l'un ou l'autre
+    /// laissé derrière une erreur rendrait le foyer infermable, y compris par
+    /// [`secours_fermeture_foyer`](Self::secours_fermeture_foyer) qui repasse
+    /// ici. Les deux étapes qui peuvent échouer avant la fin du chiffrement les
+    /// suppriment donc avant de propager.
+    ///
+    /// Le filet s'arrête là volontairement. Une fois le chiffrement abouti, le
+    /// `.feu` est l'unique forme persistante du foyer et le dossier clair va
+    /// disparaître : supprimer le `.feu` sur une erreur ultérieure détruirait
+    /// les données.
     ///
     /// # Erreurs
     ///
@@ -784,13 +817,26 @@ impl FeuNoyau {
         }
 
         let (mut source, mut destination) =
-            self.gardien.preparation_archivage_chiffre_foyer(braise)?;
+            match self.gardien.preparation_archivage_chiffre_foyer(braise) {
+                Ok(fichiers) => fichiers,
+                Err(e) => {
+                    let _ = self.gardien.suppression_archive_foyer_tar(braise);
+                    let _ = self.gardien.suppression_archive_foyer_chiffree(braise);
 
-        self.cryptographe.donne_flux_chiffrement_foyer(
+                    return Err(e.into());
+                }
+            };
+
+        if let Err(e) = self.cryptographe.donne_flux_chiffrement_foyer(
             index_foyer,
             &mut source,
             &mut destination,
-        )?;
+        ) {
+            let _ = self.gardien.suppression_archive_foyer_tar(braise);
+            let _ = self.gardien.suppression_archive_foyer_chiffree(braise);
+
+            return Err(e.into());
+        };
 
         self.gardien.suppression_archive_foyer_tar(braise)?;
         self.gardien.suppression_dossier_braise(braise)?;
