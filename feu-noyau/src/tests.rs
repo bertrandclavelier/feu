@@ -15,11 +15,12 @@
 //! intacte après extinction, et qu'elle reste hors de portée de qui n'a pas le
 //! mot de passe.
 //!
-//! Trois tests, chacun repartant d'un nœud neuf. [`cycle_vie_noyau`] suit
+//! Cinq tests, chacun repartant d'un nœud neuf. [`cycle_vie_noyau`] suit
 //! l'allumage, le dépôt et la relecture après rallumage ;
 //! [`cycle_mot_de_passe`] éprouve le rechiffrement du trousseau et le rejet de
 //! l'ancien mot de passe ; [`erreurs_usage`] rassemble les refus opposés à un
-//! appelant qui s'y prend mal.
+//! appelant qui s'y prend mal ; [`drop_foyer_ouvert`] et [`fermeture_secours`]
+//! prennent le nœud là où une terminaison anormale l'a laissé.
 //!
 //! Les assertions portent sur ce que le noyau **rend observable**, jamais sur
 //! son état interne : les rappels à l'interface — [`InterfaceTest`] les
@@ -29,6 +30,7 @@
 
 use std::{
     fs::{File, read_dir, read_to_string, symlink_metadata, write},
+    mem::forget,
     os::unix::fs::PermissionsExt,
 };
 
@@ -501,6 +503,89 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
         FeuNoyau::new(&chemin_feu, Some(seed), &mut interface),
         Err(ErreurFeuNoyau::InitialisationNoeudImpossible)
     ));
+
+    Ok(())
+}
+
+/// Abandonner un [`FeuNoyau`] qui détient un foyer ouvert fait paniquer son
+/// `Drop`, plutôt que de laisser un dossier de foyer en clair sur le disque.
+///
+/// Le message n'est vérifié que par sa première moitié : l'invariant tient à ce
+/// que la panique survienne, pas à la formulation qui l'accompagne.
+///
+/// La panique est laissée au harnais plutôt que rattrapée par `catch_unwind` :
+/// le test s'arrête donc ici, ce qu'assume [`fermeture_secours`] en remontant le
+/// même état par `forget`, sans passer par le `Drop`.
+#[test]
+#[should_panic(expected = "Les foyers n'étaient pas tous fermés")]
+fn drop_foyer_ouvert() {
+    let tmp = TempDir::new().unwrap();
+
+    let chemin_feu = tmp.path().join(".feu");
+
+    let mut interface = InterfaceTest::new("mot de passe");
+
+    let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface).unwrap();
+
+    noyau.ouverture_foyer(&mut interface, 0).unwrap();
+}
+
+/// Un foyer laissé ouvert par une terminaison anormale se referme par
+/// [`secours_fermeture_foyer`](FeuNoyau::secours_fermeture_foyer), et la donnée
+/// qu'il détenait se relit ensuite à l'identique.
+///
+/// L'état est monté par `forget` : le noyau disparaît sans que son `Drop`
+/// s'exécute, laissant sur le disque exactement ce que laisse une terminaison
+/// brutale — dossier clair présent, archive `.feu` supprimée à l'ouverture et
+/// jamais reconstituée.
+///
+/// Le `Gardien(_)` qui précède atteste de cet état : une ouverture ordinaire
+/// échoue faute de `.feu` à déchiffrer, et c'est ce que le secours vient
+/// réparer. La relecture finale porte sur le contenu, non sur la présence du
+/// blob : le secours reconstruit le trousseau depuis le dossier clair, et une
+/// clé de classeur mal rechargée laisserait le fichier en place tout en le
+/// rendant indéchiffrable.
+#[test]
+fn fermeture_secours() -> ResultFeuNoyau<()> {
+    let tmp = TempDir::new().unwrap();
+
+    let chemin_feu = tmp.path().join(".feu");
+
+    let chemin_donnees = tmp.path().join("fichier.txt");
+
+    let contenu = "contenu de test";
+
+    write(&chemin_donnees, contenu).unwrap();
+
+    let mut interface = InterfaceTest::new("mot de passe");
+
+    let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
+
+    noyau.ouverture_foyer(&mut interface, 0)?;
+    let source_donnees = File::open(&chemin_donnees).unwrap();
+    let (hash_donnees, _) = noyau.depot_donnees(0, 0, &source_donnees)?;
+
+    forget(noyau);
+
+    let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
+
+    assert!(matches!(
+        noyau.ouverture_foyer(&mut interface, 0),
+        Err(ErreurFeuNoyau::Gardien(_))
+    ));
+
+    noyau.secours_fermeture_foyer(&mut interface, 0)?;
+    noyau.ouverture_foyer(&mut interface, 0)?;
+
+    let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
+
+    noyau.lecture_donnees(0, &hash_donnees, &fichier_recuperation)?;
+
+    let contenu_recupere = read_to_string(tmp.path().join("temp")).unwrap();
+
+    assert_eq!(contenu, contenu_recupere);
+
+    noyau.fermeture_foyer(&mut interface, 0)?;
 
     Ok(())
 }
