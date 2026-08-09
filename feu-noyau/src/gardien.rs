@@ -441,6 +441,17 @@ impl Gardien {
     /// et parser `config.feu` pour vérifier les fichiers de chaque foyer connu.
     /// Si la config est illisible, les foyers ne peuvent pas être vérifiés —
     /// `ConfigurationIllisible` est ajoutée et la boucle foyers est ignorée.
+    ///
+    /// Quatre contrôles par foyer, qui couvrent à eux seuls les huit états
+    /// possibles du trio dossier clair / `.feu` / `.tar` : les deux premiers
+    /// constatent une absence, les deux suivants une présence de trop.
+    ///
+    /// Un `.feu` manquant est signalé même quand le foyer est simplement ouvert.
+    /// Ce n'est pas un défaut : un foyer ouvert et un foyer abandonné avant
+    /// toute fermeture laissent le **même** disque, et seule l'existence d'un
+    /// processus détenant les clés les sépare — que ce diagnostic, appelé sans
+    /// noyau, ne peut pas observer. Une fermeture seulement *entamée*, elle,
+    /// laisse un `.tar` ou une archive derrière elle, et se distingue.
     pub(super) fn diagnostic_noeud(&self) -> Vec<Anomalie> {
         let mut resultat = self.carnet.verifier_arborescence_noeud();
 
@@ -454,31 +465,30 @@ impl Gardien {
                 Ok(configuration) => {
                     // Pour chaque foyer
                     for element in configuration.donne_adresses_braise() {
-                        if !self
+                        let chemin = self
                             .carnet
                             .donne_chemin_feu()
                             .join(".cles/")
-                            .join(format!("{}{}", element, ".cle"))
-                            .exists()
-                        {
-                            resultat.push(Anomalie::ElementAbsent(
-                                self.carnet
-                                    .donne_chemin_feu()
-                                    .join(".cles/")
-                                    .join(format!("{}{}", element, ".cle")),
-                            ));
+                            .join(format!("{}{}", element, ".cle"));
+                        if !chemin.exists() {
+                            resultat.push(Anomalie::ElementAbsent(chemin));
                         }
-                        if !self
-                            .carnet
-                            .donne_chemin_feu()
-                            .join(format!("{}{}", element, ".feu"))
-                            .exists()
+
+                        let chemin = self.carnet.donne_chemin_archive_chiffree(*element);
+                        if !chemin.exists() {
+                            resultat.push(Anomalie::ElementAbsent(chemin));
+                        }
+
+                        let chemin = self.carnet.donne_chemin_archive_tar(*element);
+                        if chemin.exists() {
+                            resultat.push(Anomalie::ArchiveIntermediaireResiduelle(chemin));
+                        }
+
+                        let chemin = self.carnet.donne_chemin_braise(*element);
+                        if chemin.exists()
+                            && self.carnet.donne_chemin_archive_chiffree(*element).exists()
                         {
-                            resultat.push(Anomalie::ElementAbsent(
-                                self.carnet
-                                    .donne_chemin_feu()
-                                    .join(format!("{}{}", element, ".feu")),
-                            ));
+                            resultat.push(Anomalie::FoyerClairEtArchive(chemin));
                         }
                     }
                 }

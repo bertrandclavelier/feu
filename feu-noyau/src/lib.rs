@@ -168,6 +168,18 @@ pub enum Anomalie {
     ElementAbsent(PathBuf),
     /// `config.feu` est présent mais son contenu ne peut pas être parsé.
     ConfigurationIllisible,
+
+    /// Une archive `.tar` subsiste alors qu'elle n'est qu'une forme de passage
+    /// entre le dossier clair d'un foyer et son archive chiffrée. Sa présence
+    /// au repos atteste d'une ouverture ou d'une fermeture interrompue. Le
+    /// fichier ne porte aucune donnée qui ne soit ailleurs : il se supprime.
+    ArchiveIntermediaireResiduelle(PathBuf),
+
+    /// Un foyer existe à la fois en clair et sous forme chiffrée : la fermeture
+    /// a chiffré l'archive puis échoué avant d'effacer le dossier clair. Le
+    /// chemin porté est celui du dossier clair — l'archive est complète, et le
+    /// clair est le seul des deux qu'on puisse supprimer sans rien perdre.
+    FoyerClairEtArchive(PathBuf),
 }
 
 impl DonneesBlob {
@@ -1130,7 +1142,8 @@ impl FeuNoyau {
     /// # Erreurs
     ///
     /// Retourne une erreur si les index sont hors bornes,
-    /// si le foyer n'est pas ouvert, ou si le blob est introuvable.
+    /// si le foyer n'est pas ouvert, si l'Archiviste est absent,
+    /// ou si le blob est introuvable.
     pub fn informations_blob(
         &self,
         index_foyer: usize,
@@ -1321,6 +1334,12 @@ impl FeuNoyau {
     /// anomalies détectées sinon. Ne peut pas échouer : l'inspection se limite à
     /// des tests de présence et une config illisible est signalée comme une
     /// anomalie ([`Anomalie::ConfigurationIllisible`]), pas comme une erreur.
+    ///
+    /// Le diagnostic répond à ce que le disque porte, non à la santé d'un nœud
+    /// en cours d'usage : appelé pendant qu'un foyer est ouvert, il signale
+    /// l'archive absente. C'est ce même signal dont
+    /// [`secours_fermeture_foyer`](Self::secours_fermeture_foyer) se sert pour
+    /// reconnaître un foyer à réparer.
     pub fn diagnostic_noeud(chemin_feu: &Path) -> Vec<Anomalie> {
         let gardien = Gardien::new(chemin_feu);
 
@@ -1345,7 +1364,9 @@ impl FeuNoyau {
     /// # Erreurs
     ///
     /// Retourne une erreur si l'index est invalide,
-    /// ou si le foyer n'est pas ouvert.
+    /// si le foyer n'est pas ouvert, si l'Archiviste est absent,
+    /// si l'adresse `.braise` est introuvable, ou si une
+    /// opération disque échoue.
     pub fn diagnostic_foyer(&self, index_foyer: usize) -> ResultFeuNoyau<Vec<Anomalie>> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 

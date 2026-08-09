@@ -15,13 +15,14 @@
 //! intacte après extinction, et qu'elle reste hors de portée de qui n'a pas le
 //! mot de passe.
 //!
-//! Cinq tests, chacun repartant d'un nœud neuf. [`cycle_vie_noyau`] suit
-//! l'allumage, le dépôt et la relecture après rallumage ;
+//! Six tests, chacun repartant d'un nœud neuf. [`cycle_vie_noyau`] suit
+//! l'allumage, le dépôt, la relecture après rallumage et l'effacement ;
 //! [`cycle_mot_de_passe`] éprouve le rechiffrement du trousseau et le rejet de
 //! l'ancien mot de passe ; [`erreurs_usage`] rassemble les refus opposés à un
 //! appelant qui s'y prend mal ; [`drop_foyer_ouvert`] et [`fermeture_secours`]
 //! prennent le nœud là où une terminaison anormale l'a laissé ;
-//! [`cycle_demarrage_seed`] le reconstruit de rien, seed en main.
+//! [`cycle_demarrage_seed`] le reconstruit de rien, seed en main ; et
+//! [`diagnostic_noeud`] l'abîme pièce à pièce pour voir ce qu'il en dit.
 //!
 //! Les assertions portent sur ce que le noyau **rend observable**, jamais sur
 //! son état interne : les rappels à l'interface — [`InterfaceTest`] les
@@ -30,7 +31,10 @@
 //! déduisent de la seule braise.
 
 use std::{
-    fs::{File, read_dir, read_to_string, remove_dir_all, remove_file, symlink_metadata, write},
+    fs::{
+        File, create_dir, read_dir, read_to_string, remove_dir, remove_dir_all, remove_file,
+        symlink_metadata, write,
+    },
     mem::forget,
     os::unix::fs::PermissionsExt,
 };
@@ -155,7 +159,7 @@ fn verifie_permissions(racine: &Path) {
 
 /// Un blob déposé dans chacun des trois foyers se relit à l'identique après que
 /// le noyau a été détruit puis reconstruit, braises et clé publique de nœud
-/// retrouvées à partir du seul mot de passe.
+/// retrouvées à partir du seul mot de passe, et s'efface ensuite sans trace.
 ///
 /// Établit au passage l'unicité d'un blob dans un foyer : redéposé dans un autre
 /// classeur, il n'est pas dupliqué et le dépôt rend celui qui le détient déjà.
@@ -165,9 +169,18 @@ fn verifie_permissions(racine: &Path) {
 /// partiel, et un chunk perdu ou interverti se verrait à la relecture — ce
 /// qu'un contenu uniforme laisserait passer.
 ///
-/// Les permissions sont contrôlées à chaque état stable du nœud, tous foyers
-/// fermés puis tous ouverts : les fichiers d'un foyer n'existent qu'ouvert, son
-/// archive qu'une fois refermé.
+/// Les permissions sont contrôlées aux trois états stables du nœud — tous foyers
+/// fermés, tous ouverts, puis refermés. Les deux premiers ne voient pas les
+/// mêmes fichiers : ceux d'un foyer n'existent qu'ouvert, son archive qu'une
+/// fois refermé. Le troisième porte sur les archives réécrites après la
+/// suppression des blobs.
+///
+/// La suppression clôt le cycle, une fois la donnée relue — donc une fois
+/// prouvé qu'il y avait bien quelque chose à effacer. Les deux vérifications qui
+/// la suivent ne se recouvrent pas :
+/// [`existence_blob`](FeuNoyau::existence_blob) interroge le classeur nommé,
+/// [`lecture_donnees`](FeuNoyau::lecture_donnees) balaie les cinq — seule la
+/// seconde écarte l'hypothèse d'un blob déplacé plutôt que détruit.
 #[test]
 fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -256,6 +269,16 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
         let contenu_recupere = read_to_string(tmp.path().join("temp")).unwrap();
 
         assert_eq!(contenu, contenu_recupere);
+
+        // Classeur 0 : celui que le premier dépôt a rendu, et où le second a
+        // laissé le blob.
+        noyau2.suppression_donnees(i, 0, &hash_donnees)?;
+
+        assert!(!noyau2.existence_blob(i, 0, &hash_donnees)?);
+        assert!(matches!(
+            noyau2.lecture_donnees(i, &hash_donnees, &fichier_recuperation),
+            Err(ErreurFeuNoyau::BlobIntrouvable)
+        ));
     }
 
     verifie_permissions(&chemin_feu);
@@ -542,10 +565,20 @@ fn drop_foyer_ouvert() {
 ///
 /// Le `Gardien(_)` qui précède atteste de cet état : une ouverture ordinaire
 /// échoue faute de `.feu` à déchiffrer, et c'est ce que le secours vient
-/// réparer. La relecture finale porte sur le contenu, non sur la présence du
-/// blob : le secours reconstruit le trousseau depuis le dossier clair, et une
-/// clé de classeur mal rechargée laisserait le fichier en place tout en le
-/// rendant indéchiffrable.
+/// réparer. La relecture porte sur le contenu, non sur la présence du blob : le
+/// secours reconstruit le trousseau depuis le dossier clair, et une clé de
+/// classeur mal rechargée laisserait le fichier en place tout en le rendant
+/// indéchiffrable.
+///
+/// Le second volet éprouve le refus. Une clé du foyer est retirée du dossier
+/// clair, puis le secours redemandé : il doit renoncer plutôt que d'archiver ce
+/// qu'il trouve. La garde vaut cher — le secours efface le dossier clair une
+/// fois l'archive écrite, donc l'accepter amputé échangerait un foyer réparable
+/// contre une archive définitivement incomplète.
+///
+/// L'état de départ est repris du foyer rouvert juste avant, par un second
+/// `forget` : les clés d'un foyer n'existent sur le disque que pendant son
+/// ouverture.
 #[test]
 fn fermeture_secours() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -586,7 +619,25 @@ fn fermeture_secours() -> ResultFeuNoyau<()> {
 
     assert_eq!(contenu, contenu_recupere);
 
-    noyau.fermeture_foyer(&mut interface, 0)?;
+    forget(noyau);
+
+    // Le `.cles/` du foyer, à ne pas confondre avec celui du nœud : celui-ci vit
+    // dans le dossier clair, et n'importe laquelle de ses neuf clés suffit à
+    // faire échouer le diagnostic préalable au secours.
+    remove_file(
+        chemin_feu
+            .join(interface.braises[0].to_string())
+            .join(".cles")
+            .join("sig.priv"),
+    )
+    .unwrap();
+
+    let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
+
+    assert!(matches!(
+        noyau.secours_fermeture_foyer(&mut interface, 0),
+        Err(ErreurFeuNoyau::FermetureSecoursFoyerImpossible)
+    ));
 
     Ok(())
 }
@@ -692,6 +743,100 @@ fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
     assert_eq!(contenu, contenu_recupere);
 
     noyau.fermeture_foyer(&mut interface, 0)?;
+
+    Ok(())
+}
+
+/// Chaque dégât infligé à l'arborescence remonte l'anomalie qui le nomme, et
+/// désigne le fichier en cause.
+///
+/// Les états sont fabriqués sur le disque plutôt qu'atteints par le noyau : un
+/// `.tar` résiduel ou un foyer présent sous ses deux formes ne s'obtiennent
+/// qu'en interrompant une opération au bon moment, ce qui demanderait une panne
+/// disque. Le contenu des fichiers créés est indifférent — le diagnostic ne fait
+/// que des tests de présence.
+///
+/// Un seul représentant est pris pour la famille [`Anomalie::ElementAbsent`] :
+/// les autres fichiers attendus sont contrôlés par le même `.exists()` recopié,
+/// sans rien qu'un test puisse prendre en défaut.
+///
+/// Le nœud n'est pas ouvert : [`FeuNoyau::new`] laisse déjà les trois foyers
+/// archivés, et le diagnostic ne descend pas dans leur arborescence interne —
+/// c'est [`diagnostic_foyer`](FeuNoyau::diagnostic_foyer) qui s'en charge.
+#[test]
+fn diagnostic_noeud() -> ResultFeuNoyau<()> {
+    let tmp = TempDir::new().unwrap();
+
+    let chemin_feu = tmp.path().join(".feu");
+
+    let mut interface = InterfaceTest::new("mot de passe");
+    let noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
+
+    let anomalies = FeuNoyau::diagnostic_noeud(&chemin_feu);
+
+    // 1 — nœud neuf : la référence dont chaque dégât suivant s'écarte.
+    assert_eq!(anomalies.len(), 0);
+
+    // 2 — une archive intermédiaire n'a aucune raison d'exister au repos.
+    let chemin = chemin_feu.join(format!("{}.tar", interface.braises[0]));
+    File::create(&chemin).unwrap();
+
+    let anomalies = FeuNoyau::diagnostic_noeud(&chemin_feu);
+
+    assert_eq!(anomalies.len(), 1);
+    assert!(matches!(
+        anomalies.first().unwrap(),
+        Anomalie::ArchiveIntermediaireResiduelle(m) if m == &chemin
+    ));
+
+    remove_file(&chemin).unwrap();
+
+    // 3 — le dossier clair rejoint l'archive : la fermeture s'est arrêtée entre
+    // le chiffrement et l'effacement du clair.
+    let chemin = chemin_feu.join(format!("{}", interface.braises[0]));
+    create_dir(&chemin).unwrap();
+
+    let anomalies = FeuNoyau::diagnostic_noeud(&chemin_feu);
+
+    assert_eq!(anomalies.len(), 1);
+    assert!(matches!(
+        anomalies.first().unwrap(),
+        Anomalie::FoyerClairEtArchive(m) if m == &chemin
+    ));
+
+    remove_dir(&chemin).unwrap();
+
+    // 4 — la clé du foyer vit au niveau du nœud, donc reste visible foyer fermé.
+    // Elle n'est pas restaurée : l'étape suivante s'accommode de son absence.
+    let chemin = chemin_feu
+        .join(".cles")
+        .join(format!("{}.cle", interface.braises[0]));
+
+    remove_file(&chemin).unwrap();
+
+    let anomalies = FeuNoyau::diagnostic_noeud(&chemin_feu);
+
+    assert_eq!(anomalies.len(), 1);
+    assert!(matches!(
+        anomalies.first().unwrap(),
+        Anomalie::ElementAbsent(c) if c == &chemin
+    ));
+
+    // 5 — la config doit rester lisible pour que son parsing échoue ; la
+    // supprimer donnerait une absence. Le compte retombe à un parce que la
+    // boucle sur les foyers est court-circuitée, masquant l'anomalie de
+    // l'étape 4.
+    write(chemin_feu.join("config.feu"), "n'importe quoi").unwrap();
+
+    let anomalies = FeuNoyau::diagnostic_noeud(&chemin_feu);
+
+    assert_eq!(anomalies.len(), 1);
+    assert!(matches!(
+        anomalies.first().unwrap(),
+        Anomalie::ConfigurationIllisible
+    ));
+
+    drop(noyau);
 
     Ok(())
 }
