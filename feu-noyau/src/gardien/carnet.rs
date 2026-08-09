@@ -559,6 +559,12 @@ impl Carnet {
     /// `~/.feu/<braise>/` — symétrique de [`archive_tar_foyer`](Self::archive_tar_foyer)
     /// qui archive avec `.` comme racine.
     ///
+    /// Le dossier de destination est créé ici, et non laissé à `unpack`. Comme
+    /// il est la racine de l'extraction, il ne figure pas parmi les entrées de
+    /// l'archive : `unpack` le créerait au `umask` du processus, soit `0o755` en
+    /// pratique, là où tout le reste de l'arborescence est en `0o700`. Les
+    /// entrées de l'archive, elles, portent leur mode d'origine.
+    ///
     /// # Erreurs
     ///
     /// Retourne une erreur si `<braise>.tar` est absent, illisible,
@@ -566,6 +572,7 @@ impl Carnet {
     pub(super) fn desarchive_tar_foyer(&self, braise: Braise) -> ResultGardien<()> {
         let mut archive = tar::Archive::new(self.ouvre_archive_tar_foyer_lecture(braise)?);
 
+        Self::creer_dossier(&self.donne_chemin_braise(braise))?;
         archive.unpack(self.donne_chemin_braise(braise))?;
         Ok(())
     }

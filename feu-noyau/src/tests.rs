@@ -26,7 +26,10 @@
 //! de retour, et les fichiers laissés sur le disque, dont les chemins se
 //! déduisent de la seule braise.
 
-use std::fs::{File, read_to_string, write};
+use std::{
+    fs::{File, read_dir, read_to_string, symlink_metadata, write},
+    os::unix::fs::PermissionsExt,
+};
 
 use tempfile::TempDir;
 
@@ -118,12 +121,49 @@ impl InterfaceFeuNoyau for InterfaceTest {
     }
 }
 
+/// Vérifie que tout dossier sous `racine` est en `0o700` et tout fichier en
+/// `0o600` — les deux seuls modes que le noyau pose, sans exception.
+///
+/// Un parcours plutôt qu'une liste de chemins : la règle est uniforme, et rien
+/// ne doit y échapper parce qu'un fichier serait apparu depuis. C'est ainsi
+/// qu'a été trouvé le dossier de foyer laissé au `umask` par `unpack`.
+///
+/// Les liens symboliques sont écartés sans être suivis : `registre/classeur.N`
+/// pointe vers la racine du foyer, et y descendre ferait boucler le parcours.
+fn verifie_permissions(racine: &Path) {
+    let mode = |c: &Path| symlink_metadata(c).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(racine), 0o700, "{}", racine.display());
+
+    for entree in read_dir(racine).unwrap() {
+        let chemin = entree.unwrap().path();
+
+        if chemin.is_symlink() {
+            continue;
+        }
+
+        if chemin.is_dir() {
+            verifie_permissions(&chemin);
+        } else {
+            assert_eq!(mode(&chemin), 0o600, "{}", chemin.display());
+        }
+    }
+}
+
 /// Un blob déposé dans chacun des trois foyers se relit à l'identique après que
 /// le noyau a été détruit puis reconstruit, braises et clé publique de nœud
 /// retrouvées à partir du seul mot de passe.
 ///
 /// Établit au passage l'unicité d'un blob dans un foyer : redéposé dans un autre
 /// classeur, il n'est pas dupliqué et le dépôt rend celui qui le détient déjà.
+///
+/// Le blob dépasse [`TAILLE_CHUNK`] et ses lignes sont numérotées : la boucle de
+/// lecture de `Tiroir::remplir` fait donc plusieurs tours, dont un dernier
+/// partiel, et un chunk perdu ou interverti se verrait à la relecture — ce
+/// qu'un contenu uniforme laisserait passer.
+///
+/// Les permissions sont contrôlées à chaque état stable du nœud, tous foyers
+/// fermés puis tous ouverts : les fichiers d'un foyer n'existent qu'ouvert, son
+/// archive qu'une fois refermé.
 #[test]
 fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -131,8 +171,12 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
     let chemin_feu = tmp.path().join(".feu");
 
     let chemin_donnees = tmp.path().join("fichier.txt");
-    let contenu = "Contenu de test à mettre dans un foyer.";
-    write(&chemin_donnees, contenu).unwrap();
+
+    let contenu: String = (0..1000)
+        .map(|i| format!("ligne {i:04} du blob de test\n"))
+        .collect();
+
+    write(&chemin_donnees, &contenu).unwrap();
     let mut hash_donnees = String::new();
 
     let mut interface = InterfaceTest::new("mot de passe");
@@ -166,6 +210,10 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
         let source_donnees = File::open(&chemin_donnees).unwrap();
         let (hash_donnees2, index) = noyau.depot_donnees(i, 1, &source_donnees)?;
 
+        assert_eq!(noyau.liste_blobs(i, 0)?.len(), 1);
+        assert_eq!(noyau.liste_blobs(i, 0)?.first().unwrap(), &hash_donnees);
+        assert_eq!(noyau.liste_blobs(i, 1)?.len(), 0);
+
         assert_eq!(index, 0);
         assert_eq!(hash_donnees, hash_donnees2);
 
@@ -180,6 +228,8 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
 
     let mut interface2 = InterfaceTest::new("mot de passe");
     let mut noyau2 = FeuNoyau::new(&chemin_feu, None, &mut interface2)?;
+
+    verifie_permissions(&chemin_feu);
 
     // Comparaison champ à champ, et non des deux interfaces entières : elles
     // n'ont pas vécu la même histoire. `interface2` n'a reçu ni la seed — émise
@@ -202,11 +252,18 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
         let contenu_recupere = read_to_string(tmp.path().join("temp")).unwrap();
 
         assert_eq!(contenu, contenu_recupere);
+    }
 
+    verifie_permissions(&chemin_feu);
+
+    for i in 0..MAX_FOYERS {
         noyau2.fermeture_foyer(&mut interface2, i)?;
 
         assert!(!interface2.etats[i]);
     }
+
+    verifie_permissions(&chemin_feu);
+
     Ok(())
 }
 

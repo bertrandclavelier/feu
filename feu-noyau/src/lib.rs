@@ -798,6 +798,9 @@ impl FeuNoyau {
     /// disparaître : supprimer le `.feu` sur une erreur ultérieure détruirait
     /// les données.
     ///
+    /// Aucun test ne couvre ces deux chemins : les atteindre suppose une panne
+    /// disque, qu'aucun mauvais usage ne provoque.
+    ///
     /// # Erreurs
     ///
     /// Retourne une [`ErreurFeuNoyau`] si l'index est invalide, si le foyer est
