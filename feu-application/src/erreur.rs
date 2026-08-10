@@ -78,6 +78,13 @@ impl From<ErreurFeuNoyau> for ErreurFeuApplication {
 }
 
 impl From<ErreurScribe> for ErreurFeuApplication {
+    /// Aplatit toute erreur du Scribe en une chaîne, comme le fait déjà
+    /// `From<ErreurFeuNoyau>`.
+    ///
+    /// Conséquence à connaître avant de typer une erreur côté Scribe : la
+    /// variante ne survit pas à la frontière. Un appelant ne peut pas
+    /// distinguer un `SCR-004` d'un `SCR-005` autrement qu'en lisant le
+    /// message.
     fn from(e: ErreurScribe) -> Self {
         ErreurFeuApplication::Scribe(e.to_string())
     }

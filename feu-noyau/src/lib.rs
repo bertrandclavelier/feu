@@ -917,7 +917,7 @@ impl FeuNoyau {
         Ok(())
     }
 
-    // ── Données ──────────────────────────────────────────────────────────────
+    // ── BLOBS ──────────────────────────────────────────────────────────────
 
     /// Stocke un blob dans un classeur d'un foyer ouvert, sans jamais le dupliquer.
     ///
@@ -937,10 +937,10 @@ impl FeuNoyau {
     /// # Unicité dans le foyer
     ///
     /// Une ENU référence une donnée par le couple `(foyer, hash)` — le classeur
-    /// n'y figure pas, et [`lecture_donnees`](Self::lecture_donnees) le retrouve
+    /// n'y figure pas, et [`lecture_blob`](Self::lecture_blob) le retrouve
     /// en balayant. Deux copies du même blob dans deux classeurs resteraient
     /// donc parfaitement lisibles, le hash désignant un contenu et non un
-    /// fichier ; mais [`suppression_donnees`](Self::suppression_donnees), qui
+    /// fichier ; mais [`suppression_blob`](Self::suppression_blob), qui
     /// vise un classeur nommé, n'en effacerait qu'une et laisserait l'autre
     /// lisible. Le balayage de l'étape 5 écarte le cas à la source : un hash
     /// donné n'existe qu'à un seul endroit du foyer.
@@ -960,7 +960,7 @@ impl FeuNoyau {
     ///
     /// Le couple `(hash, classeur)` : le hash SHA3-256 du blob en clair —
     /// identifiant content-addressable à conserver pour relire la donnée via
-    /// [`lecture_donnees`](Self::lecture_donnees) — et l'index du classeur qui
+    /// [`lecture_blob`](Self::lecture_blob) — et l'index du classeur qui
     /// détient le blob, celui demandé ou celui où il résidait déjà.
     ///
     /// # Erreurs
@@ -969,7 +969,7 @@ impl FeuNoyau {
     /// ouvert, si le Cryptographe ou l'Archiviste est absent, si la lecture de
     /// `source` échoue, si la taille dépasse [`MAX_TAILLE_BLOB`], si le chiffrement
     /// échoue, ou si l'écriture disque échoue.
-    pub fn depot_donnees(
+    pub fn depot_blob(
         &mut self,
         index_foyer: usize,
         index_classeur: usize,
@@ -1002,8 +1002,13 @@ impl FeuNoyau {
     /// classeurs du foyer ([`existence_blob`](Self::existence_blob)) jusqu'à
     /// celui qui détient `classeurN/<hash>.dat`. Le nommage étant
     /// content-addressed sur le hash du clair, l'appelant (couche ENU) connaît le
-    /// `hash` mais pas l'emplacement ; le noyau lève cette indétermination. Le
-    /// classeur trouvé sert aux deux temps qui suivent — localiser le `.dat` et
+    /// `hash` mais pas l'emplacement ; le noyau lève cette indétermination.
+    ///
+    /// Un même blob ne réside jamais dans deux classeurs d'un même foyer : le
+    /// premier trouvé est donc le bon, et le balayage n'a pas d'arbitrage à
+    /// rendre.
+    ///
+    /// Le classeur trouvé sert aux deux temps qui suivent — localiser le `.dat` et
     /// fournir la clé de déchiffrement (propre à chaque classeur) — et les deux
     /// sont nécessairement cohérents, le blob ayant été chiffré sous la clé du
     /// classeur où il réside.
@@ -1031,7 +1036,7 @@ impl FeuNoyau {
     /// classeur du foyer ne détient `hash`. Propage enfin l'absence du
     /// Cryptographe, l'échec de déchiffrement ou de vérification d'intégrité, et
     /// l'échec d'écriture dans `destination`.
-    pub fn lecture_donnees(
+    pub fn lecture_blob(
         &mut self,
         index_foyer: usize,
         hash: &str,
@@ -1046,7 +1051,7 @@ impl FeuNoyau {
         // déjà validé, `existence_blob` ne peut plus échouer sur ces index ;
         // l'absence réelle du blob dans tous les classeurs donne BlobIntrouvable.
         let index_classeur = (0..MAX_CLASSEURS)
-            .find(|&c| self.existence_blob(index_foyer, c, hash).unwrap_or(false))
+            .find(|&c| archiviste.existe_blob(c, hash))
             .ok_or(ErreurFeuNoyau::BlobIntrouvable)?;
 
         let mut tiroir = archiviste.donne_tiroir_plein(index_classeur, hash)?;
@@ -1063,27 +1068,38 @@ impl FeuNoyau {
         Ok(())
     }
 
-    /// Supprime un blob d'un classeur d'un foyer ouvert.
+    /// Supprime un blob d'un foyer ouvert, sans en connaître le classeur.
     ///
     /// Supprime le fichier `classeurN/<hash>.dat` via l'Archiviste du foyer.
+    /// L'opération est irréversible.
+    ///
+    /// Le classeur est **découvert** par balayage, comme dans
+    /// [`lecture_blob`](Self::lecture_blob) et pour la même raison :
+    /// l'appelant connaît le `hash` du clair, pas l'emplacement. Un même blob ne
+    /// résidant jamais dans deux classeurs d'un même foyer, le premier trouvé
+    /// est le bon.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
-    /// ouvert, si l'Archiviste est absent, ou si aucun fichier ne correspond
-    /// au `hash` dans le classeur.
-    pub fn suppression_donnees(
-        &self,
-        index_foyer: usize,
-        index_classeur: usize,
-        hash: &str,
-    ) -> ResultFeuNoyau<()> {
-        if index_classeur >= MAX_CLASSEURS {
+    /// Retourne [`ErreurFeuNoyau::IndexInvalide`] si `index_foyer` est hors
+    /// bornes, puis délègue à `archiviste_foyer_ouvert` le foyer fermé
+    /// ([`ErreurFeuNoyau::FoyerFerme`]) et l'Archiviste manquant
+    /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]) — avant le balayage, dont
+    /// l'échec donne [`ErreurFeuNoyau::BlobIntrouvable`]. Propage enfin l'échec
+    /// de la suppression disque.
+    pub fn suppression_blob(&self, index_foyer: usize, hash: &str) -> ResultFeuNoyau<()> {
+        if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::IndexInvalide);
         }
+
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
+        let index_classeur = (0..MAX_CLASSEURS)
+            .find(|&c| archiviste.existe_blob(c, hash))
+            .ok_or(ErreurFeuNoyau::BlobIntrouvable)?;
+
         archiviste.supprime_blob(index_classeur, hash)?;
+
         Ok(())
     }
 
@@ -1111,49 +1127,58 @@ impl FeuNoyau {
         Ok(archiviste.donne_liste_blobs(index_classeur)?)
     }
 
-    /// Indique si un blob est présent dans un classeur d'un foyer ouvert.
+    /// Indique si un blob est présent dans un foyer ouvert, quel qu'en soit le
+    /// classeur.
     ///
-    /// Retourne `true` si `classeurN/<hash>.dat` existe, `false` sinon.
-    /// Permet aux couches supérieures d'interroger l'existence d'un blob
-    /// sans avoir à le lire.
+    /// Permet aux couches supérieures d'interroger l'existence d'un blob sans
+    /// avoir à le lire — donc sans déchiffrement.
+    ///
+    /// L'absence est un `Ok(false)`, jamais une erreur : la question posée
+    /// admet « non » pour réponse. Les erreurs sont réservées à ce qui empêche
+    /// de répondre — index hors bornes, foyer fermé.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
-    /// ouvert, ou si l'Archiviste est absent.
-    pub fn existence_blob(
-        &self,
-        index_foyer: usize,
-        index_classeur: usize,
-        hash: &str,
-    ) -> ResultFeuNoyau<bool> {
-        if index_classeur >= MAX_CLASSEURS {
+    /// Retourne [`ErreurFeuNoyau::IndexInvalide`] si `index_foyer` est hors
+    /// bornes, puis délègue à `archiviste_foyer_ouvert` le foyer fermé
+    /// ([`ErreurFeuNoyau::FoyerFerme`]) et l'Archiviste manquant
+    /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]).
+    pub fn existence_blob(&self, index_foyer: usize, hash: &str) -> ResultFeuNoyau<bool> {
+        if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::IndexInvalide);
         }
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
-        Ok(archiviste.existe_blob(index_classeur, hash))
+        Ok((0..MAX_CLASSEURS).any(|c| archiviste.existe_blob(c, hash)))
     }
 
-    /// Retourne les métadonnées système d'un blob.
+    /// Retourne les métadonnées système d'un blob, sans en connaître le
+    /// classeur.
     ///
-    /// Délègue à l'Archiviste du foyer désigné — voir [`DonneesBlob`] pour le détail des champs.
+    /// Délègue à l'Archiviste du foyer désigné — voir [`DonneesBlob`] pour le
+    /// détail des champs. Le classeur est découvert par balayage, comme dans
+    /// [`lecture_blob`](Self::lecture_blob).
+    ///
+    /// Contrairement à [`existence_blob`](Self::existence_blob), l'absence est
+    /// ici une erreur : on a demandé les métadonnées d'un blob, pas s'il en
+    /// avait.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si les index sont hors bornes,
-    /// si le foyer n'est pas ouvert, si l'Archiviste est absent,
-    /// ou si le blob est introuvable.
-    pub fn informations_blob(
-        &self,
-        index_foyer: usize,
-        index_classeur: usize,
-        hash: &str,
-    ) -> ResultFeuNoyau<DonneesBlob> {
-        if index_classeur >= MAX_CLASSEURS {
+    /// Retourne [`ErreurFeuNoyau::IndexInvalide`] si `index_foyer` est hors
+    /// bornes, puis délègue à `archiviste_foyer_ouvert` le foyer fermé et
+    /// l'Archiviste manquant. Retourne [`ErreurFeuNoyau::BlobIntrouvable`] si
+    /// aucun classeur ne détient `hash`.
+    pub fn informations_blob(&self, index_foyer: usize, hash: &str) -> ResultFeuNoyau<DonneesBlob> {
+        if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::IndexInvalide);
         }
+
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
+
+        let index_classeur = (0..MAX_CLASSEURS)
+            .find(|&c| archiviste.existe_blob(c, hash))
+            .ok_or(ErreurFeuNoyau::BlobIntrouvable)?;
 
         Ok(archiviste.donne_informations_blob(index_classeur, hash)?)
     }

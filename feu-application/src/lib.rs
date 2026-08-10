@@ -36,8 +36,11 @@
 //!    [`ErreurFeuApplication::NoeudEteint`] si cette étape n'a pas été franchie.
 //!
 //! [`FeuApplication`] possède :
+//! - `chemin_feu` — racine du nœud, reçue du binaire et distribuée au Scribe
+//!   puis au noyau
 //! - `feu_noyau` — `Option<FeuNoyau>` : `None` jusqu'à `commande_allumage_noeud`
 //! - `session` — état applicatif mis à jour à chaque commande noyau
+//! - `scribe` — tenant de la couche ENU, champ plein activé à l'allumage
 
 use std::path::{Path, PathBuf};
 
@@ -48,8 +51,15 @@ use feu_noyau::{Braise, FeuNoyau, InterfaceFeuNoyau};
 use scribe::Scribe;
 /// Types ENU exposés en lecture seule à toutes les crates du workspace.
 ///
-/// Contrat : champs privés, accesseurs publics — voir la doc du module
-/// `scribe::enu` pour le détail.
+/// [`Enu`] tient ses champs privés derrière des accesseurs : son enveloppe
+/// (braise, signature, date) ne se forge que dans `scribe::enu`, dont les
+/// constructeurs restent `pub(super)`.
+///
+/// [`Carte`] est l'inverse — un `enum` public dont les variantes exposent leurs
+/// champs. C'est délibéré : c'est ce qui permet à un consommateur de descendre
+/// l'arborescence en lisant les `hashs_enu` d'une [`Carte::Repertoire`]. La
+/// confiance ne vient pas de l'encapsulation mais de la vérification de la
+/// signature à chaque chargement.
 pub use scribe::enu::{Carte, Enu};
 pub use session::SessionApplication;
 

@@ -26,6 +26,28 @@
 //! Les commandes qui ne modifient pas l'état du noyau (`existence_blob`,
 //! `informations_blob`, signatures, diagnostic…) prennent `&self` ;
 //! les autres prennent `&mut self`.
+//!
+//! # Désigner une donnée
+//!
+//! Un nœud ne contient que deux sortes de fichiers : les **ENU**, qui portent
+//! la structure et les métadonnées, et les **blobs**, qui portent les contenus
+//! chiffrés dans les classeurs. « Blob » est le terme officiel du projet pour
+//! ces derniers.
+//!
+//! **Au dépôt**, l'appelant donne le foyer et le classeur : rien n'existe
+//! encore, il n'y a pas d'autre façon de dire où ranger.
+//!
+//! **Ensuite, tout passe par l'ENU, sans exception.** Charger, supprimer,
+//! interroger un blob se fait en fournissant son [`Enu`], jamais un couple
+//! foyer/hash — l'ENU porte les deux (braise et `hash_donnee`), et les tenir
+//! ensemble interdit d'en former une paire incohérente. Pas d'ENU, pas de
+//! donnée.
+//!
+//! Rien ici n'accepte donc un hash de blob, ni n'en énumère : de l'extérieur,
+//! les seuls hashs qui ouvrent quelque chose sont ceux des ENU
+//! ([`commande_charge_enu`](FeuApplication::commande_charge_enu)). Celui d'un
+//! blob reste lisible dans une [`Carte::Donnee`], mais il n'identifie que le
+//! fichier — il ne le désigne pas.
 
 use std::{io::Write, path::PathBuf};
 
@@ -391,25 +413,30 @@ impl FeuApplication {
         Ok(())
     }
 
-    /// Lit et déchiffre un blob d'un foyer ouvert, sans en connaître le classeur.
+    /// Lit et déchiffre le blob désigné par `enu`, et écrit le clair dans
+    /// `destination`.
     ///
-    /// Le classeur détenant le blob est découvert par le noyau (balayage sur le
-    /// hash, content-addressed). Déchiffre `<hash>.dat` avec la clé du classeur
-    /// (AES-256-GCM) et écrit le clair dans `destination`. L'intégrité est
-    /// doublement vérifiée : par le tag d'authentification AES-GCM, puis par
-    /// recalcul du hash SHA3-256 du clair, qui doit correspondre à `hash` — une
-    /// divergence est traitée comme une donnée corrompue et retourne une erreur.
+    /// Dernier maillon de la descente ouverte par
+    /// [`commande_donne_derniere_enu_racine`](Self::commande_donne_derniere_enu_racine) :
+    /// une [`Carte::Donnee`] ne porte que l'empreinte du blob, jamais ses
+    /// octets. L'ENU suffit à la retrouver — sa braise donne le foyer, sa carte
+    /// donne le hash. Rien n'est demandé à l'appelant qu'il aurait à extraire
+    /// lui-même, et aucun couple foyer/hash incohérent ne peut être formé.
+    ///
+    /// Le classeur, lui, reste découvert par le noyau (balayage sur le hash,
+    /// content-addressed). L'intégrité est doublement vérifiée : par le tag
+    /// d'authentification AES-GCM, puis par recalcul du hash SHA3-256 du clair.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si `index_foyer` est invalide, si le foyer n'est pas
-    /// ouvert, si aucun classeur du foyer ne détient `hash`, si le déchiffrement
-    /// échoue, ou si le hash recalculé ne correspond pas à `hash` (donnée
-    /// corrompue).
-    pub fn commande_lecture_donnees(
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
+    /// (`SCR-004`), carte qui n'est pas une [`Carte::Donnee`] (`SCR-005`), foyer
+    /// fermé, blob introuvable, déchiffrement, ou hash recalculé divergent —
+    /// donnée corrompue.
+    pub fn commande_chargement_blob(
         &mut self,
-        index_foyer: usize,
-        hash: &str,
+        enu: &Enu,
         destination: impl Write,
     ) -> ResultFeuApplication<()> {
         let noyau = self
@@ -417,96 +444,85 @@ impl FeuApplication {
             .as_mut()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        noyau.lecture_donnees(index_foyer, hash, destination)?;
-        Ok(())
-    }
-
-    /// Supprime un blob d'un classeur d'un foyer ouvert.
-    ///
-    /// Supprime le fichier `<hash>.dat` sur disque. L'opération est irréversible.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas ouvert,
-    /// ou si la suppression disque échoue.
-    pub fn commande_suppression_donnees(
-        &self,
-        index_foyer: usize,
-        index_classeur: usize,
-        hash: &str,
-    ) -> ResultFeuApplication<()> {
-        let noyau = self
-            .feu_noyau
-            .as_ref()
-            .ok_or(ErreurFeuApplication::NoeudEteint)?;
-
-        noyau.suppression_donnees(index_foyer, index_classeur, hash)?;
+        self.scribe
+            .charge_blob(noyau, &self.session, enu, destination)?;
 
         Ok(())
     }
 
-    /// Retourne la liste des hashes des blobs présents dans un classeur d'un foyer ouvert.
+    /// Supprime le blob désigné par `enu` — le fichier `<hash>.dat` sur disque.
+    /// L'opération est irréversible.
     ///
-    /// L'ordre n'est pas garanti — dépend de l'ordre de lecture du système de fichiers.
+    /// Symétrique de
+    /// [`commande_chargement_blob`](Self::commande_chargement_blob) et
+    /// désignant sa cible de la même façon : par l'ENU seule, dont la braise
+    /// donne le foyer et la carte le hash. Le classeur est découvert par
+    /// balayage côté noyau, l'appelant n'a donc rien à en connaître.
+    ///
+    /// Ne touche pas à l'ENU elle-même, qui continue de référencer un blob
+    /// désormais absent.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas ouvert,
-    /// ou si la lecture du dossier échoue.
-    pub fn commande_liste_blobs(
-        &self,
-        index_foyer: usize,
-        index_classeur: usize,
-    ) -> ResultFeuApplication<Vec<String>> {
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
+    /// (`SCR-004`), carte qui n'est pas une [`Carte::Donnee`] (`SCR-005`), foyer
+    /// fermé, blob introuvable, ou échec de la suppression disque.
+    pub fn commande_suppression_blob(&mut self, enu: &Enu) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
-            .as_ref()
+            .as_mut()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        Ok(noyau.liste_blobs(index_foyer, index_classeur)?)
+        self.scribe.supprime_blob(noyau, &self.session, enu)?;
+
+        Ok(())
     }
 
-    /// Indique si un blob est présent dans un classeur d'un foyer ouvert.
+    /// Indique si le blob désigné par `enu` est présent sur disque.
     ///
-    /// Retourne `true` si `classeurN/<hash>.dat` existe sur disque, `false` sinon.
+    /// Une ENU peut survivre à son blob :
+    /// [`commande_suppression_blob`](Self::commande_suppression_blob) retire le
+    /// `.dat` sans toucher à l'arborescence. C'est ce décalage que cette
+    /// commande permet de constater, sans rien déchiffrer.
+    ///
+    /// L'absence est un `Ok(false)` — la question admet « non » pour réponse.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si les index sont invalides ou si le foyer n'est pas ouvert.
-    pub fn commande_existence_blob(
-        &self,
-        index_foyer: usize,
-        index_classeur: usize,
-        hash: &str,
-    ) -> ResultFeuApplication<bool> {
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
+    /// (`SCR-004`), carte qui n'est pas une [`Carte::Donnee`] (`SCR-005`), foyer
+    /// fermé.
+    pub fn commande_existence_blob(&self, enu: &Enu) -> ResultFeuApplication<bool> {
         let noyau = self
             .feu_noyau
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        Ok(noyau.existence_blob(index_foyer, index_classeur, hash)?)
+        Ok(self.scribe.existence_blob(noyau, &self.session, enu)?)
     }
 
-    /// Retourne les métadonnées système d'un blob (taille, dates d'accès et de modification).
+    /// Retourne les métadonnées système du blob désigné par `enu` — taille,
+    /// dates d'accès et de modification.
     ///
-    /// Voir [`DonneesBlob`] pour le détail des champs.
+    /// Voir [`DonneesBlob`] pour le détail des champs. Renseigne sur le fichier,
+    /// jamais sur son contenu : rien n'est déchiffré.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas ouvert,
-    /// ou si le blob est introuvable.
-    pub fn commande_information_blob(
-        &self,
-        index_foyer: usize,
-        index_classeur: usize,
-        hash: &str,
-    ) -> ResultFeuApplication<DonneesBlob> {
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
+    /// (`SCR-004`), carte qui n'est pas une [`Carte::Donnee`] (`SCR-005`), foyer
+    /// fermé, blob introuvable — ici une erreur, contrairement à
+    /// [`commande_existence_blob`](Self::commande_existence_blob).
+    pub fn commande_informations_blob(&self, enu: &Enu) -> ResultFeuApplication<DonneesBlob> {
         let noyau = self
             .feu_noyau
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        Ok(noyau.informations_blob(index_foyer, index_classeur, hash)?)
+        Ok(self.scribe.informations_blob(noyau, &self.session, enu)?)
     }
 
     /// Chiffre des octets à destination d'un nœud identifié par sa clé publique ML-KEM-1024.
@@ -644,5 +660,56 @@ impl FeuApplication {
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
         Ok(noyau.diagnostic_foyer(index_foyer)?)
+    }
+
+    /// Retourne le sommet courant de l'arborescence, authentifié.
+    ///
+    /// Avec [`commande_charge_enu`](Self::commande_charge_enu), forme la porte
+    /// d'entrée de la couche ENU : celle-ci donne le point de départ, l'autre
+    /// permet la descente. Aucune autre commande ne produit d'[`Enu`] — sans
+    /// elles, [`commande_fermeture_comptoir_depot`](Self::commande_fermeture_comptoir_depot)
+    /// et [`commande_retrait_lecture_seule`](Self::commande_retrait_lecture_seule),
+    /// qui en réclament une, restaient inappelables depuis la présentation.
+    ///
+    /// Ne demande rien au noyau : la racine se lit sur le disque. Sa garde porte
+    /// donc sur l'activation du Scribe, pas sur la présence du noyau.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : lien `.DERNIERE_RACINE` absent, lecture,
+    /// authentification.
+    pub fn commande_donne_derniere_enu_racine(&self) -> ResultFeuApplication<Enu> {
+        if !self.scribe.est_actif() {
+            return Err(ErreurFeuApplication::NoeudEteint);
+        }
+
+        Ok(self.scribe.derniere_enu_racine(&self.session)?)
+    }
+
+    /// Charge l'[`Enu`] désignée par `hash`, authentifiée — `None` si aucune ne
+    /// porte ce hash.
+    ///
+    /// Assure la descente de l'arborescence : une [`Carte::Repertoire`] ne
+    /// référence ses enfants que par leur hash, à recharger un à un depuis le
+    /// sommet obtenu par
+    /// [`commande_donne_derniere_enu_racine`](Self::commande_donne_derniere_enu_racine).
+    ///
+    /// L'absence est un `None` et non une erreur : le hash vient de l'appelant,
+    /// ne pas le trouver est une réponse. Les erreurs restent réservées à ce qui
+    /// a mal tourné — lecture ou authentification. C'est ce qui rend la garde
+    /// nécessaire : sans elle, un hash inconnu sur un nœud éteint répondrait
+    /// `Ok(None)`, réponse normale d'un nœud qui n'est pas allumé.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : lecture, authentification.
+    pub fn commande_charge_enu(&self, hash: &[u8; 32]) -> ResultFeuApplication<Option<Enu>> {
+        if !self.scribe.est_actif() {
+            return Err(ErreurFeuApplication::NoeudEteint);
+        }
+
+        Ok(self.scribe.charge_enu(&self.session, hash)?)
     }
 }

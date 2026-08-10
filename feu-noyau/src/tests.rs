@@ -218,14 +218,14 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
         // Chaque dépôt exige une source neuve : `remplir` lit jusqu'à EOF, un
         // handle réutilisé ne rendrait plus qu'un blob vide.
         let source_donnees = File::open(&chemin_donnees).unwrap();
-        (hash_donnees, _) = noyau.depot_donnees(i, 0, &source_donnees)?;
+        (hash_donnees, _) = noyau.depot_blob(i, 0, &source_donnees)?;
 
         // Même contenu, autre classeur demandé : le blob ne doit pas être
         // dupliqué, et le dépôt rendre le classeur 0 où il réside déjà. Le hash
         // identique le confirme — il ne dépend que du clair, jamais de la clé du
         // classeur sous laquelle il vient d'être chiffré.
         let source_donnees = File::open(&chemin_donnees).unwrap();
-        let (hash_donnees2, index) = noyau.depot_donnees(i, 1, &source_donnees)?;
+        let (hash_donnees2, index) = noyau.depot_blob(i, 1, &source_donnees)?;
 
         assert_eq!(noyau.liste_blobs(i, 0)?.len(), 1);
         assert_eq!(noyau.liste_blobs(i, 0)?.first().unwrap(), &hash_donnees);
@@ -264,7 +264,7 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
 
         noyau2.ouverture_foyer(&mut interface2, i)?;
 
-        noyau2.lecture_donnees(i, &hash_donnees, &fichier_recuperation)?;
+        noyau2.lecture_blob(i, &hash_donnees, &fichier_recuperation)?;
 
         let contenu_recupere = read_to_string(tmp.path().join("temp")).unwrap();
 
@@ -272,11 +272,11 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
 
         // Classeur 0 : celui que le premier dépôt a rendu, et où le second a
         // laissé le blob.
-        noyau2.suppression_donnees(i, 0, &hash_donnees)?;
+        noyau2.suppression_blob(i, &hash_donnees)?;
 
-        assert!(!noyau2.existence_blob(i, 0, &hash_donnees)?);
+        assert!(!noyau2.existence_blob(i, &hash_donnees)?);
         assert!(matches!(
-            noyau2.lecture_donnees(i, &hash_donnees, &fichier_recuperation),
+            noyau2.lecture_blob(i, &hash_donnees, &fichier_recuperation),
             Err(ErreurFeuNoyau::BlobIntrouvable)
         ));
     }
@@ -480,7 +480,7 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
     let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
 
     assert!(matches!(
-        noyau.lecture_donnees(0, &hash, &fichier_recuperation),
+        noyau.lecture_blob(0, &hash, &fichier_recuperation),
         Err(ErreurFeuNoyau::BlobIntrouvable)
     ));
 
@@ -495,7 +495,7 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
     // opérations qui en dépendent.
     let source_donnees = File::open(&chemin_donnees).unwrap();
     assert!(matches!(
-        noyau.depot_donnees(0, 0, &source_donnees),
+        noyau.depot_blob(0, 0, &source_donnees),
         Err(ErreurFeuNoyau::FoyerFerme)
     ));
 
@@ -597,7 +597,7 @@ fn fermeture_secours() -> ResultFeuNoyau<()> {
 
     noyau.ouverture_foyer(&mut interface, 0)?;
     let source_donnees = File::open(&chemin_donnees).unwrap();
-    let (hash_donnees, _) = noyau.depot_donnees(0, 0, &source_donnees)?;
+    let (hash_donnees, _) = noyau.depot_blob(0, 0, &source_donnees)?;
 
     forget(noyau);
 
@@ -613,7 +613,7 @@ fn fermeture_secours() -> ResultFeuNoyau<()> {
 
     let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
 
-    noyau.lecture_donnees(0, &hash_donnees, &fichier_recuperation)?;
+    noyau.lecture_blob(0, &hash_donnees, &fichier_recuperation)?;
 
     let contenu_recupere = read_to_string(tmp.path().join("temp")).unwrap();
 
@@ -701,7 +701,7 @@ fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
     noyau.ouverture_foyer(&mut interface, 0)?;
 
     let source_donnees = File::open(&chemin_donnees).unwrap();
-    let (hash_donnees, _) = noyau.depot_donnees(0, 0, &source_donnees)?;
+    let (hash_donnees, _) = noyau.depot_blob(0, 0, &source_donnees)?;
 
     noyau.fermeture_foyer(&mut interface, 0)?;
 
@@ -736,7 +736,7 @@ fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
 
     let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
 
-    noyau.lecture_donnees(0, &hash_donnees, &fichier_recuperation)?;
+    noyau.lecture_blob(0, &hash_donnees, &fichier_recuperation)?;
 
     let contenu_recupere = read_to_string(tmp.path().join("temp")).unwrap();
 

@@ -16,8 +16,15 @@
 //! la signature, pas par le chiffrement.
 //!
 //! Le Scribe est activé à l'allumage du nœud et désactivé à son extinction.
-//! Il ignore ce qu'est un foyer : la résolution du blob (trouver le `.dat`
-//! correspondant à un `hash_donnee`) est ailleurs.
+//!
+//! Un nœud ne contient que deux sortes de fichiers : les ENU, tenues ici, et
+//! les **blobs** — les contenus chiffrés rangés dans les classeurs des foyers.
+//!
+//! Le Scribe ne descend pas jusqu'au blob : trouver le `.dat` correspondant à un
+//! `hash_donnee`, le déchiffrer, le supprimer sont l'affaire du noyau. Il fait
+//! la charnière — traduire une ENU en index de foyer et en empreinte de blob
+//! (voir [`Scribe::index_et_hash_blob`]) — pour que ses appelants ne désignent
+//! jamais une donnée autrement que par son ENU.
 
 mod comptoir;
 pub mod enu;
@@ -35,7 +42,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use feu_noyau::{BRAISE_VIDE, FeuNoyau};
+use feu_noyau::{BRAISE_VIDE, DonneesBlob, FeuNoyau};
 use walkdir::WalkDir;
 
 use crate::{
@@ -56,6 +63,14 @@ const ERR_SCR_002: &str = "SCR-002 > Le dossier existe déjà";
 /// L'ENU fournie comme racine de retrait n'est pas une `EnuR`
 /// ([`Carte::Repertoire`]) : seul un répertoire peut ouvrir une arborescence.
 const ERR_SCR_003: &str = "SCR-003 > Ce doit être une EnuR";
+
+/// La braise portée par une ENU ne résout vers aucun foyer de la session —
+/// nécessaire pour savoir à quel foyer demander le déchiffrement d'un blob.
+const ERR_SCR_004: &str = "SCR-004 > Braise inconnue";
+
+/// L'ENU fournie pour un chargement de données n'est pas une `EnuD`
+/// ([`Carte::Donnee`]) : elle ne référence donc aucun blob.
+const ERR_SCR_005: &str = "SCR-005 > Ce doit être une EnuD";
 
 /// Tenant de la couche ENU — créé et maintient `~/.feu/enu/`.
 ///
@@ -114,6 +129,185 @@ impl Scribe {
     /// Sert de précondition aux commandes qui ne dépendent que de lui.
     pub(super) fn est_actif(&self) -> bool {
         self.est_actif
+    }
+
+    /// Charge le sommet courant en suivant `.DERNIERE_RACINE`.
+    ///
+    /// Le Scribe étant seul à connaître l'emplacement du lien, il est le seul à
+    /// pouvoir le résoudre pour un appelant qui ne veut que l'ENU.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage les erreurs de [`Enu::charger_derniere_racine`] : lien absent,
+    /// lecture, authentification.
+    pub(super) fn derniere_enu_racine(&self, session: &SessionApplication) -> ResultScribe<Enu> {
+        Enu::charger_derniere_racine(&self.chemin_derniere_racine, session)
+    }
+
+    /// Charge l'ENU de `hash` — `None` si aucun fichier ne lui correspond.
+    ///
+    /// L'existence est testée avant le chargement pour que l'absence ne se
+    /// confonde pas avec un échec d'authentification : [`Enu::charger`] refuse
+    /// de la même façon une ENU manquante et une ENU altérée, alors que les deux
+    /// n'appellent pas la même réaction.
+    ///
+    /// La fenêtre entre le test et la lecture est assumée. Une ENU qui
+    /// disparaîtrait entre les deux ressortirait en erreur d'E/S plutôt qu'en
+    /// `None` — cas sans portée, aucun appelant de production ne supprime d'ENU.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage les erreurs de [`Enu::charger`] : lecture, authentification.
+    pub(super) fn charge_enu(
+        &self,
+        session: &SessionApplication,
+        hash: &[u8; 32],
+    ) -> ResultScribe<Option<Enu>> {
+        if !Enu::hash_carte_vers_chemin(hash, &self.chemin_enu).exists() {
+            return Ok(None);
+        }
+
+        Ok(Some(Enu::charger(&self.chemin_enu, session, hash)?))
+    }
+
+    /// Traduit une ENU en ce que le noyau attend : l'index du foyer et
+    /// l'empreinte du blob.
+    ///
+    /// Le Scribe ignore ce qu'est un foyer, le noyau ignore ce qu'est une ENU.
+    /// Cette fonction est la charnière : la braise devient un index par
+    /// [`SessionApplication::braise_vers_index`], la carte livre son
+    /// `hash_donnee`. C'est ce qui permet aux appelants de ne désigner une
+    /// donnée que par son ENU, sans jamais recomposer un couple foyer/hash —
+    /// qu'ils pourraient former incohérent.
+    ///
+    /// Facteur commun de [`charge_blob`](Self::charge_blob) et
+    /// [`supprime_blob`](Self::supprime_blob), qui ne diffèrent que par
+    /// l'appel noyau qui suit. Les tenir ensemble ici garantit qu'elles ne
+    /// divergeront pas sur la façon de résoudre leur cible.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne `SCR-004` si la braise ne résout vers aucun foyer de la session,
+    /// `SCR-005` si la carte n'est pas une [`Carte::Donnee`] et ne référence
+    /// donc aucun blob.
+    fn index_et_hash_blob(
+        &self,
+        session: &SessionApplication,
+        enu: &Enu,
+    ) -> ResultScribe<(usize, [u8; 32])> {
+        let Some(index) = session.braise_vers_index(enu.braise()) else {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_004)));
+        };
+
+        let Carte::Donnee {
+            metas: _,
+            tags: _,
+            hash_donnee,
+        } = enu.carte()
+        else {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_005)));
+        };
+
+        Ok((index, *hash_donnee))
+    }
+
+    /// Déchiffre le blob référencé par `enu` et écrit le clair dans
+    /// `destination`.
+    ///
+    /// Le Scribe ne sait pas déchiffrer, c'est l'affaire du noyau : il ne fait
+    /// ici que résoudre la cible par [`index_et_hash_blob`](Self::index_et_hash_blob),
+    /// puis passer la main. Le hash lui est transmis en hexadécimal, forme sous
+    /// laquelle le noyau nomme ses blobs.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage `SCR-004` et `SCR-005` de [`index_et_hash_blob`](Self::index_et_hash_blob),
+    /// puis les erreurs du noyau : foyer fermé, blob introuvable, déchiffrement,
+    /// donnée corrompue.
+    pub(super) fn charge_blob(
+        &self,
+        noyau: &mut FeuNoyau,
+        session: &SessionApplication,
+        enu: &Enu,
+        destination: impl Write,
+    ) -> ResultScribe<()> {
+        let (index, hash_donnees) = self.index_et_hash_blob(session, enu)?;
+
+        noyau.lecture_blob(index, &HEXLOWER.encode(&hash_donnees), destination)?;
+
+        Ok(())
+    }
+
+    /// Supprime le blob référencé par `enu`, sans toucher à l'ENU.
+    ///
+    /// Jumelle de [`charge_blob`](Self::charge_blob) : même résolution de
+    /// cible, seul l'appel noyau qui suit diffère.
+    ///
+    /// L'ENU survit à son blob. Rien ici ne la retire de l'arborescence, où elle
+    /// continue de référencer un fichier absent.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage `SCR-004` et `SCR-005` de [`index_et_hash_blob`](Self::index_et_hash_blob),
+    /// puis les erreurs du noyau : foyer fermé, blob introuvable, suppression
+    /// disque.
+    pub(super) fn supprime_blob(
+        &self,
+        noyau: &mut FeuNoyau,
+        session: &SessionApplication,
+        enu: &Enu,
+    ) -> ResultScribe<()> {
+        let (index, hash_donnees) = self.index_et_hash_blob(session, enu)?;
+
+        noyau.suppression_blob(index, &HEXLOWER.encode(&hash_donnees))?;
+
+        Ok(())
+    }
+
+    /// Indique si le blob référencé par `enu` est présent dans son foyer.
+    ///
+    /// Même résolution de cible que [`charge_blob`](Self::charge_blob), sans
+    /// rien ouvrir : la question porte sur la présence du `.dat`, pas sur son
+    /// contenu. Une ENU peut survivre à son blob (voir
+    /// [`supprime_blob`](Self::supprime_blob)) — c'est ce que cette méthode
+    /// permet de détecter.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage `SCR-004` et `SCR-005` de
+    /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
+    /// noyau : foyer fermé. Un blob absent est un `Ok(false)`.
+    pub(super) fn existence_blob(
+        &self,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+        enu: &Enu,
+    ) -> ResultScribe<bool> {
+        let (index, hash_donnees) = self.index_et_hash_blob(session, enu)?;
+
+        Ok(noyau.existence_blob(index, &HEXLOWER.encode(&hash_donnees))?)
+    }
+
+    /// Retourne les métadonnées système du blob référencé par `enu` — taille,
+    /// dates.
+    ///
+    /// Renseigne sur le fichier, jamais sur son contenu : rien n'est déchiffré.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage `SCR-004` et `SCR-005` de
+    /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
+    /// noyau : foyer fermé, blob introuvable — ici une erreur, contrairement à
+    /// [`existence_blob`](Self::existence_blob).
+    pub(super) fn informations_blob(
+        &self,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+        enu: &Enu,
+    ) -> ResultScribe<DonneesBlob> {
+        let (index, hash_donnees) = self.index_et_hash_blob(session, enu)?;
+
+        Ok(noyau.informations_blob(index, &HEXLOWER.encode(&hash_donnees))?)
     }
 
     /// Active le Scribe et, à la première activation, amorce l'arborescence.
@@ -283,7 +477,7 @@ impl Scribe {
             if entree.file_type().is_file() {
                 let contenu = read(&chemin_entree)?;
 
-                let (hash_fichier, _) = noyau.depot_donnees(
+                let (hash_fichier, _) = noyau.depot_blob(
                     comptoir.index_foyer(),
                     comptoir.index_classeur(),
                     &contenu[..],
@@ -596,7 +790,7 @@ impl Scribe {
     ///
     /// - [`Carte::Donnee`] — la braise résout l'`index_foyer` (elle seule en a
     ///   besoin, déjà garanti par [`Enu::charger`] sur `enu_courante`), puis
-    ///   [`FeuNoyau::lecture_donnees`] retrouve le classeur du blob, le
+    ///   [`FeuNoyau::lecture_blob`] retrouve le classeur du blob, le
     ///   déchiffre et écrit le clair directement dans le fichier de sortie
     ///   (0o600). Le `File` est consommé par l'appel — flush et fermeture au
     ///   drop, rien à reprendre ensuite.
@@ -644,7 +838,7 @@ impl Scribe {
 
                 // le noyau écrit le clair directement dans le fichier, qui est
                 // consommé — fermé au drop, aucun suivi ensuite
-                noyau.lecture_donnees(index_foyer, &HEXLOWER.encode(hash_donnee), fichier)?;
+                noyau.lecture_blob(index_foyer, &HEXLOWER.encode(hash_donnee), fichier)?;
             }
             Carte::Texte {
                 metas: _,
