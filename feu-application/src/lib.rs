@@ -57,6 +57,8 @@ mod commandes;
 pub mod erreur;
 mod scribe;
 mod session;
+#[cfg(test)]
+mod tests;
 
 /// Contrat entre [`FeuApplication`] et la couche de présentation.
 ///
@@ -66,6 +68,13 @@ mod session;
 /// (`recevoir_session_application`). Les notifications d'état internes au noyau
 /// (clés publiques, adresses `.braise`) sont écrites directement dans
 /// [`SessionApplication`] sans passer par ce trait.
+///
+/// Toutes les méthodes prennent `&self` : aucune n'exige l'exclusivité de
+/// l'implémenteur. Ce que le trait demande est de **transmettre**, pas de
+/// retenir — `feu-tui` pousse tout sur un canal, et `Sender::send` se contente
+/// d'un emprunt partagé. Un implémenteur qui veut stocker prend une mutabilité
+/// intérieure à sa charge, plutôt que de faire remonter la contrainte à tous
+/// les autres.
 pub trait InterfaceFeuApplication {
     /// Collecte le mot de passe Feu en masquant la saisie.
     ///
@@ -77,7 +86,7 @@ pub trait InterfaceFeuApplication {
     ///
     /// Appelée une seule fois à l'initialisation. Les `&str` empruntent
     /// la mémoire du noyau — toute copie est à la charge de l'interface.
-    fn recevoir_seed(&mut self, mots: &[&str]);
+    fn recevoir_seed(&self, mots: &[&str]);
 
     /// Demande confirmation que la seed a bien été enregistrée.
     ///

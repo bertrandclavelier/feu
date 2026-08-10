@@ -286,7 +286,7 @@ impl InterfaceFeuApplication for ConnecteurVersTui {
     /// ou fermeture du canal — TUI morte — (retour anticipé sans erreur).
     /// Les autres messages reçus pendant l'attente sont ignorés : hors-protocole
     /// dans ce contexte, ils ne peuvent pas être dispatchés depuis ici.
-    fn recevoir_seed(&mut self, mots: &[&str]) {
+    fn recevoir_seed(&self, mots: &[&str]) {
         self.envoyer_message_coeur_tui(MessageCoeurTui::EnvoiSeed(
             mots.iter()
                 .map(|s| SecretString::from(s.to_string()))

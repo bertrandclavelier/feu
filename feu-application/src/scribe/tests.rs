@@ -10,6 +10,12 @@
 //! confiance de `charger`, et tenue de l'arborescence — racine du nœud,
 //! remplacements, greffe d'enfants, dépôt.
 //!
+//! Le Scribe y est consommé comme le fait `feu-application` : appels directs à
+//! ses fonctions, sur des composants montés à la main. C'est le pendant de
+//! `src/tests.rs`, qui éprouve la crate depuis son contrat public — [`FeuApplication`]
+//! et ses seules `commande_*`, comme le fait `feu-tui`. La frontière tient à
+//! l'angle, pas au sujet : ce qui se comporte ici se prouve câblé là-bas.
+//!
 //! Ces tests montent une pile réelle — noyau allumé depuis une seed neuve dans
 //! un `TempDir`, foyer ouvert, scribe activé — plutôt que des composants isolés :
 //! seule une pile complète permet de signer une ENU puis d'éprouver sa relecture
@@ -29,38 +35,11 @@ use std::{
 
 use data_encoding::HEXLOWER;
 use rand::{Rng, distributions::Alphanumeric};
-use secrecy::SecretString;
 use tempfile::TempDir;
 
-use crate::{InterfaceFeuApplication, RecepteurNoyau};
+use crate::{RecepteurNoyau, tests::InterfaceTest};
 
 use super::*;
-
-/// Implémentation minimale d'[`InterfaceFeuApplication`] pour les tests.
-///
-/// Répond par des valeurs fixes et déterministes — aucune interaction réelle
-/// n'est possible sous test. Enveloppée dans un [`RecepteurNoyau`] réel, elle
-/// laisse le vrai pont remplir la [`SessionApplication`] (braise, clés publiques)
-/// exactement comme en production. Struct sans état : réinstanciable à volonté,
-/// notamment pour le teardown.
-struct InterfaceTest;
-
-impl InterfaceFeuApplication for InterfaceTest {
-    // Constante : la fermeture du foyer doit retrouver le mot de passe qui a
-    // servi à l'ouvrir, sinon le déchiffrement échoue.
-    fn demander_mdp(&self) -> Option<secrecy::SecretString> {
-        Some(SecretString::from("motdepasse"))
-    }
-
-    fn recevoir_seed(&mut self, _mots: &[&str]) {}
-
-    // Sans confirmation, l'initialisation du noyau s'interromprait.
-    fn confirmer_enregistrement_seed(&self) -> bool {
-        true
-    }
-
-    fn recevoir_session_application(&self, _session_application: Option<SessionApplication>) {}
-}
 
 /// Monte le décor commun à tous les tests et le rend à l'appelant.
 ///
@@ -81,7 +60,7 @@ fn cree_noyau_et_foyer_ouvert() -> (
     // un dossier déjà créé le ferait basculer en « ouverture d'un nœud existant ».
     let chemin_feu = tmp.path().join(".feu");
 
-    let mut interface_test = InterfaceTest;
+    let mut interface_test = InterfaceTest::new("mot de passe");
     let mut session = SessionApplication::new();
 
     let mut recepteur = RecepteurNoyau::new(&mut session, &mut interface_test);
@@ -192,7 +171,7 @@ fn lire_arborescence(chemin: &Path) -> ResultScribe<HashSet<(PathBuf, String)>> 
 /// son `Drop` provoquerait un panic. Prend `noyau` et `session` par valeur car
 /// plus rien ne les utilise ensuite.
 fn fermer_foyer(mut noyau: FeuNoyau, mut session: SessionApplication) {
-    let mut interface = InterfaceTest;
+    let mut interface = InterfaceTest::new("mot de passe");
     let mut recepteur = RecepteurNoyau::new(&mut session, &mut interface);
     noyau.fermeture_foyer(&mut recepteur, 0).unwrap();
 }
