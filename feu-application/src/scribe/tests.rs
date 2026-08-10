@@ -285,6 +285,33 @@ fn falsification_avant_chargement_enu() {
     fermer_foyer(noyau, session);
 }
 
+/// Barrière de confiance : une ENU dont la braise a été altérée sur le disque
+/// est rejetée par `charger` (`ENU-003`).
+///
+/// La braise reste bien formée mais ne résout plus vers aucun foyer : aucune clé
+/// publique ne peut alors vérifier la signature.
+#[test]
+fn falsification_braise_avant_chargement_enu() {
+    let (_tmp, chemin_enu, _, noyau, _, session) = cree_noyau_et_foyer_ouvert();
+
+    let enu = creer_enu_donnee(&chemin_enu, &noyau, &session, 0u8);
+
+    let mut octets = read(enu.chemin(&chemin_enu)).unwrap();
+    // Octet du corps de la braise, remplacé par un autre caractère de l'alphabet
+    // BASE32 : la braise reste bien formée (sinon ENU-005 à la désérialisation)
+    // mais ne désigne plus aucun foyer de la session.
+    octets[0] = if octets[0] == b'a' { b'b' } else { b'a' };
+
+    write(enu.chemin(&chemin_enu), octets).unwrap();
+
+    assert!(matches!(
+            Enu::charger(&chemin_enu, &session, &enu.hash_carte()),
+            Err(ErreurScribe::Interne(m)) if m.contains("ENU-003")
+    ));
+
+    fermer_foyer(noyau, session);
+}
+
 /// Cycle de vie de la racine du nœud, sur les trois fonctions qui la portent.
 ///
 /// - `activation` : amorce de l'arborescence à la genèse (dossier `enu/`,

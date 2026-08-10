@@ -13,7 +13,7 @@
 //! l'identité (hash), l'authenticité (signature ML-DSA-87) et la braise du
 //! signataire. Deux signataires possibles : un **foyer** (ENU de contenu,
 //! braise du foyer) ou le **nœud** lui-même (racines de l'arborescence,
-//! braise sentinelle [`BRAISE_VIDE`] — voir [`Enu::new_racine`]).
+//! [`BRAISE_VIDE`] — voir [`Enu::new_racine`]).
 //!
 //! Les types ENU sont **content-addressed** : le hash de la carte sert de nom
 //! de fichier sur disque (`<hash_hex>.enu`). Aucune carte n'a de nom stable.
@@ -198,9 +198,8 @@ impl Enu {
     ///
     /// Une racine est signée par le **nœud** ([`FeuNoyau::signature_noeud`]),
     /// non par un foyer — le sommet de l'arbre appartient au nœud. Sa braise
-    /// vaut [`BRAISE_VIDE`], sentinelle qui marque un signataire nœud (aucun
-    /// foyer réel ne la porte) et oriente [`Enu::charger`] vers la clé publique
-    /// de signature du nœud.
+    /// vaut [`BRAISE_VIDE`], qu'aucun foyer réel ne porte : c'est ce qui oriente
+    /// [`Enu::charger`] vers la clé publique de signature du nœud.
     ///
     /// Le paramètre `carte` distingue les deux usages :
     ///
@@ -456,7 +455,7 @@ impl Enu {
         let enu = Self::octets_vers_enu(&read(chemin)?)?;
         let octets_carte = enu.carte.vers_octets();
 
-        // racine du nœud : braise sentinelle → vérification contre la clé du nœud
+        // racine du nœud : BRAISE_VIDE → vérification contre la clé du nœud
         if enu.braise == BRAISE_VIDE
             && enu.carte().metas().contains_key("_racine")
             && FeuNoyau::verification_signature(
@@ -511,7 +510,7 @@ impl Enu {
         let enu = Self::octets_vers_enu(&read(chemin_derniere_racine)?)?;
         let octets_carte = enu.carte.vers_octets();
 
-        // racine du nœud : braise sentinelle → vérification contre la clé du nœud
+        // racine du nœud : BRAISE_VIDE → vérification contre la clé du nœud
         if enu.braise == BRAISE_VIDE
             && enu.carte().metas().contains_key("_racine")
             && FeuNoyau::verification_signature(

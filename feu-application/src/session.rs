@@ -224,3 +224,28 @@ impl Default for SessionApplication {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    /// Deux foyers ouverts sur trois, lus par les deux accesseurs.
+    ///
+    /// Seul cet état panaché sépare un `all` d'un `any`. Le compte relevé dès
+    /// la session neuve attrape un `filter` inversé.
+    #[test]
+    fn etat_foyers() {
+        let mut session = SessionApplication::new();
+
+        assert_eq!(session.nombre_foyers_ouverts(), 0);
+        assert!(session.foyers_fermes());
+
+        session.definit_etat_foyer(0, true);
+        assert_eq!(session.nombre_foyers_ouverts(), 1);
+        session.definit_etat_foyer(1, true);
+        assert_eq!(session.nombre_foyers_ouverts(), 2);
+
+        assert!(!session.foyers_fermes());
+    }
+}
