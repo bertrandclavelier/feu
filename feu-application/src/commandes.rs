@@ -10,8 +10,12 @@
 //!
 //! Chaque méthode `commande_*` est un point d'entrée stable : elle valide
 //! les préconditions, construit un [`RecepteurNoyau`] éphémère si l'appel
-//! noyau en a besoin, délègue à [`FeuNoyau`] et propage les erreurs via
-//! [`ErreurFeuApplication`].
+//! noyau en a besoin, délègue à [`FeuNoyau`] ou au [`Scribe`](crate::scribe::Scribe)
+//! et propage les erreurs via [`ErreurFeuApplication`].
+//!
+//! La précondition commune est l'allumage : hors `commande_allumage_noeud`,
+//! `commande_verification_signature` et `commande_diagnostic_noeud`, toute
+//! commande retourne [`ErreurFeuApplication::NoeudEteint`] nœud éteint.
 //!
 //! Les commandes qui nécessitent une interaction utilisateur (saisie du mot de
 //! passe, affichage de la seed) reçoivent `interface_feu_application : &mut impl
@@ -238,11 +242,10 @@ impl FeuApplication {
     /// validé comme composant de chemin dès la construction. Le détail du
     /// rangement est porté par le Scribe.
     ///
-    /// `index_foyer` désigne le foyer **propriétaire du texte**, indépendamment
-    /// du répertoire où il est accroché : `enu_racine_depot` peut appartenir à un
-    /// autre foyer, ou être la racine du nœud. Tout foyer concerné — celui du
-    /// texte, celui du répertoire d'accueil s'il en a un, ceux du chemin remonté
-    /// — doit être ouvert.
+    /// `index_foyer` désigne le foyer sous la braise duquel le texte est signé ;
+    /// `enu_racine_depot` peut être un répertoire de foyer ou la racine du nœud.
+    /// Tout foyer concerné — celui du texte, celui du répertoire d'accueil s'il
+    /// en a un, ceux du chemin remonté — doit être ouvert.
     ///
     /// # Retour
     ///
@@ -286,19 +289,30 @@ impl FeuApplication {
     /// chiffré qu'à la fermeture, via
     /// [`commande_fermeture_comptoir_depot`](Self::commande_fermeture_comptoir_depot).
     ///
+    /// Ne demandant rien au noyau, sa garde porte sur l'activation du Scribe.
+    /// Elle refuse malgré tout nœud éteint : la fermeture, elle, exige le noyau
+    /// — un comptoir ouvert sans lui resterait sur le disque, intraitable.
+    ///
     /// # Retour
     ///
-    /// L'identifiant du comptoir, à conserver pour le refermer.
+    /// L'identifiant du comptoir, à conserver pour le refermer — valable tant
+    /// que le nœud reste allumé, l'extinction l'annulant définitivement.
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le dossier existe déjà ou ne peut pas être créé.
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : dossier déjà existant ou impossible à
+    /// créer.
     pub fn commande_ouverture_comptoir_depot(
         &mut self,
         chemin: PathBuf,
         index_foyer: usize,
         index_classeur: usize,
     ) -> ResultFeuApplication<usize> {
+        if !self.scribe.est_actif() {
+            return Err(ErreurFeuApplication::NoeudEteint);
+        }
+
         Ok(self
             .scribe
             .ouverture_comptoir_depot(chemin, index_foyer, index_classeur)?)

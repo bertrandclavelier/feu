@@ -64,6 +64,10 @@ const ERR_SCR_003: &str = "SCR-003 > Ce doit être une EnuR";
 /// avec le reste de `~/.feu/`.
 pub(super) struct Scribe {
     /// `true` si le Scribe a été activé (nœud allumé).
+    ///
+    /// Le Scribe est un champ plein, pas un `Option` : construit avant le noyau
+    /// dont son amorce a besoin, il porte lui-même la marque de sa mise en
+    /// service. Ne gouverne pas l'amorce, idempotente par l'existence de `enu/`.
     est_actif: bool,
 
     /// Chemin du dossier des ENU — `~/.feu/enu/`, dérivé du chemin racine reçu à
@@ -81,6 +85,10 @@ pub(super) struct Scribe {
     comptoirs_depot: HashMap<usize, ComptoirDepot>,
 
     /// Prochain identifiant disponible pour un nouveau comptoir.
+    ///
+    /// Jamais remis à zéro, pas même à l'extinction : un identifiant distribué
+    /// avant elle ne peut ainsi désigner aucun comptoir neuf, il échoue en
+    /// `SCR-001` au lieu d'en atteindre un autre.
     prochain_id: usize,
 }
 
@@ -101,6 +109,13 @@ impl Scribe {
         }
     }
 
+    /// Indique si le Scribe est en service.
+    ///
+    /// Sert de précondition aux commandes qui ne dépendent que de lui.
+    pub(super) fn est_actif(&self) -> bool {
+        self.est_actif
+    }
+
     /// Active le Scribe et, à la première activation, amorce l'arborescence.
     ///
     /// Appelé par [`commande_allumage_noeud`](crate::FeuApplication::commande_allumage_noeud)
@@ -115,17 +130,19 @@ impl Scribe {
     ///
     /// Aux allumages ultérieurs (`enu/` déjà présent), cette amorce est sautée.
     ///
+    /// Point d'accroche du travail que le Scribe aurait à mener à chaque
+    /// allumage : hors du `if`, que seule la genèse franchit.
+    ///
     /// # Erreurs
     ///
     /// Retourne une erreur si la création du dossier, la signature de la racine
-    /// origine, sa sauvegarde ou la pose du symlink échoue.
+    /// origine, sa sauvegarde ou la pose du symlink échoue. Le Scribe reste
+    /// alors inactif : le drapeau n'est posé qu'en sortie réussie.
     pub(super) fn activation(
         &mut self,
         feu_noyau: &FeuNoyau,
         session: &SessionApplication,
     ) -> ResultScribe<()> {
-        self.est_actif = true;
-
         if !&self.chemin_enu.exists() {
             DirBuilder::new()
                 .mode(0o700)
@@ -141,15 +158,20 @@ impl Scribe {
             )?;
         }
 
+        self.est_actif = true;
+
         Ok(())
     }
 
-    /// Désactive le Scribe.
+    /// Désactive le Scribe et oublie les comptoirs de dépôt ouverts.
     ///
     /// Appelé par [`commande_extinction_noeud`](crate::FeuApplication::commande_extinction_noeud).
-    /// Ne supprime pas le dossier `enu/` — les ENU survivent à l'extinction.
+    /// Ne supprime rien sur le disque : ni `enu/`, dont les ENU survivent à
+    /// l'extinction, ni les dossiers des comptoirs, qui portent des fichiers de
+    /// l'utilisateur jamais ingérés.
     pub(super) fn desactivation(&mut self) {
         self.est_actif = false;
+        self.comptoirs_depot.clear();
     }
 
     /// Ouvre un comptoir de dépôt au chemin donné.
@@ -423,10 +445,8 @@ impl Scribe {
     /// `~/.feu/enu/`, puis greffe via [`Self::greffe_enfants`].
     ///
     /// Voie unitaire du dépôt, par opposition à celle du comptoir : une ENU à
-    /// la fois, quelle que soit sa carte. Elle ne signe rien — l'appelant a
-    /// choisi le foyer signataire en construisant l'enveloppe, ce qui permet de
-    /// ranger un contenu dans un foyer tout en l'accrochant sous le répertoire
-    /// d'un autre.
+    /// la fois, quelle que soit sa carte. Elle ne signe rien — le foyer
+    /// signataire a été fixé par l'appelant en construisant l'enveloppe.
     ///
     /// # Erreurs
     ///
@@ -458,10 +478,9 @@ impl Scribe {
     /// qu'elle est la **seule** voie pour une `EnuT` : un texte n'existe pas
     /// comme fichier, il ne peut donc pas passer par un comptoir de dépôt.
     ///
-    /// L'`EnuT` est signée sous la braise d'`index_foyer` — le foyer demandé,
-    /// pas celui du répertoire d'accueil, à l'image du comptoir qui porte son
-    /// propre foyer de destination. Le foyer du texte doit donc être ouvert, en
-    /// plus de ceux qu'exige la greffe.
+    /// L'`EnuT` est signée sous la braise d'`index_foyer`, pas sous celle du
+    /// répertoire d'accueil. Le foyer du texte doit donc être ouvert, en plus
+    /// de ceux qu'exige la greffe.
     ///
     /// # Retour
     ///
