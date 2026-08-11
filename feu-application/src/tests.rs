@@ -26,6 +26,14 @@
 //! public, et n'ont pas à en avoir — un consommateur n'a rien à faire de ces
 //! états. D'où un `mod` interne plutôt qu'un crate de test dans `tests/` : on
 //! agit par l'API publique, on constate par l'intérieur.
+//!
+//! # Non testé, délibérément
+//!
+//! `SCR-001` et `SCR-003`, branches d'un `else` immédiat. Les `From`, `Display`
+//! et accesseurs de champ, passe-plats. Le pont `RecepteurNoyau`, exercé de
+//! biais — rien ne se signerait sans lui. Le contrat de notification, prouvé par
+//! chaque assertion portant sur la session reçue. Neuf des vingt-trois commandes
+//! publiques, dont `feu-noyau` éprouve déjà le comportement.
 
 use std::{
     cell::RefCell,
@@ -81,19 +89,23 @@ impl InterfaceTest {
 }
 
 impl InterfaceFeuApplication for InterfaceTest {
+    /// Sert toujours le même mot de passe : ouverture et fermeture d'un foyer
+    /// doivent le voir identique, sinon le déchiffrement échoue.
     fn demander_mdp(&self) -> Option<SecretString> {
         Some(self.mot_de_passe.clone())
     }
 
-    // Jetée : aucun test n'a besoin de relire la seed. La retenir demanderait un
-    // second champ que rien ne consulterait.
+    /// Jetée : aucun test n'a besoin de relire la seed. La retenir demanderait
+    /// un second champ que rien ne consulterait.
     fn recevoir_seed(&self, _mots: &[&str]) {}
 
-    // Sans confirmation, l'initialisation du noyau s'interromprait.
+    /// Confirme toujours — sans quoi l'initialisation du noyau s'interromprait.
     fn confirmer_enregistrement_seed(&self) -> bool {
         true
     }
 
+    /// Retient la session notifiée, seul état que l'interface conserve : c'est
+    /// par elle que les tests constatent ce qu'une commande a publié.
     fn recevoir_session_application(&self, session_application: Option<SessionApplication>) {
         *self.session_application.borrow_mut() = session_application;
     }
@@ -260,7 +272,8 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
         interface_test
             .session_application()
             .unwrap()
-            .braise_foyer(0)?,
+            .braise_foyer(0)
+            .unwrap(),
         BRAISE_VIDE
     );
 
@@ -269,7 +282,8 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
         interface_test
             .session_application()
             .unwrap()
-            .etat_foyer(0)?,
+            .etat_foyer(0)
+            .unwrap(),
     );
 
     app.commande_ouverture_comptoir_depot(&chemin_depot, 0, 0)?;
@@ -284,7 +298,8 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
         !interface_test
             .session_application()
             .unwrap()
-            .etat_foyer(0)?,
+            .etat_foyer(0)
+            .unwrap(),
     );
 
     assert!(app.commande_extinction_noeud(&mut interface_test).is_ok());
@@ -296,9 +311,9 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
 
     // Plus rien à tirer de la session notifiée, désormais `None` : le teardown
     // ne se constate que sur les champs.
-    assert_eq!(app.session.braise_foyer(0)?, BRAISE_VIDE);
+    assert_eq!(app.session.braise_foyer(0).unwrap(), BRAISE_VIDE);
     assert_eq!(app.session.cle_publique_sig_noeud(), [0u8; 2592]);
-    assert_eq!(app.session.cle_publique_sig_foyer(0)?, [0u8; 2592]);
+    assert_eq!(app.session.cle_publique_sig_foyer(0).unwrap(), [0u8; 2592]);
     assert!(app.session.foyers_fermes());
     assert!(!app.scribe.est_actif());
 

@@ -9,7 +9,7 @@
 //! Comptoir de dépôt — point d'entrée unique pour injecter des données
 //! dans Feu via un dossier du système de fichiers.
 //!
-//! Un [`ComptoirDepot`] est un dossier OS que le [`Scribe`] ouvre puis
+//! Un [`ComptoirDepot`] est un dossier OS que le [`Scribe`](super::Scribe) ouvre puis
 //! referme. Chaque comptoir est associé à un foyer et un classeur de
 //! destination. L'OS est l'interface : l'utilisateur (ou un script, un
 //! agent IA) écrit librement dans le dossier, et Feu le parcourt à la
@@ -30,7 +30,7 @@ const ERR_COM_D_001: &str = "COM_D-001 > Le dossier existe déjà";
 /// Dossier OS servant de point de dépôt.
 ///
 /// Créé à l'ouverture par [`ouvrir`](ComptoirDepot::ouvrir), parcouru à la
-/// fermeture par le [`Scribe`]. Chaque comptoir est lié à un foyer et un
+/// fermeture par le [`Scribe`](super::Scribe). Chaque comptoir est lié à un foyer et un
 /// classeur de destination pour ses données.
 pub(super) struct ComptoirDepot {
     /// Chemin du dossier sur le système de fichiers.
@@ -90,7 +90,7 @@ impl ComptoirDepot {
 
     /// Supprime le dossier physique du comptoir et tout son contenu résiduel.
     ///
-    /// Appelée par le [`Scribe`] à la fermeture, une fois les fichiers parcourus
+    /// Appelée par le [`Scribe`](super::Scribe) à la fermeture, une fois les fichiers parcourus
     /// et déposés. Récursive ([`remove_dir_all`]) : le dossier disparaît avec ce
     /// qu'il reste dedans.
     ///
@@ -107,6 +107,16 @@ impl ComptoirDepot {
 
 #[cfg(test)]
 mod tests {
+    //! Tests en ligne : ce qui se prouve sans monter de pile.
+    //!
+    //! Un [`ComptoirDepot`] n'est qu'un dossier de l'OS et trois champs — il ne
+    //! signe rien, ne chiffre rien, n'a besoin ni de noyau allumé ni de foyer
+    //! ouvert. Un `TempDir` suffit, là où `src/scribe/tests.rs` monte une pile
+    //! réelle pour éprouver l'enveloppe et sa signature.
+    //!
+    //! Le **rangement** du contenu d'un comptoir n'est pas ici : il appartient à
+    //! [`Scribe::fermeture_comptoir_depot`](super::super::Scribe), donc au haut.
+
     use std::{
         fs::{OpenOptions, metadata},
         io::Write,

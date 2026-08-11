@@ -61,7 +61,7 @@
 //!   fait, et il est `pub(super)`). Les constructeurs ([`Carte::new_donnee`],
 //!   [`Carte::new_texte`], [`Carte::new_repertoire`]) et les mutateurs
 //!   ([`Carte::ajout_meta`], [`Carte::ajout_tag`],
-//!   [`Carte::ajout_hash_donnee`]) restent `pub(super)`.
+//!   [`Carte::ajout_hash_enu`]) restent `pub(super)`.
 //!
 //!   Les accesseurs [`Carte::metas`] et [`Carte::tags`], communs aux trois
 //!   variantes, sont maintenus : ils évitent de répéter le match pour des
@@ -118,6 +118,10 @@ const ERR_ENU_005: &str = "ENU-005 > Braise incorrecte";
 /// refusée avant même d'être mise sous enveloppe et signée.
 const ERR_ENU_006: &str = "ENU-006 > Texte pour EnuT trop long";
 
+/// La cible du remplacement porte le même `hash_carte` que le remplacement
+/// lui-même — aucune nouvelle version à produire.
+/// Le remplacement proposé à [`Enu::remplacer`] porte le même `hash_carte` que
+/// la racine courante : la substitution n'aurait rien à produire.
 const ERR_ENU_007: &str = "ENU-007 > Problème Enu racine ou remplacement";
 
 /// La carte ne porte pas de méta `"nom"` : impossible de la matérialiser sur le
@@ -163,14 +167,14 @@ impl Enu {
     /// c'est la frontière où la couche application traduit son adresse `.braise`
     /// en `index_foyer`, seule monnaie comprise par le noyau (qui signe via
     /// `signature_foyer`). La taille de la carte sérialisée est limitée à
-    /// [`MAX_TAILLE_SIGNATURE`] (64 kio) par le noyau.
+    /// [`MAX_TAILLE_SIGNATURE`](feu_noyau::MAX_TAILLE_SIGNATURE) (64 kio) par le noyau.
     ///
     /// # Erreurs
     ///
     /// Retourne [`ErreurScribe::Interne`] (`ENU-005`) si la braise n'identifie
     /// aucun foyer de la session. Propage toute erreur de signature du noyau —
     /// notamment si le foyer est fermé ou si la carte dépasse
-    /// [`MAX_TAILLE_SIGNATURE`].
+    /// [`MAX_TAILLE_SIGNATURE`](feu_noyau::MAX_TAILLE_SIGNATURE).
     pub(super) fn new(
         carte: Carte,
         feu_noyau: &FeuNoyau,
@@ -223,7 +227,7 @@ impl Enu {
     ///
     /// Après signature, l'ENU est sauvegardée, puis le symlink pointé par
     /// `chemin_derniere_racine` (`.DERNIERE_RACINE`, fourni par le
-    /// [`Scribe`]) est repointé sur elle de façon atomique
+    /// [`Scribe`](crate::scribe::Scribe)) est repointé sur elle de façon atomique
     /// (lien temporaire puis `rename`). L'ENU forgée n'est **pas** retournée :
     /// elle vit désormais sur disque et c'est le symlink qui la désigne — un
     /// appelant qui en a besoin la relit via [`Enu::charger_derniere_racine`].
@@ -422,7 +426,7 @@ impl Enu {
     /// annonce qui a signé — et la clé de vérification en découle :
     ///
     /// - **Racine du nœud** — braise [`BRAISE_VIDE`] : le nœud est le
-    ///   signataire, la signature est validée contre [`cle_publique_sig_noeud`].
+    ///   signataire, la signature est validée contre [`cle_publique_sig_noeud`](SessionApplication::cle_publique_sig_noeud).
     ///   Sa carte porte par ailleurs la méta `_racine` (marqueur de racine dans
     ///   l'arbre des versions).
     /// - **Contenu** — braise d'un foyer connu de la session : la clé publique
@@ -470,11 +474,8 @@ impl Enu {
 
         // ENU de contenu : la braise doit résoudre vers un foyer connu de la session
         if let Some(index_foyer) = session.braise_vers_index(enu.braise)
-            && FeuNoyau::verification_signature(
-                session.cle_publique_sig_foyer(index_foyer)?,
-                enu.signature_carte,
-                &octets_carte,
-            )?
+            && let Some(cle_publique) = session.cle_publique_sig_foyer(index_foyer)
+            && FeuNoyau::verification_signature(cle_publique, enu.signature_carte, &octets_carte)?
             && FeuNoyau::creation_empreinte(&octets_carte) == enu.hash_carte
         {
             return Ok(enu);
@@ -854,7 +855,6 @@ impl Carte {
         }
     }
 
-    #[allow(dead_code)]
     /// Retourne les hashs des ENU enfants — spécifique à [`Carte::Repertoire`].
     ///
     /// Contrairement à [`Self::metas`] et [`Self::tags`], communs aux trois
@@ -863,10 +863,17 @@ impl Carte {
     /// que de renvoyer un ensemble vide qui laisserait croire à un répertoire
     /// sans enfant.
     ///
+    /// Le `#[allow(dead_code)]` est **temporaire** : seuls les tests l'appellent
+    /// aujourd'hui. `feu-application` en aura besoin pour l'itérateur descendant,
+    /// qui suit précisément les `hashs_enu` d'un répertoire pour parcourir
+    /// l'arborescence. Elle reste `pub(crate)` en attendant — ce qui sort de la
+    /// crate sort par une `commande_*`, pas par un accesseur.
+    ///
     /// # Erreurs
     ///
     /// Retourne [`ErreurScribe::Interne`] (`ENU-004`) si la carte n'est pas un
     /// répertoire.
+    #[allow(dead_code)]
     pub(crate) fn hashs_enu(&self) -> ResultScribe<BTreeSet<[u8; 32]>> {
         match self {
             Self::Donnee {
@@ -1071,7 +1078,7 @@ impl Carte {
     /// Retourne [`ErreurScribe::Interne`] (`ENU-004`) si la carte n'est pas un
     /// répertoire : une [`Carte::Donnee`] ou une [`Carte::Texte`] n'a pas
     /// d'enfants.
-    pub(super) fn ajout_hash_donnee(&mut self, hash: &[u8; 32]) -> ResultScribe<()> {
+    pub(super) fn ajout_hash_enu(&mut self, hash: &[u8; 32]) -> ResultScribe<()> {
         if let Carte::Repertoire {
             metas: _,
             tags: _,
@@ -1307,6 +1314,17 @@ fn prendre_octets(buf: &[u8], n: usize) -> ResultScribe<(&[u8], &[u8])> {
 
 #[cfg(test)]
 mod tests {
+    //! Tests en ligne : ce qui se prouve sans monter de pile.
+    //!
+    //! Le format canonique et les gardes de forme, éprouvés sur des octets et
+    //! des cartes forgés à la main — aucune signature, donc aucun noyau. C'est
+    //! la moitié de ce module qui ne franchit pas la barrière de confiance.
+    //!
+    //! L'autre moitié est dans `src/scribe/tests.rs` : tout ce qui touche à
+    //! l'enveloppe signée ([`Enu::new`], [`Enu::charger`], [`Enu::remplacer`])
+    //! y monte un noyau allumé et un foyer ouvert, seule façon de signer puis de
+    //! relire une ENU authentifiée.
+
     use super::*;
 
     // --- prendre_octets ---
@@ -1575,7 +1593,7 @@ mod tests {
     }
 
     /// Cycle complet sur `Carte::Donnee` : hash conservé à la construction,
-    /// refus de `ajout_hash_donnee` (`ERR_ENU_004`), tags et metas insérés
+    /// refus de `ajout_hash_enu` (`ERR_ENU_004`), tags et metas insérés
     /// puis relus via les accesseurs communs.
     #[test]
     fn carte_donnee() -> ResultScribe<()> {
@@ -1583,7 +1601,7 @@ mod tests {
         let mut carte = Carte::new_donnee(hash_donnee);
 
         assert!(matches!(
-            carte.ajout_hash_donnee(&hash_donnee),
+            carte.ajout_hash_enu(&hash_donnee),
             Err(ErreurScribe::Interne(_))
         ));
 
@@ -1614,7 +1632,7 @@ mod tests {
     }
 
     /// Cycle complet sur `Carte::Texte` : contenu conservé et méta `"nom"`
-    /// posée dès la construction, refus de `ajout_hash_donnee` (`ERR_ENU_004`),
+    /// posée dès la construction, refus de `ajout_hash_enu` (`ERR_ENU_004`),
     /// tags et metas insérés puis relus via les accesseurs communs.
     #[test]
     fn carte_texte() -> ResultScribe<()> {
@@ -1622,7 +1640,7 @@ mod tests {
         let mut carte = Carte::new_texte("Test", "Contenu court de test")?;
 
         assert!(matches!(
-            carte.ajout_hash_donnee(&hash_donnee),
+            carte.ajout_hash_enu(&hash_donnee),
             Err(ErreurScribe::Interne(_))
         ));
 
@@ -1680,7 +1698,7 @@ mod tests {
     }
 
     /// Cycle complet sur `Carte::Repertoire` : hashs enfants insérés via
-    /// `ajout_hash_donnee`, tags et metas insérés puis relus via les
+    /// `ajout_hash_enu`, tags et metas insérés puis relus via les
     /// accesseurs communs.
     #[test]
     fn carte_repertoire() -> ResultScribe<()> {
@@ -1697,8 +1715,8 @@ mod tests {
             assert!(h.is_empty());
         }
 
-        carte.ajout_hash_donnee(&hash_donnee1)?;
-        carte.ajout_hash_donnee(&hash_donnee2)?;
+        carte.ajout_hash_enu(&hash_donnee1)?;
+        carte.ajout_hash_enu(&hash_donnee2)?;
 
         if let Carte::Repertoire {
             metas: _,

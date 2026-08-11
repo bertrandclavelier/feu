@@ -15,8 +15,17 @@
 //! Cette struct est peuplée par le pont interne vers le noyau pendant
 //! l'exécution de chaque commande — jamais directement par la couche de
 //! présentation.
+//!
+//! # Aucune erreur, que des options
+//!
+//! Aucun accesseur de [`SessionApplication`] ne rend de `Result`. Un index de
+//! foyer hors bornes est une absence de valeur, pas une faute : les accesseurs
+//! indexés rendent tous [`Option`], et l'appelant décide ce que l'absence vaut
+//! chez lui — `unwrap_or` côté présentation, code d'erreur propre côté Scribe.
+//!
+//! La session ne peut donc pas faire remonter d'erreur applicative dans une
+//! couche qui la consomme, ni celle-ci la lui renvoyer aplatie de ses préfixes.
 
-use crate::erreur::{ErreurFeuApplication, ResultFeuApplication};
 use feu_noyau::{BRAISE_VIDE, Braise};
 use feu_noyau::{
     MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
@@ -59,9 +68,17 @@ pub struct SessionApplication {
 }
 
 impl SessionApplication {
-    /// Crée une session vide : capacités initialisées depuis les constantes noyau,
-    /// foyers fermés, clés à zéro. Les clés sont peuplées par le pont interne
-    /// vers le noyau lors de la construction de `FeuApplication`.
+    /// Crée une session vide : capacités initialisées depuis les constantes
+    /// noyau, foyers fermés, braises et clés à zéro.
+    ///
+    /// Rien n'est lu du disque ni du noyau ici. Le remplissage vient ensuite du
+    /// pont interne, à l'allumage puis à chaque ouverture de foyer — d'où des
+    /// tableaux entièrement littéraux : les cinq sont des valeurs de départ,
+    /// jamais des valeurs de travail.
+    ///
+    /// Une clé à zéro n'est donc pas une clé, et `braise_foyers` rempli de
+    /// [`BRAISE_VIDE`] ne désigne aucun foyer — l'état d'une session neuve se
+    /// distingue par ce que le noyau n'y a pas encore écrit.
     pub fn new() -> Self {
         Self {
             nombre_foyers: MAX_FOYERS,
@@ -70,25 +87,22 @@ impl SessionApplication {
             max_taille_chiffrement_asymetrique: MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
             max_taille_signature: MAX_TAILLE_SIGNATURE,
             braise_foyers: [BRAISE_VIDE; MAX_FOYERS],
-            etat_foyers: std::array::from_fn(|_| false),
+            etat_foyers: [false; MAX_FOYERS],
             cle_publique_sig_noeud: [0u8; 2592],
-            cle_publique_sig_foyers: std::array::from_fn(|_| [0u8; 2592]),
-            cle_publique_chif_foyers: std::array::from_fn(|_| [0u8; 1568]),
+            cle_publique_sig_foyers: [[0u8; 2592]; MAX_FOYERS],
+            cle_publique_chif_foyers: [[0u8; 1568]; MAX_FOYERS],
         }
     }
 
-    /// Retourne l'adresse `.braise` du foyer à la position `index_foyer`.
+    /// Retourne l'adresse `.braise` du foyer à la position `index_foyer` —
+    /// `None` si l'index dépasse [`MAX_FOYERS`].
     ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si `index_foyer >= MAX_FOYERS`.
-    pub fn braise_foyer(&self, index_foyer: usize) -> ResultFeuApplication<Braise> {
+    /// Réciproque de [`Self::braise_vers_index`], et de même forme.
+    pub fn braise_foyer(&self, index_foyer: usize) -> Option<Braise> {
         if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuApplication::Standard(String::from(
-                "index_foyer trop élevé",
-            )));
+            return None;
         }
-        Ok(self.braise_foyers[index_foyer])
+        Some(self.braise_foyers[index_foyer])
     }
 
     /// Résout une adresse `.braise` en position de foyer.
@@ -102,7 +116,7 @@ impl SessionApplication {
 
     /// Enregistre l'adresse `.braise` du foyer à la position `index_foyer`.
     ///
-    /// Appelé par [`RecepteurNoyau`] lors de l'allumage du nœud.
+    /// Appelé par `RecepteurNoyau` lors de l'allumage du nœud.
     pub(crate) fn definit_braise_foyer(&mut self, index_foyer: usize, braise: Braise) {
         self.braise_foyers[index_foyer] = braise;
     }
@@ -117,18 +131,13 @@ impl SessionApplication {
         &self.etat_foyers
     }
 
-    /// Retourne l'état d'ouverture du foyer à la position `index_foyer`.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si `index_foyer >= MAX_FOYERS`.
-    pub fn etat_foyer(&self, index_foyer: usize) -> ResultFeuApplication<bool> {
+    /// Retourne l'état d'ouverture du foyer à la position `index_foyer` —
+    /// `None` si l'index dépasse [`MAX_FOYERS`].
+    pub fn etat_foyer(&self, index_foyer: usize) -> Option<bool> {
         if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuApplication::Standard(String::from(
-                "index_foyer trop élevé",
-            )));
+            return None;
         }
-        Ok(self.etat_foyers[index_foyer])
+        Some(self.etat_foyers[index_foyer])
     }
 
     /// Indique si tous les foyers sont fermés.
@@ -158,14 +167,14 @@ impl SessionApplication {
 
     /// Met à jour l'état d'ouverture du foyer à la position `index_foyer`.
     ///
-    /// Appelé par [`RecepteurNoyau`] après ouverture ou fermeture d'un foyer.
+    /// Appelé par `RecepteurNoyau` après ouverture ou fermeture d'un foyer.
     pub(crate) fn definit_etat_foyer(&mut self, index_foyer: usize, etat: bool) {
         self.etat_foyers[index_foyer] = etat;
     }
 
     /// Enregistre la clé publique de signature ML-DSA-87 du nœud.
     ///
-    /// Appelé par [`RecepteurNoyau`] à l'allumage du nœud.
+    /// Appelé par `RecepteurNoyau` à l'allumage du nœud.
     pub(crate) fn definit_cle_publique_sig_noeud(&mut self, cle: [u8; 2592]) {
         self.cle_publique_sig_noeud = cle;
     }
@@ -175,44 +184,38 @@ impl SessionApplication {
         self.cle_publique_sig_noeud
     }
 
-    /// Retourne la clé publique de signature ML-DSA-87 du foyer à la position `index_foyer`.
+    /// Retourne la clé publique de signature ML-DSA-87 du foyer à la position
+    /// `index_foyer` — `None` si l'index dépasse [`MAX_FOYERS`].
     ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si `index_foyer >= MAX_FOYERS`.
-    pub fn cle_publique_sig_foyer(&self, index_foyer: usize) -> ResultFeuApplication<[u8; 2592]> {
+    /// Interrogée par [`Enu::charger`](crate::scribe::enu::Enu) après résolution
+    /// de la braise : c'est la clé contre laquelle une ENU de contenu est
+    /// authentifiée.
+    pub fn cle_publique_sig_foyer(&self, index_foyer: usize) -> Option<[u8; 2592]> {
         if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuApplication::Standard(String::from(
-                "index_foyer trop élevé",
-            )));
+            return None;
         }
-        Ok(self.cle_publique_sig_foyers[index_foyer])
+        Some(self.cle_publique_sig_foyers[index_foyer])
     }
 
     /// Enregistre la clé publique de signature ML-DSA-87 du foyer.
     ///
-    /// Appelé par [`RecepteurNoyau`] à l'ouverture du foyer.
+    /// Appelé par `RecepteurNoyau` à l'ouverture du foyer.
     pub(crate) fn definit_cle_publique_sig_foyer(&mut self, index_foyer: usize, cle: [u8; 2592]) {
         self.cle_publique_sig_foyers[index_foyer] = cle;
     }
 
-    /// Retourne la clé publique de chiffrement ML-KEM-1024 du foyer à la position `index_foyer`.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si `index_foyer >= MAX_FOYERS`.
-    pub fn cle_publique_chif_foyer(&self, index_foyer: usize) -> ResultFeuApplication<[u8; 1568]> {
+    /// Retourne la clé publique de chiffrement ML-KEM-1024 du foyer à la
+    /// position `index_foyer` — `None` si l'index dépasse [`MAX_FOYERS`].
+    pub fn cle_publique_chif_foyer(&self, index_foyer: usize) -> Option<[u8; 1568]> {
         if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuApplication::Standard(String::from(
-                "index_foyer trop élevé",
-            )));
+            return None;
         }
-        Ok(self.cle_publique_chif_foyers[index_foyer])
+        Some(self.cle_publique_chif_foyers[index_foyer])
     }
 
     /// Enregistre la clé publique de chiffrement ML-KEM-1024 du foyer.
     ///
-    /// Appelé par [`RecepteurNoyau`] à l'ouverture du foyer.
+    /// Appelé par `RecepteurNoyau` à l'ouverture du foyer.
     pub(crate) fn definit_cle_publique_chif_foyer(&mut self, index_foyer: usize, cle: [u8; 1568]) {
         self.cle_publique_chif_foyers[index_foyer] = cle;
     }
@@ -227,6 +230,15 @@ impl Default for SessionApplication {
 
 #[cfg(test)]
 mod tests {
+    //! Tests en ligne : ce qui se prouve sans monter de pile.
+    //!
+    //! Troisième emplacement de la crate, après `src/tests.rs` (la crate par ses
+    //! `commande_*`) et `src/scribe/tests.rs` (le Scribe en direct). Ces deux-là
+    //! montent un noyau réel dans un `TempDir` ; ici, [`SessionApplication`] est
+    //! un porteur d'état pur — une session neuve et deux setters suffisent.
+    //!
+    //! Ce qui touche à la session **à travers une commande** relève du haut, pas
+    //! d'ici : ce fichier n'éprouve que le comptage et les bornes.
 
     use super::*;
 

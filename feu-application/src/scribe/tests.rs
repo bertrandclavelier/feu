@@ -34,6 +34,12 @@
 //! de prouver qu'un appelant l'invoque, et la doc de chacun dit son rôle. Cette
 //! répartition ne franchit pas la frontière avec `src/tests.rs`, où le test du
 //! haut prend tout.
+//!
+//! **Un troisième emplacement existe** : les `mod tests` en ligne de
+//! `session.rs`, `scribe/comptoir.rs` et `scribe/enu.rs`. Ils prennent ce qui se
+//! prouve sans monter de pile — format canonique, gardes de forme, comptage,
+//! cycle disque d'un dossier. Le critère est la pile, pas la visibilité : dès
+//! qu'un test a besoin d'un noyau allumé, il vient ici.
 
 use std::{collections::BTreeSet, fs::write};
 

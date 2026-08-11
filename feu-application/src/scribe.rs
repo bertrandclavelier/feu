@@ -72,6 +72,12 @@ const ERR_SCR_004: &str = "SCR-004 > Braise inconnue";
 /// ([`Carte::Donnee`]) : elle ne référence donc aucun blob.
 const ERR_SCR_005: &str = "SCR-005 > Ce doit être une EnuD";
 
+/// L'`index_foyer` fourni ne désigne aucun foyer de la session — au-delà de
+/// `MAX_FOYERS`. Le Scribe le constate sur le `None` de
+/// [`SessionApplication::braise_foyer`] et le refuse sous son propre code,
+/// plutôt que de laisser une erreur applicative faire l'aller-retour.
+const ERR_SCR_006: &str = "SCR-006 > Index de foyer invalide";
+
 /// Tenant de la couche ENU — créé et maintient `~/.feu/enu/`.
 ///
 /// Activé à l'allumage du nœud, désactivé à l'extinction. Le dossier
@@ -111,7 +117,7 @@ impl Scribe {
     /// Construit un [`Scribe`] inactif.
     ///
     /// `chemin_feu` est le chemin racine du nœud (`~/.feu` en usage nominal),
-    /// reçu de [`FeuApplication`]. Le Scribe en dérive une fois pour toutes le
+    /// reçu de [`FeuApplication`](crate::FeuApplication). Le Scribe en dérive une fois pour toutes le
     /// chemin de son dossier `enu/` (`chemin_enu`) — aucune relecture de
     /// l'environnement à l'usage.
     pub(super) fn new(chemin_feu: &Path) -> Self {
@@ -385,8 +391,10 @@ impl Scribe {
         index_classeur: usize,
     ) -> ResultScribe<usize> {
         let comptoir = ComptoirDepot::new(chemin.to_path_buf(), index_foyer, index_classeur);
-        comptoir.ouvrir()?; // on s'assure qu'on peut l'ouvrir avant de le garder
-        //
+        // ouvert avant d'être gardé : un comptoir enregistré mais sans dossier
+        // distribuerait un identifiant que la fermeture ne saurait pas honorer
+        comptoir.ouvrir()?;
+
         self.comptoirs_depot.insert(self.prochain_id, comptoir);
         self.prochain_id += 1;
 
@@ -398,13 +406,13 @@ impl Scribe {
     ///
     /// Parcourt le dossier en bottom-up (`contents_first(true)`) : chaque
     /// fichier est déposé dans le classeur du comptoir via
-    /// [`FeuNoyau::depot_donnees`], puis encapsulé dans une ENU signée de
+    /// [`FeuNoyau::depot_blob`], puis encapsulé dans une ENU signée de
     /// type [`Carte::Donnee`]. Chaque répertoire devient une
     /// [`Carte::Repertoire`] référençant ses enfants par leur `hash_carte`.
     /// Toutes les ENU produites sont sauvegardées dans `~/.feu/enu/`.
     ///
     /// Le classeur du comptoir n'est qu'une demande : si la donnée existe déjà
-    /// dans un autre classeur du foyer, [`FeuNoyau::depot_donnees`] l'y laisse et
+    /// dans un autre classeur du foyer, [`FeuNoyau::depot_blob`] l'y laisse et
     /// rend l'index réel. Le traitement se poursuit sans rien changer et l'ENU
     /// produite reste valable — elle référence un hash, pas un emplacement —
     /// mais l'écart n'est **remonté nulle part** : le classeur réel est ignoré
@@ -434,10 +442,11 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] (`SCR-001`) si l'ID du comptoir est
-    /// invalide. Propage toute erreur d'E/S, de dépôt de données ou de signature
-    /// — y compris l'échec de signature si un foyer du chemin reconstruit par
-    /// [`Enu::remplacer`] est fermé.
+    /// Retourne [`ErreurScribe::Interne`] si l'ID du comptoir est invalide
+    /// (`SCR-001`) ou si le foyer de destination qu'il porte sort des bornes
+    /// (`SCR-006`). Propage toute erreur d'E/S, de dépôt de données ou de
+    /// signature — y compris l'échec de signature si un foyer du chemin
+    /// reconstruit par [`Enu::remplacer`] est fermé.
     pub(super) fn fermeture_comptoir_depot(
         &mut self,
         noyau: &mut FeuNoyau,
@@ -450,7 +459,9 @@ impl Scribe {
         };
 
         // foyer/classeur de destination, constants pour tout le comptoir
-        let braise = session.braise_foyer(comptoir.index_foyer())?;
+        let Some(braise) = session.braise_foyer(comptoir.index_foyer()) else {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_006)));
+        };
 
         let dir = read_dir(comptoir.chemin())?;
         if dir.count() == 0 {
@@ -601,7 +612,7 @@ impl Scribe {
         let mut nouvelle_carte = enu_racine_depot.carte().clone();
 
         for h in hashs_nouveaux_enfants {
-            nouvelle_carte.ajout_hash_donnee(h)?;
+            nouvelle_carte.ajout_hash_enu(h)?;
         }
 
         if nouvelle_carte == *enu_racine_depot.carte() {
@@ -645,7 +656,7 @@ impl Scribe {
     /// # Erreurs
     ///
     /// Propage les erreurs de sauvegarde et celles de [`Self::greffe_enfants`].
-    pub(super) fn depot_enu(
+    fn depot_enu(
         &self,
         noyau: &FeuNoyau,
         session: &SessionApplication,
@@ -687,10 +698,10 @@ impl Scribe {
     /// Propage [`ErreurScribe::Interne`] si le texte dépasse `MAX_TAILLE_TEXTE`
     /// (`ENU-006`) ou si `nom` est refusé comme composant de chemin (`ENU-009`)
     /// — les deux via [`Carte::new_texte`] — ou si `enu_racine_depot` n'est pas
-    /// un répertoire (`ENU-004`, via `ajout_hash_donnee`). Propage également
-    /// l'erreur de [`SessionApplication::braise_foyer`] si `index_foyer` sort
-    /// des bornes, ainsi que toute erreur d'E/S, d'authentification ou de
-    /// signature — notamment si un foyer du chemin reconstruit est fermé.
+    /// un répertoire (`ENU-004`, via `ajout_hash_enu`) ou si `index_foyer`
+    /// sort des bornes (`SCR-006`). Propage toute erreur d'E/S,
+    /// d'authentification ou de signature — notamment si un foyer du chemin
+    /// reconstruit est fermé.
     pub(super) fn depot_enu_texte(
         &self,
         noyau: &FeuNoyau,
@@ -700,12 +711,11 @@ impl Scribe {
         nom: &str,
         contenu: &str,
     ) -> ResultScribe<()> {
-        let enu_texte = Enu::new(
-            Carte::new_texte(nom, contenu)?,
-            noyau,
-            session,
-            session.braise_foyer(index_foyer)?,
-        )?;
+        let Some(braise) = session.braise_foyer(index_foyer) else {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_006)));
+        };
+
+        let enu_texte = Enu::new(Carte::new_texte(nom, contenu)?, noyau, session, braise)?;
 
         self.depot_enu(noyau, session, enu_racine_depot, &enu_texte)?;
 

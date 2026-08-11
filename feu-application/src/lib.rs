@@ -136,6 +136,11 @@ struct RecepteurNoyau<'a, 'b> {
 }
 
 impl<'a, 'b> RecepteurNoyau<'a, 'b> {
+    /// Assemble le pont pour la durée d'un appel noyau.
+    ///
+    /// Les deux emprunts mutables viennent de [`FeuApplication`] et de la couche
+    /// de présentation ; ils ne sont pas retenus au-delà de l'appel, ce qui est
+    /// la raison d'être du pont.
     fn new(
         session_application: &'a mut SessionApplication,
         interface_feu_application: &'b mut dyn InterfaceFeuApplication,
@@ -148,14 +153,20 @@ impl<'a, 'b> RecepteurNoyau<'a, 'b> {
 }
 
 impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
+    /// Délègue la saisie du mot de passe à l'interface applicative.
     fn demander_mdp(&self) -> Option<SecretString> {
         self.interface_feu_application.demander_mdp()
     }
 
+    /// Délègue l'affichage de la seed à l'interface applicative.
+    ///
+    /// Les `&str` restent empruntés au noyau : le pont ne les copie pas.
     fn recevoir_seed(&mut self, mots: &[&str]) {
         self.interface_feu_application.recevoir_seed(mots);
     }
 
+    /// Délègue la confirmation d'enregistrement de la seed à l'interface
+    /// applicative.
     fn confirmer_enregistrement_seed(&self) -> bool {
         self.interface_feu_application
             .confirmer_enregistrement_seed()

@@ -10,7 +10,7 @@
 //!
 //! Chaque méthode `commande_*` est un point d'entrée stable : elle valide
 //! les préconditions, construit un [`RecepteurNoyau`] éphémère si l'appel
-//! noyau en a besoin, délègue à [`FeuNoyau`] ou au [`Scribe`](crate::scribe::Scribe)
+//! noyau en a besoin, délègue à [`FeuNoyau`] ou au [`Scribe`]
 //! et propage les erreurs via [`ErreurFeuApplication`].
 //!
 //! La précondition commune est l'allumage : hors `commande_allumage_noeud`,
@@ -484,8 +484,9 @@ impl FeuApplication {
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : comptoir invalide, E/S, dépôt de données
-    /// ou signature (notamment si un foyer du chemin reconstruit est fermé).
+    /// propage les erreurs du Scribe : comptoir invalide (`SCR-001`), foyer de
+    /// destination hors bornes (`SCR-006`), E/S, dépôt de données ou signature
+    /// (notamment si un foyer du chemin reconstruit est fermé).
     pub fn commande_fermeture_comptoir_depot(
         &mut self,
         index_comptoir: usize,
@@ -739,11 +740,12 @@ impl FeuApplication {
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : texte trop long, nom invalide,
-    /// `index_foyer` hors bornes, répertoire d'accueil invalide, E/S ou
-    /// signature (notamment si un foyer du chemin reconstruit est fermé).
+    /// propage les erreurs du Scribe : texte trop long (`ENU-006`), nom invalide
+    /// (`ENU-009`), `index_foyer` hors bornes (`SCR-006`), répertoire d'accueil
+    /// invalide (`ENU-004`), E/S ou signature (notamment si un foyer du chemin
+    /// reconstruit est fermé).
     pub fn commande_depot_enu_texte(
-        &mut self,
+        &self,
         enu_racine_depot: &Enu,
         index_foyer: usize,
         nom: &str,

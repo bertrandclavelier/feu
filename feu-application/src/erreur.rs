@@ -27,11 +27,17 @@ pub type ResultFeuApplication<T> = Result<T, ErreurFeuApplication>;
 ///
 /// Agrège deux familles de variantes :
 ///
-/// - **Erreurs remontées depuis `feu-noyau`** — encapsulées dans une `String`
-///   via `.to_string()`, ce qui préserve l'encapsulation et évite toute fuite
-///   de type privé à travers l'API applicative.
-/// - **Erreurs propres à la couche applicative** — arguments invalides,
-///   préconditions non satisfaites, états internes incohérents.
+/// - **Erreurs remontées d'une couche inférieure** — `feu-noyau` et le Scribe,
+///   encapsulées dans une `String` via `.to_string()`, ce qui préserve
+///   l'encapsulation et évite toute fuite de type privé à travers l'API
+///   applicative.
+/// - **Préconditions de la couche applicative** — nœud éteint, foyer encore
+///   ouvert. Elles sont **typées, sans charge utile** : ce sont des états que la
+///   couche de présentation reconnaît pour décider quoi proposer, pas des
+///   messages qu'elle se contenterait d'afficher.
+///
+/// Pas de variante fourre-tout : une précondition qui n'entre dans aucune des
+/// deux existantes en réclame une nouvelle, nommée.
 ///
 /// Le préfixe `APP >` dans chaque message sert de marqueur de couche lorsque
 /// les messages sont encapsulés par la couche de présentation.
@@ -46,11 +52,6 @@ pub enum ErreurFeuApplication {
     /// Le message textuel provient de `ErreurScribe` via `.to_string()`.
     #[error("APP > {0}")]
     Scribe(String),
-
-    /// Erreur propre à la couche applicative — argument invalide, précondition non
-    /// satisfaite ou état interne incohérent. Indépendante de `feu-noyau`.
-    #[error("APP > {0}")]
-    Standard(String),
 
     /// Le noyau n'a pas encore été allumé via [`commande_allumage_noeud`](crate::FeuApplication::commande_allumage_noeud).
     #[error("APP > Le nœud doit être allumé")]
