@@ -24,9 +24,13 @@
 //! états. D'où un `mod` interne plutôt qu'un crate de test dans `tests/` : on
 //! agit par l'API publique, on constate par l'intérieur.
 
-use std::cell::RefCell;
+use std::{
+    cell::RefCell,
+    fs::{File, read_to_string, write},
+};
 
 use feu_noyau::BRAISE_VIDE;
+use rand::{Rng, distributions::Alphanumeric};
 use tempfile::TempDir;
 
 use super::*;
@@ -87,6 +91,36 @@ impl InterfaceFeuApplication for InterfaceTest {
     fn recevoir_session_application(&self, session_application: Option<SessionApplication>) {
         *self.session_application.borrow_mut() = session_application;
     }
+}
+
+/// Chaîne alphanumérique aléatoire de `n` caractères, pour nommer et remplir
+/// les fichiers de test.
+///
+/// `pub(crate)` — partagée avec `scribe/tests.rs`.
+pub(crate) fn chaine_aleatoire(n: usize) -> String {
+    rand::thread_rng()
+        .sample_iter(Alphanumeric)
+        .take(n)
+        .map(char::from)
+        .collect()
+}
+
+/// Écrit dans `destination` un fichier au nom et au contenu aléatoires, et
+/// rend les deux.
+///
+/// Les rendre tous les deux est ce qui permet de retrouver le fichier après
+/// coup sans rien relire du disque : le nom se compare à la méta `nom` de
+/// l'ENU, le contenu au clair déchiffré du blob.
+pub(crate) fn nouveau_fichier(
+    destination: &Path,
+    nombre_caracteres: usize,
+) -> ResultFeuApplication<(String, String)> {
+    let nom_fichier = chaine_aleatoire(10);
+    let contenu = chaine_aleatoire(nombre_caracteres);
+
+    write(destination.join(&nom_fichier), contenu.clone()).unwrap();
+
+    Ok((nom_fichier, contenu))
 }
 
 /// Cycle de vie complet du nœud par les commandes — allumage, ouverture de
@@ -167,6 +201,95 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
     assert_eq!(app.session.cle_publique_sig_foyer(0)?, [0u8; 2592]);
     assert!(app.session.foyers_fermes());
     assert!(!app.scribe.est_actif());
+
+    Ok(())
+}
+
+/// Un fichier déposé par comptoir se relit à l'identique après extinction et
+/// rallumage du nœud — nom et contenu.
+///
+/// Seul test qui **rallume**. Tout le reste de la suite vit dans un unique
+/// allumage et ne prouve donc rien du disque : ce qu'il observe pourrait tenir
+/// à un état gardé en mémoire. Ici l'instance est détruite entre les deux
+/// moitiés, et la seconde ne repart que de `chemin_feu`.
+///
+/// **Racine.** L'assertion tient en deux temps. `assert_ne!` établit que ce que
+/// `.DERNIERE_RACINE` désigne après rallumage est la racine d'*après* dépôt, et
+/// non l'origine — sans quoi le test pourrait survivre à une greffe jamais
+/// écrite sur disque. Le compte d'enfants à un ajoute que l'ancienne racine ne
+/// s'y trouve pas : elle se chaîne par la méta `_racine`, pas comme enfant.
+///
+/// **Dépôt à la racine**, sans imbrication : la descente tient alors en un seul
+/// [`commande_chargement_enu`](FeuApplication::commande_chargement_enu) jusqu'à
+/// la [`Carte::Donnee`], et le test reste centré sur la survie de la donnée. Le
+/// cas imbriqué relève du retrait, éprouvé côté Scribe.
+#[test]
+fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+    let chemin_depot = tmp.path().join("depot");
+
+    let mut interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&mut interface_test, None)?;
+
+    app.commande_ouverture_foyer(&mut interface_test, 0)?;
+
+    let index_comptoir = app.commande_ouverture_comptoir_depot(chemin_depot.clone(), 0, 0)?;
+    assert_eq!(index_comptoir, 0);
+
+    let (nom_fichier, contenu) = nouveau_fichier(&chemin_depot, 100)?;
+
+    let enu_racine = app.commande_derniere_enu_racine()?;
+
+    app.commande_fermeture_comptoir_depot(index_comptoir, &enu_racine)?;
+
+    // le dossier physique du comptoir disparaît avec son rangement
+    assert!(!chemin_depot.exists());
+
+    app.commande_fermeture_foyer(&mut interface_test, 0)?;
+
+    app.commande_extinction_noeud(&mut interface_test)?;
+
+    // `drop` explicite : le shadowing seul garderait la première instance en vie
+    // jusqu'à la fin du test, et le rallumage ne prouverait plus rien du disque
+    drop(app);
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&mut interface_test, None)?;
+
+    app.commande_ouverture_foyer(&mut interface_test, 0)?;
+
+    let nouvelle_racine = app.commande_derniere_enu_racine()?;
+
+    assert_ne!(nouvelle_racine, enu_racine);
+    assert_eq!(nouvelle_racine.carte().hashs_enu()?.len(), 1);
+
+    let enu_rechargee = app
+        .commande_chargement_enu(nouvelle_racine.carte().hashs_enu()?.first().unwrap())?
+        .unwrap();
+
+    assert_eq!(
+        enu_rechargee.carte().metas().get("nom").unwrap(),
+        &nom_fichier
+    );
+
+    // `create` et non `open` : la destination n'existe pas encore et doit être
+    // ouverte en écriture, `commande_chargement_blob` réclamant un `Write`
+    let chemin_relecture = tmp.path().join("relecture");
+    let fichier = File::create(&chemin_relecture).unwrap();
+
+    app.commande_chargement_blob(&enu_rechargee, &fichier)?;
+
+    let contenu_relu = read_to_string(&chemin_relecture).unwrap();
+
+    assert_eq!(contenu, contenu_relu);
+
+    app.commande_fermeture_foyer(&mut interface_test, 0)?;
+
+    app.commande_extinction_noeud(&mut interface_test)?;
 
     Ok(())
 }

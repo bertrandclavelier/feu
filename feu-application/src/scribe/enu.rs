@@ -867,7 +867,7 @@ impl Carte {
     ///
     /// Retourne [`ErreurScribe::Interne`] (`ENU-004`) si la carte n'est pas un
     /// répertoire.
-    pub(super) fn hashs_enu(&self) -> ResultScribe<BTreeSet<[u8; 32]>> {
+    pub(crate) fn hashs_enu(&self) -> ResultScribe<BTreeSet<[u8; 32]>> {
         match self {
             Self::Donnee {
                 metas: _,

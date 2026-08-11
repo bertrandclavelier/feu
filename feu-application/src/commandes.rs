@@ -15,7 +15,7 @@
 //!
 //! La précondition commune est l'allumage : hors `commande_allumage_noeud`,
 //! `commande_verification_signature` et `commande_diagnostic_noeud`, toute
-//! commande retourne [`ErreurFeuApplication::NoeudEteint`] nœud éteint.
+//! commande retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint.
 //!
 //! Les commandes qui nécessitent une interaction utilisateur (saisie du mot de
 //! passe, affichage de la seed) reçoivent `interface_feu_application : &mut impl
@@ -26,6 +26,23 @@
 //! Les commandes qui ne modifient pas l'état du noyau (`existence_blob`,
 //! `informations_blob`, signatures, diagnostic…) prennent `&self` ;
 //! les autres prennent `&mut self`.
+//!
+//! # Les cinq parties
+//!
+//! Le fichier suit cet ordre, du socle vers ce qu'il porte. Rustdoc, lui,
+//! reclasse tout par ordre alphabétique : ces parties ne se lisent que dans la
+//! source, d'où ce sommaire.
+//!
+//! 1. **Gestion du foyer** — allumage, extinction, mot de passe, cycle des
+//!    foyers, diagnostic. L'état que tout le reste suppose.
+//! 2. **Cryptographie** — chiffrement asymétrique, signatures, vérification.
+//!    Des primitives sur les octets de l'appelant, sans lien avec le stockage.
+//! 3. **Dépôt et retrait** — comptoir et retrait en lecture seule, les deux sens
+//!    du passage entre un dossier de l'OS et le nœud, par arborescences entières.
+//! 4. **Blobs** — chargement, suppression, existence, informations : le contenu
+//!    chiffré, un fichier à la fois.
+//! 5. **ENU** — dernière racine, chargement par hash, dépôt d'un texte court.
+//!    La structure, sans quoi la partie 4 n'aurait rien à désigner.
 //!
 //! # Désigner une donnée
 //!
@@ -45,7 +62,7 @@
 //!
 //! Rien ici n'accepte donc un hash de blob, ni n'en énumère : de l'extérieur,
 //! les seuls hashs qui ouvrent quelque chose sont ceux des ENU
-//! ([`commande_charge_enu`](FeuApplication::commande_charge_enu)). Celui d'un
+//! ([`commande_chargement_enu`](FeuApplication::commande_chargement_enu)). Celui d'un
 //! blob reste lisible dans une [`Carte::Donnee`], mais il n'identifie que le
 //! fichier — il ne le désigne pas.
 
@@ -58,6 +75,13 @@ use crate::scribe::enu::Enu;
 use super::*;
 
 impl FeuApplication {
+    //
+    // 1. Gestion du foyer
+    //
+    // Allumage et extinction du nœud, cycle des foyers, diagnostic. Tout le
+    // reste du fichier suppose cet état posé.
+    //
+
     /// Initialise ou allume le nœud et stocke l'instance dans [`FeuApplication`].
     ///
     /// Délègue à [`FeuNoyau::new`] qui détecte automatiquement l'état du nœud :
@@ -255,53 +279,156 @@ impl FeuApplication {
         Ok(())
     }
 
-    /// Dépose un texte dans un foyer : crée une `EnuT` (une [`Enu`] portant une
-    /// `Carte::Texte`), l'accroche sous `enu_racine_depot`, puis propage la
-    /// nouvelle racine jusqu'à la racine du nœud.
+    /// Diagnostique la présence et la cohérence des fichiers du nœud.
     ///
-    /// Le texte est embarqué dans la carte (aucun blob, aucun classeur) et borné
-    /// en taille. `nom` nommera le fichier lors d'un retrait sur disque — il est
-    /// validé comme composant de chemin dès la construction. Le détail du
-    /// rangement est porté par le Scribe.
+    /// Utilisable nœud éteint : le diagnostic s'appuie sur le seul chemin racine,
+    /// pas sur une instance de [`FeuNoyau`] allumée. Retourne la liste des
+    /// anomalies détectées ; vide si tout est en ordre. Ne peut pas échouer.
+    pub fn commande_diagnostic_noeud(&self) -> Vec<Anomalie> {
+        FeuNoyau::diagnostic_noeud(&self.chemin_feu)
+    }
+
+    /// Diagnostique la présence et la cohérence des fichiers d'un foyer.
     ///
-    /// `index_foyer` désigne le foyer sous la braise duquel le texte est signé ;
-    /// `enu_racine_depot` peut être un répertoire de foyer ou la racine du nœud.
-    /// Tout foyer concerné — celui du texte, celui du répertoire d'accueil s'il
-    /// en a un, ceux du chemin remonté — doit être ouvert.
-    ///
-    /// # Retour
-    ///
-    /// Rien : le nouveau sommet du nœud devient la cible de `.DERNIERE_RACINE`.
+    /// Retourne la liste des anomalies détectées pour le foyer désigné ;
+    /// vide si tout est en ordre.
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : texte trop long, nom invalide,
-    /// `index_foyer` hors bornes, répertoire d'accueil invalide, E/S ou
-    /// signature (notamment si un foyer du chemin reconstruit est fermé).
-    pub fn commande_depot_enu_texte(
-        &mut self,
-        enu_racine_depot: &Enu,
+    /// Retourne une erreur si l'index est invalide ou si le diagnostic échoue.
+    pub fn commande_diagnostic_foyer(
+        &self,
         index_foyer: usize,
-        nom: &str,
-        contenu: &str,
-    ) -> ResultFeuApplication<()> {
+    ) -> ResultFeuApplication<Vec<Anomalie>> {
         let noyau = self
             .feu_noyau
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        self.scribe.depot_enu_texte(
-            noyau,
-            &self.session,
-            enu_racine_depot,
-            index_foyer,
-            nom,
-            contenu,
-        )?;
-
-        Ok(())
+        Ok(noyau.diagnostic_foyer(index_foyer)?)
     }
+
+    //
+    // 2. Cryptographie
+    //
+    // Primitives offertes telles quelles à l'appelant, sur des octets qu'il
+    // fournit. Rien ici ne touche à l'arborescence ni aux classeurs.
+    //
+
+    /// Chiffre des octets à destination d'un nœud identifié par sa clé publique ML-KEM-1024.
+    ///
+    /// Schéma KEM + HKDF + AES-256-GCM. La clé privée du nœud local
+    /// n'intervient pas — seule la clé publique du destinataire est nécessaire.
+    /// La taille des données est limitée à `MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la taille dépasse la limite ou si le chiffrement échoue.
+    pub fn commande_chiffrement_asymetrique(
+        &self,
+        cle_publique_destinataire: &[u8; 1568],
+        octets_a_chiffrer: &[u8],
+    ) -> ResultFeuApplication<Vec<u8>> {
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.chiffrement_asymetrique(cle_publique_destinataire, octets_a_chiffrer)?)
+    }
+
+    /// Déchiffre un message chiffré à destination du foyer désigné.
+    ///
+    /// Réciproque de [`commande_chiffrement_asymetrique`](Self::commande_chiffrement_asymetrique) —
+    /// utilise la clé privée ML-KEM-1024 du foyer, qui doit être ouverte.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si l'index est invalide, si le foyer n'est pas ouvert,
+    /// si la taille dépasse la limite, ou si le déchiffrement échoue.
+    pub fn commande_dechiffrement_asymetrique(
+        &self,
+        index_foyer: usize,
+        octets_a_dechiffrer: &[u8],
+    ) -> ResultFeuApplication<Vec<u8>> {
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.dechiffrement_asymetrique(index_foyer, octets_a_dechiffrer)?)
+    }
+
+    /// Signe des octets avec la clé privée ML-DSA-87 du nœud.
+    ///
+    /// La clé de signature du nœud est l'identité cryptographique racine —
+    /// elle signe les IdNU et tout acte engageant le nœud dans sa globalité.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si la clé privée du nœud n'est pas disponible.
+    pub fn commande_signature_noeud(
+        &self,
+        octets_a_signer: &[u8],
+    ) -> ResultFeuApplication<[u8; 4627]> {
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.signature_noeud(octets_a_signer)?)
+    }
+
+    /// Signe des octets avec la clé privée ML-DSA-87 du foyer désigné.
+    ///
+    /// Le foyer doit être ouvert — sa clé privée de signature doit être présente
+    /// dans le trousseau.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur si l'index est invalide, si le foyer n'est pas ouvert,
+    /// ou si la clé privée est absente.
+    pub fn commande_signature_foyer(
+        &self,
+        index_foyer: usize,
+        octets_a_signer: &[u8],
+    ) -> ResultFeuApplication<[u8; 4627]> {
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        Ok(noyau.signature_foyer(index_foyer, octets_a_signer)?)
+    }
+
+    /// Vérifie une signature ML-DSA-87.
+    ///
+    /// Retourne `true` si `signature` est une signature valide de `octets_signes`
+    /// produite par la clé privée correspondant à `cle_publique`, `false` sinon.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne une erreur uniquement si le noyau signale une anomalie interne —
+    /// un échec de vérification cryptographique retourne `false`, pas une erreur.
+    pub fn commande_verification_signature(
+        &self,
+        cle_publique: [u8; 2592],
+        signature: [u8; 4627],
+        octets_signes: &[u8],
+    ) -> ResultFeuApplication<bool> {
+        Ok(FeuNoyau::verification_signature(
+            cle_publique,
+            signature,
+            octets_signes,
+        )?)
+    }
+
+    //
+    // 3. Dépôt et retrait
+    //
+    // Les deux sens du passage entre un dossier de l'OS et le nœud. Seules
+    // commandes qui traitent une arborescence entière d'un bloc.
+    //
 
     /// Ouvre un comptoir de dépôt et retourne son identifiant.
     ///
@@ -413,11 +540,19 @@ impl FeuApplication {
         Ok(())
     }
 
+    //
+    // 4. Blobs
+    //
+    // Le contenu chiffré, un fichier à la fois. Les quatre commandes désignent
+    // leur cible par la seule `Enu`, comme le pose le « Désigner une donnée »
+    // du module.
+    //
+
     /// Lit et déchiffre le blob désigné par `enu`, et écrit le clair dans
     /// `destination`.
     ///
     /// Dernier maillon de la descente ouverte par
-    /// [`commande_donne_derniere_enu_racine`](Self::commande_donne_derniere_enu_racine) :
+    /// [`commande_derniere_enu_racine`](Self::commande_derniere_enu_racine) :
     /// une [`Carte::Donnee`] ne porte que l'empreinte du blob, jamais ses
     /// octets. L'ENU suffit à la retrouver — sa braise donne le foyer, sa carte
     /// donne le hash. Rien n'est demandé à l'appelant qu'il aurait à extraire
@@ -525,146 +660,16 @@ impl FeuApplication {
         Ok(self.scribe.informations_blob(noyau, &self.session, enu)?)
     }
 
-    /// Chiffre des octets à destination d'un nœud identifié par sa clé publique ML-KEM-1024.
-    ///
-    /// Schéma KEM + HKDF + AES-256-GCM. La clé privée du nœud local
-    /// n'intervient pas — seule la clé publique du destinataire est nécessaire.
-    /// La taille des données est limitée à `MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la taille dépasse la limite ou si le chiffrement échoue.
-    pub fn commande_chiffrement_asymetrique(
-        &self,
-        cle_publique_destinataire: &[u8; 1568],
-        octets_a_chiffrer: &[u8],
-    ) -> ResultFeuApplication<Vec<u8>> {
-        let noyau = self
-            .feu_noyau
-            .as_ref()
-            .ok_or(ErreurFeuApplication::NoeudEteint)?;
-
-        Ok(noyau.chiffrement_asymetrique(cle_publique_destinataire, octets_a_chiffrer)?)
-    }
-
-    /// Déchiffre un message chiffré à destination du foyer désigné.
-    ///
-    /// Réciproque de [`commande_chiffrement_asymetrique`](Self::commande_chiffrement_asymetrique) —
-    /// utilise la clé privée ML-KEM-1024 du foyer, qui doit être ouverte.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si l'index est invalide, si le foyer n'est pas ouvert,
-    /// si la taille dépasse la limite, ou si le déchiffrement échoue.
-    pub fn commande_dechiffrement_asymetrique(
-        &self,
-        index_foyer: usize,
-        octets_a_dechiffrer: &[u8],
-    ) -> ResultFeuApplication<Vec<u8>> {
-        let noyau = self
-            .feu_noyau
-            .as_ref()
-            .ok_or(ErreurFeuApplication::NoeudEteint)?;
-
-        Ok(noyau.dechiffrement_asymetrique(index_foyer, octets_a_dechiffrer)?)
-    }
-
-    /// Signe des octets avec la clé privée ML-DSA-87 du nœud.
-    ///
-    /// La clé de signature du nœud est l'identité cryptographique racine —
-    /// elle signe les IdNU et tout acte engageant le nœud dans sa globalité.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si la clé privée du nœud n'est pas disponible.
-    pub fn commande_signature_noeud(
-        &self,
-        octets_a_signer: &[u8],
-    ) -> ResultFeuApplication<[u8; 4627]> {
-        let noyau = self
-            .feu_noyau
-            .as_ref()
-            .ok_or(ErreurFeuApplication::NoeudEteint)?;
-
-        Ok(noyau.signature_noeud(octets_a_signer)?)
-    }
-
-    /// Signe des octets avec la clé privée ML-DSA-87 du foyer désigné.
-    ///
-    /// Le foyer doit être ouvert — sa clé privée de signature doit être présente
-    /// dans le trousseau.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si l'index est invalide, si le foyer n'est pas ouvert,
-    /// ou si la clé privée est absente.
-    pub fn commande_signature_foyer(
-        &self,
-        index_foyer: usize,
-        octets_a_signer: &[u8],
-    ) -> ResultFeuApplication<[u8; 4627]> {
-        let noyau = self
-            .feu_noyau
-            .as_ref()
-            .ok_or(ErreurFeuApplication::NoeudEteint)?;
-
-        Ok(noyau.signature_foyer(index_foyer, octets_a_signer)?)
-    }
-
-    /// Vérifie une signature ML-DSA-87.
-    ///
-    /// Retourne `true` si `signature` est une signature valide de `octets_signes`
-    /// produite par la clé privée correspondant à `cle_publique`, `false` sinon.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur uniquement si le noyau signale une anomalie interne —
-    /// un échec de vérification cryptographique retourne `false`, pas une erreur.
-    pub fn commande_verification_signature(
-        &self,
-        cle_publique: [u8; 2592],
-        signature: [u8; 4627],
-        octets_signes: &[u8],
-    ) -> ResultFeuApplication<bool> {
-        Ok(FeuNoyau::verification_signature(
-            cle_publique,
-            signature,
-            octets_signes,
-        )?)
-    }
-
-    /// Diagnostique la présence et la cohérence des fichiers du nœud.
-    ///
-    /// Utilisable nœud éteint : le diagnostic s'appuie sur le seul chemin racine,
-    /// pas sur une instance de [`FeuNoyau`] allumée. Retourne la liste des
-    /// anomalies détectées ; vide si tout est en ordre. Ne peut pas échouer.
-    pub fn commande_diagnostic_noeud(&self) -> Vec<Anomalie> {
-        FeuNoyau::diagnostic_noeud(&self.chemin_feu)
-    }
-
-    /// Diagnostique la présence et la cohérence des fichiers d'un foyer.
-    ///
-    /// Retourne la liste des anomalies détectées pour le foyer désigné ;
-    /// vide si tout est en ordre.
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne une erreur si l'index est invalide ou si le diagnostic échoue.
-    pub fn commande_diagnostic_foyer(
-        &self,
-        index_foyer: usize,
-    ) -> ResultFeuApplication<Vec<Anomalie>> {
-        let noyau = self
-            .feu_noyau
-            .as_ref()
-            .ok_or(ErreurFeuApplication::NoeudEteint)?;
-
-        Ok(noyau.diagnostic_foyer(index_foyer)?)
-    }
+    //
+    // 5. ENU
+    //
+    // La structure : le sommet, la descente d'un cran, et le dépôt d'un texte
+    // court porté par l'ENU elle-même. C'est ce qui rend la partie 4 adressable.
+    //
 
     /// Retourne le sommet courant de l'arborescence, authentifié.
     ///
-    /// Avec [`commande_charge_enu`](Self::commande_charge_enu), forme la porte
+    /// Avec [`commande_chargement_enu`](Self::commande_chargement_enu), forme la porte
     /// d'entrée de la couche ENU : celle-ci donne le point de départ, l'autre
     /// permet la descente. Aucune autre commande ne produit d'[`Enu`] — sans
     /// elles, [`commande_fermeture_comptoir_depot`](Self::commande_fermeture_comptoir_depot)
@@ -679,7 +684,7 @@ impl FeuApplication {
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : lien `.DERNIERE_RACINE` absent, lecture,
     /// authentification.
-    pub fn commande_donne_derniere_enu_racine(&self) -> ResultFeuApplication<Enu> {
+    pub fn commande_derniere_enu_racine(&self) -> ResultFeuApplication<Enu> {
         if !self.scribe.est_actif() {
             return Err(ErreurFeuApplication::NoeudEteint);
         }
@@ -693,7 +698,7 @@ impl FeuApplication {
     /// Assure la descente de l'arborescence : une [`Carte::Repertoire`] ne
     /// référence ses enfants que par leur hash, à recharger un à un depuis le
     /// sommet obtenu par
-    /// [`commande_donne_derniere_enu_racine`](Self::commande_donne_derniere_enu_racine).
+    /// [`commande_derniere_enu_racine`](Self::commande_derniere_enu_racine).
     ///
     /// L'absence est un `None` et non une erreur : le hash vient de l'appelant,
     /// ne pas le trouver est une réponse. Les erreurs restent réservées à ce qui
@@ -705,11 +710,59 @@ impl FeuApplication {
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : lecture, authentification.
-    pub fn commande_charge_enu(&self, hash: &[u8; 32]) -> ResultFeuApplication<Option<Enu>> {
+    pub fn commande_chargement_enu(&self, hash: &[u8; 32]) -> ResultFeuApplication<Option<Enu>> {
         if !self.scribe.est_actif() {
             return Err(ErreurFeuApplication::NoeudEteint);
         }
 
         Ok(self.scribe.charge_enu(&self.session, hash)?)
+    }
+
+    /// Dépose un texte dans un foyer : crée une `EnuT` (une [`Enu`] portant une
+    /// `Carte::Texte`), l'accroche sous `enu_racine_depot`, puis propage la
+    /// nouvelle racine jusqu'à la racine du nœud.
+    ///
+    /// Le texte est embarqué dans la carte (aucun blob, aucun classeur) et borné
+    /// en taille. `nom` nommera le fichier lors d'un retrait sur disque — il est
+    /// validé comme composant de chemin dès la construction. Le détail du
+    /// rangement est porté par le Scribe.
+    ///
+    /// `index_foyer` désigne le foyer sous la braise duquel le texte est signé ;
+    /// `enu_racine_depot` peut être un répertoire de foyer ou la racine du nœud.
+    /// Tout foyer concerné — celui du texte, celui du répertoire d'accueil s'il
+    /// en a un, ceux du chemin remonté — doit être ouvert.
+    ///
+    /// # Retour
+    ///
+    /// Rien : le nouveau sommet du nœud devient la cible de `.DERNIERE_RACINE`.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : texte trop long, nom invalide,
+    /// `index_foyer` hors bornes, répertoire d'accueil invalide, E/S ou
+    /// signature (notamment si un foyer du chemin reconstruit est fermé).
+    pub fn commande_depot_enu_texte(
+        &mut self,
+        enu_racine_depot: &Enu,
+        index_foyer: usize,
+        nom: &str,
+        contenu: &str,
+    ) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        self.scribe.depot_enu_texte(
+            noyau,
+            &self.session,
+            enu_racine_depot,
+            index_foyer,
+            nom,
+            contenu,
+        )?;
+
+        Ok(())
     }
 }

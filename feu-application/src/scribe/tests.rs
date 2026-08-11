@@ -34,10 +34,12 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use rand::{Rng, distributions::Alphanumeric};
 use tempfile::TempDir;
 
-use crate::{RecepteurNoyau, tests::InterfaceTest};
+use crate::{
+    RecepteurNoyau,
+    tests::{InterfaceTest, chaine_aleatoire},
+};
 
 use super::*;
 
@@ -104,14 +106,6 @@ fn cree_noyau_et_foyer_ouvert() -> (
 ///
 /// Propage toute erreur d'E/S — dossier déjà présent, permissions.
 fn remplir_dossier(chemin: &Path) -> ResultScribe<()> {
-    let chaine_aleatoire = |n: usize| -> String {
-        rand::thread_rng()
-            .sample_iter(Alphanumeric)
-            .take(n)
-            .map(char::from)
-            .collect()
-    };
-
     // Niveau 1
     // fichier 1
     write(chemin.join(chaine_aleatoire(10)), chaine_aleatoire(100))?;
