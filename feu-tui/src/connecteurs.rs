@@ -23,7 +23,7 @@
 //! Aucun état n'est partagé entre les deux threads — toute communication
 //! transite par ces canaux typés.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{JoinHandle, spawn};
 
@@ -52,6 +52,20 @@ pub(crate) enum MessageCoeurTui {
     /// vers [`crate::tui::Ecran::SaisieMdp`], [`crate::tui::ModeSaisie::Insertion`]
     /// et [`crate::tui::ValidationBufferSaisie::EnvoiMdp`].
     AttenteMdp,
+
+    /// Un comptoir de dépôt vient d'être ouvert — la TUI doit retenir son
+    /// identifiant.
+    ///
+    /// Émis par [`ConnecteurVersTui::lancer_thread_coeur`] sur le seul succès de
+    /// [`FeuApplication::commande_ouverture_comptoir_depot`] ; consommé par la
+    /// boucle [`crate::tui::Tui::lancer`] qui pose
+    /// [`crate::tui::EtatTui::comptoir_depot_ouvert`].
+    ///
+    /// Seul message de retour du protocole : les autres commandes du cœur ne
+    /// rendent rien, et leur échec suffit à décrire ce qui s'est passé. Ici
+    /// l'identifiant est la moitié de la réponse — sans lui, le comptoir ouvert
+    /// serait irrattrapable, l'appel qui le refermera le réclamant.
+    ComptoirDepotOuvert(usize),
 
     /// La seed vient d'être générée — la TUI doit basculer sur l'écran d'affichage.
     ///
@@ -115,6 +129,20 @@ pub(crate) enum MessageTuiCoeur {
     /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
     /// [`feu_application::FeuApplication::commande_ouverture_foyer`].
     OuvertureFoyer(usize),
+
+    /// Demande l'ouverture d'un comptoir de dépôt au chemin porté, vers le foyer
+    /// et le classeur portés (base 1, dans cet ordre).
+    ///
+    /// Émis par [`crate::tui::Tui`] sur dispatch de `OuvrirComptoirDepot` — les
+    /// deux index sont capturés depuis [`crate::tui::EtatTui::position_courante`]
+    /// à la construction de la table, il n'y a pas de saisie.
+    /// Consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
+    /// [`FeuApplication::commande_ouverture_comptoir_depot`] et répond par
+    /// [`MessageCoeurTui::ComptoirDepotOuvert`].
+    ///
+    /// Le chemin traverse le canal plutôt que d'être connu du cœur : la TUI est
+    /// seule à décider où le dossier apparaît, le cœur ne fait que l'y créer.
+    OuvertureComptoir(PathBuf, usize, usize),
 
     /// L'utilisateur a confirmé l'enregistrement de la seed — débloque le thread cœur en attente.
     ///
@@ -193,7 +221,15 @@ impl ConnecteurVersTui {
     /// l'erreur éventuelle via [`MessageCoeurTui::AffichageErreur`]. Les index
     /// de foyer arrivent en base 1 (valeur saisie par l'utilisateur, déjà filtrée
     /// pour exclure 0) ; la conversion en base 0 est effectuée ici
-    /// (`index_foyer - 1`) avant l'appel à [`FeuApplication`].
+    /// (`index_foyer - 1`) avant l'appel à [`FeuApplication`]. Il en va de même
+    /// des index de classeur, arrivés eux aussi en base 1.
+    ///
+    /// [`MessageTuiCoeur::OuvertureComptoir`] est le seul bras dont la commande
+    /// rend autre chose que `()` — d'où un `match` là où les autres se
+    /// contentent d'un `if let Err` : son succès porte l'identifiant du
+    /// comptoir, renvoyé à la TUI par [`MessageCoeurTui::ComptoirDepotOuvert`].
+    /// Le perdre reviendrait à laisser un dossier ouvert que plus rien ne peut
+    /// refermer.
     /// [`MessageTuiCoeur::EnvoieMdp`], [`MessageTuiCoeur::SeedBienRecue`] et
     /// [`MessageTuiCoeur::Annulation`] ont un corps vide : hors-protocole dans
     /// le contexte de la boucle principale (ils ne peuvent arriver ici que si
@@ -243,6 +279,24 @@ impl ConnecteurVersTui {
                             self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
                                 e.to_string(),
                             ));
+                        }
+                    }
+                    Ok(MessageTuiCoeur::OuvertureComptoir(
+                        chemin_comptoir_depot,
+                        index_foyer,
+                        index_classeur,
+                    )) => {
+                        match feu_application.commande_ouverture_comptoir_depot(
+                            &chemin_comptoir_depot,
+                            index_foyer - 1,
+                            index_classeur - 1,
+                        ) {
+                            Ok(index_comptoir) => self.envoyer_message_coeur_tui(
+                                MessageCoeurTui::ComptoirDepotOuvert(index_comptoir),
+                            ),
+                            Err(e) => self.envoyer_message_coeur_tui(
+                                MessageCoeurTui::AffichageErreur(e.to_string()),
+                            ),
                         }
                     }
                     Ok(MessageTuiCoeur::SeedBienRecue) => {}

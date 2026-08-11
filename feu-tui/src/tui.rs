@@ -43,7 +43,8 @@
 //! Le geste utilisateur typique au clavier : `a` pour allumer le nœud, mot de
 //! passe, seed validée par deux pressions d'Entrée, puis `o` pour ouvrir un
 //! foyer (saisie du numéro), `1`-`9` pour entrer dans un foyer ouvert puis
-//! dans un de ses classeurs, `Backspace` pour remonter d'un niveau, `f` pour
+//! dans un de ses classeurs, `c` pour y ouvrir un comptoir de dépôt,
+//! `Backspace` pour remonter d'un niveau, `f` pour
 //! fermer le foyer où l'on est positionné, `e` pour éteindre quand tous les
 //! foyers sont fermés, `q` pour quitter quand le nœud est éteint. À tout
 //! moment `?` affiche la liste des touches actives dans le contexte courant.
@@ -237,7 +238,7 @@ pub(crate) struct PositionCourante {
 
 /// État courant de l'interface entre deux frames.
 ///
-/// Regroupe dix dimensions orthogonales dont aucune ne peut être absorbée
+/// Regroupe onze dimensions orthogonales dont aucune ne peut être absorbée
 /// par une autre :
 /// - `session_application` : clone de la session reçu après chaque commande mutante,
 ///   `None` quand le nœud est éteint ;
@@ -255,7 +256,9 @@ pub(crate) struct PositionCourante {
 ///   `message_erreur` mais durée plus courte ;
 /// - `prompt` : libellé affiché en regard du buffer pendant une saisie
 ///   ([`ModeSaisie::Insertion`]) ;
-/// - `buffer_saisie` : accumulateur de saisie, aveugle à l'écran courant.
+/// - `buffer_saisie` : accumulateur de saisie, aveugle à l'écran courant ;
+/// - `comptoir_depot_ouvert` : identifiant du comptoir de dépôt ouvert, seul
+///   état applicatif que la TUI retienne hors de la session.
 pub(crate) struct EtatTui {
     /// Session applicative courante — `None` quand le nœud est éteint.
     ///
@@ -338,6 +341,24 @@ pub(crate) struct EtatTui {
     /// À plat dans [`EtatTui`] parce que la boucle d'accumulation est indépendante de l'écran :
     /// `saisie_mode_insertion` n'a pas à `match` sur [`EtatTui::ecran`] pour accumuler les frappes.
     pub(crate) buffer_saisie: String,
+
+    /// Identifiant du comptoir de dépôt ouvert, `None` si aucun.
+    ///
+    /// Posé à la réception de
+    /// [`crate::connecteurs::MessageCoeurTui::ComptoirDepotOuvert`], donc sur le
+    /// seul succès de l'ouverture : un booléen posé à l'émission de la demande
+    /// mentirait si le dossier existait déjà. L'identifiant vient avec la
+    /// confirmation plutôt que de l'attendre.
+    ///
+    /// Remis à `None` à l'extinction du nœud, où le Scribe oublie ses comptoirs
+    /// — l'identifiant ne désignerait plus rien.
+    ///
+    /// Un seul comptoir à la fois : ce champ ne peut en tenir qu'un, et c'est
+    /// tout ce qui borne l'ouverture aujourd'hui. Rien ne le lit encore, la
+    /// fermeture n'étant pas branchée — c'est elle qui le consommera, et qui
+    /// permettra à la table de commandes d'éteindre `c` tant qu'un comptoir est
+    /// ouvert.
+    pub(crate) comptoir_depot_ouvert: Option<usize>,
 }
 
 impl EtatTui {
@@ -363,6 +384,7 @@ impl EtatTui {
             message_aide: (None, 0),
             prompt: String::new(),
             buffer_saisie: String::new(),
+            comptoir_depot_ouvert: None,
         }
     }
 
@@ -466,10 +488,14 @@ impl Tui {
     ///    [`EtatTui::message_erreur`] sur [`MessageCoeurTui::AffichageErreur`],
     ///    bascule sur [`Ecran::SaisieMdp`] sur [`MessageCoeurTui::AttenteMdp`],
     ///    bascule sur [`Ecran::AffichageSeed`] sur [`MessageCoeurTui::EnvoiSeed`],
-    ///    met à jour [`EtatTui::session_application`] et reconstruit
+    ///    retient l'identifiant du comptoir sur
+    ///    [`MessageCoeurTui::ComptoirDepotOuvert`], met à jour
+    ///    [`EtatTui::session_application`] et reconstruit
     ///    [`EtatTui::commandes_actives`] via [`CommandesActives::new`] sur
-    ///    [`MessageCoeurTui::EnvoiSessionApplication`], ou signale la
-    ///    déconnexion du thread cœur.
+    ///    [`MessageCoeurTui::EnvoiSessionApplication`] — dont le payload à `None`
+    ///    (extinction) efface au passage
+    ///    [`EtatTui::comptoir_depot_ouvert`] —, ou signale la déconnexion du
+    ///    thread cœur.
     pub(crate) fn lancer(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         let mut horloge = Instant::now();
         loop {
@@ -507,6 +533,9 @@ impl Tui {
                         self.etat_tui.mode_saisie = ModeSaisie::Insertion;
                         self.etat_tui.validation_buffer_saisie = ValidationBufferSaisie::EnvoiMdp;
                     }
+                    MessageCoeurTui::ComptoirDepotOuvert(index_comptoir) => {
+                        self.etat_tui.comptoir_depot_ouvert = Some(index_comptoir);
+                    }
                     MessageCoeurTui::EnvoiSeed(seed) => {
                         self.etat_tui.ecran = Ecran::AffichageSeed {
                             seed,
@@ -515,6 +544,9 @@ impl Tui {
                         self.etat_tui.mode_saisie = ModeSaisie::Information;
                     }
                     MessageCoeurTui::EnvoiSessionApplication(session_application) => {
+                        if session_application.is_none() {
+                            self.etat_tui.comptoir_depot_ouvert = None;
+                        }
                         self.etat_tui.session_application = session_application;
                         self.etat_tui.commandes_actives = CommandesActives::new(
                             &self.etat_tui.session_application,
@@ -619,6 +651,15 @@ impl Tui {
                     self.etat_tui.prompt = String::from("ouvre");
                     self.etat_tui.mode_saisie = ModeSaisie::Insertion;
                     self.etat_tui.validation_buffer_saisie = ValidationBufferSaisie::OuvertureFoyer;
+                }
+                Commande::OuvrirComptoirDepot(chemin_comptoir, index_foyer, index_classeur) => {
+                    self.connecteur_vers_coeur.envoyer_message_tui_coeur(
+                        MessageTuiCoeur::OuvertureComptoir(
+                            chemin_comptoir.to_path_buf(),
+                            *index_foyer,
+                            *index_classeur,
+                        ),
+                    );
                 }
                 Commande::Quitter => {
                     self.connecteur_vers_coeur

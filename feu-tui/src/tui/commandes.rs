@@ -44,7 +44,8 @@
 //!   foyer si la capacité libre le permet.
 //! - **Nœud allumé, dans un classeur** : `f` ferme le foyer parent ;
 //!   `Backspace` remonte au foyer ; `o` ouvre un foyer si la capacité libre
-//!   le permet. Les commandes propres aux classeurs s'ajouteront ici.
+//!   le permet ; `c` ouvre un comptoir de dépôt vers ce classeur. Les autres
+//!   commandes propres aux classeurs s'ajouteront ici.
 //!
 //! Touches *ignorées* dans tous les autres cas — pas d'erreur, pas d'effet,
 //! pas de feedback. Une touche absente de la table n'a aucune existence du
@@ -97,12 +98,29 @@
 //! un foyer ouvert ou dans un classeur valide. Aucune commande n'est exposée
 //! « en bloc » avec un filtrage à l'exécution.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use feu_application::SessionApplication;
 
 use crate::tui::PositionCourante;
+
+/// Emplacement du dossier de dépôt, en dur le temps de brancher la TUI.
+///
+/// Le comptoir n'a pas encore d'où tirer un chemin : ni sélecteur de fichiers,
+/// ni saisie, ni navigation dans l'arborescence du disque. Cette constante tient
+/// la place de ce que l'utilisateur désignera. À retirer dès qu'un chemin peut
+/// venir de lui.
+///
+/// `env!` est résolu **à la compilation** : la valeur est une chaîne littérale
+/// figée dans le binaire, pas une lecture de l'environnement à l'exécution. Le
+/// `$HOME` retenu est donc celui de la machine qui compile — sans portée sur du
+/// provisoire, et c'est ce qui garde tout chemin personnel hors des sources,
+/// `workspace/` étant public.
+const CHEMIN_COMPTOIR_DEPOT: &str = concat!(env!("HOME"), "/Desktop/depot");
+
+/// Pendant de [`CHEMIN_COMPTOIR_DEPOT`] pour le retrait, pas encore branché.
+const CHEMIN_COMPTOIR_RETRAIT: &str = concat!(env!("HOME"), "/Desktop/retrait");
 
 /// Intention métier déclenchée par une frappe clavier.
 ///
@@ -218,6 +236,27 @@ pub(super) enum Commande {
     /// gérés par `saisie_mode_insertion` une fois le buffer validé.
     OuvrirFoyer,
 
+    /// Ouvre un comptoir de dépôt sur le chemin porté, à destination du foyer et
+    /// du classeur portés (base 1) — émet
+    /// [`crate::connecteurs::MessageTuiCoeur::OuvertureComptoir`].
+    ///
+    /// Active uniquement quand l'utilisateur est positionné dans un classeur :
+    /// c'est le seul contexte où les deux index que réclame la commande
+    /// applicative sont connus, capturés depuis [`crate::tui::PositionCourante`]
+    /// au moment où la table est construite. Aucune saisie, donc — même geste
+    /// que [`Commande::FermerFoyer`].
+    ///
+    /// Le chemin vient de [`CHEMIN_COMPTOIR_DEPOT`] et voyage dans la variante
+    /// plutôt que d'être relu côté cœur : la table reste seule à décider *où*
+    /// déposer, le cœur exécute ce qu'on lui donne.
+    ///
+    /// Rien n'interdit encore de la déclencher deux fois de suite ; la seconde
+    /// échoue côté Scribe, le dossier existant déjà, et l'erreur s'affiche.
+    /// [`crate::tui::EtatTui::comptoir_depot_ouvert`] est ce qui permettra de
+    /// l'ôter de la table — la condition n'est pas posée tant que la fermeture
+    /// n'est pas branchée.
+    OuvrirComptoirDepot(PathBuf, usize, usize),
+
     /// Demande l'arrêt propre de l'application — émet [`crate::connecteurs::MessageTuiCoeur::Quitter`].
     ///
     /// Active uniquement lorsque le nœud est éteint, par symétrie avec
@@ -262,8 +301,9 @@ impl CommandesActives {
     ///       remonte via `ChangerPositionFoyer(None)`, `1`-`9` descendent
     ///       dans les classeurs via `ChangerPositionClasseur(Some(_))` ;
     ///     - dans un classeur → `f` ferme le foyer parent via
-    ///       `FermerFoyer(index)`, `Backspace` remonte via
-    ///       `ChangerPositionClasseur(None)` ;
+    ///       `FermerFoyer(index_foyer)`, `Backspace` remonte via
+    ///       `ChangerPositionClasseur(None)`, `c` ouvre un comptoir de dépôt
+    ///       vers ce classeur via `OuvrirComptoirDepot` ;
     /// - dans tous les cas → `ListeCommandesActives`.
     ///
     /// La borne `1`-`9` n'est pas un choix de capacité métier : elle reflète
@@ -335,14 +375,22 @@ impl CommandesActives {
                             }
                         }
                     }
-                    (Some(index), Some(_)) => {
+                    (Some(index_foyer), Some(index_classeur)) => {
                         commandes_actives.insert(
                             (KeyCode::Char('f'), KeyModifiers::NONE),
-                            Commande::FermerFoyer(index),
+                            Commande::FermerFoyer(index_foyer),
                         );
                         commandes_actives.insert(
                             (KeyCode::Backspace, KeyModifiers::NONE),
                             Commande::ChangerPositionClasseur(None),
+                        );
+                        commandes_actives.insert(
+                            (KeyCode::Char('c'), KeyModifiers::NONE),
+                            Commande::OuvrirComptoirDepot(
+                                PathBuf::from(CHEMIN_COMPTOIR_DEPOT),
+                                index_foyer,
+                                index_classeur,
+                            ),
                         );
                     }
                 }
