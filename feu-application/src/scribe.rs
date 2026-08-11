@@ -380,11 +380,11 @@ impl Scribe {
     /// créé.
     pub(super) fn ouverture_comptoir_depot(
         &mut self,
-        chemin: PathBuf,
+        chemin: &Path,
         index_foyer: usize,
         index_classeur: usize,
     ) -> ResultScribe<usize> {
-        let comptoir = ComptoirDepot::new(chemin, index_foyer, index_classeur);
+        let comptoir = ComptoirDepot::new(chemin.to_path_buf(), index_foyer, index_classeur);
         comptoir.ouvrir()?; // on s'assure qu'on peut l'ouvrir avant de le garder
         //
         self.comptoirs_depot.insert(self.prochain_id, comptoir);

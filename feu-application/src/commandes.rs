@@ -66,7 +66,7 @@
 //! blob reste lisible dans une [`Carte::Donnee`], mais il n'identifie que le
 //! fichier — il ne le désigne pas.
 
-use std::{io::Write, path::PathBuf};
+use std::io::Write;
 
 use feu_noyau::{Anomalie, DonneesBlob, FeuNoyau};
 
@@ -454,7 +454,7 @@ impl FeuApplication {
     /// créer.
     pub fn commande_ouverture_comptoir_depot(
         &mut self,
-        chemin: PathBuf,
+        chemin: &Path,
         index_foyer: usize,
         index_classeur: usize,
     ) -> ResultFeuApplication<usize> {
