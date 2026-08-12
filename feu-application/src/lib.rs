@@ -24,8 +24,10 @@
 //!   à [`InterfaceFeuApplication`] et écrit les notifications d'état directement
 //!   dans [`SessionApplication`].
 //! - [`InterfaceFeuApplication`] est fournie par la couche de présentation à
-//!   chaque commande qui nécessite une interaction utilisateur
-//!   (`commande_allumage_noeud`, `commande_ouverture_foyer`, etc.).
+//!   chaque commande qui a besoin d'elle — pour une interaction utilisateur
+//!   (`commande_allumage_noeud`) ou pour la seule notification de session
+//!   (`commande_ouverture_comptoir_depot`). Toujours par emprunt partagé : le
+//!   trait n'a que des méthodes `&self`.
 //!
 //! # Cycle de vie
 //!
@@ -112,7 +114,8 @@ pub trait InterfaceFeuApplication {
     ///
     /// Le payload distingue deux cas :
     /// - `Some(session)` — clone cohérent de l'état applicatif après une commande
-    ///   mutante réussie (allumage, ouverture/fermeture de foyer…).
+    ///   mutante réussie (allumage, ouverture/fermeture de foyer ou de
+    ///   comptoir…).
     /// - `None` — extinction du nœud : la couche de présentation doit traiter
     ///   cela comme une remise à zéro et oublier toute donnée applicative.
     ///
@@ -132,18 +135,24 @@ pub trait InterfaceFeuApplication {
 /// Privé — la couche de présentation n'en a pas connaissance.
 struct RecepteurNoyau<'a, 'b> {
     session_application: &'a mut SessionApplication,
-    interface_feu_application: &'b mut dyn InterfaceFeuApplication,
+    interface_feu_application: &'b dyn InterfaceFeuApplication,
 }
 
 impl<'a, 'b> RecepteurNoyau<'a, 'b> {
     /// Assemble le pont pour la durée d'un appel noyau.
     ///
-    /// Les deux emprunts mutables viennent de [`FeuApplication`] et de la couche
-    /// de présentation ; ils ne sont pas retenus au-delà de l'appel, ce qui est
-    /// la raison d'être du pont.
+    /// Les deux emprunts viennent de [`FeuApplication`] et de la couche de
+    /// présentation ; ils ne sont pas retenus au-delà de l'appel, ce qui est la
+    /// raison d'être du pont.
+    ///
+    /// Seule la session est prise en mutable — le pont y écrit ce que le noyau
+    /// lui notifie. L'interface, elle, n'est que sollicitée : ses quatre
+    /// méthodes prennent `&self`, un emprunt partagé suffit à les appeler,
+    /// y compris depuis les méthodes `&mut self` que réclame
+    /// [`InterfaceFeuNoyau`].
     fn new(
         session_application: &'a mut SessionApplication,
-        interface_feu_application: &'b mut dyn InterfaceFeuApplication,
+        interface_feu_application: &'b dyn InterfaceFeuApplication,
     ) -> Self {
         Self {
             session_application,

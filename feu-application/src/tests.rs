@@ -249,13 +249,13 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
     let chemin_feu = tmp.path().join(".feu");
     let chemin_depot = tmp.path().join("depot");
 
-    let mut interface_test = InterfaceTest::new("mot de passe");
+    let interface_test = InterfaceTest::new("mot de passe");
 
     let mut app = FeuApplication::new(&chemin_feu);
     assert!(interface_test.session_application().is_none());
 
     assert!(matches!(
-        app.commande_ouverture_comptoir_depot(&chemin_depot, 0, 0),
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0),
         Err(ErreurFeuApplication::NoeudEteint)
     ));
     assert!(matches!(
@@ -267,7 +267,7 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
         Err(ErreurFeuApplication::NoeudEteint)
     ));
 
-    app.commande_allumage_noeud(&mut interface_test, None)?;
+    app.commande_allumage_noeud(&interface_test, None)?;
     assert_ne!(
         interface_test
             .session_application()
@@ -277,7 +277,7 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
         BRAISE_VIDE
     );
 
-    app.commande_ouverture_foyer(&mut interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, 0)?;
     assert!(
         interface_test
             .session_application()
@@ -286,14 +286,14 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
             .unwrap(),
     );
 
-    app.commande_ouverture_comptoir_depot(&chemin_depot, 0, 0)?;
+    app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0)?;
 
     assert!(matches!(
-        app.commande_extinction_noeud(&mut interface_test),
+        app.commande_extinction_noeud(&interface_test),
         Err(ErreurFeuApplication::AuMoinsUnFoyerOuvert)
     ));
 
-    app.commande_fermeture_foyer(&mut interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, 0)?;
     assert!(
         !interface_test
             .session_application()
@@ -302,7 +302,7 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
             .unwrap(),
     );
 
-    assert!(app.commande_extinction_noeud(&mut interface_test).is_ok());
+    assert!(app.commande_extinction_noeud(&interface_test).is_ok());
     assert!(interface_test.session_application().is_none());
     assert!(matches!(
         app.commande_chargement_enu(&[0u8; 32]),
@@ -344,38 +344,39 @@ fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
     let chemin_feu = tmp.path().join(".feu");
     let chemin_depot = tmp.path().join("depot");
 
-    let mut interface_test = InterfaceTest::new("mot de passe");
+    let interface_test = InterfaceTest::new("mot de passe");
 
     let mut app = FeuApplication::new(&chemin_feu);
 
-    app.commande_allumage_noeud(&mut interface_test, None)?;
+    app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&mut interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, 0)?;
 
-    let index_comptoir = app.commande_ouverture_comptoir_depot(&chemin_depot, 0, 0)?;
+    let index_comptoir =
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0)?;
     assert_eq!(index_comptoir, 0);
 
     let (nom_fichier, contenu) = nouveau_fichier(&chemin_depot, 100);
 
     let enu_racine = app.commande_derniere_enu_racine()?;
 
-    app.commande_fermeture_comptoir_depot(index_comptoir, &enu_racine)?;
+    app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine)?;
 
     // le dossier physique du comptoir disparaît avec son rangement
     assert!(!chemin_depot.exists());
 
-    app.commande_fermeture_foyer(&mut interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, 0)?;
 
-    app.commande_extinction_noeud(&mut interface_test)?;
+    app.commande_extinction_noeud(&interface_test)?;
 
     // `drop` explicite : le shadowing seul garderait la première instance en vie
     // jusqu'à la fin du test, et le rallumage ne prouverait plus rien du disque
     drop(app);
     let mut app = FeuApplication::new(&chemin_feu);
 
-    app.commande_allumage_noeud(&mut interface_test, None)?;
+    app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&mut interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, 0)?;
 
     let nouvelle_racine = app.commande_derniere_enu_racine()?;
 
@@ -402,9 +403,9 @@ fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
 
     assert_eq!(contenu, contenu_relu);
 
-    app.commande_fermeture_foyer(&mut interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, 0)?;
 
-    app.commande_extinction_noeud(&mut interface_test)?;
+    app.commande_extinction_noeud(&interface_test)?;
 
     Ok(())
 }
@@ -447,22 +448,23 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
     let chemin_feu = tmp.path().join(".feu");
     let chemin_depot = tmp.path().join("depot");
 
-    let mut interface_test = InterfaceTest::new("mot de passe");
+    let interface_test = InterfaceTest::new("mot de passe");
 
     let mut app = FeuApplication::new(&chemin_feu);
 
-    app.commande_allumage_noeud(&mut interface_test, None)?;
+    app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&mut interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, 0)?;
 
-    let index_comptoir = app.commande_ouverture_comptoir_depot(&chemin_depot, 0, 0)?;
+    let index_comptoir =
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0)?;
     assert_eq!(index_comptoir, 0);
 
     nouveau_fichier(&chemin_depot, 100);
 
     let enu_racine = app.commande_derniere_enu_racine()?;
 
-    app.commande_fermeture_comptoir_depot(index_comptoir, &enu_racine)?;
+    app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine)?;
 
     let nouvelle_racine = app.commande_derniere_enu_racine()?;
 
@@ -493,9 +495,9 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
             .is_some()
     );
 
-    app.commande_fermeture_foyer(&mut interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, 0)?;
 
-    app.commande_extinction_noeud(&mut interface_test)?;
+    app.commande_extinction_noeud(&interface_test)?;
 
     Ok(())
 }
@@ -511,18 +513,22 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
 /// refermé entre-temps (`SCR-008`, seul refus rattrapable : le foyer rouvert, la
 /// même fermeture repart, ce que la suite du test exerce) et dossier disparu du
 /// disque (`SCR-007`, constaté après le retrait du comptoir, donc sans reprise).
+///
+/// Établit aussi que le miroir de session suit le Scribe sur chacun de ces
+/// chemins : présent tant que le comptoir l'est, parti dès qu'il l'a lâché. Ces
+/// quatre assertions sont ce qui interdit au miroir de se remettre à diverger.
 #[test]
 fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
     let chemin_feu = tmp.path().join(".feu");
 
-    let mut interface_test = InterfaceTest::new("mot de passe");
+    let interface_test = InterfaceTest::new("mot de passe");
 
     let mut app = FeuApplication::new(&chemin_feu);
 
-    app.commande_allumage_noeud(&mut interface_test, None)?;
+    app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&mut interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, 0)?;
 
     let dossier_temporaire = TempDir::new().unwrap();
 
@@ -534,36 +540,54 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
     let chemin_comptoir1 = dossier_temporaire.path().join("comptoir_depot1");
 
     assert!(
-        matches!(app.commande_ouverture_comptoir_depot(&chemin_comptoir1, MAX_FOYERS + 1, 0), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-006"))
+        matches!(app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir1, MAX_FOYERS + 1, 0), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-006"))
     );
     assert!(
-        matches!(app.commande_ouverture_comptoir_depot(&chemin_comptoir1, 0, MAX_CLASSEURS + 1), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-009"))
+        matches!(app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir1, 0, MAX_CLASSEURS + 1), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-009"))
     );
 
-    let index_comptoir = app.commande_ouverture_comptoir_depot(&chemin_comptoir1, 0, 0)?;
+    let index_comptoir =
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir1, 0, 0)?;
     assert_eq!(index_comptoir, 0);
-
-    app.commande_fermeture_foyer(&mut interface_test, 0)?;
-
     assert!(
-        matches!(app.commande_fermeture_comptoir_depot(index_comptoir, &enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-008"))
+        app.session
+            .comptoirs_depot_ouverts()
+            .contains(&index_comptoir)
     );
 
-    app.commande_ouverture_foyer(&mut interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, 0)?;
 
     assert!(
-        matches!(app.commande_fermeture_comptoir_depot(1, &enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-001"))
+        matches!(app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-008"))
+    );
+    // SCR-008 tombe avant le retrait : l'identifiant reste des deux côtés, sans
+    // quoi la retentative qui suit n'aurait plus rien à désigner
+    assert!(
+        app.session
+            .comptoirs_depot_ouverts()
+            .contains(&index_comptoir)
+    );
+
+    app.commande_ouverture_foyer(&interface_test, 0)?;
+
+    assert!(
+        matches!(app.commande_fermeture_comptoir_depot(&interface_test, 1, &enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-001"))
     );
 
     remove_dir(&chemin_comptoir1).unwrap();
 
     assert!(
-        matches!(app.commande_fermeture_comptoir_depot(index_comptoir, &enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-007"))
+        matches!(app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-007"))
     );
+    // SCR-007 est constaté après le retrait : le Scribe a lâché le comptoir, la
+    // session l'a lâché avec lui, sur un chemin qui rend pourtant une erreur
+    assert!(app.session.comptoirs_depot_ouverts().is_empty());
 
-    app.commande_fermeture_foyer(&mut interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, 0)?;
 
-    app.commande_extinction_noeud(&mut interface_test)?;
+    app.commande_extinction_noeud(&interface_test)?;
+
+    assert!(app.session.comptoirs_depot_ouverts().is_empty());
 
     Ok(())
 }
@@ -610,13 +634,13 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
     let chemin_feu = tmp.path().join(".feu");
 
-    let mut interface_test = InterfaceTest::new("mot de passe");
+    let interface_test = InterfaceTest::new("mot de passe");
 
     let mut app = FeuApplication::new(&chemin_feu);
 
-    app.commande_allumage_noeud(&mut interface_test, None)?;
+    app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&mut interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, 0)?;
 
     let dossier_temporaire = TempDir::new().unwrap();
 
@@ -627,10 +651,11 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
     //
     let chemin_comptoir1 = dossier_temporaire.path().join("comptoir_depot1");
 
-    let index_comptoir1 = app.commande_ouverture_comptoir_depot(&chemin_comptoir1, 0, 0)?;
+    let index_comptoir1 =
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir1, 0, 0)?;
 
     // Fermeture comptoir vide
-    app.commande_fermeture_comptoir_depot(index_comptoir1, &enu_racine)?;
+    app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir1, &enu_racine)?;
 
     let deuxieme_enu_racine = app.commande_derniere_enu_racine()?;
 
@@ -642,14 +667,15 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
     //
     let chemin_comptoir2 = dossier_temporaire.path().join("comptoir_depot2");
 
-    let index_comptoir2 = app.commande_ouverture_comptoir_depot(&chemin_comptoir2, 0, 0)?;
+    let index_comptoir2 =
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir2, 0, 0)?;
     assert_eq!(index_comptoir2, 1);
 
     remplir_dossier(&chemin_comptoir2)?;
 
     let arborescence_origine = lire_arborescence(&chemin_comptoir2)?;
 
-    app.commande_fermeture_comptoir_depot(index_comptoir2, &enu_racine)?;
+    app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir2, &enu_racine)?;
 
     let deuxieme_enu_racine = app.commande_derniere_enu_racine()?;
 
@@ -707,9 +733,9 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
         matches!(app.commande_existence_blob(&enur), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-005"))
     );
 
-    app.commande_fermeture_foyer(&mut interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, 0)?;
 
-    app.commande_extinction_noeud(&mut interface_test)?;
+    app.commande_extinction_noeud(&interface_test)?;
 
     Ok(())
 }
@@ -761,13 +787,13 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
     let chemin_feu = tmp.path().join(".feu");
 
-    let mut interface_test = InterfaceTest::new("mot de passe");
+    let interface_test = InterfaceTest::new("mot de passe");
 
     let mut app = FeuApplication::new(&chemin_feu);
 
-    app.commande_allumage_noeud(&mut interface_test, None)?;
+    app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&mut interface_test, 1)?;
+    app.commande_ouverture_foyer(&interface_test, 1)?;
 
     let enu_racine = app.commande_derniere_enu_racine()?;
 
@@ -825,9 +851,9 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
 
     assert_eq!(contenus, ["enu test 1", "enu test 2"]);
 
-    app.commande_fermeture_foyer(&mut interface_test, 1)?;
+    app.commande_fermeture_foyer(&interface_test, 1)?;
 
-    app.commande_extinction_noeud(&mut interface_test)?;
+    app.commande_extinction_noeud(&interface_test)?;
 
     Ok(())
 }

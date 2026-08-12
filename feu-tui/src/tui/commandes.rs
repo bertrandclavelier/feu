@@ -44,8 +44,9 @@
 //!   foyer si la capacité libre le permet.
 //! - **Nœud allumé, dans un classeur** : `f` ferme le foyer parent ;
 //!   `Backspace` remonte au foyer ; `o` ouvre un foyer si la capacité libre
-//!   le permet ; `c` ouvre un comptoir de dépôt vers ce classeur. Les autres
-//!   commandes propres aux classeurs s'ajouteront ici.
+//!   le permet ; `d` ouvre un comptoir de dépôt vers ce classeur, tant
+//!   qu'aucun autre n'est ouvert. Les autres commandes propres aux classeurs
+//!   s'ajouteront ici.
 //!
 //! Touches *ignorées* dans tous les autres cas — pas d'erreur, pas d'effet,
 //! pas de feedback. Une touche absente de la table n'a aucune existence du
@@ -250,11 +251,16 @@ pub(super) enum Commande {
     /// plutôt que d'être relu côté cœur : la table reste seule à décider *où*
     /// déposer, le cœur exécute ce qu'on lui donne.
     ///
-    /// Rien n'interdit encore de la déclencher deux fois de suite ; la seconde
-    /// échoue côté Scribe, le dossier existant déjà, et l'erreur s'affiche.
-    /// [`crate::tui::EtatTui::comptoir_depot_ouvert`] est ce qui permettra de
-    /// l'ôter de la table — la condition n'est pas posée tant que la fermeture
-    /// n'est pas branchée.
+    /// Elle quitte la table dès qu'un comptoir est ouvert, la condition étant
+    /// lue dans la session. Un seul comptoir à la fois, donc — non par
+    /// contrainte du Scribe, qui en tient autant qu'on veut, mais parce que le
+    /// chemin de dépôt est une constante : deux comptoirs viseraient le même
+    /// dossier, et le second échouerait à la création. La limite tombera avec
+    /// [`CHEMIN_COMPTOIR_DEPOT`].
+    ///
+    /// Rien ne la ramène ensuite dans la table avant l'extinction du nœud : la
+    /// fermeture d'un comptoir n'a pas encore de commande côté TUI, et c'est
+    /// elle qui retirera l'identifiant de la session.
     OuvrirComptoirDepot(PathBuf, usize, usize),
 
     /// Demande l'arrêt propre de l'application — émet [`crate::connecteurs::MessageTuiCoeur::Quitter`].
@@ -302,8 +308,9 @@ impl CommandesActives {
     ///       dans les classeurs via `ChangerPositionClasseur(Some(_))` ;
     ///     - dans un classeur → `f` ferme le foyer parent via
     ///       `FermerFoyer(index_foyer)`, `Backspace` remonte via
-    ///       `ChangerPositionClasseur(None)`, `c` ouvre un comptoir de dépôt
-    ///       vers ce classeur via `OuvrirComptoirDepot` ;
+    ///       `ChangerPositionClasseur(None)`, `d` ouvre un comptoir de dépôt
+    ///       vers ce classeur via `OuvrirComptoirDepot`, si
+    ///       `comptoirs_depot_ouverts` est vide ;
     /// - dans tous les cas → `ListeCommandesActives`.
     ///
     /// La borne `1`-`9` n'est pas un choix de capacité métier : elle reflète
@@ -316,9 +323,13 @@ impl CommandesActives {
     /// Toute touche présente dans la table déclenche un effet réel dans le
     /// contexte courant ; toute touche absente est ignorée silencieusement.
     /// Le filtrage tient compte à la fois de la session (état des foyers,
-    /// capacité libre) et de la position courante (depuis quel niveau
-    /// l'utilisateur navigue) — pas de touche « activée en bloc » avec un
-    /// rejet à l'exécution.
+    /// capacité libre, comptoirs ouverts) et de la position courante (depuis
+    /// quel niveau l'utilisateur navigue) — pas de touche « activée en bloc »
+    /// avec un rejet à l'exécution.
+    ///
+    /// La session suffit à tout décider parce qu'elle porte désormais aussi les
+    /// comptoirs ouverts : la table se reconstruit à sa réception, sans que la
+    /// TUI ait à retenir quoi que ce soit entre deux envois.
     pub(super) fn new(
         session_application: &Option<SessionApplication>,
         position_courante: &PositionCourante,
@@ -384,14 +395,16 @@ impl CommandesActives {
                             (KeyCode::Backspace, KeyModifiers::NONE),
                             Commande::ChangerPositionClasseur(None),
                         );
-                        commandes_actives.insert(
-                            (KeyCode::Char('d'), KeyModifiers::NONE),
-                            Commande::OuvrirComptoirDepot(
-                                PathBuf::from(CHEMIN_COMPTOIR_DEPOT),
-                                index_foyer,
-                                index_classeur,
-                            ),
-                        );
+                        if session.comptoirs_depot_ouverts().is_empty() {
+                            commandes_actives.insert(
+                                (KeyCode::Char('d'), KeyModifiers::NONE),
+                                Commande::OuvrirComptoirDepot(
+                                    PathBuf::from(CHEMIN_COMPTOIR_DEPOT),
+                                    index_foyer,
+                                    index_classeur,
+                                ),
+                            );
+                        }
                     }
                 }
             }

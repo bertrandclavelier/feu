@@ -403,6 +403,11 @@ impl Scribe {
     /// comptoir les porte ensuite jusqu'à sa fermeture, qui n'a plus à en
     /// douter.
     ///
+    /// `session` est prise en mutable pour y inscrire le même identifiant, à la
+    /// ligne qui suit l'enregistrement. Le Scribe tient les comptoirs, la
+    /// session les rend lisibles hors de la crate : les deux se remplissent
+    /// donc ici, où l'identifiant vient d'être formé.
+    ///
     /// # Erreurs
     ///
     /// Retourne [`ErreurScribe::Interne`] si l'index de foyer (`SCR-006`) ou de
@@ -410,6 +415,7 @@ impl Scribe {
     /// dossier — notamment s'il existe déjà.
     pub(super) fn ouverture_comptoir_depot(
         &mut self,
+        session: &mut SessionApplication,
         chemin: &Path,
         index_foyer: usize,
         index_classeur: usize,
@@ -428,6 +434,10 @@ impl Scribe {
 
         self.comptoirs_depot.insert(self.prochain_id, comptoir);
         self.prochain_id += 1;
+
+        session
+            .mut_comptoirs_depot_ouverts()
+            .insert(self.prochain_id - 1);
 
         Ok(self.prochain_id - 1)
     }
@@ -468,6 +478,12 @@ impl Scribe {
     /// les gardes passées : au-delà, la fermeture est un aller simple, et son
     /// identifiant ne désigne plus rien.
     ///
+    /// Il sort de `session` à la ligne suivante, d'où le `&mut` sur un paramètre
+    /// que le reste de la fonction ne fait que lire. Les deux retraits sont
+    /// collés parce que ce qui les sépare finit toujours par grandir : une garde
+    /// glissée entre eux rendrait la session menteuse sur un chemin d'erreur,
+    /// sans que rien ne le signale.
+    ///
     /// # Retour
     ///
     /// Rien : le nouveau sommet du nœud est signé, sauvegardé et devient la
@@ -496,7 +512,7 @@ impl Scribe {
     pub(super) fn fermeture_comptoir_depot(
         &mut self,
         noyau: &mut FeuNoyau,
-        session: &SessionApplication,
+        session: &mut SessionApplication,
         index_comptoir: usize,
         enu_racine_depot: &Enu,
     ) -> ResultScribe<()> {
@@ -515,6 +531,9 @@ impl Scribe {
         let Some(comptoir) = self.comptoirs_depot.remove(&index_comptoir) else {
             return Err(ErreurScribe::Interne(String::from(ERR_SCR_001)));
         };
+        session
+            .mut_comptoirs_depot_ouverts()
+            .remove(&index_comptoir);
 
         if !comptoir.chemin().exists() {
             return Err(ErreurScribe::Interne(String::from(ERR_SCR_007)));

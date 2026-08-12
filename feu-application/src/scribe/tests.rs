@@ -69,10 +69,10 @@ fn cree_noyau_et_foyer_ouvert() -> (
     // un dossier déjà créé le ferait basculer en « ouverture d'un nœud existant ».
     let chemin_feu = tmp.path().join(".feu");
 
-    let mut interface_test = InterfaceTest::new("mot de passe");
+    let interface_test = InterfaceTest::new("mot de passe");
     let mut session = SessionApplication::new();
 
-    let mut recepteur = RecepteurNoyau::new(&mut session, &mut interface_test);
+    let mut recepteur = RecepteurNoyau::new(&mut session, &interface_test);
 
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut recepteur).unwrap();
     let mut scribe = Scribe::new(&chemin_feu);
@@ -102,8 +102,8 @@ fn cree_noyau_et_foyer_ouvert() -> (
 /// son `Drop` provoquerait un panic. Prend `noyau` et `session` par valeur car
 /// plus rien ne les utilise ensuite.
 fn fermer_foyer(mut noyau: FeuNoyau, mut session: SessionApplication) {
-    let mut interface = InterfaceTest::new("mot de passe");
-    let mut recepteur = RecepteurNoyau::new(&mut session, &mut interface);
+    let interface = InterfaceTest::new("mot de passe");
+    let mut recepteur = RecepteurNoyau::new(&mut session, &interface);
     noyau.fermeture_foyer(&mut recepteur, 0).unwrap();
 }
 

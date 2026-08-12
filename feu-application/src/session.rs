@@ -10,11 +10,34 @@
 //!
 //! [`SessionApplication`] centralise tout ce que `feu-application` doit
 //! mémoriser entre les commandes : capacités du noyau, adresses et états
-//! des foyers, clés publiques reçues via l'interface du noyau.
+//! des foyers, clés publiques reçues via l'interface du noyau, et les
+//! comptoirs de dépôt ouverts.
 //!
-//! Cette struct est peuplée par le pont interne vers le noyau pendant
-//! l'exécution de chaque commande — jamais directement par la couche de
+//! Cette struct est peuplée pendant l'exécution des commandes — par le pont
+//! interne vers le noyau pour ce qui vient de lui, par le [`Scribe`] pour les
+//! comptoirs de dépôt. Écrit ici qui détient l'original, jamais la couche de
 //! présentation.
+//!
+//! Une commande y touche malgré tout, mais en bloc et non par champ :
+//! l'extinction du nœud remplace la session entière par une session neuve. Rien
+//! n'y survit, donc rien n'y ment.
+//!
+//! [`Scribe`]: crate::scribe::Scribe
+//!
+//! # Le porteur, pas la source
+//!
+//! La session ne détient rien en propre : chaque champ redit un état dont
+//! l'autorité est ailleurs — le noyau pour les clés et les foyers, le Scribe
+//! pour les comptoirs. Elle existe parce que cette autorité n'est pas
+//! transportable : le noyau ne franchit pas la frontière de la crate, le Scribe
+//! non plus, alors qu'un clone de la session part vers la couche de présentation
+//! après chaque commande mutante.
+//!
+//! C'est ce qui la rend lisible de l'extérieur sans rien exposer de l'intérieur,
+//! et ce qui impose sa contrepartie : tout état recopié ici se met à jour à
+//! l'endroit exact où l'original change, dans la même fonction et sans rien
+//! entre les deux. Un miroir tenu de plus loin finirait par mentir sur un
+//! chemin d'erreur.
 //!
 //! # Aucune erreur, que des options
 //!
@@ -26,6 +49,8 @@
 //! La session ne peut donc pas faire remonter d'erreur applicative dans une
 //! couche qui la consomme, ni celle-ci la lui renvoyer aplatie de ses préfixes.
 
+use std::collections::BTreeSet;
+
 use feu_noyau::{BRAISE_VIDE, Braise};
 use feu_noyau::{
     MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
@@ -36,8 +61,8 @@ use feu_noyau::{
 ///
 /// Regroupe les capacités du noyau (limites de taille, nombre de foyers) et
 /// l'état dynamique de la session (adresses braise, états d'ouverture, clés
-/// publiques). Peuplé à l'allumage et mis à jour à chaque ouverture/fermeture
-/// de foyer.
+/// publiques, comptoirs de dépôt ouverts). Peuplé à l'allumage, puis mis à jour
+/// à chaque ouverture ou fermeture de foyer et de comptoir.
 ///
 /// # Invariant
 ///
@@ -65,6 +90,15 @@ pub struct SessionApplication {
     cle_publique_sig_foyers: [[u8; 2592]; MAX_FOYERS],
     /// Clés publiques de chiffrement ML-KEM-1024 des foyers — reçues à l'ouverture.
     cle_publique_chif_foyers: [[u8; 1568]; MAX_FOYERS],
+    /// Identifiants des comptoirs de dépôt ouverts — miroir lisible de ceux que
+    /// le Scribe détient.
+    ///
+    /// Un [`BTreeSet`] plutôt qu'un `Vec` : l'unicité est portée par le type
+    /// plutôt que prouvée à chaque insertion, et l'ordre trié suffit à rendre
+    /// l'itération déterministe. Comme les identifiants sont distribués par un
+    /// compteur croissant, cet ordre est celui des ouvertures, sans avoir à le
+    /// maintenir.
+    comptoirs_depot_ouverts: BTreeSet<usize>,
 }
 
 impl SessionApplication {
@@ -91,6 +125,7 @@ impl SessionApplication {
             cle_publique_sig_noeud: [0u8; 2592],
             cle_publique_sig_foyers: [[0u8; 2592]; MAX_FOYERS],
             cle_publique_chif_foyers: [[0u8; 1568]; MAX_FOYERS],
+            comptoirs_depot_ouverts: BTreeSet::new(),
         }
     }
 
@@ -218,6 +253,32 @@ impl SessionApplication {
     /// Appelé par `RecepteurNoyau` à l'ouverture du foyer.
     pub(crate) fn definit_cle_publique_chif_foyer(&mut self, index_foyer: usize, cle: [u8; 1568]) {
         self.cle_publique_chif_foyers[index_foyer] = cle;
+    }
+
+    /// Retourne les identifiants des comptoirs de dépôt ouverts.
+    ///
+    /// Par référence, sans clone : la couche de présentation reçoit déjà une
+    /// [`SessionApplication`] clonée entière après chaque commande mutante, elle
+    /// possède donc son propre ensemble. Rendre une copie de plus n'ajouterait
+    /// rien ; qui a besoin d'une valeur possédée la clone chez lui.
+    ///
+    /// Aucune [`Option`] ici, contrairement aux accesseurs indexés : l'ensemble
+    /// existe toujours, vide quand aucun comptoir n'est ouvert.
+    pub fn comptoirs_depot_ouverts(&self) -> &BTreeSet<usize> {
+        &self.comptoirs_depot_ouverts
+    }
+
+    /// Retourne l'ensemble des comptoirs ouverts en écriture.
+    ///
+    /// Un accès mutable en bloc plutôt que trois setters — `insert`, `remove` et
+    /// `clear` sont ceux du [`BTreeSet`], les redéclarer ici n'ajouterait qu'un
+    /// niveau de délégation.
+    ///
+    /// Appelé par le Scribe seul, aux deux lignes où il ajoute et retire un
+    /// comptoir de sa propre table. C'est ce voisinage qui tient le miroir :
+    /// aucun chemin d'erreur ne passe entre les deux écritures.
+    pub(crate) fn mut_comptoirs_depot_ouverts(&mut self) -> &mut BTreeSet<usize> {
+        &mut self.comptoirs_depot_ouverts
     }
 }
 

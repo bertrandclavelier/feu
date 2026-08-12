@@ -17,11 +17,13 @@
 //! `commande_verification_signature` et `commande_diagnostic_noeud`, toute
 //! commande retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint.
 //!
-//! Les commandes qui nécessitent une interaction utilisateur (saisie du mot de
-//! passe, affichage de la seed) reçoivent `interface_feu_application : &mut impl
-//! InterfaceFeuApplication` en paramètre — l'interface n'est pas stockée dans
-//! [`FeuApplication`], elle est fournie à l'appel, comme [`InterfaceFeuNoyau`]
-//! l'est dans `feu-noyau`.
+//! Les commandes qui ont besoin de la couche de présentation reçoivent
+//! `interface_feu_application : impl InterfaceFeuApplication` en paramètre —
+//! l'interface n'est pas stockée dans [`FeuApplication`], elle est fournie à
+//! l'appel, comme [`InterfaceFeuNoyau`] l'est dans `feu-noyau`. Deux besoins
+//! s'y mêlent : l'interaction utilisateur (saisie du mot de passe, affichage de
+//! la seed) et la notification de session après mutation. Une commande peut
+//! n'avoir que le second, comme celles du comptoir de dépôt.
 //!
 //! Les commandes qui ne modifient pas l'état du noyau (`existence_blob`,
 //! `informations_blob`, signatures, diagnostic…) prennent `&self` ;
@@ -103,7 +105,7 @@ impl FeuApplication {
     /// nœud existe déjà.
     pub fn commande_allumage_noeud(
         &mut self,
-        interface_feu_application: &mut impl InterfaceFeuApplication,
+        interface_feu_application: &impl InterfaceFeuApplication,
         phrase_seed: Option<SecretString>,
     ) -> ResultFeuApplication<()> {
         let feu_noyau = {
@@ -131,8 +133,15 @@ impl FeuApplication {
     /// 1. Vérifie qu'aucun foyer n'est ouvert.
     /// 2. Libère le noyau (`feu_noyau = None`) — efface les clés privées en mémoire.
     /// 3. Réinitialise la session pour qu'aucune donnée applicative ne survive
-    ///    à l'extinction (clés publiques, adresses `.braise`, états).
+    ///    à l'extinction (clés publiques, adresses `.braise`, états, comptoirs
+    ///    de dépôt ouverts).
     /// 4. Notifie la couche de présentation avec `recevoir_session_application(None)`.
+    /// 5. Désactive le Scribe, qui oublie les comptoirs qu'il détenait.
+    ///
+    /// La session neuve de l'étape 3 vide déjà la liste des comptoirs ouverts :
+    /// c'est la même remise à zéro que pour le reste de l'état, et elle a lieu
+    /// avant que le Scribe n'oublie les siens. Les deux moitiés du miroir
+    /// tombent donc ensemble, dans la même commande.
     ///
     /// L'extinction n'écrit rien sur disque : les archives chiffrées des foyers
     /// ont déjà été produites par les fermetures préalables.
@@ -144,7 +153,7 @@ impl FeuApplication {
     /// pas été allumé.
     pub fn commande_extinction_noeud(
         &mut self,
-        interface_feu_application: &mut impl InterfaceFeuApplication,
+        interface_feu_application: &impl InterfaceFeuApplication,
     ) -> ResultFeuApplication<()> {
         if !self.session.foyers_fermes() {
             return Err(ErreurFeuApplication::AuMoinsUnFoyerOuvert);
@@ -175,7 +184,7 @@ impl FeuApplication {
     /// ou si l'écriture du trousseau public échoue.
     pub fn commande_changement_mdp(
         &mut self,
-        interface_feu_application: &mut impl InterfaceFeuApplication,
+        interface_feu_application: &impl InterfaceFeuApplication,
     ) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
@@ -201,7 +210,7 @@ impl FeuApplication {
     /// si le mot de passe est incorrect, ou si une opération disque échoue.
     pub fn commande_ouverture_foyer(
         &mut self,
-        interface_feu_application: &mut impl InterfaceFeuApplication,
+        interface_feu_application: &impl InterfaceFeuApplication,
         index_foyer: usize,
     ) -> ResultFeuApplication<()> {
         let noyau = self
@@ -231,7 +240,7 @@ impl FeuApplication {
     /// ou si une opération disque échoue.
     pub fn commande_fermeture_foyer(
         &mut self,
-        interface_feu_application: &mut impl InterfaceFeuApplication,
+        interface_feu_application: &impl InterfaceFeuApplication,
         index_foyer: usize,
     ) -> ResultFeuApplication<()> {
         let noyau = self
@@ -263,7 +272,7 @@ impl FeuApplication {
     /// opération disque échoue.
     pub fn commande_secours_fermeture_foyer(
         &mut self,
-        interface_feu_application: &mut impl InterfaceFeuApplication,
+        interface_feu_application: &impl InterfaceFeuApplication,
         index_foyer: usize,
     ) -> ResultFeuApplication<()> {
         let noyau = self
@@ -447,13 +456,20 @@ impl FeuApplication {
     /// L'identifiant du comptoir, à conserver pour le refermer — valable tant
     /// que le nœud reste allumé, l'extinction l'annulant définitivement.
     ///
+    /// Le Scribe l'inscrit au passage dans la session, dont cette commande envoie
+    /// un clone à la couche de présentation : celle-ci n'a donc rien à retenir de
+    /// l'appel pour savoir ce qui est ouvert. Le retour direct sert l'appelant
+    /// qui enchaîne, la session sert celui qui affiche.
+    ///
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : dossier déjà existant ou impossible à
-    /// créer.
+    /// créer. Un échec ne laisse aucun identifiant dans la session, et rien
+    /// n'est notifié.
     pub fn commande_ouverture_comptoir_depot(
         &mut self,
+        interface_feu_application: &impl InterfaceFeuApplication,
         chemin: &Path,
         index_foyer: usize,
         index_classeur: usize,
@@ -462,9 +478,16 @@ impl FeuApplication {
             return Err(ErreurFeuApplication::NoeudEteint);
         }
 
-        Ok(self
-            .scribe
-            .ouverture_comptoir_depot(chemin, index_foyer, index_classeur)?)
+        let index_comptoir = self.scribe.ouverture_comptoir_depot(
+            &mut self.session,
+            chemin,
+            index_foyer,
+            index_classeur,
+        )?;
+
+        interface_feu_application.recevoir_session_application(Some(self.session.clone()));
+
+        Ok(index_comptoir)
     }
 
     /// Ferme un comptoir de dépôt : range son contenu, le greffe sous
@@ -492,8 +515,15 @@ impl FeuApplication {
     /// Seul `SCR-008` est rattrapable : l'identifiant y reste valable, et la
     /// fermeture se retente une fois le foyer rouvert. Tout autre échec consomme
     /// le comptoir et laisse son dossier à l'utilisateur.
+    ///
+    /// La session suit le sort du comptoir, pas celui de la commande : le Scribe
+    /// l'en retire à l'instant où il le lâche lui-même. `SCR-006` et `SCR-008`
+    /// tombent avant ce point et y laissent donc l'identifiant — ce que la
+    /// retentative promise par `SCR-008` exige. Les échecs plus tardifs l'ont
+    /// déjà emporté, le comptoir n'existant plus nulle part.
     pub fn commande_fermeture_comptoir_depot(
         &mut self,
+        interface_feu_application: &impl InterfaceFeuApplication,
         index_comptoir: usize,
         enu_racine_depot: &Enu,
     ) -> ResultFeuApplication<()> {
@@ -504,10 +534,12 @@ impl FeuApplication {
 
         self.scribe.fermeture_comptoir_depot(
             noyau,
-            &self.session,
+            &mut self.session,
             index_comptoir,
             enu_racine_depot,
         )?;
+
+        interface_feu_application.recevoir_session_application(Some(self.session.clone()));
 
         Ok(())
     }
