@@ -43,8 +43,8 @@
 //! Le geste utilisateur typique au clavier : `a` pour allumer le nœud, mot de
 //! passe, seed validée par deux pressions d'Entrée, puis `o` pour ouvrir un
 //! foyer (saisie du numéro), `1`-`9` pour entrer dans un foyer ouvert puis
-//! dans un de ses classeurs, `d` pour y ouvrir un comptoir de dépôt,
-//! `Backspace` pour remonter d'un niveau, `f` pour
+//! dans un de ses classeurs, `d` pour y ouvrir un comptoir de dépôt et `c`
+//! pour le fermer, `Backspace` pour remonter d'un niveau, `f` pour
 //! fermer le foyer où l'on est positionné, `e` pour éteindre quand tous les
 //! foyers sont fermés, `q` pour quitter quand le nœud est éteint. À tout
 //! moment `?` affiche la liste des touches actives dans le contexte courant.
@@ -609,6 +609,17 @@ impl Tui {
                 Commande::EteindreNoeud => {
                     self.connecteur_vers_coeur
                         .envoyer_message_tui_coeur(MessageTuiCoeur::ExtinctionNoeud);
+                }
+                Commande::FermerComptoirDepot => {
+                    if let Some(session) = &self.etat_tui.session_application {
+                        let index_comptoir = session
+                            .comptoirs_depot_ouverts()
+                            .first()
+                            .expect("commande active quand au moins un élément");
+                        self.connecteur_vers_coeur.envoyer_message_tui_coeur(
+                            MessageTuiCoeur::FermetureComptoirDepot(*index_comptoir),
+                        );
+                    }
                 }
                 Commande::FermerFoyer(index) => {
                     self.connecteur_vers_coeur

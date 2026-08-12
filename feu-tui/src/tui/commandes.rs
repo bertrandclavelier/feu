@@ -44,9 +44,9 @@
 //!   foyer si la capacité libre le permet.
 //! - **Nœud allumé, dans un classeur** : `f` ferme le foyer parent ;
 //!   `Backspace` remonte au foyer ; `o` ouvre un foyer si la capacité libre
-//!   le permet ; `d` ouvre un comptoir de dépôt vers ce classeur, tant
-//!   qu'aucun autre n'est ouvert. Les autres commandes propres aux classeurs
-//!   s'ajouteront ici.
+//!   le permet ; `d` ouvre un comptoir de dépôt vers ce classeur tant qu'aucun
+//!   autre n'est ouvert, `c` ferme celui qui l'est. Les autres commandes
+//!   propres aux classeurs s'ajouteront ici.
 //!
 //! Touches *ignorées* dans tous les autres cas — pas d'erreur, pas d'effet,
 //! pas de feedback. Une touche absente de la table n'a aucune existence du
@@ -195,6 +195,18 @@ pub(super) enum Commande {
     /// par contexte évite à l'utilisateur de la déclencher pour rien.
     EteindreNoeud,
 
+    /// Ferme le comptoir de dépôt ouvert — émet
+    /// [`crate::connecteurs::MessageTuiCoeur::FermetureComptoirDepot`].
+    ///
+    /// Active dans un classeur dès qu'un comptoir est ouvert, quel que soit ce
+    /// classeur : la commande ne porte pas d'index, le bras d'exécution dans
+    /// [`crate::tui::Tui::saisie_mode_normal`] prend le premier identifiant de
+    /// [`feu_application::SessionApplication::comptoirs_depot_ouverts`]. C'est
+    /// suffisant tant qu'un seul comptoir peut être ouvert à la fois — la
+    /// condition posée par [`Commande::OuvrirComptoirDepot`], dont elle prend
+    /// la place dans la table, jamais les deux ensemble.
+    FermerComptoirDepot,
+
     /// Ferme le foyer dont l'index (base 1) est porté par la variante — émet
     /// [`crate::connecteurs::MessageTuiCoeur::FermetureFoyer`].
     ///
@@ -258,9 +270,8 @@ pub(super) enum Commande {
     /// dossier, et le second échouerait à la création. La limite tombera avec
     /// [`CHEMIN_COMPTOIR_DEPOT`].
     ///
-    /// Rien ne la ramène ensuite dans la table avant l'extinction du nœud : la
-    /// fermeture d'un comptoir n'a pas encore de commande côté TUI, et c'est
-    /// elle qui retirera l'identifiant de la session.
+    /// Elle revient dans la table quand [`Commande::FermerComptoirDepot`] a
+    /// retiré l'identifiant de la session.
     OuvrirComptoirDepot(PathBuf, usize, usize),
 
     /// Demande l'arrêt propre de l'application — émet [`crate::connecteurs::MessageTuiCoeur::Quitter`].
@@ -308,9 +319,10 @@ impl CommandesActives {
     ///       dans les classeurs via `ChangerPositionClasseur(Some(_))` ;
     ///     - dans un classeur → `f` ferme le foyer parent via
     ///       `FermerFoyer(index_foyer)`, `Backspace` remonte via
-    ///       `ChangerPositionClasseur(None)`, `d` ouvre un comptoir de dépôt
-    ///       vers ce classeur via `OuvrirComptoirDepot`, si
-    ///       `comptoirs_depot_ouverts` est vide ;
+    ///       `ChangerPositionClasseur(None)`, et selon que
+    ///       `comptoirs_depot_ouverts` est vide ou non, `d` ouvre un comptoir
+    ///       de dépôt vers ce classeur via `OuvrirComptoirDepot` ou `c` ferme
+    ///       le comptoir ouvert via `FermerComptoirDepot` ;
     /// - dans tous les cas → `ListeCommandesActives`.
     ///
     /// La borne `1`-`9` n'est pas un choix de capacité métier : elle reflète
@@ -403,6 +415,11 @@ impl CommandesActives {
                                     index_foyer,
                                     index_classeur,
                                 ),
+                            );
+                        } else {
+                            commandes_actives.insert(
+                                (KeyCode::Char('c'), KeyModifiers::NONE),
+                                Commande::FermerComptoirDepot,
                             );
                         }
                     }

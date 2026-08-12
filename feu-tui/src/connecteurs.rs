@@ -97,6 +97,17 @@ pub(crate) enum MessageTuiCoeur {
     /// à [`FeuApplication`].
     EnvoieMdp(SecretString),
 
+    /// Demande la fermeture du comptoir de dépôt dont l'identifiant est porté.
+    ///
+    /// Émis par [`crate::tui::Tui`] sur dispatch de la commande
+    /// `FermerComptoirDepot` — l'identifiant est lu dans
+    /// [`SessionApplication::comptoirs_depot_ouverts`], pas saisi. Le bras de la
+    /// boucle enchaîne [`FeuApplication::commande_derniere_enu_racine`] puis
+    /// [`FeuApplication::commande_fermeture_comptoir_depot`], qui réclame cette
+    /// racine ; l'erreur de l'une comme de l'autre est propagée via
+    /// [`MessageCoeurTui::AffichageErreur`].
+    FermetureComptoirDepot(usize),
+
     /// Demande la fermeture du foyer à l'index donné (base 1, tel que désigné par
     /// la position courante de l'utilisateur).
     ///
@@ -203,7 +214,8 @@ impl ConnecteurVersTui {
     /// silencieusement ignorées.
     ///
     /// [`MessageTuiCoeur::AllumageNoeud`], [`MessageTuiCoeur::ExtinctionNoeud`],
-    /// [`MessageTuiCoeur::FermetureFoyer`] et [`MessageTuiCoeur::OuvertureFoyer`]
+    /// [`MessageTuiCoeur::FermetureFoyer`], [`MessageTuiCoeur::OuvertureFoyer`]
+    /// et [`MessageTuiCoeur::FermetureComptoirDepot`]
     /// déclenchent la commande correspondante de [`FeuApplication`] et propagent
     /// l'erreur éventuelle via [`MessageCoeurTui::AffichageErreur`]. Les index
     /// de foyer arrivent en base 1 (valeur saisie par l'utilisateur, déjà filtrée
@@ -215,8 +227,14 @@ impl ConnecteurVersTui {
     /// rend autre chose que `()`, et pourtant il s'écrit comme les autres, en
     /// `if let Err` : l'identifiant qu'elle rend est ignoré ici parce qu'il est
     /// déjà inscrit dans la session, que la même commande envoie. Le retour
-    /// direct sert un appelant qui enchaîne ; cette boucle, elle, n'enchaîne
-    /// rien — elle repasse la main à la TUI, qui lit la session.
+    /// direct sert un appelant qui enchaîne ; ce bras, lui, n'enchaîne rien —
+    /// il repasse la main à la TUI, qui lit la session.
+    ///
+    /// [`MessageTuiCoeur::FermetureComptoirDepot`] est le seul bras à enchaîner
+    /// deux commandes, la fermeture réclamant la dernière ENU racine. L'`and_then`
+    /// garde la forme des autres : une seule erreur à afficher, quelle que soit
+    /// celle des deux qui a échoué.
+    ///
     /// [`MessageTuiCoeur::EnvoieMdp`], [`MessageTuiCoeur::SeedBienRecue`] et
     /// [`MessageTuiCoeur::Annulation`] ont un corps vide : hors-protocole dans
     /// le contexte de la boucle principale (ils ne peuvent arriver ici que si
@@ -279,6 +297,23 @@ impl ConnecteurVersTui {
                             index_foyer - 1,
                             index_classeur - 1,
                         ) {
+                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
+                                e.to_string(),
+                            ));
+                        }
+                    }
+                    Ok(MessageTuiCoeur::FermetureComptoirDepot(index_comptoir)) => {
+                        if let Err(e) =
+                            feu_application
+                                .commande_derniere_enu_racine()
+                                .and_then(|enu| {
+                                    feu_application.commande_fermeture_comptoir_depot(
+                                        &self,
+                                        index_comptoir,
+                                        &enu,
+                                    )
+                                })
+                        {
                             self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
                                 e.to_string(),
                             ));
