@@ -42,7 +42,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use feu_noyau::{BRAISE_VIDE, DonneesBlob, FeuNoyau};
+use feu_noyau::{BRAISE_VIDE, DonneesBlob, FeuNoyau, MAX_CLASSEURS, MAX_FOYERS};
 use walkdir::WalkDir;
 
 use crate::{
@@ -72,11 +72,30 @@ const ERR_SCR_004: &str = "SCR-004 > Braise inconnue";
 /// ([`Carte::Donnee`]) : elle ne référence donc aucun blob.
 const ERR_SCR_005: &str = "SCR-005 > Ce doit être une EnuD";
 
-/// L'`index_foyer` fourni ne désigne aucun foyer de la session — au-delà de
-/// `MAX_FOYERS`. Le Scribe le constate sur le `None` de
-/// [`SessionApplication::braise_foyer`] et le refuse sous son propre code,
+/// L'`index_foyer` fourni dépasse [`MAX_FOYERS`]. Refusé sous le code du Scribe
 /// plutôt que de laisser une erreur applicative faire l'aller-retour.
+///
+/// Sert aussi à traiter le `None` de [`SessionApplication::braise_foyer`] à la
+/// fermeture d'un comptoir : l'index y est déjà validé par l'ouverture, mais
+/// l'`Option` rendue par l'API se traite quand même.
 const ERR_SCR_006: &str = "SCR-006 > Index de foyer invalide";
+
+/// Le dossier du comptoir a disparu entre son ouverture et sa fermeture —
+/// supprimé ou déplacé hors de Feu. Constaté avant le parcours, pour rendre un
+/// code du Scribe plutôt que l'[`ErreurScribe::IoError`] brute que produirait
+/// [`read_dir`] sur un chemin absent.
+const ERR_SCR_007: &str = "SCR-007 > Dossier du dépôt introuvable";
+
+/// Le foyer de destination du comptoir a été fermé depuis son ouverture. Sans
+/// cette garde, l'échec ne viendrait que du noyau, au premier `depot_blob` —
+/// donc après lecture des fichiers, et sous une erreur qui ne nomme pas le
+/// comptoir.
+const ERR_SCR_008: &str = "SCR-008 > Foyer fermé";
+
+/// L'`index_classeur` fourni dépasse [`MAX_CLASSEURS`]. Refusé à l'ouverture du
+/// comptoir : l'index y est figé, un comptoir créé avec un classeur hors bornes
+/// échouerait à chaque fermeture sans recours.
+const ERR_SCR_009: &str = "SCR-009 > Index de classeur invalide";
 
 /// Tenant de la couche ENU — créé et maintient `~/.feu/enu/`.
 ///
@@ -380,16 +399,28 @@ impl Scribe {
     /// dans [`comptoirs_depot`](Self::comptoirs_depot) et retourne son
     /// identifiant.
     ///
+    /// Les deux index sont validés ici, contre des bornes de compilation : le
+    /// comptoir les porte ensuite jusqu'à sa fermeture, qui n'a plus à en
+    /// douter.
+    ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le dossier existe déjà ou ne peut pas être
-    /// créé.
+    /// Retourne [`ErreurScribe::Interne`] si l'index de foyer (`SCR-006`) ou de
+    /// classeur (`SCR-009`) sort des bornes, et propage l'échec de création du
+    /// dossier — notamment s'il existe déjà.
     pub(super) fn ouverture_comptoir_depot(
         &mut self,
         chemin: &Path,
         index_foyer: usize,
         index_classeur: usize,
     ) -> ResultScribe<usize> {
+        if index_foyer >= MAX_FOYERS {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_006)));
+        }
+        if index_classeur >= MAX_CLASSEURS {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_009)));
+        }
+
         let comptoir = ComptoirDepot::new(chemin.to_path_buf(), index_foyer, index_classeur);
         // ouvert avant d'être gardé : un comptoir enregistré mais sans dossier
         // distribuerait un identifiant que la fermeture ne saurait pas honorer
@@ -433,6 +464,10 @@ impl Scribe {
     /// est supprimé en fin de traitement. Un comptoir vide est simplement
     /// supprimé sans modifier `enu_racine_depot`.
     ///
+    /// Le comptoir est retiré de [`comptoirs_depot`](Self::comptoirs_depot) dès
+    /// les gardes passées : au-delà, la fermeture est un aller simple, et son
+    /// identifiant ne désigne plus rien.
+    ///
     /// # Retour
     ///
     /// Rien : le nouveau sommet du nœud est signé, sauvegardé et devient la
@@ -442,11 +477,22 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] si l'ID du comptoir est invalide
-    /// (`SCR-001`) ou si le foyer de destination qu'il porte sort des bornes
-    /// (`SCR-006`). Propage toute erreur d'E/S, de dépôt de données ou de
-    /// signature — y compris l'échec de signature si un foyer du chemin
-    /// reconstruit par [`Enu::remplacer`] est fermé.
+    /// Quatre refus, tous en [`ErreurScribe::Interne`], dont un seul laisse une
+    /// seconde chance : `SCR-008`, foyer de destination fermé depuis l'ouverture
+    /// — le comptoir est encore enregistré, la fermeture se retente une fois le
+    /// foyer rouvert. `SCR-006` sort au même endroit, mais ne couvre ici que le
+    /// `None` de [`SessionApplication::braise_foyer`], que la validation d'index
+    /// à l'ouverture rend inatteignable.
+    ///
+    /// Les deux autres sont sans retour : ID de comptoir inconnu (`SCR-001`), et
+    /// dossier disparu du disque (`SCR-007`), constaté après le retrait — il n'y
+    /// a plus de comptoir à refermer.
+    ///
+    /// Propage ensuite toute erreur d'E/S, de dépôt de données ou de signature —
+    /// y compris l'échec de signature si un foyer du chemin reconstruit par
+    /// [`Enu::remplacer`] est fermé. Elles surviennent toutes après le retrait :
+    /// le dossier reste sur le disque avec ce qui n'a pas été ingéré, à
+    /// l'utilisateur de le reprendre.
     pub(super) fn fermeture_comptoir_depot(
         &mut self,
         noyau: &mut FeuNoyau,
@@ -454,14 +500,25 @@ impl Scribe {
         index_comptoir: usize,
         enu_racine_depot: &Enu,
     ) -> ResultScribe<()> {
+        let Some(comptoir) = self.comptoirs_depot.get(&index_comptoir) else {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_001)));
+        };
+
+        let Some(braise) = session.braise_foyer(comptoir.index_foyer()) else {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_006)));
+        };
+
+        if !session.etat_foyers()[comptoir.index_foyer()] {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_008)));
+        }
+
         let Some(comptoir) = self.comptoirs_depot.remove(&index_comptoir) else {
             return Err(ErreurScribe::Interne(String::from(ERR_SCR_001)));
         };
 
-        // foyer/classeur de destination, constants pour tout le comptoir
-        let Some(braise) = session.braise_foyer(comptoir.index_foyer()) else {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_006)));
-        };
+        if !comptoir.chemin().exists() {
+            return Err(ErreurScribe::Interne(String::from(ERR_SCR_007)));
+        }
 
         let dir = read_dir(comptoir.chemin())?;
         if dir.count() == 0 {

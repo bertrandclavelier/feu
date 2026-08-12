@@ -484,9 +484,14 @@ impl FeuApplication {
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : comptoir invalide (`SCR-001`), foyer de
-    /// destination hors bornes (`SCR-006`), E/S, dépôt de données ou signature
+    /// propage les erreurs du Scribe : comptoir invalide (`SCR-001`), dossier du
+    /// comptoir disparu (`SCR-007`), foyer de destination fermé (`SCR-008`) ou
+    /// braise introuvable (`SCR-006`), E/S, dépôt de données ou signature
     /// (notamment si un foyer du chemin reconstruit est fermé).
+    ///
+    /// Seul `SCR-008` est rattrapable : l'identifiant y reste valable, et la
+    /// fermeture se retente une fois le foyer rouvert. Tout autre échec consomme
+    /// le comptoir et laisse son dossier à l'utilisateur.
     pub fn commande_fermeture_comptoir_depot(
         &mut self,
         index_comptoir: usize,

@@ -385,7 +385,7 @@ impl CommandesActives {
                             Commande::ChangerPositionClasseur(None),
                         );
                         commandes_actives.insert(
-                            (KeyCode::Char('c'), KeyModifiers::NONE),
+                            (KeyCode::Char('d'), KeyModifiers::NONE),
                             Commande::OuvrirComptoirDepot(
                                 PathBuf::from(CHEMIN_COMPTOIR_DEPOT),
                                 index_foyer,

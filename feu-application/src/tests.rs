@@ -29,7 +29,7 @@
 //!
 //! # Non testé, délibérément
 //!
-//! `SCR-001` et `SCR-003`, branches d'un `else` immédiat. Les `From`, `Display`
+//! `SCR-003`, branche d'un `else` immédiat. Les `From`, `Display`
 //! et accesseurs de champ, passe-plats. Le pont `RecepteurNoyau`, exercé de
 //! biais — rien ne se signerait sans lui. Le contrat de notification, prouvé par
 //! chaque assertion portant sur la session reçue. Neuf des vingt-trois commandes
@@ -38,11 +38,11 @@
 use std::{
     cell::RefCell,
     collections::HashSet,
-    fs::{File, create_dir, read_to_string, write},
+    fs::{File, create_dir, read_to_string, remove_dir, write},
 };
 
 use data_encoding::HEXLOWER;
-use feu_noyau::BRAISE_VIDE;
+use feu_noyau::{BRAISE_VIDE, MAX_CLASSEURS, MAX_FOYERS};
 use rand::{Rng, distributions::Alphanumeric};
 use tempfile::TempDir;
 use walkdir::WalkDir;
@@ -500,6 +500,74 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
     Ok(())
 }
 
+/// Les gardes du comptoir de dépôt, dans l'ordre où elles se posent.
+///
+/// À l'ouverture, les deux index sont validés contre leurs bornes de
+/// compilation — `SCR-006` et `SCR-009` — parce qu'un comptoir les fige :
+/// admis ici, ils condamneraient toutes ses fermetures.
+///
+/// À la fermeture, trois refus. `SCR-001` d'abord : un identifiant que rien n'a
+/// distribué. Puis deux états que l'ouverture ne pouvait pas prévoir — foyer
+/// refermé entre-temps (`SCR-008`, seul refus rattrapable : le foyer rouvert, la
+/// même fermeture repart, ce que la suite du test exerce) et dossier disparu du
+/// disque (`SCR-007`, constaté après le retrait du comptoir, donc sans reprise).
+#[test]
+fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+
+    let mut interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&mut interface_test, None)?;
+
+    app.commande_ouverture_foyer(&mut interface_test, 0)?;
+
+    let dossier_temporaire = TempDir::new().unwrap();
+
+    let enu_racine = app.commande_derniere_enu_racine()?;
+
+    //
+    // Premier dépôt vide
+    //
+    let chemin_comptoir1 = dossier_temporaire.path().join("comptoir_depot1");
+
+    assert!(
+        matches!(app.commande_ouverture_comptoir_depot(&chemin_comptoir1, MAX_FOYERS + 1, 0), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-006"))
+    );
+    assert!(
+        matches!(app.commande_ouverture_comptoir_depot(&chemin_comptoir1, 0, MAX_CLASSEURS + 1), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-009"))
+    );
+
+    let index_comptoir = app.commande_ouverture_comptoir_depot(&chemin_comptoir1, 0, 0)?;
+    assert_eq!(index_comptoir, 0);
+
+    app.commande_fermeture_foyer(&mut interface_test, 0)?;
+
+    assert!(
+        matches!(app.commande_fermeture_comptoir_depot(index_comptoir, &enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-008"))
+    );
+
+    app.commande_ouverture_foyer(&mut interface_test, 0)?;
+
+    assert!(
+        matches!(app.commande_fermeture_comptoir_depot(1, &enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-001"))
+    );
+
+    remove_dir(&chemin_comptoir1).unwrap();
+
+    assert!(
+        matches!(app.commande_fermeture_comptoir_depot(index_comptoir, &enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-007"))
+    );
+
+    app.commande_fermeture_foyer(&mut interface_test, 0)?;
+
+    app.commande_extinction_noeud(&mut interface_test)?;
+
+    Ok(())
+}
+
 /// Aller-retour complet dépôt par comptoir → retrait, sur une arborescence à
 /// plusieurs niveaux : ce qui ressort est exactement ce qui est entré.
 ///
@@ -560,7 +628,6 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
     let chemin_comptoir1 = dossier_temporaire.path().join("comptoir_depot1");
 
     let index_comptoir1 = app.commande_ouverture_comptoir_depot(&chemin_comptoir1, 0, 0)?;
-    assert_eq!(index_comptoir1, 0);
 
     // Fermeture comptoir vide
     app.commande_fermeture_comptoir_depot(index_comptoir1, &enu_racine)?;
