@@ -3,7 +3,7 @@
 ### 24 mots, un nœud, tout son numérique.
 
 **Livre blanc**
-**Date : 26 juin 2026**
+**Date : 12 août 2026**
 
 *Le 17 février 2026, nouvel an chinois marquant le début de l'année du Cheval de Feu, naît le projet Feu.*
 
@@ -25,7 +25,7 @@ Feu propose une alternative : que chaque individu devienne le dépositaire souve
 
 Si chaque individu contrôle ses données, les communautés peuvent reconquérir leur autonomie numérique, les institutions peuvent bâtir sur des fondations équitables, et la connaissance circule sans surveillance.
 
-Mais la décentralisation n'est pas un produit. C'est une pratique. Elle demande d'apprendre à posséder ses clés, à gérer ses espaces, à comprendre la valeur de ce qu'on partage. Feu repose sur une conviction : la possession d'une clé cryptographique personnelle — idéalement dans un hardware wallet — deviendra la norme du numérique.
+Mais la décentralisation n'est pas un produit. C'est une pratique. Elle demande d'apprendre à posséder ses clés, à gérer ses espaces, à comprendre la valeur de ce qu'on partage. Feu repose sur une conviction : la possession d'une clé cryptographique personnelle — idéalement enfermée dans un dispositif matériel dédié — deviendra la norme du numérique.
 
 Notre souveraineté numérique tient en 24 mots !
 
@@ -33,7 +33,7 @@ Notre souveraineté numérique tient en 24 mots !
 
 ## 1. 24 mots, un nœud, des foyers
 
-Tout commence par une seule graine cryptographique : la **seed**. Une liste de 24 mots, conforme au standard BIP39 — le même qui sécurise des milliards d'euros en cryptomonnaies depuis plus d'une décennie. Feu retient 24 mots pour une entropie de 256 bits, alignée sur le niveau de sécurité maximal des primitives post-quantiques sous-jacentes. La restauration depuis des seeds de 12, 15, 18 ou 21 mots reste acceptée. Cette seed n'est jamais stockée, jamais transmise. Elle est la clé absolue du système — tout en découle.
+Tout commence par une seule graine cryptographique : la **seed**. Une liste de 24 mots, conforme au standard BIP39 — le même qui sécurise des milliards d'euros en cryptomonnaies depuis plus d'une décennie. Feu retient 24 mots pour une entropie de 256 bits, alignée sur le niveau de sécurité maximal des primitives post-quantiques sous-jacentes. La restauration depuis des seeds de 12, 15, 18 ou 21 mots reste acceptée. Cette seed n'est jamais stockée par Feu, jamais transmise — sa conservation hors ligne appartient à l'utilisateur. Elle est la clé absolue du système, tout en découle.
 
 La seed est générée localement, sans serveur, sans tiers, sans accès au réseau. L'utilisateur crée seul son identité, ses clés et ses adresses réseau — aucune inscription, aucune autorisation, aucune dépendance extérieure. L'identité existe dès que les 24 mots sont générés.
 
@@ -41,7 +41,11 @@ Depuis cette seed, Feu dérive un **nœud** : la racine logique de toute l'ident
 
 Du nœud naissent les **foyers** — des instances indépendantes, chacune avec ses propres clés, sa propre adresse réseau, son propre espace chiffré. Un foyer par contexte de vie : un pour l'identité publique, un pour le cercle privé, un pour un projet professionnel. Chaque foyer est isolé des autres — la compromission de l'un n'affecte pas les autres. Et chacun peut être révoqué, renouvelé, migré, sans toucher au reste.
 
-L'architecture cible repose sur un **hardware wallet** — un dispositif physique dédié qui génère et conserve la seed dans un environnement inviolable. La clé privée maître ne quitte jamais le matériel. Cette garantie est physique, pas logicielle. La version actuelle gère l'ensemble du processus cryptographique en logiciel, selon le même schéma de dérivation.
+L'architecture cible repose sur un **dispositif matériel dédié**, à l'image des portefeuilles matériels de cryptomonnaie : il génère la seed, la conserve et garde les clés maîtres du nœud dans un environnement inviolable, hors de l'ordinateur. La seed et les clés maîtres ne quittent jamais le matériel. Cette garantie est physique, pas logicielle.
+
+Le dispositif ne remplace pas les 24 mots. Un appareil casse, se perd, se vole : les mots, eux, conservés hors ligne par l'utilisateur, redonnent le nœud entier sur un autre dispositif. Le matériel protège l'usage quotidien de la seed ; les mots protègent de la perte du matériel. Les deux vont ensemble.
+
+La version actuelle gère l'ensemble du processus cryptographique en logiciel, selon le même schéma de dérivation.
 
 Toutes les clés sont dérivables depuis la seed. La perte de la machine n'entraîne aucune perte de clés — les archives chiffrées, elles, doivent être sauvegardées séparément. La résilience des données repose sur la réplication des classeurs, pas sur la seed seule. Seule la perte de la seed est fatale — et cette responsabilité appartient à l'utilisateur, comme dans tout écosystème cryptographique sérieux.
 
@@ -54,7 +58,8 @@ L'**IdNU** est la carte d'identité cryptographique d'un foyer. Signée par la c
 Elle contient :
 
 - L'adresse `.braise` du foyer — dérivée directement de la seed, permanente et immuable
-- La clé publique du nœud — pour la vérification de la signature par les tiers
+- La clé publique du nœud — pour vérifier la signature de l'IdNU elle-même
+- La clé publique de signature du foyer (ML-DSA-87) — pour vérifier les ENU qu'il émet
 - La clé publique de chiffrement réseau ML-KEM-1024 — pour recevoir des messages chiffrés
 - La date d'émission et la date d'expiration
 - Optionnellement un pseudonyme ou un nom de domaine
@@ -68,17 +73,17 @@ L'IdNU a une durée de validité configurable par l'utilisateur. À échéance, 
 
 Une IdNU expirée signale un foyer potentiellement compromis : le réseau cesse immédiatement tout échange avec lui. Un attaquant ayant compromis les clés du foyer ne peut pas produire une IdNU fraîche — il n'a pas la clé du nœud. Sa capacité d'usurpation expire avec la dernière IdNU légitime.
 
-Pour un foyer qui sommeille, la situation est différente — à sa réactivation, l'utilisateur est invité à re-signer son IdNU. Une fois propagée par gossip, le foyer redevient progressivement acceptable sur le réseau. L'utilisateur calibre sa période de renouvellement selon son modèle de sécurité : fréquente pour une exposition élevée, espacée pour un usage confidentiel avec hardware wallet en coffre-fort physique.
+Pour un foyer qui sommeille, la situation est différente — à sa réactivation, l'utilisateur est invité à re-signer son IdNU. Une fois propagée par gossip, le foyer redevient progressivement acceptable sur le réseau. L'utilisateur calibre sa période de renouvellement selon son modèle de sécurité : fréquente pour une exposition élevée, espacée pour un usage confidentiel avec le dispositif matériel en coffre-fort.
 
 ### Validation par un foyer tiers
 
-Un tiers qui reçoit une IdNU vérifie quatre choses : que l'adresse `.braise` déclarée correspond à celle dérivée de la seed, que la signature de l'IdNU est valide avec la clé publique du nœud, que l'IdNU n'est pas expirée, et que le foyer répond bien à son adresse réseau.
+Un tiers qui reçoit une IdNU vérifie quatre choses : que l'adresse `.braise` déclarée est bien formée — son checksum la valide sans rien connaître de la seed —, que la signature de l'IdNU est valide avec la clé publique du nœud qu'elle annonce, que l'IdNU n'est pas expirée, et que le foyer répond bien à son adresse réseau. Nul ne peut recalculer une braise sans la seed dont elle dérive : c'est la signature du nœud, et elle seule, qui atteste que cette braise est bien la sienne.
 
 Au premier contact, le tiers fait confiance au canal Tor (chiffrement de bout en bout). C'est le modèle TOFU — Trust On First Use. Aux contacts suivants, il vérifie la continuité : même clé publique de nœud que l'IdNU précédemment stockée.
 
 ### Pont DNS
 
-Un **pont DNS** permet de lier un nom de domaine classique à un foyer. Le propriétaire déclare le domaine dans son IdNU ; un champ TXT dans le DNS pointe vers l'adresse `.onion`. La vérification est bidirectionnelle. Une identité Feu peut ainsi être découverte par un simple nom de domaine — sans renoncer à l'infrastructure décentralisée qui la porte.
+Un **pont DNS** permet de lier un nom de domaine classique à un foyer. Le propriétaire déclare le domaine dans son IdNU ; un champ TXT dans le DNS pointe vers la **braise**. La vérification est bidirectionnelle. Le pont désigne l'identité du foyer, jamais son adresse de transport : celle-ci peut changer autant de fois que nécessaire sans qu'on touche au DNS, la résolution vers l'adresse courante étant l'affaire du réseau. Une identité Feu peut ainsi être découverte par un simple nom de domaine — sans renoncer à l'infrastructure décentralisée qui la porte.
 
 ### Révocation
 
@@ -96,43 +101,59 @@ Côté architecture, l'IdNU est une donnée comme les autres : un blob stocké d
 
 Sous Unix, tout est fichier. Sous Feu, tout est **ENU**.
 
-L'ENU est l'unité fondamentale du protocole. Une structure légère — quelques centaines d'octets — qui décrit ou contient une donnée. Chaque ENU porte son propre hash, calculé sur l'ensemble de son contenu hors ce champ — c'est son identifiant unique. Elle est signée par le foyer émetteur (ML-DSA-87, post-quantique) et immuable : si la donnée change, l'ENU est supprimée et une nouvelle prend sa place.
+L'ENU est l'unité fondamentale du protocole. Une structure légère — quelques milliers d'octets, l'essentiel étant la signature — faite de deux parties : une **carte**, qui décrit ou contient la donnée, et une **enveloppe** qui la scelle. La carte porte le sens : type, métadonnées, tags, et selon le type le hash d'une donnée, un texte, ou les hashs d'autres ENU. L'enveloppe porte le hash de la carte, la signature de la carte (ML-DSA-87, post-quantique), la braise du signataire et une date.
 
-Deux niveaux d'adressage : le hash de l'ENU identifie l'enveloppe, le hash de la donnée à l'intérieur identifie le contenu. On trouve l'enveloppe par son hash, on trouve la donnée par le hash qu'elle contient.
+Le sceau ne couvre que la carte. La braise et la date restent hors signature : ce sont des indications de routage et d'horodatage, malléables par nature. Falsifier la braise ne fait qu'aiguiller la vérification vers la mauvaise clé — donc échouer. Une enveloppe n'est jamais lue sans que son hash soit recalculé et sa signature vérifiée.
+
+L'ENU est **immuable** : le hash de la carte est le nom du fichier, donc modifier une carte, c'est créer une autre ENU. L'ancienne ne disparaît pas pour autant — voir « Une arborescence qui garde ses versions » plus bas.
+
+Deux niveaux d'adressage : le hash de la carte identifie l'enveloppe, le hash de la donnée à l'intérieur identifie le contenu. On trouve l'enveloppe par le hash de sa carte, on trouve la donnée par le hash qu'elle contient.
 
 Trois types d'ENU couvrent tous les besoins :
 
-**Donnée (ENUd)** — Associée à un fichier, elle contient le hash de la donnée vers laquelle elle pointe si celle-ci est stockée dans un classeur du foyer, ou une URL si la donnée est externe (serveur distant, cloud, API). L'ENUd porte les métadonnées : créateur, date, tags, type. Elle ne sait pas *où* se trouve le fichier dans le foyer — elle sait *ce qu'il est*. Quand la donnée est locale, le noyau la sert via le tiroir. Quand elle est externe, le noyau n'intervient pas — la résolution de l'URL est à la charge des couches supérieures.
+**Donnée (ENUd)** — Associée à un fichier, elle porte le hash de la donnée qu'elle décrit, et ses métadonnées : nom, créateur, date, tags, type. Elle ne sait pas *où* se trouve le fichier — ni dans quel classeur, ni même sur quelle machine. Elle sait *ce qu'il est*. Quand la donnée est dans un foyer, la braise du signataire suffit à la retrouver : le noyau la sert via le tiroir, quel que soit le classeur qui l'héberge.
+
+Quand la donnée est externe (serveur mail, cloud, API), le hash reste la référence — c'est lui qui dit que le fichier récupéré est bien celui que l'enveloppe décrit — et une métadonnée porte son adresse. Le noyau n'intervient pas : résoudre une URL, s'authentifier auprès d'un service, rapatrier un fichier sont l'affaire des couches supérieures. Une même donnée peut ainsi être décrite avant d'être possédée, puis rapatriée sans que son enveloppe change de sens.
 
 **Texte (ENUt)** — Autoporteuse : elle contient directement un texte court — message, note, mémo. Aucune dépendance externe.
 
-**Dossier (ENUr)** — Contient les hashs d'autres ENU (pas les hashs des données). Elle permet de créer des arborescences, des groupes, des collections. C'est le hash de l'ENU qui est référencé — l'ENUr organise des enveloppes, pas des fichiers.
+**Dossier (ENUr)** — Contient les hashs de cartes d'autres ENU (pas les hashs des données). Elle permet de créer des arborescences, des groupes, des collections. C'est l'enveloppe qui est référencée — l'ENUr organise des enveloppes, pas des fichiers.
 
 ### Séparation noyau / ENU
 
 Les ENU ne vivent pas dans le noyau. Le noyau est une boîte noire qui gère des octets chiffrés : on pousse des octets via le tiroir, il chiffre, range, et retourne un hash. On donne un hash, il retourne des octets. On donne des octets à signer, il retourne une signature. C'est tout.
 
-La couche ENU vit au-dessus. Elle reçoit le hash du noyau, construit l'ENU (hash de l'ENU, hash de la donnée, métadonnées, type), demande au noyau de la signer via le tiroir, et la stocke elle-même dans un dossier dédié `enu/` au sein du foyer. Ce dossier est en clair — les ENU sont signées, leur intégrité est garantie par la signature, pas par le chiffrement. Cela permet à la couche supérieure de naviguer, chercher et indexer les ENU sans passer par le tiroir.
+La couche ENU vit au-dessus. Elle reçoit le hash du noyau, construit la carte (type, hash de la donnée, métadonnées), demande au noyau de la signer via le tiroir, et stocke elle-même l'enveloppe dans un dossier dédié `enu/`, **à la racine du nœud — hors de tout foyer**. Ce dossier est en clair : les ENU sont signées, leur intégrité est garantie par la signature, pas par le chiffrement.
 
-Les ENU sont la couche vivante du système. On les crée, les réorganise, les publie, les supprime librement. Elles donnent du sens aux données sans jamais les toucher. Plusieurs ENUr peuvent référencer les mêmes ENUd (par leurs hashs d'ENU) pour construire des vues différentes : un même ensemble de photos organisé par date, par lieu, par projet — autant de structures que nécessaire, sans jamais dupliquer une donnée.
+Cet emplacement est un choix de fond. Un foyer se ferme, et fermé il n'est plus qu'une archive chiffrée : ce qu'il contient devient inatteignable. Si les enveloppes vivaient dedans, on ne pourrait plus rien consulter ni chercher sans tout ouvrir. Hors des foyers, elles restent navigables en permanence — on parcourt son catalogue, on cherche, on organise, et l'on n'ouvre un foyer qu'au moment de toucher une donnée. La confidentialité protège les données ; la signature protège le catalogue.
+
+Les ENU sont la couche vivante du système. On les crée, on les réorganise, on les publie — sans jamais toucher aux données elles-mêmes, auxquelles elles se contentent de donner du sens. Plusieurs ENUr peuvent référencer les mêmes ENUd (par leurs hashs de carte) pour construire des vues différentes : un même ensemble de photos organisé par date, par lieu, par projet — autant de structures que nécessaire, sans jamais dupliquer une donnée.
 
 L'identité elle-même n'échappe pas au modèle. Une IdNU est décrite par une ENUd. Les contacts sont des ENUd récupérées sur le réseau. Les groupes d'utilisateurs sont des ENUr. Aucun mécanisme dédié, aucune exception : l'identité et les groupes sont des données comme les autres.
 
+### Une arborescence qui garde ses versions
+
+Les enveloppes ne forment pas un tas. Elles s'organisent en arborescence sous une **racine** — une ENUr particulière, signée non par un foyer mais par le **nœud** lui-même. C'est la seule signature de ce niveau : la racine engage le nœud dans sa globalité, alors que chaque enveloppe de contenu n'engage que le foyer qui l'a produite. Un symlink désigne le sommet courant ; c'est le seul point d'entrée, et il suffit à retrouver tout le reste.
+
+Comme une ENU est immuable, réorganiser ne modifie rien : on reconstruit. Déplacer une photo, renommer un dossier, ajouter un fichier produit de nouvelles enveloppes pour les répertoires du chemin concerné, jusqu'à un nouveau sommet. Chaque racine porte le hash de la précédente. Le sommet courant est donc le dernier maillon d'une **lignée** qu'on peut remonter indéfiniment.
+
+Rien n'est effacé au passage. Les anciens sommets restent, et avec eux l'arborescence telle qu'elle était. Feu n'a pas de fonction d'historique : il en a un parce qu'une ENU immuable ne se modifie pas, elle se remplace — l'ancienne version est toujours là. C'est l'effacement qui demanderait un travail explicite : un élagage des branches mortes, décidé par l'utilisateur le jour où la place sur le disque compte, jamais un comportement automatique du protocole.
+
 ### Exemple local — Alice organise ses photos
 
-Alice stocke une photo via le tiroir. Le noyau chiffre, écrit le blob dans `classeur_1/`, retourne `hash_photo`. La couche ENU crée une ENUd : hash de la donnée = `hash_photo`, métadonnées (date, tags "vacances", "2026"). Le hash de l'ENUd est calculé sur ce contenu. La couche demande au tiroir de signer. Le fichier est écrit dans `enu/`.
+Alice stocke une photo via le tiroir. Le noyau chiffre, écrit le blob dans `classeur1/`, retourne `hash_photo`. La couche ENU crée une carte Donnée : hash de la donnée = `hash_photo`, métadonnées (nom, date, tags "vacances", "2026"). Le hash de la carte est calculé sur ce contenu, la carte est signée par le foyer, et l'enveloppe est écrite dans `enu/` sous le nom de ce hash.
 
-Alice veut organiser par projet. La couche ENU crée une ENUr "Vacances 2026" contenant les hashs d'ENU de plusieurs ENUd — signée, stockée dans `enu/`. Pour créer une deuxième vue — "Meilleures photos" — une autre ENUr est créée, référençant les mêmes hashs d'ENU. La photo n'existe qu'une fois dans le classeur. Les ENUd n'existent qu'une fois dans `enu/`. Seules les ENUr se multiplient pour offrir des vues différentes.
+Alice veut organiser par projet. La couche ENU crée une ENUr "Vacances 2026" contenant les hashs de plusieurs ENUd — signée, stockée dans `enu/`, greffée sous la racine. Pour créer une deuxième vue — "Meilleures photos" — une autre ENUr est créée, référençant les mêmes hashs. La photo n'existe qu'une fois dans le classeur. Les ENUd n'existent qu'une fois dans `enu/` : le nom du fichier étant le hash, deux enveloppes identiques sont le même fichier. Seules les ENUr se multiplient pour offrir des vues différentes.
 
-Pour modifier la photo (recadrage), Alice récupère le blob via le tiroir (déchiffrement), modifie, re-stocke. Nouveau hash de donnée, donc nouvelle ENUd avec un nouveau hash d'ENU. Les ENUr qui référençaient l'ancienne ENUd doivent être recréées avec le nouveau hash d'ENU. L'ancienne ENUd est orpheline — elle peut être supprimée.
+Pour modifier la photo (recadrage), Alice récupère le blob via le tiroir (déchiffrement), modifie, re-stocke. Nouveau hash de donnée, donc nouvelle carte, donc nouvelle ENUd. Les ENUr qui référençaient l'ancienne sont reconstruites avec le nouveau hash, de proche en proche jusqu'à un nouveau sommet. L'ancienne ENUd n'est pas supprimée : elle sort de l'arborescence courante mais reste atteignable par le sommet précédent — la photo d'avant recadrage est toujours là, et son enveloppe dit encore ce qu'elle était.
 
 ### Exemple réseau — Alice partage avec Bob
 
 Alice veut partager la photo avec Bob. Elle associe une condition à la donnée dans le registre : `registre/<hash_photo>.1 → <hash_condition>`, où la condition est `Braise(bob)`.
 
-Alice publie un paquet sur le réseau (couche réseau, hors noyau). Le paquet contient l'ENUd — le hash de l'ENU, le hash de la photo, les métadonnées, la signature d'Alice. Il ne contient pas la photo, juste l'enveloppe. Le paquet circule par le gossip protocol de foyer en foyer.
+Alice publie un paquet sur le réseau (couche réseau, hors noyau). Le paquet contient l'ENUd — le hash de la carte, le hash de la photo, les métadonnées, la signature d'Alice. Il ne contient pas la photo, juste l'enveloppe. Le paquet circule par le gossip protocol de foyer en foyer.
 
-Bob reçoit le paquet. Il lit l'ENUd, vérifie la signature avec la clé publique d'Alice (publiée dans son IdNU), vérifie le hash de l'ENU contre son contenu. L'enveloppe est authentique. Il veut la photo. Il contacte le foyer d'Alice via Tor (adresse `.onion`).
+Bob reçoit le paquet. Il lit l'ENUd, vérifie la signature avec la clé publique d'Alice (publiée dans son IdNU), et recalcule le hash de la carte pour le confronter à celui que l'enveloppe annonce. L'enveloppe est authentique. Il veut la photo. Il contacte le foyer d'Alice via Tor (adresse `.onion`).
 
 Le foyer d'Alice reçoit la requête : « je veux `hash_photo`, je suis Bob ». Le noyau cherche dans le registre : `<hash_photo>.1` existe, la cible donne `<hash_condition>`. Le noyau évalue la condition : `Braise(bob)`, le demandeur est Bob — condition remplie. Le noyau déchiffre le blob (clé du classeur), le rechiffre pour Bob (ML-KEM-1024, clé publique tirée de l'IdNU de Bob), et le sert.
 
@@ -144,20 +165,22 @@ Le noyau d'Alice n'a jamais entendu parler d'ENU, de Bob, ni de photos. Il a sto
 
 ## 4. Le foyer et les classeurs
 
-Le foyer est l'espace souverain de l'utilisateur. Il contient les classeurs (données chiffrées), le registre (contrôle d'accès) et le dossier `enu/` (enveloppes signées en clair).
+Le foyer est l'espace souverain de l'utilisateur. Il contient les classeurs (données chiffrées) et le registre (contrôle d'accès). Les enveloppes, elles, vivent à la racine du nœud — hors des foyers, pour rester lisibles quand ceux-ci sont fermés.
 
 ```
-~/.feu/<braise>/
-    classeur0/
-        <hash>.dat              ← blob chiffré
-    classeur1/
-    classeur2/
-    classeur3/
-    classeur4/
-    registre/
-        <hash_donnée>.N  →  <hash_condition>
+~/.feu/
+    <braise>/                       ← un foyer ouvert
+        classeur0/
+            <hash>.dat              ← blob chiffré
+        classeur1/
+        classeur2/
+        classeur3/
+        classeur4/
+        registre/
+            <hash_donnée>.N  →  <hash_condition>
+    <braise>.feu                    ← un foyer fermé : archive chiffrée
     enu/
-        <hash_enu>.enu          ← ENU signée, en clair
+        <hash_carte>.enu            ← ENU signée, en clair
 ```
 
 Le foyer est organisé en **classeurs** : des compartiments distincts, chacun chiffré par sa propre clé dérivée de la seed. Documents personnels dans un classeur, archives professionnelles dans un autre, communications dans un troisième. La compromission d'un classeur n'expose que son contenu — les autres restent intacts. C'est le principe de compartimentation appliqué au chiffrement.
@@ -168,7 +191,7 @@ Le foyer est la seule unité qui s'ouvre et se ferme. Un classeur n'a pas de cyc
 
 Le noyau permet d'exporter un classeur sous forme d'archive. Les blobs étant déjà chiffrés par la clé du classeur, l'archive est opaque — illisible sans la seed. Ce qui en est fait ensuite (copie sur disque externe, envoi vers un tiers, synchronisation) est hors périmètre du noyau.
 
-L'import est le scénario de récupération. En cas de perte du nœud : la seed est ressaisie, toutes les clés sont redérivées, les archives de classeurs sont importées. Le noyau parcourt les blobs, déchiffre ceux qui sont des conditions, lit le hash de la donnée conditionnée dans chaque condition, et reconstruit les liens symboliques du registre. Les clés se redérivent, les données s'importent, le registre se reconstruit — seules les données doivent être sauvegardées.
+L'import est le scénario de récupération. En cas de perte du nœud : la seed est ressaisie, toutes les clés sont redérivées, les archives de classeurs sont importées. Le noyau parcourt les blobs, déchiffre ceux qui sont des conditions, lit le hash de la donnée conditionnée dans chaque condition, et reconstruit les liens symboliques du registre. Les clés se redérivent, les données s'importent, le registre se reconstruit — restent à sauvegarder les classeurs et le dossier `enu/`, qui ne se redérive de rien : il porte l'organisation, et une enveloppe perdue est un sens perdu, pas une donnée perdue.
 
 ---
 
@@ -220,7 +243,7 @@ Le **tiroir** est l'interface unique entre le noyau et les couches supérieures.
 
 **Tiroir données** — Entrée/sortie des données chiffrées dans les classeurs. On pousse un flux d'octets et un numéro de classeur, le noyau chiffre avec la clé du classeur, range le blob sous son hash, et retourne ce hash. Le hash est calculé sur le clair avant chiffrement — c'est l'identifiant content-addressable de la donnée. On donne un hash, le noyau localise le blob dans les classeurs, déchiffre, et retourne le flux d'octets. Aucune donnée en clair ne touche le disque — le chiffrement et le déchiffrement sont strictement en mémoire.
 
-**Tiroir signature** — Signature et vérification. On donne des octets, le noyau signe avec la clé privée ML-DSA-87 du foyer et retourne la signature. On donne des octets, une signature et une clé publique, le noyau vérifie et retourne vrai ou faux. La couche ENU utilise ce tiroir pour signer les enveloppes qu'elle crée et vérifier celles qu'elle reçoit du réseau.
+**Tiroir signature** — Signature et vérification. On donne des octets, le noyau signe en ML-DSA-87 et retourne la signature — avec la clé du foyer désigné, ou avec celle du nœud pour ce qui engage le nœud entier : IdNU, racines de l'arborescence. On donne des octets, une signature et une clé publique, le noyau vérifie et retourne vrai ou faux. La couche ENU utilise ce tiroir pour signer les enveloppes qu'elle crée et vérifier celles qu'elle relit ou reçoit du réseau.
 
 Les deux tiroirs sont les seuls chemins vers le noyau. Les couches supérieures ne voient jamais une clé, ne touchent jamais un classeur directement, ne manipulent jamais un blob chiffré. Elles travaillent avec des hashs, des flux d'octets en clair, et des signatures.
 
@@ -228,7 +251,7 @@ Les deux tiroirs sont les seuls chemins vers le noyau. Les couches supérieures 
 
 ## 7. Centralisation locale
 
-Feu permet de référencer n'importe quelle donnée accessible : fichier local, serveur de fichiers, messagerie, cloud, API. Tant que la donnée existe et n'est pas modifiée, l'ENUd qui la décrit reste valide. C'est déjà un catalogue unifié de tout son numérique, indépendant des plateformes.
+Feu permet de référencer n'importe quelle donnée accessible : fichier local, serveur de fichiers, messagerie, cloud, API. L'ENUd porte le hash de la donnée et son adresse en métadonnée — donc tant que la donnée existe et n'est pas modifiée, l'enveloppe qui la décrit reste valide, et le hash le prouve au moment de la récupérer. C'est déjà un catalogue unifié de tout son numérique, indépendant des plateformes, et consultable sans ouvrir un seul foyer.
 
 La philosophie du projet encourage à aller plus loin : rapatrier ses données dans un espace souverain. Télécharger ses fichiers distants, les stocker chiffrés dans le foyer, conserver la copie d'origine en source secondaire. Feu ne remplace aucun service existant. Il les relie et les abstrait derrière une interface unifiée : l'ENU.
 
@@ -280,13 +303,13 @@ Un classeur exporté est une archive opaque — chiffrée par sa propre clé, il
 
 ### Cryptomonnaies et preuve de paternité
 
-La seed BIP39 étant la racine commune de toutes les dérivations, un foyer Feu est nativement compatible avec tout écosystème de cryptomonnaies reposant sur le même standard. Connaître le nom de domaine d'un foyer suffit pour lui adresser un paiement. L'adresse BTC est dérivée de la même seed — aucune clé supplémentaire.
+La seed BIP39 étant la racine commune de toutes les dérivations, un foyer Feu est nativement compatible avec tout écosystème de cryptomonnaies reposant sur le même standard : l'adresse BTC se dérive de la même seed, par le chemin BIP32 qui lui est propre, sans aucune clé supplémentaire à conserver. Un foyer qui publie son adresse dans son IdNU devient payable par tout tiers capable de le découvrir — au besoin depuis un simple nom de domaine, via le pont DNS.
 
 Le noyau ne se connecte jamais à la blockchain. La vérification d'une transaction est assurée par une couche supérieure (plugin, oracle, agent) qui fournit au noyau une preuve cryptographique via la condition `AvecPreuve`. Le paiement devient une condition d'accès comme une autre — composable avec `Braise`, `Avant`, `Et`, `Ou`. Le contrôle d'accès par paiement est un cas particulier du registre, sans dépendance extérieure dans le noyau.
 
 Ce mécanisme ouvre des perspectives : rémunération automatique lors de l'accès à des données publiées, micro-transactions entre foyers, commerce décentralisé.
 
-Inscrire le hash d'une ENU sur une blockchain publique constitue un horodatage irréfutable. À cette date, cette donnée existait et était signée par cette identité. La preuve de paternité en découle naturellement — une fonctionnalité optionnelle destinée aux cas où la paternité a une valeur juridique ou commerciale.
+Inscrire le hash de la carte d'une ENU sur une blockchain publique constitue un horodatage irréfutable. À cette date, cette donnée existait et était signée par cette identité. La preuve de paternité en découle naturellement — une fonctionnalité optionnelle destinée aux cas où la paternité a une valeur juridique ou commerciale.
 
 ---
 
@@ -294,7 +317,7 @@ Inscrire le hash d'une ENU sur une blockchain publique constitue un horodatage i
 
 L'architecture de Feu repose sur six garanties. Elles ne sont pas des objectifs — elles découlent mécaniquement des choix du protocole.
 
-1. **Souveraineté en 24 mots.** Vingt-quatre mots suffisent à dériver l'intégralité d'une vie numérique — clés, identités, foyers, adresses réseau. Aucune autorité extérieure, aucun serveur, aucun tiers. La seed est la seule dépendance. Sa perte est la seule perte irréversible.
+1. **Souveraineté en 24 mots.** Vingt-quatre mots suffisent à dériver l'intégralité d'une vie numérique — clés, identités, foyers, adresses réseau. Aucune autorité extérieure, aucun serveur, aucun tiers. La seed est la seule dépendance, et la seule chose qu'aucune sauvegarde ne remplace : les données et les enveloppes, elles, se répliquent.
 
 2. **Chiffré par défaut, clair par exception.** Les données sont chiffrées au repos dans les classeurs, chiffrées en transit sur le réseau, chiffrées dans l'archive du foyer. Les ENU sont en clair mais signées — leur intégrité repose sur la signature, pas sur le chiffrement. Les clés en clair n'existent qu'en mémoire, le temps d'une opération via le tiroir. Le disque ne voit jamais de secret en clair.
 
@@ -302,7 +325,7 @@ L'architecture de Feu repose sur six garanties. Elles ne sont pas des objectifs 
 
 4. **Privé par défaut, partagé par acte explicite.** Aucune donnée n'est accessible à un tiers tant qu'un lien n'est pas créé dans le registre. Le partage est un acte conscient. La suppression du lien coupe l'accès instantanément.
 
-5. **Reconstructible depuis la seed.** Les clés se redérivent, les classeurs s'importent, le registre se reconstruit depuis les conditions. Seules les données doivent être sauvegardées. La perte de la machine n'est pas la perte du nœud.
+5. **Reconstructible depuis la seed.** Les clés se redérivent, les classeurs s'importent, le registre se reconstruit depuis les conditions. Seuls les classeurs et le dossier `enu/` doivent être sauvegardés : les données et le sens qu'on leur a donné. La perte de la machine n'est pas la perte du nœud.
 
 6. **Identité périssable.** L'IdNU expire. Un foyer qui ne renouvelle pas son identité est considéré comme potentiellement compromis par le réseau. La fenêtre d'usurpation est bornée par la péremption.
 
@@ -320,13 +343,15 @@ L'architecture de Feu repose sur six garanties. Elles ne sont pas des objectifs 
 
 **Braise** — Identifiant public et invariant d'un foyer. Dérivé directement de la seed, indépendant de toute clé cryptographique. Adresse textuelle `.braise` (ex. `k7x4…wq.braise`). Stable à vie, survit à toute migration de primitive.
 
-**Seed** — Graine cryptographique (standard BIP39) de 24 mots, 256 bits d'entropie. Racine absolue de toutes les clés, identités et foyers. Jamais stockée. Perdre sa seed, c'est perdre son nœud.
+**Seed** — Graine cryptographique (standard BIP39) de 24 mots, 256 bits d'entropie. Racine absolue de toutes les clés, identités et foyers. Jamais stockée par le logiciel — les mots sont conservés hors ligne par l'utilisateur. Perdre sa seed, c'est perdre son nœud.
 
-**Hardware wallet** — Dispositif physique dédié qui génère et conserve la seed dans un environnement inviolable. Architecture cible de Feu.
+**Dispositif matériel** — Appareil dédié, à l'image des portefeuilles matériels de cryptomonnaie, qui génère la seed et garde les clés maîtres du nœud hors de l'ordinateur. Architecture cible de Feu.
 
 **IdNU** — Identité Numérique Universelle. Carte d'identité cryptographique d'un foyer, signée par la clé de nœud. Périssable — elle expire et doit être renouvelée périodiquement.
 
-**ENU** — Enveloppe Numérique Universelle. Structure légère, signée et immuable qui décrit ou contient une donnée. Identifiée par son propre hash. Trois types : Donnée (ENUd), Texte (ENUt), Dossier (ENUr). Stockée en clair dans le dossier `enu/` du foyer.
+**ENU** — Enveloppe Numérique Universelle. Structure légère, signée et immuable qui décrit ou contient une donnée. Faite d'une **carte** (le sens : type, métadonnées, contenu ou référence) et d'une enveloppe qui la scelle. Identifiée par le hash de sa carte, qui est aussi son nom de fichier. Trois types : Donnée (ENUd), Texte (ENUt), Dossier (ENUr). Stockée en clair dans le dossier `enu/`, à la racine du nœud — hors des foyers, donc lisible même foyers fermés.
+
+**Racine** — ENUr signée par le nœud, sommet de l'arborescence des enveloppes. Chaque racine porte le hash de la précédente : la lignée des racines est l'historique du nœud, conservé par construction.
 
 **Classeur** — Compartiment chiffré du foyer, possédant sa propre clé dérivée de la seed. Contient des blobs chiffrés adressés par hash (données et conditions). Exportable sous forme d'archive opaque pour la sauvegarde.
 

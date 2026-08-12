@@ -2,13 +2,17 @@
 
 ### 24 mots, un nœud, tout ton numérique.
 
-Feu est un protocole de souveraineté numérique personnelle. Depuis une unique seed BIP39, il dérive de manière déterministe l'ensemble des clés cryptographiques nécessaires à la gestion d'identités multiples (foyers), au chiffrement local des données et à leur contrôle d'accès. L'architecture cible repose sur un hardware wallet comme trousseau souverain. La version actuelle gère l'ensemble du processus cryptographique en logiciel, selon le même schéma de dérivation.
+Feu est un protocole de souveraineté numérique personnelle. Depuis une unique seed BIP39, il dérive de manière déterministe l'ensemble des clés cryptographiques nécessaires à la gestion d'identités multiples (foyers), au chiffrement local des données et à leur contrôle d'accès. Les données sont organisées par des **ENU** — des enveloppes signées, en clair, qui les nomment et les rangent en arborescence sans jamais les toucher.
+
+L'architecture cible repose sur un dispositif matériel dédié, à l'image des portefeuilles matériels de cryptomonnaie, qui génère la seed et garde les clés maîtres du nœud hors de l'ordinateur. La version actuelle gère l'ensemble du processus cryptographique en logiciel, selon le même schéma de dérivation.
 
 ---
 
 ## Statut
 
 Projet en développement actif. Fonctionnel localement, sans réseau.
+
+**v0.0.5** — Intégration des ENU : arborescence d'enveloppes signées (ML-DSA-87) tenue à la racine du nœud, donc lisible foyers fermés. Dépôt d'un dossier entier par comptoir et retrait en lecture seule, pilotés depuis la TUI. Accès aux blobs par l'ENU seule, sans désigner ni foyer ni classeur. Type `Braise` dans le noyau. 61 tests, intégrés aux crates. Toujours aucun réseau.
 
 **v0.0.4** — Migration post-quantique : signatures ML-DSA-87, chiffrement asymétrique ML-KEM-1024, dérivation HKDF-SHA3-256 directe depuis la seed (abandon de SLIP-0010), identité foyer par adresse `.braise` (découplée de l'ancienne `.onion`), seed 24 mots. Noyau stable sur le plan cryptographique. Toujours aucun réseau.
 
@@ -31,11 +35,13 @@ Projet en développement actif. Fonctionnel localement, sans réseau.
 ## Installation et lancement
 
 ```sh
-git clone https://github.com/bertrandclavelier/feu.git
+git clone https://git.clavelier.me/bertrand/feu.git
 cd feu
 cargo build --release
 cargo run --release -p feu-tui
 ```
+
+Le dépôt de référence est sur Forgejo. [GitHub](https://github.com/bertrandclavelier/feu) n'en est qu'un miroir sortant : rien n'y est reçu, ni issue ni contribution.
 
 ---
 
@@ -48,10 +54,14 @@ Linux et macOS uniquement.
 ## Documentation
 
 - [Livre blanc](documentation/livre_blanc.md) — vision et architecture du protocole
-- [Release v0.0.4](documentation/releases/v0_0_4_release.md) — détails techniques de la version courante
-- [Release v0.0.3](documentation/releases/v0_0_3_release.md)
-- [Release v0.0.2](documentation/releases/v0_0_2_release.md)
-- [Release v0.0.1](documentation/releases/v0_0_1_release.md)
+- [Note de release](documentation/release.md) — détails techniques de la version courante
+
+---
+
+## Suivre le projet
+
+Les annonces et l'avancement sont publiés sur le Fediverse par
+[@bertrand@social.clavelier.me](https://social.clavelier.me/@bertrand), sous **#FeuApp**.
 
 ---
 
