@@ -31,6 +31,9 @@
 //! `!` affiche l'écran « à propos ». Toutes deux sont omises ci-dessous pour ne
 //! pas alourdir.
 //!
+//! `r` fait exception dans l'autre sens : active partout dès que le nœud est
+//! allumé, elle n'est pas répétée à chaque cas ci-dessous.
+//!
 //! - **Nœud éteint, racine** : `a` allume le nœud, `q` quitte Feu.
 //! - **Nœud allumé, racine, aucun foyer ouvert** : `e` éteint le nœud, `o`
 //!   ouvre un foyer (saisie du numéro à suivre).
@@ -99,29 +102,12 @@
 //! un foyer ouvert ou dans un classeur valide. Aucune commande n'est exposée
 //! « en bloc » avec un filtrage à l'exécution.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use feu_application::SessionApplication;
 
 use crate::tui::PositionCourante;
-
-/// Emplacement du dossier de dépôt, en dur le temps de brancher la TUI.
-///
-/// Le comptoir n'a pas encore d'où tirer un chemin : ni sélecteur de fichiers,
-/// ni saisie, ni navigation dans l'arborescence du disque. Cette constante tient
-/// la place de ce que l'utilisateur désignera. À retirer dès qu'un chemin peut
-/// venir de lui.
-///
-/// `env!` est résolu **à la compilation** : la valeur est une chaîne littérale
-/// figée dans le binaire, pas une lecture de l'environnement à l'exécution. Le
-/// `$HOME` retenu est donc celui de la machine qui compile — sans portée sur du
-/// provisoire, et c'est ce qui garde tout chemin personnel hors des sources,
-/// `workspace/` étant public.
-const CHEMIN_COMPTOIR_DEPOT: &str = concat!(env!("HOME"), "/Desktop/depot");
-
-/// Pendant de [`CHEMIN_COMPTOIR_DEPOT`] pour le retrait, pas encore branché.
-const CHEMIN_COMPTOIR_RETRAIT: &str = concat!(env!("HOME"), "/Desktop/retrait");
 
 /// Intention métier déclenchée par une frappe clavier.
 ///
@@ -249,8 +235,8 @@ pub(super) enum Commande {
     /// gérés par `saisie_mode_insertion` une fois le buffer validé.
     OuvrirFoyer,
 
-    /// Ouvre un comptoir de dépôt sur le chemin porté, à destination du foyer et
-    /// du classeur portés (base 1) — émet
+    /// Ouvre un comptoir de dépôt à destination du foyer et du classeur portés
+    /// (base 1) — émet
     /// [`crate::connecteurs::MessageTuiCoeur::OuvertureComptoir`].
     ///
     /// Active uniquement quand l'utilisateur est positionné dans un classeur :
@@ -259,20 +245,37 @@ pub(super) enum Commande {
     /// au moment où la table est construite. Aucune saisie, donc — même geste
     /// que [`Commande::FermerFoyer`].
     ///
-    /// Le chemin vient de [`CHEMIN_COMPTOIR_DEPOT`] et voyage dans la variante
-    /// plutôt que d'être relu côté cœur : la table reste seule à décider *où*
-    /// déposer, le cœur exécute ce qu'on lui donne.
+    /// La variante ne porte que les deux index : le chemin est posé au dispatch
+    /// dans [`crate::tui::Tui::saisie_mode_normal`], depuis
+    /// [`super::CHEMIN_COMPTOIR_DEPOT`]. La table n'a donc rien à dire sur *où*
+    /// déposer, seulement sur *quand* c'est possible.
     ///
     /// Elle quitte la table dès qu'un comptoir est ouvert, la condition étant
     /// lue dans la session. Un seul comptoir à la fois, donc — non par
     /// contrainte du Scribe, qui en tient autant qu'on veut, mais parce que le
     /// chemin de dépôt est une constante : deux comptoirs viseraient le même
     /// dossier, et le second échouerait à la création. La limite tombera avec
-    /// [`CHEMIN_COMPTOIR_DEPOT`].
+    /// [`super::CHEMIN_COMPTOIR_DEPOT`].
     ///
     /// Elle revient dans la table quand [`Commande::FermerComptoirDepot`] a
     /// retiré l'identifiant de la session.
-    OuvrirComptoirDepot(PathBuf, usize, usize),
+    OuvrirComptoirDepot(usize, usize),
+
+    /// Matérialise l'arborescence de la dernière racine dans un dossier de l'OS
+    /// — émet [`crate::connecteurs::MessageTuiCoeur::RetraitLectureSeule`].
+    ///
+    /// Active dès que le nœud est allumé, sans autre condition : le retrait part
+    /// de la dernière racine, que le cœur va chercher lui-même, et ne lit donc
+    /// ni la position courante ni l'état des foyers. Seule commande du nœud
+    /// allumé dans ce cas — les autres dépendent toutes de l'une ou de l'autre.
+    ///
+    /// Elle peut malgré tout échouer à l'exécution : le déchiffrement d'un blob
+    /// exige que le foyer signataire soit ouvert, et la table ne le vérifie pas.
+    /// C'est la seule entorse au filtrage strict décrit dans
+    /// [`CommandesActives::new`] — parcourir l'arbre pour dresser la liste des
+    /// foyers requis demande un itérateur qui n'existe pas encore. L'erreur
+    /// remonte en [`crate::connecteurs::MessageCoeurTui::AffichageErreur`].
+    RetraitLectureSeule,
 
     /// Demande l'arrêt propre de l'application — émet [`crate::connecteurs::MessageTuiCoeur::Quitter`].
     ///
@@ -308,6 +311,7 @@ impl CommandesActives {
     ///
     /// - `session_application = None` (nœud éteint) → `AllumerNoeud`, `Quitter` ;
     /// - `Some(session)` (nœud allumé) :
+    ///   - `RetraitLectureSeule`, sans autre condition ;
     ///   - `EteindreNoeud` si `nombre_foyers_ouverts == 0` ;
     ///   - `OuvrirFoyer` si `nombre_foyers_ouverts < nombre_foyers` ;
     ///   - si `nombre_foyers_ouverts > 0`, le bloc « navigation » dépend de
@@ -349,6 +353,11 @@ impl CommandesActives {
         let mut commandes_actives: HashMap<(KeyCode, KeyModifiers), Commande> = HashMap::new();
 
         if let Some(session) = session_application {
+            commandes_actives.insert(
+                (KeyCode::Char('r'), KeyModifiers::NONE),
+                Commande::RetraitLectureSeule,
+            );
+
             if session.nombre_foyers_ouverts() == 0 {
                 commandes_actives.insert(
                     (KeyCode::Char('e'), KeyModifiers::NONE),
@@ -410,11 +419,7 @@ impl CommandesActives {
                         if session.comptoirs_depot_ouverts().is_empty() {
                             commandes_actives.insert(
                                 (KeyCode::Char('d'), KeyModifiers::NONE),
-                                Commande::OuvrirComptoirDepot(
-                                    PathBuf::from(CHEMIN_COMPTOIR_DEPOT),
-                                    index_foyer,
-                                    index_classeur,
-                                ),
+                                Commande::OuvrirComptoirDepot(index_foyer, index_classeur),
                             );
                         } else {
                             commandes_actives.insert(

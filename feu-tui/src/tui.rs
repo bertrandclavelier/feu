@@ -44,7 +44,8 @@
 //! passe, seed validée par deux pressions d'Entrée, puis `o` pour ouvrir un
 //! foyer (saisie du numéro), `1`-`9` pour entrer dans un foyer ouvert puis
 //! dans un de ses classeurs, `d` pour y ouvrir un comptoir de dépôt et `c`
-//! pour le fermer, `Backspace` pour remonter d'un niveau, `f` pour
+//! pour le fermer, `r` pour retirer l'arborescence sur le disque,
+//! `Backspace` pour remonter d'un niveau, `f` pour
 //! fermer le foyer où l'on est positionné, `e` pour éteindre quand tous les
 //! foyers sont fermés, `q` pour quitter quand le nœud est éteint. À tout
 //! moment `?` affiche la liste des touches actives dans le contexte courant.
@@ -53,6 +54,7 @@ mod commandes;
 mod rendu;
 
 use std::{
+    path::PathBuf,
     sync::mpsc::TryRecvError,
     time::{Duration, Instant},
 };
@@ -64,6 +66,25 @@ use secrecy::SecretString;
 
 use crate::connecteurs::{ConnecteurVersCoeur, MessageCoeurTui, MessageTuiCoeur};
 use commandes::{Commande, CommandesActives};
+
+/// Emplacement du dossier de dépôt, en dur le temps de brancher la TUI.
+///
+/// Le comptoir n'a pas encore d'où tirer un chemin : ni sélecteur de fichiers,
+/// ni saisie, ni navigation dans l'arborescence du disque. Cette constante tient
+/// la place de ce que l'utilisateur désignera. À retirer dès qu'un chemin peut
+/// venir de lui.
+///
+/// `env!` est résolu **à la compilation** : la valeur est une chaîne littérale
+/// figée dans le binaire, pas une lecture de l'environnement à l'exécution. Le
+/// `$HOME` retenu est donc celui de la machine qui compile — sans portée sur du
+/// provisoire, et c'est ce qui garde tout chemin personnel hors des sources,
+/// `workspace/` étant public.
+///
+/// Elle est lue au dispatch de [`Commande::OuvrirComptoirDepot`], qui ne porte
+/// que les deux index : le chemin ne traverse pas la table des commandes.
+/// Son pendant pour le retrait est `CHEMIN_COMPTOIR_RETRAIT` (module
+/// `connecteurs`), posé là où le cœur le lit.
+const CHEMIN_COMPTOIR_DEPOT: &str = concat!(env!("HOME"), "/Desktop/depot");
 
 /// Axe de rendu : détermine quelle famille visuelle est dessinée à chaque frame.
 ///
@@ -637,14 +658,18 @@ impl Tui {
                     self.etat_tui.mode_saisie = ModeSaisie::Insertion;
                     self.etat_tui.validation_buffer_saisie = ValidationBufferSaisie::OuvertureFoyer;
                 }
-                Commande::OuvrirComptoirDepot(chemin_comptoir, index_foyer, index_classeur) => {
+                Commande::OuvrirComptoirDepot(index_foyer, index_classeur) => {
                     self.connecteur_vers_coeur.envoyer_message_tui_coeur(
                         MessageTuiCoeur::OuvertureComptoir(
-                            chemin_comptoir.to_path_buf(),
+                            PathBuf::from(CHEMIN_COMPTOIR_DEPOT),
                             *index_foyer,
                             *index_classeur,
                         ),
                     );
+                }
+                Commande::RetraitLectureSeule => {
+                    self.connecteur_vers_coeur
+                        .envoyer_message_tui_coeur(MessageTuiCoeur::RetraitLectureSeule);
                 }
                 Commande::Quitter => {
                     self.connecteur_vers_coeur

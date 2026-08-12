@@ -30,6 +30,24 @@ use std::thread::{JoinHandle, spawn};
 use feu_application::{FeuApplication, InterfaceFeuApplication, SessionApplication};
 use secrecy::SecretString;
 
+/// Emplacement du dossier de retrait, en dur le temps de brancher la TUI.
+///
+/// Pendant de `CHEMIN_COMPTOIR_DEPOT` (module `tui`), dont elle partage la
+/// raison d'être — l'utilisateur n'a encore aucun moyen de désigner un dossier —
+/// et la mécanique : `env!` est résolu **à la compilation**, la valeur est une
+/// chaîne littérale figée dans le binaire, jamais une lecture de l'environnement
+/// à l'exécution. C'est ce qui garde tout chemin personnel hors des sources,
+/// `workspace/` étant public.
+///
+/// Elle vit ici et non dans la table des commandes, contrairement au chemin de
+/// dépôt : le retrait n'a pas d'index à capturer dans la position courante, la
+/// TUI n'a donc rien à transmettre et le cœur lit le chemin lui-même.
+///
+/// Le nom étant fixe, un second retrait échoue tant que le dossier précédent
+/// n'est pas supprimé à la main — l'erreur remonte en
+/// [`MessageCoeurTui::AffichageErreur`].
+const CHEMIN_COMPTOIR_RETRAIT: &str = concat!(env!("HOME"), "/Desktop/retrait");
+
 /// Messages envoyés du thread cœur vers le thread TUI.
 // `EnvoiSessionApplication` est bien plus grosse que les autres variantes
 // (`SessionApplication`, dont la taille est irréductible). On assume l'écart
@@ -141,6 +159,17 @@ pub(crate) enum MessageTuiCoeur {
     /// Le chemin traverse le canal plutôt que d'être connu du cœur : la TUI est
     /// seule à décider où le dossier apparaît, le cœur ne fait que l'y créer.
     OuvertureComptoir(PathBuf, usize, usize),
+
+    /// Demande la matérialisation de la dernière racine dans un dossier de l'OS.
+    ///
+    /// Émis par [`crate::tui::Tui`] sur dispatch de la commande
+    /// `RetraitLectureSeule` — la variante ne porte rien : le chemin est
+    /// [`CHEMIN_COMPTOIR_RETRAIT`], lu ici, et la racine est demandée au même
+    /// endroit. Le bras enchaîne
+    /// [`FeuApplication::commande_derniere_enu_racine`] puis
+    /// [`FeuApplication::commande_retrait_lecture_seule`] ; l'erreur de l'une
+    /// comme de l'autre est propagée via [`MessageCoeurTui::AffichageErreur`].
+    RetraitLectureSeule,
 
     /// L'utilisateur a confirmé l'enregistrement de la seed — débloque le thread cœur en attente.
     ///
@@ -310,6 +339,22 @@ impl ConnecteurVersTui {
                                     feu_application.commande_fermeture_comptoir_depot(
                                         &self,
                                         index_comptoir,
+                                        &enu,
+                                    )
+                                })
+                        {
+                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
+                                e.to_string(),
+                            ));
+                        }
+                    }
+                    Ok(MessageTuiCoeur::RetraitLectureSeule) => {
+                        if let Err(e) =
+                            feu_application
+                                .commande_derniere_enu_racine()
+                                .and_then(|enu| {
+                                    feu_application.commande_retrait_lecture_seule(
+                                        &PathBuf::from(CHEMIN_COMPTOIR_RETRAIT),
                                         &enu,
                                     )
                                 })
