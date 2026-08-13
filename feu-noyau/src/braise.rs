@@ -57,17 +57,17 @@ impl TryFrom<&str> for Braise {
     ///
     /// # Erreurs
     ///
-    /// [`ErreurFeuNoyau::BraiseTryFromStr`] si le suffixe manque, si la longueur
+    /// [`ErreurFeuNoyau::BraiseErronnee`] si le suffixe manque, si la longueur
     /// n'est pas `LONGUEUR_BRAISE`, ou si un caractère sort de l'alphabet BASE32.
     fn try_from(valeur: &str) -> ResultFeuNoyau<Self> {
         // coupe et exige le suffixe .braise
         let reste = valeur
             .strip_suffix(".braise")
-            .ok_or(ErreurFeuNoyau::BraiseTryFromStr)?;
+            .ok_or(ErreurFeuNoyau::BraiseErronnee(valeur.to_string()))?;
 
         // 55 caractères, ni plus ni moins
         if reste.len() != LONGUEUR_BRAISE {
-            return Err(ErreurFeuNoyau::BraiseTryFromStr);
+            return Err(ErreurFeuNoyau::BraiseErronnee(valeur.to_string()));
         }
 
         // alphabet BASE32 minuscule : a-z et 2-7 (ni 0, 1, 8, 9)
@@ -75,7 +75,7 @@ impl TryFrom<&str> for Braise {
             .bytes()
             .all(|c| matches!(c, b'a'..=b'z' | b'2'..=b'7'))
         {
-            return Err(ErreurFeuNoyau::BraiseTryFromStr);
+            return Err(ErreurFeuNoyau::BraiseErronnee(valeur.to_string()));
         }
 
         // validé : ASCII et bonne taille → la conversion en tableau ne peut pas échouer
@@ -122,7 +122,7 @@ mod tests {
 
         assert!(matches!(
             Braise::try_from(corps.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseTryFromStr
+            ErreurFeuNoyau::BraiseErronnee(_)
         ));
     }
 
@@ -134,7 +134,7 @@ mod tests {
 
         assert!(matches!(
             Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseTryFromStr
+            ErreurFeuNoyau::BraiseErronnee(_)
         ));
     }
 
@@ -146,7 +146,7 @@ mod tests {
 
         assert!(matches!(
             Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseTryFromStr
+            ErreurFeuNoyau::BraiseErronnee(_)
         ));
     }
 
@@ -158,7 +158,7 @@ mod tests {
 
         assert!(matches!(
             Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseTryFromStr
+            ErreurFeuNoyau::BraiseErronnee(_)
         ));
     }
 
@@ -170,7 +170,7 @@ mod tests {
 
         assert!(matches!(
             Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseTryFromStr
+            ErreurFeuNoyau::BraiseErronnee(_)
         ));
     }
 
@@ -182,7 +182,7 @@ mod tests {
 
         assert!(matches!(
             Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseTryFromStr
+            ErreurFeuNoyau::BraiseErronnee(_)
         ));
     }
 
@@ -194,7 +194,7 @@ mod tests {
 
         assert!(matches!(
             Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseTryFromStr
+            ErreurFeuNoyau::BraiseErronnee(_)
         ));
     }
 
@@ -205,7 +205,7 @@ mod tests {
 
         assert!(matches!(
             Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseTryFromStr
+            ErreurFeuNoyau::BraiseErronnee(_)
         ));
     }
 }

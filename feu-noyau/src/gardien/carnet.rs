@@ -26,14 +26,10 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::Braise;
+use crate::ErreurFeuNoyau;
+use crate::ResultFeuNoyau;
 use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
-use crate::gardien::erreur::{ErreurGardien, ResultGardien};
 use crate::{Anomalie, MAX_CLASSEURS, MAX_FOYERS};
-
-const ERR_CAR_001: &str = "CAR-001 > Pas de trousseau public pour le foyer";
-const ERR_CAR_002: &str = "CAR-002 > Pas de clé pour le classeur";
-const ERR_CAR_003: &str = "CAR-003 > Problème lecture fichier";
-const ERR_CAR_004: &str = "CAR-004 > Problème ajout clé classeur dans trousseau_public_foyer";
 
 const FEU_CONFIGURATION: &str = "config.feu";
 const FEU_SEL: &str = "sel.feu";
@@ -193,7 +189,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le dossier est absent ou si la suppression échoue.
-    pub(super) fn supprime_dossier_braise(&self, braise: Braise) -> ResultGardien<()> {
+    pub(super) fn supprime_dossier_braise(&self, braise: Braise) -> ResultFeuNoyau<()> {
         fs::remove_dir_all(self.donne_chemin_braise(braise))?;
         Ok(())
     }
@@ -205,7 +201,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si l'écriture échoue.
-    pub(super) fn enregistre_configuration(&self, configuration: String) -> ResultGardien<()> {
+    pub(super) fn enregistre_configuration(&self, configuration: String) -> ResultFeuNoyau<()> {
         Self::ecrire_fichier_600(
             &self.chemin_feu.join(FEU_CONFIGURATION),
             configuration.as_bytes(),
@@ -219,7 +215,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou illisible.
-    pub(super) fn ouvre_configuration(&self) -> ResultGardien<String> {
+    pub(super) fn ouvre_configuration(&self) -> ResultFeuNoyau<String> {
         Ok(std::fs::read_to_string(
             self.chemin_feu.join(FEU_CONFIGURATION),
         )?)
@@ -252,7 +248,7 @@ impl Carnet {
     pub(super) fn ecrire_trousseau_public_complet(
         &self,
         trousseau_public_complet: &TrousseauPublicComplet,
-    ) -> ResultGardien<()> {
+    ) -> ResultFeuNoyau<()> {
         Self::creer_dossier(&self.chemin_feu)?;
         Self::creer_dossier(&self.chemin_feu.join(".cles"))?;
 
@@ -285,7 +281,7 @@ impl Carnet {
             let foyer = match trousseau_public_complet.donne_trousseau_public_foyer(i) {
                 Ok(valeur) => valeur,
                 Err(_) => {
-                    return Err(ErreurGardien::Interne(format!("{} {}.", ERR_CAR_001, i,)));
+                    return Err(ErreurFeuNoyau::GardienPasDeTrousseauFoyer(i));
                 }
             };
 
@@ -330,7 +326,7 @@ impl Carnet {
                 let cle_chiffree = match foyer.donne_cle_chiffrement_classeur(j) {
                     Ok(valeur) => valeur,
                     Err(_) => {
-                        return Err(ErreurGardien::Interne(format!("{} {}", ERR_CAR_002, j,)));
+                        return Err(ErreurFeuNoyau::GardienPasDeClePourClasseur(i, j));
                     }
                 };
 
@@ -360,32 +356,52 @@ impl Carnet {
     pub(super) fn creer_trousseau_public_foyer(
         &self,
         braise: Braise,
-    ) -> ResultGardien<TrousseauPublicFoyer> {
+    ) -> ResultFeuNoyau<TrousseauPublicFoyer> {
         let cle_chiffrement = std::fs::read(
             self.chemin_feu
                 .join(".cles/")
                 .join(format!("{}{}", braise, ".cle")),
         )?
         .try_into()
-        .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
+        .map_err(|_| {
+            ErreurFeuNoyau::GardienTailleFichierInattendue(
+                self.chemin_feu
+                    .join(".cles/")
+                    .join(format!("{}{}", braise, ".cle")),
+            )
+        })?;
 
         let chemin_foyer = &self.chemin_feu.join(braise.to_string()).join(".cles/");
 
         let cle_sig_privee = std::fs::read(chemin_foyer.join(CLE_FOYER_SIG_PRIV))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
+            .map_err(|_| {
+                ErreurFeuNoyau::GardienTailleFichierInattendue(
+                    chemin_foyer.join(CLE_FOYER_SIG_PRIV),
+                )
+            })?;
 
         let cle_sig_pub = std::fs::read(chemin_foyer.join(CLE_FOYER_SIG_PUB))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
+            .map_err(|_| {
+                ErreurFeuNoyau::GardienTailleFichierInattendue(chemin_foyer.join(CLE_FOYER_SIG_PUB))
+            })?;
 
         let cle_chiff_privee = std::fs::read(chemin_foyer.join(CLE_FOYER_CHIF_PRIV))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
+            .map_err(|_| {
+                ErreurFeuNoyau::GardienTailleFichierInattendue(
+                    chemin_foyer.join(CLE_FOYER_CHIF_PRIV),
+                )
+            })?;
 
         let cle_chiff_pub = std::fs::read(chemin_foyer.join(CLE_FOYER_CHIF_PUB))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
+            .map_err(|_| {
+                ErreurFeuNoyau::GardienTailleFichierInattendue(
+                    chemin_foyer.join(CLE_FOYER_CHIF_PUB),
+                )
+            })?;
 
         let mut trousseau_public_foyer = TrousseauPublicFoyer::new(
             braise,
@@ -400,12 +416,16 @@ impl Carnet {
         for j in 0..MAX_CLASSEURS {
             let cle_classeur = std::fs::read(chemin_foyer.join(format!("classeur{j}.cle")))?
                 .try_into()
-                .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))?;
+                .map_err(|_| {
+                    ErreurFeuNoyau::GardienTailleFichierInattendue(
+                        chemin_foyer.join(format!("classeur{j}.cle")),
+                    )
+                })?;
             if trousseau_public_foyer
                 .ajoute_cle_chiffrement_classeur(cle_classeur, j)
                 .is_err()
             {
-                return Err(ErreurGardien::Interne(String::from(ERR_CAR_004)));
+                return Err(ErreurFeuNoyau::GardienProblemeAjoutCleClasseur(braise, j));
             }
         }
 
@@ -417,10 +437,14 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 16 octets.
-    pub(super) fn lire_pour_donner_sel(&self) -> ResultGardien<[u8; 16]> {
+    pub(super) fn lire_pour_donner_sel(&self) -> ResultFeuNoyau<[u8; 16]> {
         std::fs::read(self.chemin_feu.join(".cles").join(FEU_SEL))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))
+            .map_err(|_| {
+                ErreurFeuNoyau::GardienTailleFichierInattendue(
+                    self.chemin_feu.join(".cles").join(FEU_SEL),
+                )
+            })
     }
 
     /// Lit la clé privée de signature du nœud depuis `~/.feu/.cles/feu_sig.priv`.
@@ -428,10 +452,14 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 60 octets.
-    pub(super) fn lire_pour_donner_cle_sig_privee(&self) -> ResultGardien<[u8; 60]> {
+    pub(super) fn lire_pour_donner_cle_sig_privee(&self) -> ResultFeuNoyau<[u8; 60]> {
         std::fs::read(self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))
+            .map_err(|_| {
+                ErreurFeuNoyau::GardienTailleFichierInattendue(
+                    self.chemin_feu.join(".cles").join(CLE_FOYER_SIG_PRIV),
+                )
+            })
     }
 
     /// Lit la clé publique de signature du nœud depuis `~/.feu/.cles/feu_sig.pub`.
@@ -439,10 +467,14 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 2592 octets.
-    pub(super) fn lire_pour_donner_cle_sig_pub(&self) -> ResultGardien<[u8; 2592]> {
+    pub(super) fn lire_pour_donner_cle_sig_pub(&self) -> ResultFeuNoyau<[u8; 2592]> {
         std::fs::read(self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB))?
             .try_into()
-            .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))
+            .map_err(|_| {
+                ErreurFeuNoyau::GardienTailleFichierInattendue(
+                    self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB),
+                )
+            })
     }
 
     /// Lit la clé symétrique de chiffrement d'un foyer depuis `~/.feu/.cles/<braise>.cle`.
@@ -453,14 +485,20 @@ impl Carnet {
     pub(super) fn lire_pour_donner_cle_chiffrement_foyer(
         &self,
         braise: Braise,
-    ) -> ResultGardien<[u8; 60]> {
+    ) -> ResultFeuNoyau<[u8; 60]> {
         std::fs::read(
             self.chemin_feu
                 .join(".cles/")
                 .join(format!("{}{}", braise, ".cle")),
         )?
         .try_into()
-        .map_err(|_| ErreurGardien::Interne(String::from(ERR_CAR_003)))
+        .map_err(|_| {
+            ErreurFeuNoyau::GardienTailleFichierInattendue(
+                self.chemin_feu
+                    .join(".cles/")
+                    .join(format!("{}{}", braise, ".cle")),
+            )
+        })
     }
 
     // ── Archives ──────────────────────────────────────────────────────────────
@@ -473,7 +511,7 @@ impl Carnet {
     pub(super) fn ouvre_archive_chiffree_foyer_ecriture(
         &self,
         braise: Braise,
-    ) -> ResultGardien<File> {
+    ) -> ResultFeuNoyau<File> {
         Ok(OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -489,7 +527,7 @@ impl Carnet {
     pub(super) fn ouvre_archive_chiffree_foyer_lecture(
         &self,
         braise: Braise,
-    ) -> ResultGardien<File> {
+    ) -> ResultFeuNoyau<File> {
         Ok(OpenOptions::new()
             .read(true)
             .open(self.donne_chemin_archive_chiffree(braise))?)
@@ -500,7 +538,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou illisible.
-    pub(super) fn ouvre_archive_tar_foyer_lecture(&self, braise: Braise) -> ResultGardien<File> {
+    pub(super) fn ouvre_archive_tar_foyer_lecture(&self, braise: Braise) -> ResultFeuNoyau<File> {
         Ok(OpenOptions::new()
             .read(true)
             .open(self.donne_chemin_archive_tar(braise))?)
@@ -514,7 +552,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier existe déjà ou si la création échoue.
-    pub(super) fn ouvre_archive_tar_vide_ecriture(&self, braise: Braise) -> ResultGardien<File> {
+    pub(super) fn ouvre_archive_tar_vide_ecriture(&self, braise: Braise) -> ResultFeuNoyau<File> {
         Ok(OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -539,7 +577,7 @@ impl Carnet {
     ///
     /// Retourne une erreur si le fichier existe déjà, si la création échoue,
     /// si l'archivage tar échoue, ou si la finalisation échoue.
-    pub(super) fn archive_tar_foyer(&self, braise: Braise) -> ResultGardien<()> {
+    pub(super) fn archive_tar_foyer(&self, braise: Braise) -> ResultFeuNoyau<()> {
         let fichier = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -569,7 +607,7 @@ impl Carnet {
     ///
     /// Retourne une erreur si `<braise>.tar` est absent, illisible,
     /// ou si l'extraction échoue.
-    pub(super) fn desarchive_tar_foyer(&self, braise: Braise) -> ResultGardien<()> {
+    pub(super) fn desarchive_tar_foyer(&self, braise: Braise) -> ResultFeuNoyau<()> {
         let mut archive = tar::Archive::new(self.ouvre_archive_tar_foyer_lecture(braise)?);
 
         Self::creer_dossier(&self.donne_chemin_braise(braise))?;
@@ -582,7 +620,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
-    pub(super) fn supprime_archive_foyer_chiffree(&self, braise: Braise) -> ResultGardien<()> {
+    pub(super) fn supprime_archive_foyer_chiffree(&self, braise: Braise) -> ResultFeuNoyau<()> {
         fs::remove_file(self.donne_chemin_archive_chiffree(braise))?;
         Ok(())
     }
@@ -592,7 +630,7 @@ impl Carnet {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
-    pub(super) fn supprime_archive_foyer_tar(&self, braise: Braise) -> ResultGardien<()> {
+    pub(super) fn supprime_archive_foyer_tar(&self, braise: Braise) -> ResultFeuNoyau<()> {
         fs::remove_file(self.donne_chemin_archive_tar(braise))?;
         Ok(())
     }
@@ -607,7 +645,7 @@ impl Carnet {
     ///
     /// Retourne une erreur si la création échoue — permissions
     /// insuffisantes, chemin invalide ou erreur d'entrée/sortie.
-    fn creer_dossier(path: &Path) -> ResultGardien<()> {
+    fn creer_dossier(path: &Path) -> ResultFeuNoyau<()> {
         DirBuilder::new().mode(0o700).recursive(true).create(path)?;
         Ok(())
     }
@@ -623,7 +661,7 @@ impl Carnet {
     ///
     /// Retourne une erreur si l'écriture du fichier temporaire échoue,
     /// ou si le renommage vers la cible échoue.
-    fn ecrire_fichier_600(chemin: &Path, contenu: &[u8]) -> ResultGardien<()> {
+    fn ecrire_fichier_600(chemin: &Path, contenu: &[u8]) -> ResultFeuNoyau<()> {
         let nouveau_chemin = chemin.with_added_extension("tmp");
 
         let mut fichier = OpenOptions::new()

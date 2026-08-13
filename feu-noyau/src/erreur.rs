@@ -16,9 +16,11 @@
 //! [`ResultFeuNoyau<T>`] est l'alias de [`Result<T, ErreurFeuNoyau>`] utilisé dans
 //! toutes les fonctions publiques de `feu-noyau`.
 
+use std::path::PathBuf;
+
 use crate::{
-    archiviste::erreur::ErreurArchiviste, cryptographe::erreur::ErreurCryptographe,
-    gardien::erreur::ErreurGardien,
+    Braise, MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
+    MAX_TAILLE_SIGNATURE, cryptographe::erreur::ErreurCryptographe,
 };
 use thiserror::Error;
 
@@ -27,102 +29,163 @@ pub type ResultFeuNoyau<T> = Result<T, ErreurFeuNoyau>;
 
 /// Type d'erreur unique exposé par `feu-noyau`.
 ///
-/// Agrège deux familles de variantes :
+/// Les variantes internes viennent d'abord, par ordre alphabétique — c'est le
+/// seul ordre qui dise sans ambiguïté où insérer la suivante. Elles couvrent les
+/// préconditions non satisfaites, les index hors bornes et les états incohérents.
+/// Seul le `Cryptographe` garde encore un type d'erreur propre, aplati ici en
+/// `String` via `.to_string()` pour ne pas faire fuir un type privé à travers
+/// l'API — le gardien et l'archiviste, eux, lèvent directement leurs variantes.
 ///
-/// - **Erreurs remontées d'un composant interne** (`Gardien`, `Cryptographe`,
-///   `Archiviste`) — le type interne est encapsulé dans une `String` via
-///   `.to_string()`, ce qui préserve l'encapsulation des détails
-///   d'implémentation et évite toute fuite de type privé à travers l'API.
-/// - **Erreurs propres à l'orchestration du noyau** — préconditions non
-///   satisfaites, index hors bornes, état de session incohérent.
+/// Les variantes externes ferment la liste : elles portent l'erreur d'un type
+/// étranger au lieu de la traduire.
 ///
 /// Le préfixe `NOY >` dans chaque message sert de marqueur de couche lorsque
 /// les messages sont encapsulés par la couche applicative (`feu-application`).
 #[derive(Error, Debug)]
 pub enum ErreurFeuNoyau {
-    /// Erreur remontée depuis le gardien — opération disque ou parsing échoué.
-    /// Le message textuel provient du type d'erreur interne du gardien via `.to_string()`.
-    #[error("NOY > {0}")]
-    Gardien(String),
+    /// Foyer marqué ouvert dans la session alors que son emplacement
+    /// d'`archivistes` est `None` — état incohérent, signale un bug interne.
+    #[error("NOY > Foyer {0} ouvert sans archiviste (état interne incohérent)")]
+    ArchivisteIndisponible(usize),
+
+    /// Remplissage demandé sur un tiroir qui détient déjà un blob — un tiroir ne
+    /// se remplit qu'une fois, la seconde écriture masquerait la première.
+    #[error("NOY > Le blob dans le tiroir de l'archiviste est non vide")]
+    ArchivisteTiroirBlobNonvide,
+
+    /// Hash lu avant que `definit_hash` l'ait posé : le blob n'a pas encore été
+    /// empreinté, il n'y a rien à rendre.
+    #[error("NOY > Le tiroir de l'archiviste n'a pas de hash")]
+    ArchivisteTiroirSansHash,
+
+    /// Opération requérant que **tous** les foyers soient ouverts — typiquement
+    /// un changement de mot de passe qui rechiffre l'intégralité du trousseau.
+    #[error("NOY > Tous les foyers doivent être ouverts pour cette opération")]
+    AuMoinsUnFoyerFerme,
+
+    /// Aucun classeur du foyer ne détient le hash cherché — le foyer, lui, est
+    /// valide et ouvert, vérifié avant le balayage.
+    #[error("NOY > Blob introuvable dans le foyer {0}")]
+    BlobIntrouvable(usize),
+
+    /// Chaîne mal formée soumise à `Braise::try_from` — suffixe absent, longueur
+    /// ou alphabet invalides. Portée pour inspection, jamais affichée.
+    #[error("NOY > Adresse braise mal formée")]
+    BraiseErronnee(String),
+
+    /// Chemin attendu sur le disque et absent, fichier comme dossier. Porté pour
+    /// inspection, jamais affiché : un chemin absolu nomme le compte utilisateur.
+    #[error("NOY > Fichier ou dossier inexistant")]
+    CheminInexistant(PathBuf),
 
     /// Erreur remontée depuis le cryptographe — opération cryptographique échouée.
     /// Le message textuel provient du type d'erreur interne du cryptographe via `.to_string()`.
     #[error("NOY > {0}")]
     Cryptographe(String),
 
-    /// Erreur remontée depuis l'archiviste — opération sur l'arborescence d'un foyer échouée.
-    /// Le message textuel provient du type d'erreur interne de l'archiviste via `.to_string()`.
-    #[error("NOY > {0}")]
-    Archiviste(String),
-
-    /// Un index de foyer ou de classeur fourni par l'appelant est hors bornes
-    /// (`>= MAX_FOYERS` ou `>= MAX_CLASSEURS`).
-    #[error("NOY > Index foyer ou classeur invalide")]
-    IndexInvalide,
-
-    /// Le nœud est déjà initialisé — une seed ne peut pas être fournie à [`crate::FeuNoyau::new`]
-    /// quand l'arborescence existe déjà.
-    #[error("NOY > Nœud déjà initialisé — fourniture d'une seed impossible")]
-    InitialisationNoeudImpossible,
+    /// Dossier clair du foyer trop abîmé pour que la reconstruction du trousseau
+    /// aboutisse — le diagnostic préalable a relevé au moins une anomalie.
+    #[error("NOY > Diagnostic impossible pour fermeture en secours du foyer")]
+    FermetureSecoursFoyerImpossible,
 
     /// Tentative d'ouvrir un foyer déjà marqué comme ouvert dans la session.
-    #[error("NOY > Impossible d'ouvrir un foyer déjà ouvert")]
-    FoyerDejaOuvert,
+    #[error("NOY > Le foyer {0} est déjà ouvert")]
+    FoyerDejaOuvert(usize),
 
     /// Opération nécessitant un foyer ouvert appelée sur un foyer fermé —
     /// les clés du trousseau ne sont pas disponibles en mémoire.
-    #[error("NOY > Opération impossible sur foyer fermé")]
-    FoyerFerme,
+    #[error("NOY > Opération impossible sur foyer {0} fermé")]
+    FoyerFerme(usize),
 
-    /// Opération requérant que **tous** les foyers soient ouverts — typiquement
-    /// un changement de mot de passe qui rechiffre l'intégralité du trousseau.
-    #[error("NOY > Tous les foyers doivent être ouverts pour cette opération")]
-    TousFoyersNonOuverts,
+    /// Création d'arborescence demandée alors que le nœud existe déjà sur le
+    /// disque — l'écraser détruirait les foyers en place.
+    #[error("NOY > L'arborescence du nœud existe déjà")]
+    GardienArborescenceNoeudDejaExistante,
 
-    /// État interne incohérent : un foyer est marqué ouvert dans la session
-    /// mais l'emplacement correspondant d'`archivistes` est `None`. Ne devrait
-    /// jamais se produire — signale un bug d'orchestration.
-    #[error("NOY > Foyer ouvert sans archiviste (état interne incohérent)")]
-    ArchivisteIndisponible,
+    /// Aucune arborescence de nœud sous le chemin donné : rien à allumer, il
+    /// faut d'abord créer le nœud.
+    #[error("NOY > Manque arborescence nœud")]
+    GardienArborescenceNoeudManquante,
 
-    /// Taille de message dépassée pour une opération bornée :
-    /// [`MAX_TAILLE_BLOB`](crate::MAX_TAILLE_BLOB),
-    /// [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`](crate::MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE)
-    /// ou [`MAX_TAILLE_SIGNATURE`](crate::MAX_TAILLE_SIGNATURE).
-    #[error("NOY > Dépassement taille autorisée pour cette opération")]
-    TailleMaxDepassee,
+    /// Suppression du dossier clair refusée faute de `<braise>.feu` — sans
+    /// archive, effacer le dossier perdrait le foyer.
+    #[error("NOY > L'archive chiffrée est inexistante")]
+    GardienArchiveChiffreeInexistante,
 
-    /// Le diagnostic préalable à une fermeture en secours a détecté une
-    /// anomalie — le dossier clair du foyer n'est pas dans un état suffisant
-    /// pour que la reconstruction du trousseau puisse aboutir.
-    #[error("NOY > Check-up négatif pour fermeture en secours du foyer")]
-    FermetureSecoursFoyerImpossible,
+    /// `config.feu` compte moins de `2 + MAX_FOYERS` lignes : version, prochain
+    /// index ou braise de foyer manquants.
+    #[error("NOY > Il manque au moins un élément dans config.feu")]
+    GardienConfigManqueAuMoinsUnElement,
 
-    /// L'adresse `.braise` fournie ou résolue depuis un index ne correspond
-    /// à aucun foyer connu de la session.
-    #[error("NOY > Adresse braise inconnue")]
-    BraiseIntrouvable,
+    /// Le trousseau public du foyer ne détient pas de clé pour ce classeur —
+    /// porte le foyer puis le classeur.
+    #[error("NOY > Foyer {0} : pas de clé pour le classeur {1}")]
+    GardienPasDeClePourClasseur(usize, usize),
 
-    /// La chaîne soumise à `Braise::try_from` est mal formée : suffixe
-    /// `.braise` absent, longueur incorrecte, ou caractère hors alphabet BASE32.
-    #[error("NOY > TryFrom : mauvais format de &str pour Braise")]
-    BraiseTryFromStr,
+    /// Aucun trousseau public disponible pour ce foyer au moment de l'écrire
+    /// sur le disque.
+    #[error("NOY > Le foyer {0} n'a pas de trousseau public")]
+    GardienPasDeTrousseauFoyer(usize),
 
-    /// Le balayage de [`crate::FeuNoyau::lecture_blob`] n'a trouvé aucun
-    /// classeur du foyer détenant le blob visé : le foyer est valide et ouvert
-    /// (vérifié en amont), mais aucun `classeurN/<hash>.dat` ne correspond.
-    #[error("NOY > Blob introuvable dans ce foyer")]
-    BlobIntrouvable,
-}
+    /// Échec de l'ajout d'une clé de classeur au trousseau public du foyer.
+    /// La braise est portée pour inspection, jamais affichée : c'est une adresse.
+    #[error("NOY > Problème d'ajout de clé pour le classeur {1}")]
+    GardienProblemeAjoutCleClasseur(Braise, usize),
 
-impl From<ErreurGardien> for ErreurFeuNoyau {
-    /// Convertit une erreur interne du gardien en [`ErreurFeuNoyau::Gardien`].
-    ///
-    /// Le type interne est perdu — seul le message textuel est propagé,
-    /// préservant l'encapsulation des détails d'implémentation du gardien.
-    fn from(e: ErreurGardien) -> Self {
-        ErreurFeuNoyau::Gardien(e.to_string())
-    }
+    /// Braise de `config.feu` que `Braise::try_from` refuse — le fichier est
+    /// lisible, c'est son contenu qui est corrompu.
+    #[error("NOY > Problème d'encodage de la braise")]
+    GardienProblemeEncodageBraise,
+
+    /// Fichier de clé lu sans erreur mais dont la taille ne correspond pas à
+    /// celle attendue. Le chemin est porté pour inspection, jamais affiché.
+    #[error("NOY > Taille de fichier inattendue")]
+    GardienTailleFichierInattendue(PathBuf),
+
+    /// Index de classeur hors bornes (`>= MAX_CLASSEURS`), à l'intérieur d'un
+    /// foyer par ailleurs valide.
+    #[error("NOY > Index classeur invalide : {0} (max {max})", max = MAX_CLASSEURS - 1)]
+    IndexClasseurInvalide(usize),
+
+    /// Index de foyer hors bornes (`>= MAX_FOYERS`). Porte la valeur reçue :
+    /// c'est une donnée d'appel, jamais un secret.
+    #[error("NOY > Index foyer invalide : {0} (max {max})", max = MAX_FOYERS - 1)]
+    IndexFoyerInvalide(usize),
+
+    /// Seed passée à [`crate::FeuNoyau::new`] alors que l'arborescence existe :
+    /// c'est la restauration qui est refusée, pas l'allumage du nœud.
+    #[error("NOY > Seed refusée : le nœud existe déjà")]
+    SeedRefuseeNoeudExistant,
+
+    /// Blob plus grand que [`MAX_TAILLE_BLOB`], borne posée au remplissage du
+    /// tiroir. Porte la taille atteinte.
+    #[error("NOY > Blob trop grand : {0} octets (max {max} octets)", max = MAX_TAILLE_BLOB - 1)]
+    TailleMaxDepasseeBlob(usize),
+
+    /// Message à chiffrer plus grand que [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`].
+    /// Porte la taille reçue, seule information non déductible du nom.
+    #[error("NOY > Message à chiffrer trop grand : {0} octets (max {max} octets)", max = MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE - 1)]
+    TailleMaxDepasseeChiffrementAsymetrique(usize),
+
+    /// Message chiffré plus grand que la limite du clair augmentée du surcoût
+    /// KEM — 1568 octets de ciphertext, 12 de nonce, 16 de tag.
+    #[error("NOY > Message à déchiffrer trop grand : {0} octets (max {max} octets)", max = MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE + 1595)]
+    TailleMaxDepasseeDechiffrementAsymetrique(usize),
+
+    /// Message à signer plus grand que [`MAX_TAILLE_SIGNATURE`], que la clé
+    /// engagée soit celle du nœud ou celle d'un foyer — cause et borne communes.
+    #[error("NOY > Message à signer trop grand : {0} octets (max {max} octets)", max = MAX_TAILLE_SIGNATURE - 1)]
+    TailleMaxDepasseeSignature(usize),
+
+    /// Échec d'entrée-sortie remonté tel quel par `?` : le variant porte
+    /// l'erreur système au lieu de la traduire.
+    #[error("IoError > {0}")]
+    IoError(#[from] std::io::Error),
+
+    /// Version ou prochain index de `config.feu` illisibles comme entiers,
+    /// remontés tels quels par `?`.
+    #[error("ParseIntError > {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
 }
 
 impl From<ErreurCryptographe> for ErreurFeuNoyau {
@@ -132,15 +195,5 @@ impl From<ErreurCryptographe> for ErreurFeuNoyau {
     /// préservant l'encapsulation des détails d'implémentation du cryptographe.
     fn from(e: ErreurCryptographe) -> Self {
         ErreurFeuNoyau::Cryptographe(e.to_string())
-    }
-}
-
-impl From<ErreurArchiviste> for ErreurFeuNoyau {
-    /// Convertit une erreur interne de l'archiviste en [`ErreurFeuNoyau::Archiviste`].
-    ///
-    /// Le type interne est perdu — seul le message textuel est propagé,
-    /// préservant l'encapsulation des détails d'implémentation de l'archiviste.
-    fn from(e: ErreurArchiviste) -> Self {
-        ErreurFeuNoyau::Archiviste(e.to_string())
     }
 }

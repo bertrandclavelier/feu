@@ -16,14 +16,12 @@
 //! Le blob en clair est zéroïsé dès qu'il est remplacé par le blob chiffré —
 //! aucun octet sensible ne subsiste en mémoire après chiffrement.
 
-use super::{ErreurArchiviste, ResultArchiviste};
+use crate::ErreurFeuNoyau;
 use crate::MAX_TAILLE_BLOB;
+use crate::ResultFeuNoyau;
 use crate::TAILLE_CHUNK;
 use std::io::{Read, Write};
 use zeroize::Zeroize;
-
-const ERR_TIR_001: &str = "Le tiroir n'est pas vide";
-const ERR_TIR_002: &str = "Dépassement MAX_TAILLE_BLOB";
 
 /// Objet de transfert éphémère entre l'Archiviste et le Cryptographe.
 ///
@@ -75,9 +73,9 @@ impl Tiroir {
     ///
     /// Retourne une erreur si le tiroir n'est pas vide, si la lecture de `source`
     /// échoue, ou si la taille dépasse [`MAX_TAILLE_BLOB`].
-    pub(crate) fn remplir(&mut self, mut source: impl Read) -> ResultArchiviste<()> {
+    pub(crate) fn remplir(&mut self, mut source: impl Read) -> ResultFeuNoyau<()> {
         if !self.blob.is_empty() {
-            return Err(ErreurArchiviste::Interne(String::from(ERR_TIR_001)));
+            return Err(ErreurFeuNoyau::ArchivisteTiroirBlobNonvide);
         }
 
         let mut chunk = [0u8; TAILLE_CHUNK];
@@ -87,8 +85,10 @@ impl Tiroir {
             if n == 0 {
                 break;
             }
-            if self.blob.len() + n > MAX_TAILLE_BLOB {
-                return Err(ErreurArchiviste::Interne(String::from(ERR_TIR_002)));
+            if self.blob.len() + n >= MAX_TAILLE_BLOB {
+                return Err(crate::ErreurFeuNoyau::TailleMaxDepasseeBlob(
+                    self.blob.len() + n,
+                ));
             }
             self.blob.extend_from_slice(&chunk[0..n]);
         }
@@ -101,7 +101,7 @@ impl Tiroir {
     /// # Erreurs
     ///
     /// Retourne une erreur si l'écriture dans `destination` échoue.
-    pub(crate) fn vider(&mut self, mut destination: impl Write) -> ResultArchiviste<()> {
+    pub(crate) fn vider(&mut self, mut destination: impl Write) -> ResultFeuNoyau<()> {
         destination.write_all(&self.blob)?;
         self.blob.zeroize();
         Ok(())
@@ -135,9 +135,9 @@ impl Tiroir {
     /// # Erreurs
     ///
     /// Retourne une erreur si [`definit_hash`](Self::definit_hash) n'a pas encore été appelé.
-    pub(crate) fn lire_hash(&self) -> ResultArchiviste<String> {
+    pub(crate) fn lire_hash(&self) -> ResultFeuNoyau<String> {
         let Some(hash) = &self.hash else {
-            return Err(ErreurArchiviste::Interne(String::from("Pas de hash")));
+            return Err(ErreurFeuNoyau::ArchivisteTiroirSansHash);
         };
         Ok(hash.clone())
     }

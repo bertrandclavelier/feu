@@ -19,7 +19,6 @@
 //! du protocole.
 
 mod carnet;
-pub(super) mod erreur;
 
 use std::fs::File;
 use std::path::Path;
@@ -27,21 +26,16 @@ use std::path::PathBuf;
 
 use crate::Anomalie;
 use crate::Braise;
+use crate::ErreurFeuNoyau;
 use crate::MAX_FOYERS;
+use crate::ResultFeuNoyau;
 use crate::braise::BRAISE_VIDE;
 use crate::cryptographe::trousseaux_publics::{
     TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
 };
 use crate::gardien::carnet::Carnet;
-use crate::gardien::erreur::{ErreurGardien, ResultGardien};
 
 const VERSION_CONFIGURATION: u32 = 1;
-
-const ERR_GAR_001: &str = "GAR-001 > Aucune arborescence du nœud trouvée";
-const ERR_GAR_002: &str = "GAR-002 > Une arborescence existe déjà";
-const ERR_GAR_003: &str = "GAR-003 > Suppression du dossier impossible s'il n'est pas archivé";
-const ERR_GAR_004: &str = "GAR-004 > Manque au moins un élément dans config.feu";
-const ERR_GAR_005: &str = "GAR-005 > Problème encodage braise";
 
 /// Configuration globale du nœud — miroir de `config.feu` en mémoire.
 ///
@@ -81,10 +75,10 @@ impl Configuration {
     ///
     /// Retourne une erreur si le fichier contient moins de `2 + MAX_FOYERS`
     /// lignes, ou si `version` ou `prochain_index` ne sont pas des entiers valides.
-    fn new_from_string(contenu: &str) -> ResultGardien<Self> {
+    fn new_from_string(contenu: &str) -> ResultFeuNoyau<Self> {
         let mut lignes: Vec<&str> = contenu.lines().collect();
         if lignes.len() < 2 + MAX_FOYERS {
-            return Err(ErreurGardien::Interne(String::from(ERR_GAR_004)));
+            return Err(ErreurFeuNoyau::GardienConfigManqueAuMoinsUnElement);
         }
         let version = lignes.remove(0).parse::<u32>()?;
         let prochain_index = lignes.remove(0).parse::<u32>()?;
@@ -92,7 +86,7 @@ impl Configuration {
         let mut tableau = [BRAISE_VIDE; MAX_FOYERS];
         for e in tableau.iter_mut() {
             *e = Braise::try_from(String::from(lignes.remove(0)).as_str())
-                .map_err(|_| ErreurGardien::Interne(String::from(ERR_GAR_005)))?;
+                .map_err(|_| ErreurFeuNoyau::GardienProblemeEncodageBraise)?;
         }
 
         Ok(Self {
@@ -154,10 +148,10 @@ impl Gardien {
     /// Retourne une erreur si l'arborescence `~/.feu` est introuvable, si
     /// `config.feu` est absent ou illisible, ou si son contenu ne peut pas
     /// être parsé.
-    pub(super) fn ouvre_nouveau(chemin_feu: &Path) -> ResultGardien<Self> {
+    pub(super) fn ouvre_nouveau(chemin_feu: &Path) -> ResultFeuNoyau<Self> {
         let carnet = Carnet::new(chemin_feu);
         if !carnet.existe_arborescence_noeud() {
-            return Err(ErreurGardien::Interne(String::from(ERR_GAR_001)));
+            return Err(ErreurFeuNoyau::GardienArborescenceNoeudManquante);
         }
         Ok(Self {
             configuration: Configuration::new_from_string(&carnet.ouvre_configuration()?)?,
@@ -204,9 +198,9 @@ impl Gardien {
     pub(super) fn cree_premiere_arborescence(
         &self,
         trousseau_public_complet: &TrousseauPublicComplet,
-    ) -> ResultGardien<()> {
+    ) -> ResultFeuNoyau<()> {
         if self.carnet.existe_arborescence_noeud() {
-            return Err(ErreurGardien::Interne(String::from(ERR_GAR_002)));
+            return Err(ErreurFeuNoyau::GardienArborescenceNoeudDejaExistante);
         }
         // Écriture du trousseau public sur le disque
         self.carnet
@@ -224,13 +218,13 @@ impl Gardien {
     ///
     /// Retourne une erreur si l'archive `<braise>.feu` est absente
     /// ou si la suppression récursive du dossier échoue.
-    pub(super) fn suppression_dossier_braise(&self, braise: Braise) -> ResultGardien<()> {
+    pub(super) fn suppression_dossier_braise(&self, braise: Braise) -> ResultFeuNoyau<()> {
         // Vérification que l'archive existe avant de supprimer le dossier. Sinon impossible
         if self.carnet.donne_chemin_archive_chiffree(braise).exists() {
             self.carnet.supprime_dossier_braise(braise)?;
             Ok(())
         } else {
-            Err(ErreurGardien::Interne(String::from(ERR_GAR_003)))
+            Err(ErreurFeuNoyau::GardienArchiveChiffreeInexistante)
         }
     }
 
@@ -244,7 +238,7 @@ impl Gardien {
     /// # Erreurs
     ///
     /// Retourne une erreur si l'écriture échoue.
-    pub(super) fn enregistrement_configuration(&self) -> ResultGardien<()> {
+    pub(super) fn enregistrement_configuration(&self) -> ResultFeuNoyau<()> {
         self.carnet
             .enregistre_configuration(self.configuration.exporte_en_texte())?;
 
@@ -282,7 +276,7 @@ impl Gardien {
     pub(super) fn ecriture_trousseau_public_complet(
         &self,
         trousseau_public_complet: &TrousseauPublicComplet,
-    ) -> ResultGardien<()> {
+    ) -> ResultFeuNoyau<()> {
         self.carnet
             .ecrire_trousseau_public_complet(trousseau_public_complet)?;
         Ok(())
@@ -298,7 +292,7 @@ impl Gardien {
     /// Retourne une erreur si un fichier est absent, illisible ou de taille incorrecte.
     pub(super) fn lecture_pour_creation_trousseau_public_noeud(
         &self,
-    ) -> ResultGardien<TrousseauPublicNoeud> {
+    ) -> ResultFeuNoyau<TrousseauPublicNoeud> {
         Ok(TrousseauPublicNoeud::new(
             self.carnet.lire_pour_donner_sel()?,
             self.carnet.lire_pour_donner_cle_sig_privee()?,
@@ -317,7 +311,7 @@ impl Gardien {
     pub(super) fn creation_trousseau_foyer_public(
         &self,
         braise: Braise,
-    ) -> ResultGardien<TrousseauPublicFoyer> {
+    ) -> ResultFeuNoyau<TrousseauPublicFoyer> {
         self.carnet.creer_trousseau_public_foyer(braise)
     }
 
@@ -342,7 +336,7 @@ impl Gardien {
     pub(super) fn preparation_archivage_chiffre_foyer(
         &self,
         braise: Braise,
-    ) -> ResultGardien<(File, File)> {
+    ) -> ResultFeuNoyau<(File, File)> {
         self.carnet.archive_tar_foyer(braise)?;
 
         Ok((
@@ -370,7 +364,7 @@ impl Gardien {
     pub(super) fn preparation_desarchivage_chiffre_foyer(
         &self,
         braise: Braise,
-    ) -> ResultGardien<([u8; 60], File, File)> {
+    ) -> ResultFeuNoyau<([u8; 60], File, File)> {
         Ok((
             self.carnet.lire_pour_donner_cle_chiffrement_foyer(braise)?,
             self.carnet.ouvre_archive_chiffree_foyer_lecture(braise)?,
@@ -392,7 +386,7 @@ impl Gardien {
     ///
     /// Retourne une erreur si l'extraction échoue ou si la suppression d'un
     /// fichier intermédiaire échoue.
-    pub(super) fn desarchivage_chiffre_foyer(&self, braise: Braise) -> ResultGardien<()> {
+    pub(super) fn desarchivage_chiffre_foyer(&self, braise: Braise) -> ResultFeuNoyau<()> {
         self.carnet.desarchive_tar_foyer(braise)?;
         self.carnet.supprime_archive_foyer_tar(braise)?;
         self.carnet.supprime_archive_foyer_chiffree(braise)?;
@@ -410,7 +404,7 @@ impl Gardien {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
-    pub(super) fn suppression_archive_foyer_tar(&self, braise: Braise) -> ResultGardien<()> {
+    pub(super) fn suppression_archive_foyer_tar(&self, braise: Braise) -> ResultFeuNoyau<()> {
         self.carnet.supprime_archive_foyer_tar(braise)?;
 
         Ok(())
@@ -427,7 +421,7 @@ impl Gardien {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
-    pub(super) fn suppression_archive_foyer_chiffree(&self, braise: Braise) -> ResultGardien<()> {
+    pub(super) fn suppression_archive_foyer_chiffree(&self, braise: Braise) -> ResultFeuNoyau<()> {
         self.carnet.supprime_archive_foyer_chiffree(braise)?;
 
         Ok(())
@@ -508,12 +502,12 @@ impl Gardien {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::braise::LONGUEUR_BRAISE;
+    use crate::{ResultFeuNoyau, braise::LONGUEUR_BRAISE};
 
     /// Une configuration sérialisée puis reparsée redonne les mêmes valeurs,
     /// adresses `.braise` comprises et dans le même ordre.
     #[test]
-    fn cycle_configuration() -> ResultGardien<()> {
+    fn cycle_configuration() -> ResultFeuNoyau<()> {
         // Des braises toutes égales laisseraient passer une lecture qui mélange
         // l'ordre des lignes. Chaque corps dérive donc de l'indice, écrit en
         // binaire sur `LONGUEUR_BRAISE` caractères puis traduit `0`/`1` en

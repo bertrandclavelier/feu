@@ -44,7 +44,6 @@
 //!     classeur4/
 //! ```
 
-pub(super) mod erreur;
 pub(crate) mod tiroir;
 
 use std::fs;
@@ -56,11 +55,10 @@ use std::path::{Path, PathBuf};
 
 use crate::Anomalie;
 use crate::DonneesBlob;
+use crate::ErreurFeuNoyau;
 use crate::MAX_CLASSEURS;
-use crate::archiviste::erreur::{ErreurArchiviste, ResultArchiviste};
+use crate::ResultFeuNoyau;
 use crate::archiviste::tiroir::Tiroir;
-
-const ERR_ARC_001: &str = "Le fichier n'existe pas";
 
 /// Noms des sous-dossiers de l'arborescence d'un foyer.
 const REGISTRE: &str = "registre";
@@ -87,7 +85,7 @@ impl Archiviste {
     /// # Erreurs
     ///
     /// Retourne une erreur si une opération disque échoue.
-    pub(super) fn new(racine: PathBuf) -> ResultArchiviste<Self> {
+    pub(super) fn new(racine: PathBuf) -> ResultFeuNoyau<Self> {
         let archiviste = Self { racine };
 
         if !&archiviste.donne_chemin_registre().exists() {
@@ -126,7 +124,7 @@ impl Archiviste {
         &self,
         index_classeur: usize,
         hash: &str,
-    ) -> ResultArchiviste<Tiroir> {
+    ) -> ResultFeuNoyau<Tiroir> {
         let chemin = self.donne_chemin_blob(index_classeur, hash);
 
         let fichier = std::fs::File::open(chemin)?;
@@ -157,7 +155,7 @@ impl Archiviste {
     ///
     /// Retourne une erreur si le hash est absent du tiroir, si le fichier existe
     /// déjà, ou si une opération disque échoue.
-    pub(super) fn ecrit_blob(&self, mut tiroir: Tiroir) -> ResultArchiviste<()> {
+    pub(super) fn ecrit_blob(&self, mut tiroir: Tiroir) -> ResultFeuNoyau<()> {
         let chemin = self.donne_chemin_blob(tiroir.lire_index_classeur(), &tiroir.lire_hash()?);
 
         let fichier = OpenOptions::new()
@@ -178,10 +176,10 @@ impl Archiviste {
     /// # Erreurs
     ///
     /// Retourne une erreur si le fichier n'existe pas ou si la suppression échoue.
-    pub(super) fn supprime_blob(&self, index_classeur: usize, hash: &str) -> ResultArchiviste<()> {
+    pub(super) fn supprime_blob(&self, index_classeur: usize, hash: &str) -> ResultFeuNoyau<()> {
         let chemin = self.donne_chemin_blob(index_classeur, hash);
         if !chemin.exists() {
-            return Err(ErreurArchiviste::Interne(String::from(ERR_ARC_001)));
+            return Err(ErreurFeuNoyau::CheminInexistant(chemin));
         }
         Ok(std::fs::remove_file(chemin)?)
     }
@@ -203,7 +201,7 @@ impl Archiviste {
     /// # Erreurs
     ///
     /// Retourne une erreur si la lecture du dossier échoue.
-    pub(super) fn donne_liste_blobs(&self, index_classeur: usize) -> ResultArchiviste<Vec<String>> {
+    pub(super) fn donne_liste_blobs(&self, index_classeur: usize) -> ResultFeuNoyau<Vec<String>> {
         let mut liste = Vec::new();
         for element in std::fs::read_dir(self.donne_chemin_classeur(index_classeur))? {
             if let Some(nom) = element?.path().file_stem() {
@@ -225,7 +223,7 @@ impl Archiviste {
         &self,
         index_classeur: usize,
         hash: &str,
-    ) -> ResultArchiviste<DonneesBlob> {
+    ) -> ResultFeuNoyau<DonneesBlob> {
         let metadata = std::fs::metadata(self.donne_chemin_blob(index_classeur, hash))?;
         let created = metadata.created().ok();
 
@@ -244,7 +242,7 @@ impl Archiviste {
     /// Contrôle `registre/` et les `MAX_CLASSEURS` liens symboliques
     /// `registre/classeur.N`, ainsi que l'existence des cibles de ces liens.
     /// N'inspecte pas le contenu des classeurs — seule la structure est vérifiée.
-    pub(super) fn verifier_arborescence_classeurs(&self) -> ResultArchiviste<Vec<Anomalie>> {
+    pub(super) fn verifier_arborescence_classeurs(&self) -> ResultFeuNoyau<Vec<Anomalie>> {
         let mut resultat: Vec<Anomalie> = Vec::new();
 
         if !self.donne_chemin_registre().exists() {
@@ -298,7 +296,7 @@ impl Archiviste {
     /// # Erreurs
     ///
     /// Retourne une erreur si la création échoue.
-    fn cree_dossier(path: &Path) -> ResultArchiviste<()> {
+    fn cree_dossier(path: &Path) -> ResultFeuNoyau<()> {
         DirBuilder::new().mode(0o700).recursive(true).create(path)?;
         Ok(())
     }

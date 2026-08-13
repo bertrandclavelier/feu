@@ -277,7 +277,7 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
         assert!(!noyau2.existence_blob(i, &hash_donnees)?);
         assert!(matches!(
             noyau2.lecture_blob(i, &hash_donnees, &fichier_recuperation),
-            Err(ErreurFeuNoyau::BlobIntrouvable)
+            Err(ErreurFeuNoyau::BlobIntrouvable(_))
         ));
     }
 
@@ -318,7 +318,7 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
 
     // `changement_mdp` exige les trois foyers ouverts — leurs clés doivent être
-    // en mémoire pour être rechiffrées, sinon `TousFoyersNonOuverts`.
+    // en mémoire pour être rechiffrées, sinon `AuMoinsUnFoyerFerme`.
     for i in 0..MAX_FOYERS {
         noyau.ouverture_foyer(&mut interface, i)?;
     }
@@ -438,9 +438,10 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
 /// s'enchaînent sur le même foyer, chacun le laissant dans l'état qu'attend le
 /// suivant.
 ///
-/// [`ErreurFeuNoyau::IndexInvalide`] en est absente délibérément : c'est une
-/// comparaison de borne répétée à l'entrée d'une dizaine de méthodes, sans
-/// logique qu'un test puisse prendre en défaut.
+/// [`ErreurFeuNoyau::IndexFoyerInvalide`] et
+/// [`ErreurFeuNoyau::IndexClasseurInvalide`] en sont absentes délibérément :
+/// c'est une comparaison de borne répétée à l'entrée d'une dizaine de méthodes,
+/// sans logique qu'un test puisse prendre en défaut.
 #[test]
 fn erreurs_usage() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -455,21 +456,21 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
     // qui s'éprouve sans rien préparer.
     assert!(matches!(
         noyau.fermeture_foyer(&mut interface, 0),
-        Err(ErreurFeuNoyau::FoyerFerme)
+        Err(ErreurFeuNoyau::FoyerFerme(i)) if i == 0
     ));
 
     noyau.ouverture_foyer(&mut interface, 0)?;
 
     assert!(matches!(
         noyau.ouverture_foyer(&mut interface, 0),
-        Err(ErreurFeuNoyau::FoyerDejaOuvert)
+        Err(ErreurFeuNoyau::FoyerDejaOuvert(i)) if i == 0
     ));
 
     // Un seul foyer ouvert sur les trois : le rechiffrement du trousseau exige
     // que toutes les clés soient en mémoire, il refuse d'en laisser une derrière.
     assert!(matches!(
         noyau.changement_mdp(&mut interface),
-        Err(ErreurFeuNoyau::TousFoyersNonOuverts)
+        Err(ErreurFeuNoyau::AuMoinsUnFoyerFerme)
     ));
 
     // Hash bien formé — 64 caractères, la longueur d'un SHA3-256 en hexadécimal
@@ -481,7 +482,7 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
 
     assert!(matches!(
         noyau.lecture_blob(0, &hash, &fichier_recuperation),
-        Err(ErreurFeuNoyau::BlobIntrouvable)
+        Err(ErreurFeuNoyau::BlobIntrouvable(i)) if i == 0
     ));
 
     noyau.fermeture_foyer(&mut interface, 0)?;
@@ -496,7 +497,7 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
     let source_donnees = File::open(&chemin_donnees).unwrap();
     assert!(matches!(
         noyau.depot_blob(0, 0, &source_donnees),
-        Err(ErreurFeuNoyau::FoyerFerme)
+        Err(ErreurFeuNoyau::FoyerFerme(i)) if i == 0
     ));
 
     // Une clé factice suffit : la borne est contrôlée à l'entrée, avant que la
@@ -505,7 +506,7 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
 
     assert!(matches!(
         noyau.signature_noeud(&message),
-        Err(ErreurFeuNoyau::TailleMaxDepassee)
+        Err(ErreurFeuNoyau::TailleMaxDepasseeSignature(_))
     ));
 
     let message = vec![0u8; MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE + 1];
@@ -513,7 +514,7 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
 
     assert!(matches!(
         noyau.chiffrement_asymetrique(&cle, &message),
-        Err(ErreurFeuNoyau::TailleMaxDepassee)
+        Err(ErreurFeuNoyau::TailleMaxDepasseeChiffrementAsymetrique(_))
     ));
 
     drop(noyau);
@@ -525,7 +526,7 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
 
     assert!(matches!(
         FeuNoyau::new(&chemin_feu, Some(seed), &mut interface),
-        Err(ErreurFeuNoyau::InitialisationNoeudImpossible)
+        Err(ErreurFeuNoyau::SeedRefuseeNoeudExistant)
     ));
 
     Ok(())
@@ -605,7 +606,7 @@ fn fermeture_secours() -> ResultFeuNoyau<()> {
 
     assert!(matches!(
         noyau.ouverture_foyer(&mut interface, 0),
-        Err(ErreurFeuNoyau::Gardien(_))
+        Err(ErreurFeuNoyau::IoError(_))
     ));
 
     noyau.secours_fermeture_foyer(&mut interface, 0)?;
@@ -710,7 +711,7 @@ fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
 
     assert!(matches!(
         FeuNoyau::new(&chemin_feu, None, &mut interface),
-        Err(ErreurFeuNoyau::Gardien(_))
+        Err(ErreurFeuNoyau::IoError(_))
     ));
 
     // Le secours réécrit le disque : aucune instance ne doit rester en vie.
