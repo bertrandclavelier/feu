@@ -73,8 +73,11 @@ impl Configuration {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le fichier contient moins de `2 + MAX_FOYERS`
-    /// lignes, ou si `version` ou `prochain_index` ne sont pas des entiers valides.
+    /// Retourne [`ErreurFeuNoyau::GardienConfigManqueAuMoinsUnElement`] si le
+    /// fichier compte moins de `2 + MAX_FOYERS` lignes,
+    /// [`ErreurFeuNoyau::ParseIntError`] si `version` ou `prochain_index` ne sont
+    /// pas des entiers, et [`ErreurFeuNoyau::GardienProblemeEncodageBraise`] si
+    /// une ligne de braise est mal formée.
     fn new_from_string(contenu: &str) -> ResultFeuNoyau<Self> {
         let mut lignes: Vec<&str> = contenu.lines().collect();
         if lignes.len() < 2 + MAX_FOYERS {
@@ -145,9 +148,9 @@ impl Gardien {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si l'arborescence `~/.feu` est introuvable, si
-    /// `config.feu` est absent ou illisible, ou si son contenu ne peut pas
-    /// être parsé.
+    /// Retourne [`ErreurFeuNoyau::GardienArborescenceNoeudManquante`] si
+    /// `~/.feu` est introuvable, puis propage l'absence ou l'illisibilité de
+    /// `config.feu` et l'échec de son parsing.
     pub(super) fn ouvre_nouveau(chemin_feu: &Path) -> ResultFeuNoyau<Self> {
         let carnet = Carnet::new(chemin_feu);
         if !carnet.existe_arborescence_noeud() {
@@ -193,8 +196,8 @@ impl Gardien {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si l'arborescence existe déjà, ou si une
-    /// opération disque échoue.
+    /// Retourne [`ErreurFeuNoyau::GardienArborescenceNoeudDejaExistante`] si le
+    /// nœud est déjà là, ou propage l'échec d'une opération disque.
     pub(super) fn cree_premiere_arborescence(
         &self,
         trousseau_public_complet: &TrousseauPublicComplet,
@@ -216,8 +219,9 @@ impl Gardien {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si l'archive `<braise>.feu` est absente
-    /// ou si la suppression récursive du dossier échoue.
+    /// Retourne [`ErreurFeuNoyau::GardienArchiveChiffreeInexistante`] si
+    /// `<braise>.feu` est absente, ou propage l'échec de la suppression
+    /// récursive du dossier.
     pub(super) fn suppression_dossier_braise(&self, braise: Braise) -> ResultFeuNoyau<()> {
         // Vérification que l'archive existe avant de supprimer le dossier. Sinon impossible
         if self.carnet.donne_chemin_archive_chiffree(braise).exists() {

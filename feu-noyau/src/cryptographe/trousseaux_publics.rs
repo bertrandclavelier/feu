@@ -16,12 +16,7 @@
 //! et les clés publiques (ML-DSA-87, ML-KEM-1024) apparaissent sans chiffrement.
 //! Ces structures sont destinées à être écrites sur le disque par le gardien.
 
-use super::erreur::{ErreurCryptographe, ResultCryptographe};
-use crate::{Braise, MAX_CLASSEURS, MAX_FOYERS};
-
-const ERR_TRP_001: &str = "TRP-001 > Pas de clé pour ce classeur";
-const ERR_TRP_002: &str = "TRP-002 > Pas de trousseau public disponible pour ce foyer";
-const ERR_TRP_003: &str = "TRP-003 > Erreur d'ajout du trousseau public foyer";
+use crate::{Braise, ErreurFeuNoyau, MAX_CLASSEURS, MAX_FOYERS, ResultFeuNoyau};
 
 /// Représentation persistable des clés d'un foyer Feu.
 ///
@@ -62,7 +57,7 @@ impl TrousseauPublicFoyer {
             cle_sig_pub,
             cle_chiff_privee,
             cle_chiff_pub,
-            cles_chiffrement_classeurs: std::array::from_fn(|_| None),
+            cles_chiffrement_classeurs: [None; MAX_CLASSEURS],
         }
     }
 
@@ -103,12 +98,17 @@ impl TrousseauPublicFoyer {
     /// Retourne une erreur si aucune clé n'est présente à cet index.
     pub(crate) fn donne_cle_chiffrement_classeur(
         &self,
-        index: usize,
-    ) -> ResultCryptographe<&[u8; 60]> {
-        if let Some(cle) = &self.cles_chiffrement_classeurs[index] {
+        index_classeur: usize,
+    ) -> ResultFeuNoyau<&[u8; 60]> {
+        if index_classeur >= MAX_CLASSEURS {
+            return Err(ErreurFeuNoyau::IndexClasseurInvalide(index_classeur));
+        }
+        if let Some(cle) = &self.cles_chiffrement_classeurs[index_classeur] {
             Ok(cle)
         } else {
-            Err(ErreurCryptographe::Interne(String::from(ERR_TRP_001)))
+            Err(ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente(
+                index_classeur,
+            ))
         }
     }
 
@@ -120,12 +120,12 @@ impl TrousseauPublicFoyer {
     pub(crate) fn ajoute_cle_chiffrement_classeur(
         &mut self,
         cle: [u8; 60],
-        index: usize,
-    ) -> ResultCryptographe<()> {
-        if index >= self.cles_chiffrement_classeurs.len() {
-            return Err(ErreurCryptographe::Interne(String::from(ERR_TRP_001)));
+        index_classeur: usize,
+    ) -> ResultFeuNoyau<()> {
+        if index_classeur >= MAX_CLASSEURS {
+            return Err(ErreurFeuNoyau::IndexClasseurInvalide(index_classeur));
         }
-        self.cles_chiffrement_classeurs[index] = Some(cle);
+        self.cles_chiffrement_classeurs[index_classeur] = Some(cle);
         Ok(())
     }
 }
@@ -200,12 +200,14 @@ impl TrousseauPublicComplet {
     /// Retourne une erreur si aucun foyer n'est présent à cet index.
     pub(crate) fn donne_trousseau_public_foyer(
         &self,
-        index: usize,
-    ) -> ResultCryptographe<&TrousseauPublicFoyer> {
-        if let Some(trousseau) = &self.trousseaux_publics_foyers[index] {
+        index_foyer: usize,
+    ) -> ResultFeuNoyau<&TrousseauPublicFoyer> {
+        if let Some(trousseau) = &self.trousseaux_publics_foyers[index_foyer] {
             Ok(trousseau)
         } else {
-            Err(ErreurCryptographe::Interne(String::from(ERR_TRP_002)))
+            Err(ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent(
+                index_foyer,
+            ))
         }
     }
 
@@ -217,12 +219,12 @@ impl TrousseauPublicComplet {
     pub(crate) fn ajoute_trousseau_foyer_public(
         &mut self,
         trousseau_public_foyer: TrousseauPublicFoyer,
-        index: usize,
-    ) -> ResultCryptographe<()> {
-        if index >= MAX_FOYERS {
-            return Err(ErreurCryptographe::Interne(String::from(ERR_TRP_003)));
+        index_foyer: usize,
+    ) -> ResultFeuNoyau<()> {
+        if index_foyer >= MAX_FOYERS {
+            return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));
         }
-        self.trousseaux_publics_foyers[index] = Some(trousseau_public_foyer);
+        self.trousseaux_publics_foyers[index_foyer] = Some(trousseau_public_foyer);
         Ok(())
     }
 }

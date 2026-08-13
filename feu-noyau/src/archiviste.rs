@@ -22,6 +22,14 @@
 //! Il ne connaît pas le Cryptographe. Il manipule uniquement des blobs chiffrés
 //! et des hashs — la sécurité est l'affaire exclusive du Cryptographe.
 //!
+//! # Erreurs
+//!
+//! Tout échec du système de fichiers remonte tel quel en
+//! [`ErreurFeuNoyau::IoError`] par `?` — c'est ce que désignent les sections
+//! `# Erreurs` qui parlent d'une opération disque. Les variantes `Archiviste*`
+//! et [`ErreurFeuNoyau::CheminInexistant`] sont réservées aux anomalies que
+//! l'Archiviste constate lui-même, avant de toucher au disque.
+//!
 //! # Première ouverture
 //!
 //! Lors de la première ouverture d'un foyer, `registre/` est absent. L'Archiviste
@@ -153,8 +161,9 @@ impl Archiviste {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le hash est absent du tiroir, si le fichier existe
-    /// déjà, ou si une opération disque échoue.
+    /// Retourne [`ErreurFeuNoyau::ArchivisteTiroirSansHash`] si le tiroir n'a pas
+    /// encore été empreinté, ou propage l'échec de l'écriture — le fichier déjà
+    /// présent compris, la création étant exclusive.
     pub(super) fn ecrit_blob(&self, mut tiroir: Tiroir) -> ResultFeuNoyau<()> {
         let chemin = self.donne_chemin_blob(tiroir.lire_index_classeur(), &tiroir.lire_hash()?);
 
@@ -175,7 +184,8 @@ impl Archiviste {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le fichier n'existe pas ou si la suppression échoue.
+    /// Retourne [`ErreurFeuNoyau::CheminInexistant`] si le blob est absent du
+    /// classeur, ou propage l'échec de la suppression.
     pub(super) fn supprime_blob(&self, index_classeur: usize, hash: &str) -> ResultFeuNoyau<()> {
         let chemin = self.donne_chemin_blob(index_classeur, hash);
         if !chemin.exists() {

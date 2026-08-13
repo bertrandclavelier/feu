@@ -69,11 +69,11 @@
 //!   chiffrement des clés, effacée dès que le trousseau persistable est constitué.
 
 use crate::Braise;
+use crate::ErreurFeuNoyau;
 use crate::MAX_CLASSEURS;
 use crate::MAX_FOYERS;
+use crate::ResultFeuNoyau;
 
-use super::erreur::ErreurCryptographe;
-use super::erreur::ResultCryptographe;
 use super::trousseaux_publics::{
     TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
 };
@@ -119,20 +119,6 @@ const LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu/classeur/sym
 // ── Constantes d'implémentation ──────────────────────────────────────────────
 
 const CHUNK_SIZE: usize = 4096;
-
-// ── Messages d'erreur ────────────────────────────────────────────────────────
-
-const ERR_TRO_002: &str = "TRO-002 > Problème index tableau";
-const ERR_TRO_004: &str = "TRO-004 > Mot de passe manquant";
-const ERR_TRO_005: &str = "TRO-005 > Problème de chiffrement clé";
-const ERR_TRO_006: &str = "TRO-006 > Erreur chiffrement";
-const ERR_TRO_007: &str = "TRO-007 > Erreur déchiffrement";
-const ERR_TRO_008: &str = "TRO-008 > Pas de trousseau pour cet indice";
-const ERR_TRO_009: &str = "TRO-009 > Problème de génération du trousseau public";
-const ERR_TRO_010: &str = "TRO-010 > Problème encodage braise";
-const ERR_TRO_011: &str = "TRO-011 > Pas de trousseau foyer";
-const ERR_TRO_012: &str = "TRO-012 > Pas de clé du classeur";
-const ERR_TRO_013: &str = "TRO-013 > Pas de clé de signature du nœud";
 
 /// Paire de clés ML-DSA-87 de signature d'un foyer.
 ///
@@ -214,7 +200,7 @@ impl TrousseauFoyer {
     fn genere_trousseau_public_foyer(
         &self,
         trousseau: &Trousseau,
-    ) -> ResultCryptographe<TrousseauPublicFoyer> {
+    ) -> ResultFeuNoyau<TrousseauPublicFoyer> {
         let mut trousseau_public_foyer = TrousseauPublicFoyer::new(
             self.braise,
             trousseau.chiffre_cle(self.cle_chiffrement.expose_secret())?,
@@ -224,7 +210,7 @@ impl TrousseauFoyer {
                 self.paire_chiffrement
                     .privee
                     .to_seed()
-                    .ok_or_else(|| ErreurCryptographe::Interne(String::from(ERR_TRO_005)))?
+                    .ok_or(ErreurFeuNoyau::CryptographeSeedMlKemIntrouvable)?
                     .as_ref(),
             )?,
             self.paire_chiffrement.publique.to_bytes().into(),
@@ -237,7 +223,9 @@ impl TrousseauFoyer {
                     i,
                 )?;
             } else {
-                return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_012)));
+                return Err(ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente(
+                    i,
+                ));
             }
         }
 
@@ -306,7 +294,7 @@ impl Trousseau {
     pub(super) fn ajouter_paire_noeud(
         &mut self,
         seed_bytes: &SecretBox<[u8; 64]>,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         let cle_privee = SigningKey::<MlDsa87>::from_seed(
             Self::derive_depuis_seed::<32>(seed_bytes, LABEL_DERIVATION_SIGNATURE_NOEUD)?
                 .expose_secret()
@@ -343,7 +331,7 @@ impl Trousseau {
         &mut self,
         seed_bytes: &SecretBox<[u8; 64]>,
         position: usize,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         // L'index de dérivation est position + 1
         let index_foyer = (position + 1) as u32;
 
@@ -428,8 +416,7 @@ impl Trousseau {
         // BASE32_NOPAD : alphabet `a-z2-7` sans padding `=`, l'adresse est donc
         // utilisable telle quelle comme nom de dossier (34 octets → 55 caractères).
         let braise = format!("{}{}", BASE32_NOPAD.encode(&data).to_lowercase(), ".braise");
-        let braise = Braise::try_from(braise.as_str())
-            .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_010)))?;
+        let braise = Braise::try_from(braise.as_str())?;
 
         // enregistrement de toutes les clés dans un TrousseauFoyer
         let trousseau_foyer = TrousseauFoyer {
@@ -442,7 +429,7 @@ impl Trousseau {
 
         // Ajout du TrousseauFoyer dans le trousseau
         if position >= MAX_FOYERS {
-            return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_002)));
+            return Err(ErreurFeuNoyau::IndexFoyerInvalide(position));
         }
         self.trousseaux_foyers[position] = Some(trousseau_foyer);
 
@@ -468,10 +455,7 @@ impl Trousseau {
     /// migration vers ML-DSA (v0.0.4, signature déterministe en place, mode
     /// *hedged* possible demain) ne risque donc pas de rendre le sel non
     /// reproductible.
-    pub(super) fn genere_sel(
-        &mut self,
-        seed_bytes: &SecretBox<[u8; 64]>,
-    ) -> ResultCryptographe<()> {
+    pub(super) fn genere_sel(&mut self, seed_bytes: &SecretBox<[u8; 64]>) -> ResultFeuNoyau<()> {
         self.sel = Some(
             *Self::derive_depuis_seed::<16>(seed_bytes, LABEL_DERIVATION_SEL)?.expose_secret(),
         );
@@ -521,7 +505,7 @@ impl Trousseau {
     ///
     /// Retourne une erreur si le mot de passe ou le sel est absent du trousseau,
     /// ou si la dérivation Argon2id échoue.
-    pub(super) fn derive_cle_ephemere(&mut self) -> ResultCryptographe<()> {
+    pub(super) fn derive_cle_ephemere(&mut self) -> ResultFeuNoyau<()> {
         let argon2 = Argon2::default();
 
         let mut buffer = SecretBox::new(Box::new([0u8; 32]));
@@ -536,7 +520,8 @@ impl Trousseau {
                 self.cle_ephemere = Some(buffer);
                 Ok(())
             }
-            (_, _) => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_004))),
+            (None, _) => Err(ErreurFeuNoyau::CryptographeMotDePasseAbsent),
+            (_, None) => Err(ErreurFeuNoyau::CryptographeSelAbsent),
         }
     }
 
@@ -558,7 +543,7 @@ impl Trousseau {
     pub(super) fn signe_avec_cle_noeud(
         &self,
         octets_a_signer: &[u8],
-    ) -> ResultCryptographe<[u8; 4627]> {
+    ) -> ResultFeuNoyau<[u8; 4627]> {
         Ok(Self::signe_octets(
             self.donne_cle_privee_signature_noeud()?,
             octets_a_signer,
@@ -574,7 +559,7 @@ impl Trousseau {
         &self,
         index_foyer: usize,
         octets_a_signer: &[u8],
-    ) -> ResultCryptographe<[u8; 4627]> {
+    ) -> ResultFeuNoyau<[u8; 4627]> {
         Ok(Self::signe_octets(
             self.donne_cle_privee_signature_foyer(index_foyer)?,
             octets_a_signer,
@@ -603,13 +588,13 @@ impl Trousseau {
     ///
     /// Retourne une erreur si la clé éphémère est absente du trousseau
     /// ou si le chiffrement AES-256-GCM échoue.
-    pub(super) fn chiffre_cle(&self, cle: &[u8; 32]) -> ResultCryptographe<[u8; 60]> {
+    pub(super) fn chiffre_cle(&self, cle: &[u8; 32]) -> ResultFeuNoyau<[u8; 60]> {
         match &self.cle_ephemere {
-            None => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_005))),
+            None => Err(ErreurFeuNoyau::CryptographeCleEphemereAbsente),
             Some(valeur) => Ok(
                 Self::chiffrement_generique_avec_cle(valeur.expose_secret(), cle)?
                     .try_into()
-                    .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_006)))?,
+                    .map_err(|_| ErreurFeuNoyau::CryptographeTailleSortieInattendue)?,
             ),
         }
     }
@@ -631,13 +616,13 @@ impl Trousseau {
     ///
     /// Retourne une erreur si la clé éphémère est absente du trousseau
     /// ou si le chiffrement AES-256-GCM échoue.
-    pub(super) fn chiffre_seed(&self, cle: &[u8; 64]) -> ResultCryptographe<[u8; 92]> {
+    pub(super) fn chiffre_seed(&self, cle: &[u8; 64]) -> ResultFeuNoyau<[u8; 92]> {
         match &self.cle_ephemere {
-            None => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_005))),
+            None => Err(ErreurFeuNoyau::CryptographeCleEphemereAbsente),
             Some(valeur) => Ok(
                 Self::chiffrement_generique_avec_cle(valeur.expose_secret(), cle)?
                     .try_into()
-                    .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_006)))?,
+                    .map_err(|_| ErreurFeuNoyau::CryptographeTailleSortieInattendue)?,
             ),
         }
     }
@@ -653,13 +638,13 @@ impl Trousseau {
     ///
     /// Retourne une erreur si la clé éphémère est absente, si l'auth tag est invalide
     /// (mot de passe incorrect), ou si la conversion du résultat en `[u8; 32]` échoue.
-    pub(super) fn dechiffre_cle(&self, cle: &[u8; 60]) -> ResultCryptographe<SecretBox<[u8; 32]>> {
+    pub(super) fn dechiffre_cle(&self, cle: &[u8; 60]) -> ResultFeuNoyau<SecretBox<[u8; 32]>> {
         match &self.cle_ephemere {
-            None => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_005))),
+            None => Err(ErreurFeuNoyau::CryptographeCleEphemereAbsente),
             Some(valeur) => {
                 let resultat = Self::dechiffrement_generique_avec_cle(valeur.expose_secret(), cle)?
                     .try_into()
-                    .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_007)))?;
+                    .map_err(|_| ErreurFeuNoyau::CryptographeTailleSortieInattendue)?;
                 Ok(SecretBox::new(Box::new(resultat)))
             }
         }
@@ -677,13 +662,13 @@ impl Trousseau {
     ///
     /// Retourne une erreur si la clé éphémère est absente, si l'auth tag est invalide
     /// (mot de passe incorrect), ou si la conversion du résultat en `[u8; 64]` échoue.
-    pub(super) fn dechiffre_seed(&self, cle: &[u8; 92]) -> ResultCryptographe<SecretBox<[u8; 64]>> {
+    pub(super) fn dechiffre_seed(&self, cle: &[u8; 92]) -> ResultFeuNoyau<SecretBox<[u8; 64]>> {
         match &self.cle_ephemere {
-            None => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_005))),
+            None => Err(ErreurFeuNoyau::CryptographeCleEphemereAbsente),
             Some(valeur) => {
                 let resultat = Self::dechiffrement_generique_avec_cle(valeur.expose_secret(), cle)?
                     .try_into()
-                    .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_TRO_007)))?;
+                    .map_err(|_| ErreurFeuNoyau::CryptographeTailleSortieInattendue)?;
                 Ok(SecretBox::new(Box::new(resultat)))
             }
         }
@@ -710,7 +695,7 @@ impl Trousseau {
         index_foyer: usize,
         index_classeur: usize,
         blob: &[u8],
-    ) -> ResultCryptographe<Vec<u8>> {
+    ) -> ResultFeuNoyau<Vec<u8>> {
         Self::chiffrement_generique_avec_cle(
             self.donne_cle_chiffrement_classeur(index_foyer, index_classeur)?
                 .expose_secret(),
@@ -733,7 +718,7 @@ impl Trousseau {
         index_foyer: usize,
         index_classeur: usize,
         blob: &[u8],
-    ) -> ResultCryptographe<Vec<u8>> {
+    ) -> ResultFeuNoyau<Vec<u8>> {
         Self::dechiffrement_generique_avec_cle(
             self.donne_cle_chiffrement_classeur(index_foyer, index_classeur)?
                 .expose_secret(),
@@ -757,11 +742,11 @@ impl Trousseau {
     /// ou si le chiffrement AES-GCM-stream échoue.
     pub(super) fn chiffre_avec_cle_foyer(
         &self,
-        index: usize,
+        index_foyer: usize,
         source: &mut impl Read,
         destination: &mut impl Write,
-    ) -> ResultCryptographe<()> {
-        if let Some(trousseau_foyer) = &self.trousseaux_foyers[index] {
+    ) -> ResultFeuNoyau<()> {
+        if let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] {
             self.chiffre_avec_cle(
                 trousseau_foyer.donne_cle_chiffrement().expose_secret(),
                 source,
@@ -769,7 +754,9 @@ impl Trousseau {
             )?;
             return Ok(());
         }
-        Err(ErreurCryptographe::Interne(String::from(ERR_TRO_008)))
+        Err(ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent(
+            index_foyer,
+        ))
     }
 
     /// Déchiffre un flux de données d'un foyer à partir de sa clé symétrique chiffrée.
@@ -796,7 +783,7 @@ impl Trousseau {
         cle_chiffree: &[u8; 60],
         source: &mut impl Read,
         destination: &mut impl Write,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         self.dechiffre_avec_cle(
             self.dechiffre_cle(cle_chiffree)?.expose_secret(),
             source,
@@ -826,7 +813,7 @@ impl Trousseau {
     pub(super) fn chiffrement_generique_avec_cle(
         cle_chiffrement: &[u8; 32],
         contenu: &[u8],
-    ) -> ResultCryptographe<Vec<u8>> {
+    ) -> ResultFeuNoyau<Vec<u8>> {
         // Conversion de la clé de chiffrement brute en Key<Aes256Gcm>
         let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
 
@@ -860,7 +847,7 @@ impl Trousseau {
     pub(super) fn dechiffrement_generique_avec_cle(
         cle_chiffrement: &[u8; 32],
         contenu: &[u8],
-    ) -> ResultCryptographe<Vec<u8>> {
+    ) -> ResultFeuNoyau<Vec<u8>> {
         // Conversion de la clé éphémère brute en Key<Aes256Gcm>
         let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
 
@@ -888,7 +875,7 @@ impl Trousseau {
         &self,
         index_foyer: usize,
         ciphertext: &Ciphertext1024,
-    ) -> ResultCryptographe<SecretBox<[u8; 32]>> {
+    ) -> ResultFeuNoyau<SecretBox<[u8; 32]>> {
         let secret_partage = self
             .donne_cle_privee_chiffrement_foyer(index_foyer)?
             .decapsulate(ciphertext);
@@ -914,9 +901,7 @@ impl Trousseau {
     ///
     /// Retourne une erreur si le sel ou la paire de signature du nœud est absente,
     /// ou si le chiffrement d'une clé échoue.
-    pub(super) fn genere_trousseau_public_complet(
-        &self,
-    ) -> ResultCryptographe<TrousseauPublicComplet> {
+    pub(super) fn genere_trousseau_public_complet(&self) -> ResultFeuNoyau<TrousseauPublicComplet> {
         match (self.sel, &self.paire_signature_noeud) {
             (Some(valeur1), Some(valeur2)) => {
                 let trousseau_public_noeud = TrousseauPublicNoeud::new(
@@ -938,7 +923,8 @@ impl Trousseau {
 
                 Ok(trousseau_public_complet)
             }
-            (_, _) => Err(ErreurCryptographe::Interne(String::from(ERR_TRO_009))),
+            (None, _) => Err(ErreurFeuNoyau::CryptographeSelAbsent),
+            (_, None) => Err(ErreurFeuNoyau::CryptographePaireSignatureNoeudAbsente),
         }
     }
 
@@ -964,7 +950,7 @@ impl Trousseau {
     pub(super) fn trousseau_public_noeud_vers_trousseau(
         &mut self,
         trousseau_public_noeud: &TrousseauPublicNoeud,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         let cle_dechiffree = self.dechiffre_cle(&trousseau_public_noeud.donne_cle_sig_privee())?;
 
         let cle_sig_priv = SigningKey::<MlDsa87>::from_seed(cle_dechiffree.expose_secret().into());
@@ -998,7 +984,7 @@ impl Trousseau {
         &mut self,
         trousseau_public_foyer: &TrousseauPublicFoyer,
         index: usize,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         let cle_chiffrement =
             self.dechiffre_cle(&trousseau_public_foyer.donne_cle_chiffrement())?;
 
@@ -1047,13 +1033,17 @@ impl Trousseau {
         &self,
         index_foyer: usize,
         index_classeur: usize,
-    ) -> ResultCryptographe<&SecretBox<[u8; 32]>> {
+    ) -> ResultFeuNoyau<&SecretBox<[u8; 32]>> {
         let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
-            return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_011)));
+            return Err(ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent(
+                index_foyer,
+            ));
         };
 
         let Some(cle_classeur) = &trousseau_foyer.cles_chiffrement_classeurs[index_classeur] else {
-            return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_012)));
+            return Err(ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente(
+                index_classeur,
+            ));
         };
         Ok(cle_classeur)
     }
@@ -1066,9 +1056,11 @@ impl Trousseau {
     fn donne_cle_privee_chiffrement_foyer(
         &self,
         index_foyer: usize,
-    ) -> ResultCryptographe<&DecapsulationKey1024> {
+    ) -> ResultFeuNoyau<&DecapsulationKey1024> {
         let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
-            return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_011)));
+            return Err(ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent(
+                index_foyer,
+            ));
         };
 
         Ok(trousseau_foyer.donne_cle_privee_chiffrement())
@@ -1082,9 +1074,11 @@ impl Trousseau {
     fn donne_cle_privee_signature_foyer(
         &self,
         index_foyer: usize,
-    ) -> ResultCryptographe<&SigningKey<MlDsa87>> {
+    ) -> ResultFeuNoyau<&SigningKey<MlDsa87>> {
         let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
-            return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_011)));
+            return Err(ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent(
+                index_foyer,
+            ));
         };
 
         Ok(trousseau_foyer.donne_cle_privee_signature())
@@ -1095,9 +1089,9 @@ impl Trousseau {
     /// # Erreurs
     ///
     /// Retourne une erreur si la paire de signature du nœud est absente du trousseau.
-    fn donne_cle_privee_signature_noeud(&self) -> ResultCryptographe<&SigningKey<MlDsa87>> {
+    fn donne_cle_privee_signature_noeud(&self) -> ResultFeuNoyau<&SigningKey<MlDsa87>> {
         let Some(paire_signature_noeud) = &self.paire_signature_noeud else {
-            return Err(ErreurCryptographe::Interne(String::from(ERR_TRO_013)));
+            return Err(ErreurFeuNoyau::CryptographePaireSignatureNoeudAbsente);
         };
 
         Ok(&paire_signature_noeud.privee)
@@ -1117,7 +1111,7 @@ impl Trousseau {
     fn derive_depuis_seed<const N: usize>(
         seed: &SecretBox<[u8; 64]>,
         label: &str,
-    ) -> ResultCryptographe<SecretBox<[u8; N]>> {
+    ) -> ResultFeuNoyau<SecretBox<[u8; N]>> {
         let hkdf = Hkdf::<Sha3_256>::new(None, seed.expose_secret());
 
         let mut cle_brute = SecretBox::new(Box::new([0u8; N]));
@@ -1171,7 +1165,7 @@ impl Trousseau {
         cle_chiffrement: &[u8; 32],
         source: &mut impl Read,
         destination: &mut impl Write,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         // Génération du nonce aléatoire
         let mut nonce = [0u8; 7];
         OsRng.fill_bytes(&mut nonce);
@@ -1229,7 +1223,7 @@ impl Trousseau {
         cle_chiffrement: &[u8; 32],
         source: &mut impl Read,
         destination: &mut impl Write,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         // Récupération du nonce
         let mut nonce = [0u8; 7];
         source.read_exact(&mut nonce)?;
@@ -1282,6 +1276,8 @@ impl Trousseau {
 mod tests {
     use std::collections::HashSet;
 
+    use crate::ResultFeuNoyau;
+
     use super::*;
 
     /// Vérifie qu'une même seed redonne toujours exactement le même matériau.
@@ -1291,7 +1287,7 @@ mod tests {
     /// S'il cède, les données déjà déposées deviennent illisibles et les foyers
     /// changent d'adresse.
     #[test]
-    fn derivation_deterministe_meme_seed() -> ResultCryptographe<()> {
+    fn derivation_deterministe_meme_seed() -> ResultFeuNoyau<()> {
         let seed = SecretBox::new(Box::new([0x42; 64]));
 
         // Les trois appels reproduisent la séquence de
@@ -1362,7 +1358,7 @@ mod tests {
     /// Sel, clés du nœud, clés et braises de chaque foyer : rien ne doit
     /// coïncider entre deux nœuds nés de seeds différentes.
     #[test]
-    fn derivation_deterministe_seeds_differentes() -> ResultCryptographe<()> {
+    fn derivation_deterministe_seeds_differentes() -> ResultFeuNoyau<()> {
         // Contrepartie du test précédent : une dérivation qui ignorerait la seed
         // serait parfaitement « déterministe », mais rendrait le même matériau
         // pour tous les nœuds. Seules deux seeds distinctes attrapent ce cas.
@@ -1435,7 +1431,7 @@ mod tests {
     /// `chiffre_blob` y délèguent, en ne changeant que la clé fournie et le type
     /// de sortie. Le tester une fois les couvre tous les trois.
     #[test]
-    fn cycle_chiffrement_dechiffrement_generique() -> ResultCryptographe<()> {
+    fn cycle_chiffrement_dechiffrement_generique() -> ResultFeuNoyau<()> {
         let cle = [0x11u8; 32];
         let contenu = b"contenu de test";
 
@@ -1461,7 +1457,7 @@ mod tests {
     /// dérivée par Argon2id du mot de passe et du sel — un mot de passe erroné
     /// donne une clé différente, et AES-GCM rejette l'auth tag.
     #[test]
-    fn mauvais_mot_de_passe() -> ResultCryptographe<()> {
+    fn mauvais_mot_de_passe() -> ResultFeuNoyau<()> {
         let mut trousseau = Trousseau::new();
         trousseau.definit_sel([0x22; 16]);
         trousseau.definit_mdp(SecretString::from("bon mot de passe"));
@@ -1495,7 +1491,7 @@ mod tests {
     /// échéant. Un label dupliqué ferait collisionner deux clés, et deux foyers
     /// partageraient alors leur matériau.
     #[test]
-    fn derivation_cles_distinctes() -> ResultCryptographe<()> {
+    fn derivation_cles_distinctes() -> ResultFeuNoyau<()> {
         // Un ensemble par famille : seules des valeurs de même nature et de même
         // taille peuvent réellement collisionner. Confronter une clé symétrique
         // de 32 octets à une clé publique de plusieurs milliers ne prouverait

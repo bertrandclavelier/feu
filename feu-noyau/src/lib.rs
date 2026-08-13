@@ -296,7 +296,8 @@ impl SessionFoyers {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si `index >= MAX_FOYERS`.
+    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si `index_foyer` est hors
+    /// bornes.
     fn index_vers_braise(&self, index_foyer: usize) -> ResultFeuNoyau<Braise> {
         if index_foyer >= MAX_FOYERS {
             Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer))
@@ -642,7 +643,8 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si un foyer n'est pas ouvert ou si une opération disque échoue.
+    /// Retourne [`ErreurFeuNoyau::AuMoinsUnFoyerFerme`] si un seul foyer est
+    /// fermé, ou propage l'échec du rechiffrement et des opérations disque.
     pub fn changement_mdp(
         &mut self,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
@@ -701,8 +703,10 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une [`ErreurFeuNoyau`] si l'index est invalide, si le foyer est déjà
-    /// ouvert, si le mot de passe est incorrect, ou si une opération disque échoue.
+    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
+    /// [`ErreurFeuNoyau::FoyerDejaOuvert`] si le foyer l'est déjà,
+    /// [`ErreurFeuNoyau::AesGcm`] si le mot de passe est incorrect — l'auth tag
+    /// ne valide pas —, ou propage l'échec d'une opération disque.
     ///
     /// # Avertissement sécurité
     ///
@@ -744,7 +748,7 @@ impl FeuNoyau {
             interface_feu_noyau,
         ) {
             let _ = self.gardien.suppression_archive_foyer_tar(braise);
-            return Err(e.into());
+            return Err(e);
         }
 
         // Un échec en cours d'extraction laisse le `.tar` derrière lui.
@@ -815,8 +819,9 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une [`ErreurFeuNoyau`] si l'index est invalide, si le foyer est
-    /// déjà fermé, si le chiffrement échoue, ou si une opération disque échoue.
+    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
+    /// [`ErreurFeuNoyau::FoyerFerme`] si le foyer l'est déjà, ou propage l'échec
+    /// du chiffrement et des opérations disque.
     pub fn fermeture_foyer(
         &mut self,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
@@ -850,7 +855,7 @@ impl FeuNoyau {
             let _ = self.gardien.suppression_archive_foyer_tar(braise);
             let _ = self.gardien.suppression_archive_foyer_chiffree(braise);
 
-            return Err(e.into());
+            return Err(e);
         };
 
         self.gardien.suppression_archive_foyer_tar(braise)?;
@@ -890,8 +895,10 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si l'index est invalide, si le diagnostic détecte une
-    /// anomalie, si le mot de passe est incorrect, ou si une opération disque échoue.
+    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
+    /// [`ErreurFeuNoyau::FermetureSecoursFoyerImpossible`] si le diagnostic
+    /// préalable relève une anomalie, [`ErreurFeuNoyau::AesGcm`] si le mot de
+    /// passe est incorrect, ou propage l'échec d'une opération disque.
     pub fn secours_fermeture_foyer(
         &mut self,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
@@ -965,10 +972,13 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
-    /// ouvert, si le Cryptographe ou l'Archiviste est absent, si la lecture de
-    /// `source` échoue, si la taille dépasse [`MAX_TAILLE_BLOB`], si le chiffrement
-    /// échoue, ou si l'écriture disque échoue.
+    /// Retourne [`ErreurFeuNoyau::IndexClasseurInvalide`] si `index_classeur` est
+    /// hors bornes, puis délègue à `archiviste_foyer_ouvert` l'index de foyer
+    /// ([`ErreurFeuNoyau::IndexFoyerInvalide`]), le foyer fermé
+    /// ([`ErreurFeuNoyau::FoyerFerme`]) et l'Archiviste manquant
+    /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]). Vient ensuite
+    /// [`ErreurFeuNoyau::TailleMaxDepasseeBlob`] si `source` dépasse
+    /// [`MAX_TAILLE_BLOB`]. Propage enfin l'échec du chiffrement et de l'écriture.
     pub fn depot_blob(
         &mut self,
         index_foyer: usize,
@@ -1112,8 +1122,12 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si les index sont invalides, si le foyer n'est pas
-    /// ouvert, si l'Archiviste est absent, ou si la lecture du dossier échoue.
+    /// Retourne [`ErreurFeuNoyau::IndexClasseurInvalide`] si `index_classeur` est
+    /// hors bornes, puis délègue à `archiviste_foyer_ouvert` l'index de foyer
+    /// ([`ErreurFeuNoyau::IndexFoyerInvalide`]), le foyer fermé
+    /// ([`ErreurFeuNoyau::FoyerFerme`]) et l'Archiviste manquant
+    /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]). Propage enfin l'échec de la
+    /// lecture du dossier.
     pub fn liste_blobs(
         &self,
         index_foyer: usize,
@@ -1216,9 +1230,8 @@ impl FeuNoyau {
             ));
         }
 
-        Ok(self
-            .cryptographe
-            .chiffrement_asymetrique(cle_publique_destinataire, octets_a_chiffrer)?)
+        self.cryptographe
+            .chiffrement_asymetrique(cle_publique_destinataire, octets_a_chiffrer)
     }
 
     /// Déchiffre un message chiffré à destination de ce foyer.
@@ -1254,9 +1267,8 @@ impl FeuNoyau {
             ));
         }
 
-        Ok(self
-            .cryptographe
-            .dechiffrement_asymetrique(index_foyer, octets_a_dechiffrer)?)
+        self.cryptographe
+            .dechiffrement_asymetrique(index_foyer, octets_a_dechiffrer)
     }
 
     // ── Signature ────────────────────────────────────────────────────────────
@@ -1282,7 +1294,7 @@ impl FeuNoyau {
             ));
         }
 
-        Ok(self.cryptographe.signature_noeud(octets_a_signer)?)
+        self.cryptographe.signature_noeud(octets_a_signer)
     }
 
     /// Signe des octets avec la clé privée de signature ML-DSA-87 du foyer.
@@ -1318,9 +1330,8 @@ impl FeuNoyau {
             ));
         }
 
-        Ok(self
-            .cryptographe
-            .signature_foyer(index_foyer, octets_a_signer)?)
+        self.cryptographe
+            .signature_foyer(index_foyer, octets_a_signer)
     }
 
     /// Vérifie une signature ML-DSA-87.
@@ -1330,17 +1341,14 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si `signature` n'est pas un encodage ML-DSA-87 valide.
+    /// Retourne [`ErreurFeuNoyau::CryptographeSignatureMlDsaMalFormee`] si
+    /// `signature` n'est pas un encodage ML-DSA-87 décodable.
     pub fn verification_signature(
         cle_publique: [u8; 2592],
         signature: [u8; 4627],
         octets_signes: &[u8],
     ) -> ResultFeuNoyau<bool> {
-        Ok(Cryptographe::verification_signature(
-            cle_publique,
-            signature,
-            octets_signes,
-        )?)
+        Cryptographe::verification_signature(cle_publique, signature, octets_signes)
     }
 
     /// Calcule l'empreinte SHA3-256 des octets fournis.
@@ -1399,10 +1407,11 @@ impl FeuNoyau {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si l'index est invalide,
-    /// si le foyer n'est pas ouvert, si l'Archiviste est absent,
-    /// si l'adresse `.braise` est introuvable, ou si une
-    /// opération disque échoue.
+    /// La validation du foyer est déléguée à `archiviste_foyer_ouvert`, appelé en
+    /// tête : index hors bornes ([`ErreurFeuNoyau::IndexFoyerInvalide`]), foyer
+    /// fermé ([`ErreurFeuNoyau::FoyerFerme`]) et Archiviste manquant
+    /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]). Propage ensuite l'échec des
+    /// opérations disque.
     pub fn diagnostic_foyer(&self, index_foyer: usize) -> ResultFeuNoyau<Vec<Anomalie>> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 

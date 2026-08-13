@@ -71,8 +71,10 @@ impl Tiroir {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le tiroir n'est pas vide, si la lecture de `source`
-    /// échoue, ou si la taille dépasse [`MAX_TAILLE_BLOB`].
+    /// Retourne [`ErreurFeuNoyau::ArchivisteTiroirBlobNonvide`] si le tiroir
+    /// détient déjà un blob, [`ErreurFeuNoyau::TailleMaxDepasseeBlob`] si le
+    /// total atteint [`MAX_TAILLE_BLOB`], ou propage l'échec de lecture de
+    /// `source`.
     pub(crate) fn remplir(&mut self, mut source: impl Read) -> ResultFeuNoyau<()> {
         if !self.blob.is_empty() {
             return Err(ErreurFeuNoyau::ArchivisteTiroirBlobNonvide);

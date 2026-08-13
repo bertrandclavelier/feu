@@ -8,20 +8,27 @@
 
 //! Définit les types d'erreurs de `feu-noyau`.
 //!
-//! [`ErreurFeuNoyau`] est l'unique type d'erreur exposé à l'extérieur du crate.
-//! Il agrège les erreurs de chaque composant interne — chacun souverain
-//! dans la définition de ses propres erreurs — et les fait remonter de
-//! manière transparente vers l'appelant.
+//! [`ErreurFeuNoyau`] est l'unique type d'erreur du crate — non seulement à sa
+//! frontière, mais partout à l'intérieur : gardien, archiviste et cryptographe
+//! lèvent directement ses variantes. Aucun module ne définit plus les siennes,
+//! et rien n'est donc traduit ni aplati en route.
 //!
-//! [`ResultFeuNoyau<T>`] est l'alias de [`Result<T, ErreurFeuNoyau>`] utilisé dans
-//! toutes les fonctions publiques de `feu-noyau`.
+//! Ce choix succède à des types par module dont les erreurs finissaient toutes
+//! en `String` à la sortie : la cause exacte se perdait à la frontière, là où
+//! elle est précisément utile. Le prix en est un catalogue unique et long, dont
+//! l'ordre alphabétique tient lieu de plan.
+//!
+//! [`ResultFeuNoyau<T>`] est l'alias de [`Result<T, ErreurFeuNoyau>`] utilisé
+//! par toutes les fonctions du crate, publiques comme internes.
 
 use std::path::PathBuf;
 
 use crate::{
-    Braise, MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
-    MAX_TAILLE_SIGNATURE, cryptographe::erreur::ErreurCryptographe,
+    MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
+    MAX_TAILLE_SIGNATURE,
 };
+use data_encoding::DecodePartial;
+use hkdf::InvalidLength;
 use thiserror::Error;
 
 /// Alias de [`Result`] utilisé par toutes les fonctions publiques de `feu-noyau`.
@@ -29,18 +36,23 @@ pub type ResultFeuNoyau<T> = Result<T, ErreurFeuNoyau>;
 
 /// Type d'erreur unique exposé par `feu-noyau`.
 ///
-/// Les variantes internes viennent d'abord, par ordre alphabétique — c'est le
+/// Les variantes **internes** viennent d'abord, par ordre alphabétique — c'est le
 /// seul ordre qui dise sans ambiguïté où insérer la suivante. Elles couvrent les
 /// préconditions non satisfaites, les index hors bornes et les états incohérents.
-/// Seul le `Cryptographe` garde encore un type d'erreur propre, aplati ici en
-/// `String` via `.to_string()` pour ne pas faire fuir un type privé à travers
-/// l'API — le gardien et l'archiviste, eux, lèvent directement leurs variantes.
+/// Leur préfixe de nom désigne le composant qui les lève lorsque le cas lui est
+/// propre ; les cas partagés par plusieurs composants n'en portent pas.
 ///
-/// Les variantes externes ferment la liste : elles portent l'erreur d'un type
-/// étranger au lieu de la traduire.
+/// Les variantes **externes** ferment la liste : elles portent l'erreur d'une
+/// crate tierce au lieu de la traduire. Celles dont le type source implémente
+/// `std::error::Error` le conservent via `#[from]` ; les autres n'ont d'autre
+/// choix que la `String`, chacune expliquant pourquoi.
 ///
-/// Le préfixe `NOY >` dans chaque message sert de marqueur de couche lorsque
-/// les messages sont encapsulés par la couche applicative (`feu-application`).
+/// Le préfixe `NOY >` des messages sert de marqueur de couche lorsqu'ils sont
+/// encapsulés par la couche applicative (`feu-application`).
+///
+/// Aucune charge utile n'est sensible : ce qu'une variante porte doit pouvoir
+/// s'afficher. Les valeurs qui n'y ont pas leur place — braise, chemin absolu —
+/// sont portées pour inspection mais absentes du message.
 #[derive(Error, Debug)]
 pub enum ErreurFeuNoyau {
     /// Foyer marqué ouvert dans la session alors que son emplacement
@@ -78,10 +90,80 @@ pub enum ErreurFeuNoyau {
     #[error("NOY > Fichier ou dossier inexistant")]
     CheminInexistant(PathBuf),
 
-    /// Erreur remontée depuis le cryptographe — opération cryptographique échouée.
-    /// Le message textuel provient du type d'erreur interne du cryptographe via `.to_string()`.
-    #[error("NOY > {0}")]
-    Cryptographe(String),
+    /// Message chiffré dont les 1568 premiers octets ne forment pas un
+    /// ciphertext ML-KEM-1024 exploitable — message tronqué ou mal formé.
+    #[error("NOY > Ciphertext ML-KEM invalide")]
+    CryptographeCiphertextMlKemInvalide,
+
+    /// Ce classeur n'a pas de clé de chiffrement, des deux côtés du miroir :
+    /// trousseau privé en mémoire comme trousseau public sur le disque.
+    #[error("NOY > Clé de chiffrement du classeur {0} absente du trousseau")]
+    CryptographeCleChiffrementClasseurAbstente(usize),
+
+    /// Opération sur le trousseau demandée avant la soumission du mot de passe :
+    /// la clé éphémère qui chiffre et déchiffre toutes les autres est absente.
+    #[error("NOY > Clé éphémère absente du trousseau")]
+    CryptographeCleEphemereAbsente,
+
+    /// Clé publique ML-KEM-1024 du destinataire que la crate refuse : les 1568
+    /// octets fournis ne forment pas une clé d'encapsulation valide.
+    #[error("NOY > Clé publique de chiffrement invalide")]
+    CryptographeClePubliqueChiffrementInvalide,
+
+    /// Hash SHA3-256 du blob déchiffré différent de celui demandé : le
+    /// déchiffrement a réussi, mais le contenu rendu n'est pas le bon.
+    #[error("NOY > Données corrompues après déchiffrement")]
+    CryptographeHashBlobDiscordant,
+
+    /// Dérivation de la clé éphémère tentée sans mot de passe : l'interface n'en
+    /// a pas fourni, ou le trousseau a été purgé depuis.
+    #[error("NOY > Mot de passe absent du trousseau")]
+    CryptographeMotDePasseAbsent,
+
+    /// Saisie du mot de passe annulée : l'interface n'a rien rendu, l'opération
+    /// s'arrête à la demande de l'utilisateur.
+    #[error("NOY > Saisie du mot de passe annulée")]
+    CryptographeMotDePasseNonSaisi,
+
+    /// Les deux saisies de définition du mot de passe ne concordent pas — la
+    /// seconde sert justement à écarter une faute de frappe sur la première.
+    #[error("NOY > Les deux mots de passe ne correspondent pas")]
+    CryptographeMotsDePasseDiscordants,
+
+    /// Paire de signature ML-DSA-87 du nœud absente du trousseau : elle n'est
+    /// reconstruite qu'à l'allumage, mot de passe vérifié.
+    #[error("NOY > Paire de signature du nœud absente du trousseau")]
+    CryptographePaireSignatureNoeudAbsente,
+
+    /// Clé privée ML-KEM-1024 dont la seed n'est pas extractible, alors que le
+    /// trousseau public doit la stocker sous forme de seed chiffrée.
+    #[error("NOY > Seed ML-KEM introuvable dans la clé privée")]
+    CryptographeSeedMlKemIntrouvable,
+
+    /// Seed générée puis rejetée : l'utilisateur n'a pas confirmé l'avoir notée,
+    /// la création du nœud est abandonnée à sa demande.
+    #[error("NOY > Seed non confirmée, création du nœud abandonnée")]
+    CryptographeSeedNonConfirmee,
+
+    /// Dérivation de la clé éphémère tentée sans sel Argon2id, qu'il vienne du
+    /// disque ou de la seed — sans lui, Argon2id n'a pas de quoi travailler.
+    #[error("NOY > Sel Argon2id absent du trousseau")]
+    CryptographeSelAbsent,
+
+    /// Les 4627 octets soumis ne forment pas un encodage ML-DSA-87 décodable :
+    /// signature illisible, à distinguer d'une signature lue et jugée fausse.
+    #[error("NOY > Signature ML-DSA mal formée")]
+    CryptographeSignatureMlDsaMalFormee,
+
+    /// Buffer de taille imprévue en sortie d'AES-256-GCM : l'opération a réussi,
+    /// c'est sa longueur qui ne tient pas dans le tableau attendu.
+    #[error("NOY > Taille inattendue en sortie de chiffrement")]
+    CryptographeTailleSortieInattendue,
+
+    /// Aucun trousseau pour ce foyer : le foyer est fermé, ses clés ne sont pas
+    /// en mémoire — ou son emplacement du trousseau public est vide.
+    #[error("NOY > Le foyer {0} n'a pas de trousseau")]
+    CryptographeTrousseauFoyerAbsent(usize),
 
     /// Dossier clair du foyer trop abîmé pour que la reconstruction du trousseau
     /// aboutisse — le diagnostic préalable a relevé au moins une anomalie.
@@ -121,16 +203,6 @@ pub enum ErreurFeuNoyau {
     /// porte le foyer puis le classeur.
     #[error("NOY > Foyer {0} : pas de clé pour le classeur {1}")]
     GardienPasDeClePourClasseur(usize, usize),
-
-    /// Aucun trousseau public disponible pour ce foyer au moment de l'écrire
-    /// sur le disque.
-    #[error("NOY > Le foyer {0} n'a pas de trousseau public")]
-    GardienPasDeTrousseauFoyer(usize),
-
-    /// Échec de l'ajout d'une clé de classeur au trousseau public du foyer.
-    /// La braise est portée pour inspection, jamais affichée : c'est une adresse.
-    #[error("NOY > Problème d'ajout de clé pour le classeur {1}")]
-    GardienProblemeAjoutCleClasseur(Braise, usize),
 
     /// Braise de `config.feu` que `Braise::try_from` refuse — le fichier est
     /// lisible, c'est son contenu qui est corrompu.
@@ -179,21 +251,85 @@ pub enum ErreurFeuNoyau {
 
     /// Échec d'entrée-sortie remonté tel quel par `?` : le variant porte
     /// l'erreur système au lieu de la traduire.
-    #[error("IoError > {0}")]
+    #[error("NOY > IoError > {0}")]
     IoError(#[from] std::io::Error),
 
     /// Version ou prochain index de `config.feu` illisibles comme entiers,
     /// remontés tels quels par `?`.
-    #[error("ParseIntError > {0}")]
+    #[error("NOY > ParseIntError > {0}")]
     ParseIntError(#[from] std::num::ParseIntError),
+
+    /// Erreur émise par `bip39` lors de la génération ou du parsing du mnémonique.
+    ///
+    /// `bip39::Error` implémente `std::error::Error` — `#[from]` génère
+    /// automatiquement la conversion. Le type original est préservé dans la variante.
+    #[error("NOY > Bip39 > {0}")]
+    Bip39(#[from] bip39::Error),
+
+    /// Erreur HKDF — longueur de sortie invalide, stockée en texte.
+    ///
+    /// `hkdf::InvalidLength` n'implémente pas `std::error::Error`, ce qui rend
+    /// `#[from]` inutilisable. La conversion est manuelle (voir `impl From` ci-dessous) :
+    /// l'erreur est convertie en `String` via `.to_string()` — le type original est perdu.
+    #[error("NOY > Hkdf > {0}")]
+    Hkdf(String),
+
+    /// Erreur Argon2id — dérivation de la clé éphémère depuis le mot de passe.
+    ///
+    /// `argon2::Error` implémente `std::error::Error` (feature `std`) — `#[from]`
+    /// génère automatiquement la conversion. Le type original est préservé dans
+    /// la variante.
+    #[error("NOY > Argon2 > {0}")]
+    Argon2(#[from] argon2::Error),
+
+    /// Erreur AES-256-GCM — chiffrement ou déchiffrement d'une clé.
+    ///
+    /// `aes_gcm::Error` n'implémente pas `std::error::Error`, ce qui rend
+    /// `#[from]` inutilisable. La conversion est manuelle (voir `impl From` ci-dessous) :
+    /// l'erreur est convertie en `String` via `.to_string()` — le type original est perdu.
+    #[error("NOY > AesGcm > {0}")]
+    AesGcm(String),
+
+    /// Erreur de décodage hexadécimal — décodage partiel ou caractère invalide.
+    ///
+    /// `data_encoding::DecodePartial` n'implémente ni `std::error::Error` ni
+    /// `Display`, ce qui rend `#[from]` inutilisable. La conversion est manuelle
+    /// (voir `impl From` ci-dessous) : le message est extrait du champ `error`
+    /// (de type `DecodeError`, qui implémente `Display`) — le type original est perdu.
+    #[error("NOY > DecodePartial > {0}")]
+    DecodePartial(String),
 }
 
-impl From<ErreurCryptographe> for ErreurFeuNoyau {
-    /// Convertit une erreur interne du cryptographe en [`ErreurFeuNoyau::Cryptographe`].
+impl From<DecodePartial> for ErreurFeuNoyau {
+    /// Convertit `data_encoding::DecodePartial` en [`ErreurFeuNoyau::DecodePartial`].
     ///
-    /// Le type interne est perdu — seul le message textuel est propagé,
-    /// préservant l'encapsulation des détails d'implémentation du cryptographe.
-    fn from(e: ErreurCryptographe) -> Self {
-        ErreurFeuNoyau::Cryptographe(e.to_string())
+    /// `DecodePartial` n'implémente ni `Display` ni `std::error::Error`.
+    /// Le message est extrait de son champ `error: DecodeError` qui implémente
+    /// `Display` — c'est la seule information récupérable sans le trait bound
+    /// qu'exige `#[from]`.
+    fn from(e: DecodePartial) -> Self {
+        ErreurFeuNoyau::DecodePartial(e.error.to_string())
+    }
+}
+
+impl From<hkdf::InvalidLength> for ErreurFeuNoyau {
+    /// Convertit `hkdf::InvalidLength` en [`ErreurFeuNoyau::Hkdf`].
+    ///
+    /// `hkdf::InvalidLength` implémente `Display` mais pas `std::error::Error`.
+    /// `.to_string()` suffit pour extraire le message — c'est tout ce qui
+    /// peut être récupéré sans le trait bound qu'exige `#[from]`.
+    fn from(e: InvalidLength) -> Self {
+        ErreurFeuNoyau::Hkdf(e.to_string())
+    }
+}
+
+impl From<aes_gcm::Error> for ErreurFeuNoyau {
+    /// Convertit `aes_gcm::Error` en [`ErreurFeuNoyau::AesGcm`].
+    ///
+    /// `aes_gcm::Error` implémente `Display` mais pas `std::error::Error`.
+    /// `.to_string()` suffit pour extraire le message — c'est tout ce qui
+    /// peut être récupéré sans le trait bound qu'exige `#[from]`.
+    fn from(e: aes_gcm::Error) -> Self {
+        ErreurFeuNoyau::AesGcm(e.to_string())
     }
 }

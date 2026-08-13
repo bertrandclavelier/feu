@@ -38,7 +38,6 @@
 //! données en clair. Cette centralisation est un invariant fondamental
 //! du protocole.
 
-pub(super) mod erreur;
 mod trousseau;
 pub(crate) mod trousseaux_publics;
 
@@ -52,22 +51,15 @@ use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use sha3::{Digest, Sha3_256};
 use std::io::{Read, Write};
 
-use crate::InterfaceFeuNoyau;
-use crate::MAX_FOYERS;
-use crate::cryptographe::erreur::{ErreurCryptographe, ResultCryptographe};
 use crate::cryptographe::trousseau::Trousseau;
 use crate::cryptographe::trousseaux_publics::{
     TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
 };
+use crate::{ErreurFeuNoyau, MAX_FOYERS};
+use crate::{InterfaceFeuNoyau, ResultFeuNoyau};
 
 const NOMBRE_MOTS_SEED: usize = 24;
 const INFO_HKDF_CHIFFREMENT_ASYMETRIQUE: &str = "feu-chiffrement-asymetrique";
-
-const ERR_CRY_001: &str = "CRY-001 > Données corrompues après déchiffrement";
-const ERR_CRY_002: &str = "CRY-002 > Erreur déchiffrement";
-const ERR_CRY_003: &str = "CRY-003 > Erreur définition mot de passe";
-const ERR_CRY_004: &str = "CRY-004 > Problème enregistrement seed";
-const ERR_CRY_005: &str = "CRY-005 > Signature ML-DSA invalide";
 
 /// Gardien de la sécurité cryptographique du nœud.
 ///
@@ -112,7 +104,7 @@ impl Cryptographe {
     pub(super) fn initialise_noeud_a_partir_nouvelle_seed(
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         // Bloc encadrant la portée de phrase_seed
         {
             let phrase_seed: SecretString;
@@ -133,7 +125,7 @@ impl Cryptographe {
                 interface.recevoir_seed(&mots);
 
                 if !interface.confirmer_enregistrement_seed() {
-                    return Err(ErreurCryptographe::Interne(String::from(ERR_CRY_004)));
+                    return Err(ErreurFeuNoyau::CryptographeSeedNonConfirmee);
                 }
                 phrase_seed = SecretString::from(mnemonic.expose_secret().to_string());
             }
@@ -166,7 +158,7 @@ impl Cryptographe {
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
         phrase_seed: SecretString,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         self.initialisation_nouveau_mdp(interface)?;
 
         self.genere_trousseau_a_partir_seed(interface, phrase_seed)?;
@@ -201,7 +193,7 @@ impl Cryptographe {
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
         phrase_seed: SecretString,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         if !self.trousseau.mdp_existe() {
             self.demande_mdp(interface)?;
         }
@@ -245,7 +237,7 @@ impl Cryptographe {
         &mut self,
         trousseau_public_noeud: &TrousseauPublicNoeud,
         interface: &impl InterfaceFeuNoyau,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         self.demande_mdp(interface)?;
         self.trousseau
             .definit_sel(trousseau_public_noeud.donne_sel());
@@ -278,7 +270,7 @@ impl Cryptographe {
         &mut self,
         trousseau_public_foyer: TrousseauPublicFoyer,
         index_foyer: usize,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         self.trousseau
             .trousseau_public_foyer_vers_trousseau_foyer(&trousseau_public_foyer, index_foyer)?;
 
@@ -307,7 +299,7 @@ impl Cryptographe {
         trousseau_public_foyer: TrousseauPublicFoyer,
         index_foyer: usize,
         interface: &impl InterfaceFeuNoyau,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         self.demande_mdp(interface)?;
         self.derivation_cle_ephemere()?;
 
@@ -337,7 +329,7 @@ impl Cryptographe {
     /// d'une clé échoue.
     pub(super) fn donne_trousseau_public_complet(
         &mut self,
-    ) -> ResultCryptographe<TrousseauPublicComplet> {
+    ) -> ResultFeuNoyau<TrousseauPublicComplet> {
         self.derivation_cle_ephemere()?;
 
         let resultat = self.trousseau.genere_trousseau_public_complet()?;
@@ -362,7 +354,7 @@ impl Cryptographe {
     pub(super) fn changement_mdp(
         &mut self,
         interface: &impl InterfaceFeuNoyau,
-    ) -> ResultCryptographe<TrousseauPublicComplet> {
+    ) -> ResultFeuNoyau<TrousseauPublicComplet> {
         self.initialisation_nouveau_mdp(interface)?;
         self.trousseau.derive_cle_ephemere()?;
         let trousseau_public_complet = self.trousseau.genere_trousseau_public_complet()?;
@@ -393,7 +385,7 @@ impl Cryptographe {
         index: usize,
         source: &mut impl Read,
         destination: &mut impl Write,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         self.trousseau
             .chiffre_avec_cle_foyer(index, source, destination)?;
         Ok(())
@@ -424,7 +416,7 @@ impl Cryptographe {
         source: &mut impl Read,
         destination: &mut impl Write,
         interface: &impl InterfaceFeuNoyau,
-    ) -> ResultCryptographe<()> {
+    ) -> ResultFeuNoyau<()> {
         self.demande_mdp(interface)?;
         self.derivation_cle_ephemere()?;
         self.trousseau
@@ -449,7 +441,7 @@ impl Cryptographe {
         index_foyer: usize,
         index_classeur: usize,
         blob: &[u8],
-    ) -> ResultCryptographe<(Vec<u8>, String)> {
+    ) -> ResultFeuNoyau<(Vec<u8>, String)> {
         let hash: [u8; 32] = Sha3_256::digest(blob).into();
         Ok((
             self.trousseau
@@ -489,7 +481,7 @@ impl Cryptographe {
         index_classeur: usize,
         hash: &str,
         blob: &[u8],
-    ) -> ResultCryptographe<Vec<u8>> {
+    ) -> ResultFeuNoyau<Vec<u8>> {
         let blob_dechiffre = self
             .trousseau
             .dechiffre_blob(index_foyer, index_classeur, blob)?;
@@ -499,9 +491,7 @@ impl Cryptographe {
         let mut hash_decode = [0u8; 32];
         HEXLOWER.decode_mut(hash.as_bytes(), &mut hash_decode)?;
         if nouveau_hash != hash_decode {
-            return Err(erreur::ErreurCryptographe::Interne(String::from(
-                ERR_CRY_001,
-            )));
+            return Err(ErreurFeuNoyau::CryptographeHashBlobDiscordant);
         }
 
         Ok(blob_dechiffre)
@@ -534,10 +524,10 @@ impl Cryptographe {
         &self,
         cle_publique_destinataire: &[u8; 1568],
         octets_a_chiffrer: &[u8],
-    ) -> ResultCryptographe<Vec<u8>> {
+    ) -> ResultFeuNoyau<Vec<u8>> {
         // Reconstruit la clé publique ML-KEM-1024 depuis les octets
         let ek = EncapsulationKey1024::new(cle_publique_destinataire.into())
-            .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_CRY_002)))?;
+            .map_err(|_| ErreurFeuNoyau::CryptographeClePubliqueChiffrementInvalide)?;
 
         // Encapsulation → (ciphertext 1568 o, secret partagé 32 o)
         let (ciphertext, secret_partage) = ek.encapsulate();
@@ -588,13 +578,13 @@ impl Cryptographe {
         &self,
         index_foyer: usize,
         octets_a_dechiffrer: &[u8],
-    ) -> ResultCryptographe<Vec<u8>> {
+    ) -> ResultFeuNoyau<Vec<u8>> {
         // Extrait le ciphertext KEM (1568 o)
         let ciphertext: &Ciphertext1024 = octets_a_dechiffrer
             .get(0..1568)
-            .ok_or_else(|| ErreurCryptographe::Interne(String::from(ERR_CRY_002)))?
+            .ok_or(ErreurFeuNoyau::CryptographeCiphertextMlKemInvalide)?
             .try_into()
-            .map_err(|_| ErreurCryptographe::Interne(String::from(ERR_CRY_002)))?;
+            .map_err(|_| ErreurFeuNoyau::CryptographeCiphertextMlKemInvalide)?;
 
         // Décapsulation → secret partagé
         let secret_partage = self
@@ -624,7 +614,7 @@ impl Cryptographe {
     /// # Erreurs
     ///
     /// Retourne une erreur si la clé de signature du nœud est absente du trousseau.
-    pub(super) fn signature_noeud(&self, octets_a_signer: &[u8]) -> ResultCryptographe<[u8; 4627]> {
+    pub(super) fn signature_noeud(&self, octets_a_signer: &[u8]) -> ResultFeuNoyau<[u8; 4627]> {
         self.trousseau.signe_avec_cle_noeud(octets_a_signer)
     }
 
@@ -639,7 +629,7 @@ impl Cryptographe {
         &self,
         index_foyer: usize,
         octets_a_signer: &[u8],
-    ) -> ResultCryptographe<[u8; 4627]> {
+    ) -> ResultFeuNoyau<[u8; 4627]> {
         self.trousseau
             .signe_avec_cle_foyer(index_foyer, octets_a_signer)
     }
@@ -660,9 +650,9 @@ impl Cryptographe {
         cle_publique: [u8; 2592],
         signature: [u8; 4627],
         octets_signes: &[u8],
-    ) -> ResultCryptographe<bool> {
+    ) -> ResultFeuNoyau<bool> {
         let signature = Signature::<MlDsa87>::decode(&signature.into())
-            .ok_or_else(|| ErreurCryptographe::Interne(String::from(ERR_CRY_005)))?;
+            .ok_or(ErreurFeuNoyau::CryptographeSignatureMlDsaMalFormee)?;
         let cle_publique = VerifyingKey::<MlDsa87>::decode(&cle_publique.into());
 
         Ok(cle_publique.verify(octets_signes, &signature).is_ok())
@@ -679,9 +669,8 @@ impl Cryptographe {
 
     /// Demande un nouveau mot de passe à l'utilisateur et le stocke dans le trousseau.
     ///
-    /// Sollicite deux saisies successives via `interface`. Si elles diffèrent,
-    /// l'utilisateur est invité à recommencer — la boucle se répète jusqu'à
-    /// ce que les deux entrées correspondent.
+    /// Sollicite deux saisies successives via `interface` et échoue si elles
+    /// diffèrent : la reprise appartient à l'appelant, pas à cette fonction.
     ///
     /// Le mot de passe est encapsulé dans [`SecretBox`] dès réception et
     /// remplace tout mot de passe précédemment défini (l'ancien est zéroïsé
@@ -689,15 +678,16 @@ impl Cryptographe {
     fn initialisation_nouveau_mdp(
         &mut self,
         interface: &impl InterfaceFeuNoyau,
-    ) -> ResultCryptographe<()> {
-        if let (Some(mdp), Some(mdp2)) = (interface.demander_mdp(), interface.demander_mdp())
-            && mdp.expose_secret() == mdp2.expose_secret()
-        {
-            self.trousseau.definit_mdp(mdp);
-            return Ok(());
+    ) -> ResultFeuNoyau<()> {
+        let (Some(mdp), Some(mdp2)) = (interface.demander_mdp(), interface.demander_mdp()) else {
+            return Err(ErreurFeuNoyau::CryptographeMotDePasseNonSaisi);
+        };
+        if mdp.expose_secret() != mdp2.expose_secret() {
+            return Err(ErreurFeuNoyau::CryptographeMotsDePasseDiscordants);
         }
+        self.trousseau.definit_mdp(mdp);
 
-        Err(ErreurCryptographe::Interne(String::from(ERR_CRY_003)))
+        Ok(())
     }
 
     /// Collecte le mot de passe Feu via l'interface et le stocke dans le trousseau.
@@ -705,13 +695,13 @@ impl Cryptographe {
     /// Le mot de passe est encapsulé dans [`SecretBox`] dès réception.
     /// Il doit être effacé via [`efface_mdp_et_cle_ephemere`](Self::efface_mdp_et_cle_ephemere)
     /// dès qu'il n'est plus nécessaire.
-    fn demande_mdp(&mut self, interface: &impl InterfaceFeuNoyau) -> ResultCryptographe<()> {
+    fn demande_mdp(&mut self, interface: &impl InterfaceFeuNoyau) -> ResultFeuNoyau<()> {
         if let Some(mdp) = interface.demander_mdp() {
             self.trousseau.definit_mdp(mdp);
             return Ok(());
         }
 
-        Err(ErreurCryptographe::Interne(String::from(ERR_CRY_003)))
+        Err(ErreurFeuNoyau::CryptographeMotDePasseNonSaisi)
     }
 
     /// Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel du trousseau.
@@ -724,7 +714,7 @@ impl Cryptographe {
     ///
     /// Retourne une erreur si le mot de passe ou le sel est absent, ou si la
     /// dérivation Argon2id échoue.
-    fn derivation_cle_ephemere(&mut self) -> ResultCryptographe<()> {
+    fn derivation_cle_ephemere(&mut self) -> ResultFeuNoyau<()> {
         self.trousseau.derive_cle_ephemere()?;
         Ok(())
     }
@@ -782,7 +772,7 @@ mod tests {
     /// restent en place — signature et déchiffrement fonctionnent après.
     fn monte_cryptographe_de_test(
         cryptographe: &mut Cryptographe,
-    ) -> ResultCryptographe<TrousseauPublicComplet> {
+    ) -> ResultFeuNoyau<TrousseauPublicComplet> {
         let seed = SecretBox::new(Box::new([0x22; 64]));
         cryptographe
             .trousseau
@@ -810,13 +800,13 @@ mod tests {
     /// - message altéré — la signature est liée au contenu, on ne peut pas
     ///   signer une chose et en transmettre une autre.
     ///
-    /// La branche d'erreur `ERR_CRY_005` (encodage de signature mal formé)
+    /// La branche [`ErreurFeuNoyau::CryptographeSignatureMlDsaMalFormee`]
     /// reste volontairement non couverte : altérer les octets d'une signature
     /// donne tantôt `Ok(false)`, tantôt `Err`, selon l'octet touché et l'étape
     /// du décodage ML-DSA qu'il fait échouer. Un test non déterministe coûte
     /// plus qu'il ne prouve — d'où l'altération portée sur le message.
     #[test]
-    fn cycle_signature_verification() -> ResultCryptographe<()> {
+    fn cycle_signature_verification() -> ResultFeuNoyau<()> {
         let mut cryptographe = Cryptographe::new();
         let trousseau_public = monte_cryptographe_de_test(&mut cryptographe)?;
 
@@ -892,7 +882,7 @@ mod tests {
     /// changement d'index plutôt qu'à un chiffrement raté. C'est cette
     /// combinaison, pas la seule assertion, qui rend le test concluant.
     #[test]
-    fn cycle_chiffrement_dechiffrement_asymetrique() -> ResultCryptographe<()> {
+    fn cycle_chiffrement_dechiffrement_asymetrique() -> ResultFeuNoyau<()> {
         let mut cryptographe = Cryptographe::new();
 
         let trousseau_public = monte_cryptographe_de_test(&mut cryptographe)?;

@@ -15,6 +15,13 @@
 //!
 //! Les noms de fichiers du protocole sont définis comme constantes privées
 //! au niveau du module — point de vérité unique pour toute l'arborescence.
+//!
+//! # Erreurs
+//!
+//! Tout échec du système de fichiers remonte tel quel en
+//! [`ErreurFeuNoyau::IoError`] par `?` : les sections `# Erreurs` qui parlent
+//! d'un fichier « absent ou illisible » désignent ce cas. Ne sont nommées que
+//! les variantes propres au carnet, quand il constate lui-même l'anomalie.
 
 use std::fs;
 use std::fs::DirBuilder;
@@ -278,12 +285,7 @@ impl Carnet {
 
         // Pour chaque foyer
         for i in 0..MAX_FOYERS {
-            let foyer = match trousseau_public_complet.donne_trousseau_public_foyer(i) {
-                Ok(valeur) => valeur,
-                Err(_) => {
-                    return Err(ErreurFeuNoyau::GardienPasDeTrousseauFoyer(i));
-                }
-            };
+            let foyer = trousseau_public_complet.donne_trousseau_public_foyer(i)?;
 
             let chemin_foyer = &self
                 .chemin_feu
@@ -352,7 +354,9 @@ impl Carnet {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si un fichier est absent, illisible ou de taille incorrecte.
+    /// Propage l'absence ou l'illisibilité d'un fichier de clé, et retourne
+    /// [`ErreurFeuNoyau::GardienTailleFichierInattendue`] si l'un d'eux est lu
+    /// mais ne fait pas la taille voulue.
     pub(super) fn creer_trousseau_public_foyer(
         &self,
         braise: Braise,
@@ -421,12 +425,7 @@ impl Carnet {
                         chemin_foyer.join(format!("classeur{j}.cle")),
                     )
                 })?;
-            if trousseau_public_foyer
-                .ajoute_cle_chiffrement_classeur(cle_classeur, j)
-                .is_err()
-            {
-                return Err(ErreurFeuNoyau::GardienProblemeAjoutCleClasseur(braise, j));
-            }
+            trousseau_public_foyer.ajoute_cle_chiffrement_classeur(cle_classeur, j)?;
         }
 
         Ok(trousseau_public_foyer)
@@ -436,7 +435,8 @@ impl Carnet {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 16 octets.
+    /// Propage l'absence ou l'illisibilité du fichier, et retourne
+    /// [`ErreurFeuNoyau::GardienTailleFichierInattendue`] s'il ne fait pas 16 octets.
     pub(super) fn lire_pour_donner_sel(&self) -> ResultFeuNoyau<[u8; 16]> {
         std::fs::read(self.chemin_feu.join(".cles").join(FEU_SEL))?
             .try_into()
@@ -451,7 +451,8 @@ impl Carnet {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 60 octets.
+    /// Propage l'absence ou l'illisibilité du fichier, et retourne
+    /// [`ErreurFeuNoyau::GardienTailleFichierInattendue`] s'il ne fait pas 60 octets.
     pub(super) fn lire_pour_donner_cle_sig_privee(&self) -> ResultFeuNoyau<[u8; 60]> {
         std::fs::read(self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV))?
             .try_into()
@@ -466,7 +467,8 @@ impl Carnet {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 2592 octets.
+    /// Propage l'absence ou l'illisibilité du fichier, et retourne
+    /// [`ErreurFeuNoyau::GardienTailleFichierInattendue`] s'il ne fait pas 2592 octets.
     pub(super) fn lire_pour_donner_cle_sig_pub(&self) -> ResultFeuNoyau<[u8; 2592]> {
         std::fs::read(self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB))?
             .try_into()
@@ -481,7 +483,8 @@ impl Carnet {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le fichier est absent, illisible, ou ne fait pas 60 octets.
+    /// Propage l'absence ou l'illisibilité du fichier, et retourne
+    /// [`ErreurFeuNoyau::GardienTailleFichierInattendue`] s'il ne fait pas 60 octets.
     pub(super) fn lire_pour_donner_cle_chiffrement_foyer(
         &self,
         braise: Braise,

@@ -100,8 +100,8 @@ impl InterfaceFeuNoyau for InterfaceTest {
         }
     }
 
-    // Un refus ferait échouer la création du nœud sur `ERR_CRY_004`, avant même
-    // que le moindre foyer existe.
+    // Un refus ferait échouer la création du nœud sur
+    // `CryptographeSeedNonConfirmee`, avant même que le moindre foyer existe.
     fn confirmer_enregistrement_seed(&self) -> bool {
         true
     }
@@ -349,7 +349,7 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
 
     assert!(matches!(
         FeuNoyau::new(&chemin_feu, None, &mut interface),
-        Err(ErreurFeuNoyau::Cryptographe(_))
+        Err(ErreurFeuNoyau::AesGcm(_))
     ));
 
     let mut interface2 = InterfaceTest::new("nouveau mot de passe");
@@ -407,7 +407,7 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
     // passe présenté à l'ouverture.
     assert!(matches!(
         noyau.ouverture_foyer(&mut interface, 0),
-        Err(ErreurFeuNoyau::Cryptographe(_))
+        Err(ErreurFeuNoyau::AesGcm(_))
     ));
 
     assert!(!chemin_feu.join(interface2.braises[0].to_string()).is_dir());
