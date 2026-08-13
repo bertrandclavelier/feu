@@ -29,6 +29,7 @@
 mod comptoir;
 pub mod enu;
 pub(super) mod erreur;
+pub mod iterateurs;
 
 #[cfg(test)]
 mod tests;
@@ -51,6 +52,7 @@ use crate::{
         comptoir::ComptoirDepot,
         enu::{Carte, Enu},
         erreur::{ErreurScribe, ResultScribe},
+        iterateurs::Descendants,
     },
 };
 
@@ -861,6 +863,22 @@ impl Scribe {
         }
 
         Ok(())
+    }
+
+    /// Fabrique un parcours descendant à partir de `enu`.
+    ///
+    /// Le Scribe est seul à connaître `chemin_enu` et ne le laisse pas sortir :
+    /// il fournit l'itérateur déjà armé plutôt qu'un accesseur au chemin, comme
+    /// il le fait déjà pour [`Self::charge_enu`]. L'emplacement du dépôt sur le
+    /// disque reste un détail interne.
+    ///
+    /// Aucune lecture ici — le premier chargement n'a lieu qu'au premier `next`.
+    pub(super) fn donne_descendants<'a>(
+        &'a self,
+        session: &'a SessionApplication,
+        enu: &Enu,
+    ) -> Descendants<'a> {
+        Descendants::new(&self.chemin_enu, session, enu)
     }
 
     /// Cœur récursif de [`Self::retrait_lecture_seule`] : matérialise **une**

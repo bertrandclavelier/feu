@@ -63,6 +63,7 @@ use scribe::Scribe;
 /// confiance ne vient pas de l'encapsulation mais de la vérification de la
 /// signature à chaque chargement.
 pub use scribe::enu::{Carte, Enu};
+pub use scribe::iterateurs::Descendants;
 pub use session::SessionApplication;
 
 mod commandes;
