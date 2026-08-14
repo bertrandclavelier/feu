@@ -822,21 +822,18 @@ impl FeuApplication {
     /// Rend un itérateur sur tout le sous-arbre situé sous `enu`, celle-ci
     /// comprise.
     ///
-    /// Chaque item est une [`Enu`] authentifiée, ou l'erreur rencontrée en
-    /// tentant de la charger — un échec ne met pas fin au parcours. Voir
-    /// [`Descendants`] pour l'ordre, le sort des doublons et le détail des
-    /// erreurs.
+    /// Chaque item est une [`Enu`] **intègre mais non authentifiée**, ou l'erreur
+    /// rencontrée en tentant de la charger — un échec ne met pas fin au parcours.
+    /// Seule `enu` est authentifiée, à l'appel ; la descendance tient ensuite par
+    /// le chaînage de Merkle, ce qui rend le parcours praticable sur un arbre
+    /// entier. Une ENU ainsi obtenue n'engage rien : toute commande qui agit sur
+    /// un blob la revérifie. Voir [`Descendants`] pour l'ordre, le sort des
+    /// doublons et le détail des erreurs.
     ///
-    /// Aucun foyer n'a besoin d'être ouvert : le parcours ne touche pas au
-    /// noyau. Il lui faut en revanche les clés publiques des signataires, que la
-    /// session ne détient qu'après l'allumage du nœud pour celle du nœud, et
-    /// après une ouverture pour celle d'un foyer.
-    ///
-    /// Le `Result` du retour ne porte que la précondition d'allumage : rien
-    /// n'est lu à l'appel, aucune erreur de parcours ne peut survenir avant le
-    /// premier `next`. Nœud éteint, la session n'a même pas la clé publique du
-    /// nœud — chaque item sortirait en échec d'authentification, ce qui ne
-    /// dirait pas à l'appelant ce qui manque réellement.
+    /// Aucun foyer n'a besoin d'être ouvert pour parcourir. Il en faut un pour
+    /// **partir** d'une ENU signée par lui : la session ne détient sa clé
+    /// publique qu'après une ouverture, quand celle du nœud lui vient de
+    /// l'allumage.
     ///
     /// L'emprunt de `&self` court aussi longtemps que l'itérateur : rien ne peut
     /// modifier la session tant que le parcours n'est pas terminé ou abandonné.
@@ -844,12 +841,13 @@ impl FeuApplication {
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud n'est pas
-    /// allumé.
+    /// allumé, et propage les refus d'authentification du point de départ —
+    /// signature non validée, braise inconnue, foyer sans clé.
     pub fn commande_descendants<'a>(&'a self, enu: &Enu) -> ResultFeuApplication<Descendants<'a>> {
         if !self.scribe.est_actif() {
             return Err(ErreurFeuApplication::NoeudEteint);
         }
 
-        Ok(self.scribe.donne_descendants(&self.session, enu))
+        self.scribe.donne_descendants(&self.session, enu)
     }
 }

@@ -90,10 +90,20 @@ pub enum ErreurFeuApplication {
     #[error("APP > Ce doit être une EnuD")]
     ScribeEnuDAttendue,
 
-    /// L'ENU lue sur disque n'a pas passé la barrière : signataire inconnu de la
-    /// session, signature invalide ou hash de carte discordant, sans distinguer.
-    #[error("APP > ENU non authentifiée")]
-    ScribeEnuNonAuthentifiee,
+    /// Signature de la carte non validée : signataire inconnu de la session ou
+    /// signature invalide, sans distinguer — foyer fermé et falsification aussi.
+    #[error("APP > ENU non authentique")]
+    ScribeEnuNonAuthentique,
+
+    /// L'empreinte recalculée de la carte ne vaut pas le hash attendu : corruption
+    /// ou substitution, l'ENU n'est pas celle que son parent désignait.
+    #[error("APP > ENU non intègre")]
+    ScribeEnuNonIntegre,
+
+    /// L'ENU n'est pas une racine du nœud — braise non vide ou méta `_racine`
+    /// absente. Le sommet de l'arbre appartient toujours au nœud.
+    #[error("APP > Ce doit être une racine du nœud")]
+    ScribeEnuRacineAttendue,
 
     /// La carte n'est pas une `Carte::Repertoire` : ni enfants à lire ou à
     /// ajouter, ni arborescence à ouvrir depuis elle.

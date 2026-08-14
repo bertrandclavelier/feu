@@ -166,15 +166,24 @@ impl Scribe {
     /// donnée que par son ENU, sans jamais recomposer un couple foyer/hash —
     /// qu'ils pourraient former incohérent.
     ///
-    /// Facteur commun de [`charge_blob`](Self::charge_blob) et
-    /// [`supprime_blob`](Self::supprime_blob), qui ne diffèrent que par
-    /// l'appel noyau qui suit. Les tenir ensemble ici garantit qu'elles ne
+    /// Facteur commun des quatre fonctions de blob — [`charge_blob`](Self::charge_blob),
+    /// [`supprime_blob`](Self::supprime_blob), [`existence_blob`](Self::existence_blob)
+    /// et [`informations_blob`](Self::informations_blob) — qui ne diffèrent que
+    /// par l'appel noyau qui suit. Les tenir ensemble ici garantit qu'elles ne
     /// divergeront pas sur la façon de résoudre leur cible.
+    ///
+    /// **C'est aussi la barrière d'authenticité de ces quatre-là.** Une ENU peut
+    /// venir d'un parcours, qui ne vérifie aucune signature : elle est donc
+    /// repassée par [`Enu::authentique`] avant que quoi que ce soit ne parte vers
+    /// le noyau. Ici et pas dans chacune des quatre — aucune ne peut l'oublier,
+    /// et celle qui s'ajoutera plus tard l'aura sans y penser. Le contrôle vient
+    /// en tête, avant la résolution de braise, qu'il couvre déjà.
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la braise ne
-    /// résout vers aucun foyer de la session, et
+    /// Retourne [`ErreurFeuApplication::ScribeEnuNonAuthentique`] si la signature
+    /// n'est pas validée, [`ErreurFeuApplication::ScribeBraiseInconnue`] si la
+    /// braise ne résout vers aucun foyer de la session, et
     /// [`ErreurFeuApplication::ScribeEnuDAttendue`] si la carte n'est pas une
     /// [`Carte::Donnee`] et ne référence donc aucun blob.
     fn index_et_hash_blob(
@@ -182,6 +191,9 @@ impl Scribe {
         session: &SessionApplication,
         enu: &Enu,
     ) -> ResultFeuApplication<(usize, [u8; 32])> {
+        if !enu.authentique(session)? {
+            return Err(ErreurFeuApplication::ScribeEnuNonAuthentique);
+        }
         let Some(index) = session.braise_vers_index(enu.braise()) else {
             return Err(ErreurFeuApplication::ScribeBraiseInconnue);
         };
@@ -208,7 +220,7 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Propage les deux refus de
+    /// Propage les trois refus de
     /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
     /// noyau : foyer fermé, blob introuvable, déchiffrement, donnée corrompue.
     pub(super) fn charge_blob(
@@ -235,7 +247,7 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Propage les deux refus de
+    /// Propage les trois refus de
     /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
     /// noyau : foyer fermé, blob introuvable, suppression disque.
     pub(super) fn supprime_blob(
@@ -261,7 +273,7 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Propage les deux refus de
+    /// Propage les trois refus de
     /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
     /// noyau : foyer fermé. Un blob absent est un `Ok(false)`.
     pub(super) fn existence_blob(
@@ -282,7 +294,7 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Propage les deux refus de
+    /// Propage les trois refus de
     /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
     /// noyau : foyer fermé, blob introuvable — ici une erreur, contrairement à
     /// [`existence_blob`](Self::existence_blob).
@@ -792,7 +804,9 @@ impl Scribe {
     /// déchiffré via le noyau), chaque [`Carte::Texte`] un fichier portant son
     /// contenu embarqué, chaque [`Carte::Repertoire`] un sous-dossier. Chaque
     /// enfant est chargé **et authentifié** ([`Enu::charger`]) avant d'être
-    /// écrit.
+    /// écrit, et `enu_r` elle-même passe par [`Enu::authentique`] en tête : elle
+    /// vient de l'appelant, qui a pu la tirer d'un parcours. Le retrait engage —
+    /// il écrit sur le disque — il n'a donc rien à gagner au chargement rapide.
     ///
     /// **Lecture seule, sans reprise.** Contrairement au comptoir de dépôt,
     /// aucun état n'est retenu et aucune « fermeture » ne relira le dossier :
@@ -810,8 +824,9 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurFeuApplication::ScribeDossierDejaExistant`] si
-    /// `chemin_retrait` est un dossier existant, ou
+    /// Retourne [`ErreurFeuApplication::ScribeEnuNonAuthentique`] si `enu_r` ne
+    /// passe pas la barrière, [`ErreurFeuApplication::ScribeDossierDejaExistant`]
+    /// si `chemin_retrait` est un dossier existant, ou
     /// [`ErreurFeuApplication::ScribeEnuRAttendue`] si `enu_r` n'est pas un
     /// répertoire. Propage les erreurs de la descente : authentification d'un
     /// enfant, nom absent ou invalide, E/S et lecture de blob (foyer fermé,
@@ -823,6 +838,9 @@ impl Scribe {
         chemin_retrait: &Path,
         enu_r: &Enu,
     ) -> ResultFeuApplication<()> {
+        if !enu_r.authentique(session)? {
+            return Err(ErreurFeuApplication::ScribeEnuNonAuthentique);
+        }
         if chemin_retrait.is_dir() {
             return Err(ErreurFeuApplication::ScribeDossierDejaExistant(
                 chemin_retrait.to_path_buf(),
@@ -859,12 +877,19 @@ impl Scribe {
     /// il le fait déjà pour [`Self::charge_enu`]. L'emplacement du dépôt sur le
     /// disque reste un détail interne.
     ///
-    /// Aucune lecture ici — le premier chargement n'a lieu qu'au premier `next`.
+    /// Aucune lecture disque ici — le premier chargement n'a lieu qu'au premier
+    /// `next`. La construction n'est pas pour autant gratuite : elle authentifie
+    /// le point de départ, sans quoi le chaînage du parcours partirait de rien.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage les refus de [`Descendants::new`] : ENU de départ non intègre, non
+    /// authentique, braise inconnue ou foyer sans clé.
     pub(super) fn donne_descendants<'a>(
         &'a self,
         session: &'a SessionApplication,
         enu: &Enu,
-    ) -> Descendants<'a> {
+    ) -> ResultFeuApplication<Descendants<'a>> {
         Descendants::new(&self.chemin_enu, session, enu)
     }
 
@@ -918,7 +943,7 @@ impl Scribe {
                 // pas en tête — un répertoire n'en a pas besoin
                 let index_foyer = session
                     .braise_vers_index(enu_courante.braise())
-                    .expect("Braise déjà validée par Enu::charger avant d'atteindre ce point");
+                    .expect("Braise déjà validée avant d'atteindre ce point : Enu::authentique sur la racine du retrait, Enu::charger sur chaque enfant");
 
                 let chemin = Self::chemin_libre(chemin_courant, &nom_fichier);
 

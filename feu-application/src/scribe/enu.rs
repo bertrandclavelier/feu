@@ -46,8 +46,12 @@
 //!   contenu signé foyer, [`Enu::new_racine`] pour les racines signées nœud —
 //!   tous deux `pub(super)`) ou la persister sur disque ([`Enu::sauvegarder`],
 //!   `pub(super)`). Une [`Enu`] lue depuis l'extérieur a obligatoirement
-//!   transité par [`Enu::charger`] (`pub(super)`) qui valide le hash et la
-//!   signature — son intégrité cryptographique est garantie.
+//!   transité par l'un des deux chargements `pub(super)` : [`Enu::charger`],
+//!   qui valide le hash **et** la signature, ou
+//!   [`Enu::charger_sans_verification_signature`], réservé au parcours, qui ne
+//!   valide que le hash contre celui qu'annonçait un parent authentifié. Une
+//!   [`Enu`] venue d'un parcours n'engage donc rien tant qu'elle n'a pas repassé
+//!   [`Enu::authentique`], barrière de toute action sur un blob.
 //!   Construire une [`Enu`] directement depuis l'extérieur est impossible
 //!   (champs privés, pas de `new` public).
 //!
@@ -321,6 +325,61 @@ impl Enu {
         &self.carte
     }
 
+    /// Recalcule l'empreinte de la carte et la compare au hash attendu.
+    ///
+    /// Seule garantie du parcours qui ne vérifie pas les signatures : le hash
+    /// attendu vient d'un parent déjà authentifié, et le chaînage Merkle porte
+    /// alors l'intégrité de proche en proche. Lui passer le `hash_carte` de
+    /// l'enveloppe elle-même ne prouve rien de tel — un fichier forgé s'accorde
+    /// avec lui-même ; ça ne vaut que là où la signature suit, pour établir que
+    /// le hash annoncé désigne bien la carte qui vient d'être authentifiée.
+    pub(crate) fn integre(&self, hash_attendu: &[u8; 32]) -> bool {
+        let hash = FeuNoyau::creation_empreinte(&self.carte.vers_octets());
+
+        &hash == hash_attendu
+    }
+
+    /// Vérifie la signature de la carte contre la clé publique de son signataire.
+    ///
+    /// La `braise` route vers cette clé : [`BRAISE_VIDE`] plus la méta `_racine`
+    /// désignent le nœud, toute autre valeur un foyer connu de la session. Hors
+    /// signature, elle ne peut que router vers la mauvaise clé et faire échouer
+    /// la vérification — jamais faire accepter une ENU.
+    ///
+    /// Barrière de tout ce qui engage : lecture, suppression ou description d'un
+    /// blob, retrait sur le disque. Le parcours, lui, s'en passe et ne s'appuie
+    /// que sur [`Self::integre`].
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la braise ne
+    /// résout vers aucun foyer de la session,
+    /// [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] si ce foyer ne livre
+    /// aucune clé, et propage l'erreur cryptographique du noyau. Une signature
+    /// simplement invalide est un `Ok(false)`, à l'appelant d'en faire un refus.
+    pub(crate) fn authentique(&self, session: &SessionApplication) -> ResultFeuApplication<bool> {
+        if self.braise == BRAISE_VIDE && self.carte.metas().contains_key("_racine") {
+            Ok(FeuNoyau::verification_signature(
+                session.cle_publique_sig_noeud(),
+                self.signature_carte,
+                &self.carte.vers_octets(),
+            )?)
+        } else {
+            let Some(index_foyer) = session.braise_vers_index(self.braise) else {
+                return Err(ErreurFeuApplication::ScribeBraiseInconnue);
+            };
+            let Some(cle) = session.cle_publique_sig_foyer(index_foyer) else {
+                return Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(index_foyer));
+            };
+
+            Ok(FeuNoyau::verification_signature(
+                cle,
+                self.signature_carte,
+                &self.carte.vers_octets(),
+            )?)
+        }
+    }
+
     /// Écrit l'ENU sur disque sous `~/.feu/enu/<hash_carte_hex>.enu`.
     ///
     /// Le nom du fichier est l'empreinte hexadécimale de la carte
@@ -383,28 +442,14 @@ impl Enu {
         Ok(())
     }
 
-    /// Charge **et authentifie** une ENU depuis le disque.
+    /// Charge **et authentifie** une ENU depuis le disque : le chargement complet,
+    /// hash puis signature.
     ///
-    /// L'ENU est localisée par content-addressing : `hash_carte` reconstruit son
-    /// nom de fichier `<hash>.enu` sous `chemin_enu` (via
-    /// [`Self::hash_carte_vers_chemin`]) — la désigner par son hash, c'est déjà
-    /// affirmer quel contenu on attend, que la vérification finale confirme ou
-    /// dément. Là où [`Enu::octets_vers_enu`] ne valide que la structure, cette
-    /// méthode reconstruit l'enveloppe puis franchit la frontière de confiance. Le
-    /// signataire est déterminé par la `braise` — le champ de routage qui
-    /// annonce qui a signé — et la clé de vérification en découle :
-    ///
-    /// - **Racine du nœud** — braise [`BRAISE_VIDE`] : le nœud est le
-    ///   signataire, la signature est validée contre [`cle_publique_sig_noeud`](SessionApplication::cle_publique_sig_noeud).
-    ///   Sa carte porte par ailleurs la méta `_racine` (marqueur de racine dans
-    ///   l'arbre des versions).
-    /// - **Contenu** — braise d'un foyer connu de la session : la clé publique
-    ///   de ce foyer valide la signature.
-    ///
-    /// Dans les deux cas, une condition commune s'ajoute : le hash recalculé de
-    /// la carte doit égaler le `hash_carte` stocké — sans quoi le nom
-    /// content-addressed de l'ENU mentirait sur son contenu (le `hash_carte`
-    /// est hors signature).
+    /// Là où [`Enu::octets_vers_enu`] ne valide que la structure, cette méthode
+    /// franchit la frontière de confiance. Elle n'ajoute qu'une ligne à
+    /// [`Self::charger_sans_verification_signature`] — la barrière
+    /// [`Self::authentique`] — mais c'est cette ligne qui distingue les deux
+    /// usages : navigation d'un côté, action de l'autre.
     ///
     /// La `braise` restant hors signature, la falsifier ne peut que router vers
     /// la mauvaise clé et faire **échouer** la vérification — jamais faire
@@ -414,43 +459,56 @@ impl Enu {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurFeuApplication::ScribeEnuNonAuthentifiee`] si l'ENU
-    /// n'est pas authentifiable, et propage toute erreur d'E/S
-    /// ([`ErreurFeuApplication::IoError`]), de désérialisation ou
-    /// cryptographique ([`ErreurFeuApplication::FeuNoyau`]) rencontrée en chemin.
+    /// Retourne [`ErreurFeuApplication::ScribeEnuNonAuthentique`] si la signature
+    /// n'est pas validée, propage les refus de [`Self::authentique`] — braise
+    /// inconnue, foyer sans clé — et ceux du chargement qu'elle enveloppe.
     pub(super) fn charger(
         chemin_enu: &Path,
         session: &SessionApplication,
         hash_carte: &[u8; 32],
     ) -> ResultFeuApplication<Enu> {
+        let enu = Enu::charger_sans_verification_signature(chemin_enu, hash_carte)?;
+
+        if !enu.authentique(session)? {
+            return Err(ErreurFeuApplication::ScribeEnuNonAuthentique);
+        }
+
+        Ok(enu)
+    }
+
+    /// Charge une ENU en ne vérifiant que son intégrité — **jamais sa signature**.
+    ///
+    /// L'ENU est localisée par content-addressing : `hash_carte` reconstruit son
+    /// nom de fichier `<hash>.enu` sous `chemin_enu` (via
+    /// [`Self::hash_carte_vers_chemin`]). Le désigner, c'est déjà affirmer quel
+    /// contenu on attend — et c'est exactement ce que [`Self::integre`] confirme
+    /// ou dément, sur l'empreinte recalculée de la carte lue. Le nom du fichier
+    /// ne vaut donc rien par lui-même : il localise, il ne prouve pas.
+    ///
+    /// Réservé au **parcours** ([`Descendants`](super::iterateurs::Descendants)),
+    /// où le hash attendu vient d'un parent déjà authentifié et où le chaînage de
+    /// Merkle porte l'intégrité de proche en proche. Ce qui l'appelle sans cette
+    /// garantie d'origine ne vérifie rien du tout. Le nom est long à dessein :
+    /// aucun appelant ne doit pouvoir s'y tromper.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeEnuNonIntegre`] si la carte lue ne
+    /// donne pas le hash attendu, et propage toute erreur d'E/S
+    /// ([`ErreurFeuApplication::IoError`]) ou de désérialisation.
+    pub(super) fn charger_sans_verification_signature(
+        chemin_enu: &Path,
+        hash_carte: &[u8; 32],
+    ) -> ResultFeuApplication<Enu> {
         let chemin = Self::hash_carte_vers_chemin(hash_carte, chemin_enu);
 
         let enu = Self::octets_vers_enu(&read(chemin)?)?;
-        let octets_carte = enu.carte.vers_octets();
 
-        // racine du nœud : BRAISE_VIDE → vérification contre la clé du nœud
-        if enu.braise == BRAISE_VIDE
-            && enu.carte().metas().contains_key("_racine")
-            && FeuNoyau::verification_signature(
-                session.cle_publique_sig_noeud(),
-                enu.signature_carte,
-                &octets_carte,
-            )?
-            && FeuNoyau::creation_empreinte(&octets_carte) == enu.hash_carte
-        {
-            return Ok(enu);
+        if !enu.integre(hash_carte) {
+            return Err(ErreurFeuApplication::ScribeEnuNonIntegre);
         }
 
-        // ENU de contenu : la braise doit résoudre vers un foyer connu de la session
-        if let Some(index_foyer) = session.braise_vers_index(enu.braise)
-            && let Some(cle_publique) = session.cle_publique_sig_foyer(index_foyer)
-            && FeuNoyau::verification_signature(cle_publique, enu.signature_carte, &octets_carte)?
-            && FeuNoyau::creation_empreinte(&octets_carte) == enu.hash_carte
-        {
-            return Ok(enu);
-        }
-
-        Err(ErreurFeuApplication::ScribeEnuNonAuthentifiee)
+        Ok(enu)
     }
 
     /// Charge et authentifie la racine **courante** du nœud, atteinte par le
@@ -462,39 +520,46 @@ impl Enu {
     /// désigne. Le lien est donc lu directement (il est suivi jusqu'au fichier
     /// cible).
     ///
-    /// Volontairement **plus stricte** que [`Self::charger`] : elle n'authentifie
-    /// que le cas racine nœud (braise [`BRAISE_VIDE`] + méta `_racine`, signature
-    /// du nœud, hash de carte concordant) et rejette tout le reste. Le sommet de
-    /// l'arbre appartient toujours au nœud ; une braise de foyer à cet endroit
-    /// serait une anomalie, pas un contenu à accepter.
+    /// Volontairement **plus stricte** que [`Self::charger`] : elle exige d'abord
+    /// une racine du nœud — braise [`BRAISE_VIDE`] et méta `_racine` — et rejette
+    /// tout le reste. Le sommet de l'arbre appartient toujours au nœud ; une
+    /// braise de foyer à cet endroit serait une anomalie, pas un contenu à
+    /// accepter. [`Self::authentique`] ne fait qu'utiliser ces deux marques comme
+    /// routage vers la clé du nœud, sans jamais les exiger : la contrainte est
+    /// donc posée ici, en propre.
+    ///
+    /// Faute de hash attendu — seul le symlink désigne la cible —
+    /// [`Self::integre`] est appelée sur le `hash_carte` de l'enveloppe. Le
+    /// contrôle n'établit rien à lui seul, mais la signature qui suit couvre la
+    /// carte : les deux ensemble prouvent que le hash annoncé désigne bien la
+    /// carte authentifiée. Il vaut d'être fait, ce hash étant ensuite ce par quoi
+    /// la racine est nommée et parcourue.
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurFeuApplication::ScribeEnuNonAuthentifiee`] si la cible
-    /// n'est pas une racine nœud authentique, et propage toute erreur d'E/S, de
-    /// désérialisation ou cryptographique
-    /// ([`ErreurFeuApplication::FeuNoyau`]) rencontrée en chemin.
+    /// Retourne [`ErreurFeuApplication::ScribeEnuRacineAttendue`] si la cible
+    /// n'est pas une racine du nœud, [`ErreurFeuApplication::ScribeEnuNonIntegre`]
+    /// si l'enveloppe ne s'accorde pas avec sa carte,
+    /// [`ErreurFeuApplication::ScribeEnuNonAuthentique`] si la signature n'est pas
+    /// validée, et propage toute erreur d'E/S, de désérialisation ou
+    /// cryptographique ([`ErreurFeuApplication::FeuNoyau`]) rencontrée en chemin.
     pub(super) fn charger_derniere_racine(
         chemin_derniere_racine: &Path,
         session: &SessionApplication,
     ) -> ResultFeuApplication<Enu> {
         let enu = Self::octets_vers_enu(&read(chemin_derniere_racine)?)?;
-        let octets_carte = enu.carte.vers_octets();
 
-        // racine du nœud : BRAISE_VIDE → vérification contre la clé du nœud
-        if enu.braise == BRAISE_VIDE
-            && enu.carte().metas().contains_key("_racine")
-            && FeuNoyau::verification_signature(
-                session.cle_publique_sig_noeud(),
-                enu.signature_carte,
-                &octets_carte,
-            )?
-            && FeuNoyau::creation_empreinte(&octets_carte) == enu.hash_carte
-        {
-            return Ok(enu);
+        if enu.braise != BRAISE_VIDE || !enu.carte.metas().contains_key("_racine") {
+            return Err(ErreurFeuApplication::ScribeEnuRacineAttendue);
+        }
+        if !enu.integre(&enu.hash_carte()) {
+            return Err(ErreurFeuApplication::ScribeEnuNonIntegre);
+        }
+        if !enu.authentique(session)? {
+            return Err(ErreurFeuApplication::ScribeEnuNonAuthentique);
         }
 
-        Err(ErreurFeuApplication::ScribeEnuNonAuthentifiee)
+        Ok(enu)
     }
 
     /// Sérialise l'enveloppe pour écriture disque.

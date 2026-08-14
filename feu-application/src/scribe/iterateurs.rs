@@ -14,10 +14,21 @@
 //! d'enfants) ou la déposent sur le disque gardent leur récursion, parce
 //! qu'elles portent un état de construction qu'un parcours ne peut pas porter.
 //!
-//! Chaque pas passe par [`Enu::charger`](super::enu::Enu), donc **chaque ENU
-//! rendue est authentifiée** — hash de carte recalculé et signature vérifiée
-//! contre la clé publique du signataire tenue par la
-//! [`SessionApplication`]. Un parcours ne rend jamais un contenu non vérifié.
+//! **Le parcours ne vérifie aucune signature.** Il n'authentifie que son point
+//! de départ, puis ne recalcule à chaque pas que le hash de la carte
+//! ([`Enu::integre`](super::enu::Enu)) : l'arborescence est un DAG de Merkle,
+//! une carte de répertoire portant les `hashs_enu` de ses enfants. Partir d'une
+//! ENU authentifiée et vérifier le hash annoncé à chaque descente chaîne donc
+//! l'intégrité de toute la descendance, pour **une** vérification ML-DSA-87 au
+//! lieu d'une par ENU traversée — ce qui rend praticable l'usage visé, ouvrir
+//! beaucoup d'ENU pour afficher une arborescence.
+//!
+//! **Une ENU rendue par un itérateur n'engage donc rien.** Tout ce qui agit sur
+//! un blob — lecture, suppression, description, retrait sur le disque — la
+//! repasse par [`Enu::authentique`](super::enu::Enu). Il n'existe pas de type
+//! distinct pour la marquer : la confiance vient de la vérification, pas de
+//! l'encapsulation. La `braise` reste hors garantie, couverte ni par le hash ni
+//! par la signature.
 //!
 //! Le parcours est **paresseux** : rien n'est lu avant l'appel à `next`, et
 //! l'itérateur ne conserve aucune des ENU qu'il a rendues. Qui veut la
@@ -27,7 +38,7 @@
 
 use std::{collections::VecDeque, path::Path};
 
-use crate::{Enu, ResultFeuApplication, SessionApplication};
+use crate::{Enu, ErreurFeuApplication, ResultFeuApplication, SessionApplication};
 
 /// Descend une arborescence ENU depuis une racine donnée, en largeur d'abord.
 ///
@@ -47,14 +58,15 @@ use crate::{Enu, ResultFeuApplication, SessionApplication};
 /// inventaire déduplique avec un ensemble des hashs déjà vus, alors qu'un flux
 /// déjà dédupliqué aurait perdu pour de bon la structure réelle de l'arbre.
 ///
-/// La durée de vie `'a` est celle des deux emprunts : un `Descendants` ne peut
-/// pas survivre à la session dont il tire les clés de vérification.
+/// La durée de vie `'a` est celle du dossier emprunté : un `Descendants` ne peut
+/// pas survivre au Scribe dont il tient le chemin. La session
+/// n'est requise qu'à la construction, pour authentifier le point de départ —
+/// les pas suivants ne consultent aucune clé, l'itérateur n'a donc rien à en
+/// retenir.
 pub struct Descendants<'a> {
     /// Dossier `enu/` où sont lus les fichiers, propriété du
     /// [`Scribe`](super::Scribe).
     chemin_enu: &'a Path,
-    /// Session interrogée à chaque pas pour authentifier l'ENU chargée.
-    session: &'a SessionApplication,
     /// Hashs restant à charger, en attente. File vide = parcours terminé.
     a_visiter: VecDeque<[u8; 32]>,
 }
@@ -66,6 +78,11 @@ impl<'a> Iterator for Descendants<'a> {
     type Item = ResultFeuApplication<Enu>;
 
     /// Charge l'ENU suivante et empile ses enfants s'il y en a.
+    ///
+    /// Le hash tiré de la file vient de la carte du parent, déjà vérifiée : c'est
+    /// lui que [`Enu::charger_sans_verification_signature`](super::enu::Enu)
+    /// compare à l'empreinte recalculée, et le maillon de plus dans la chaîne
+    /// d'intégrité. Aucune signature n'est vérifiée ici.
     ///
     /// **Un échec de chargement n'arrête pas le parcours** : l'erreur est rendue
     /// comme un item ordinaire et la file reste intacte pour le pas suivant.
@@ -83,7 +100,7 @@ impl<'a> Iterator for Descendants<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let hash = self.a_visiter.pop_front()?;
 
-        match Enu::charger(self.chemin_enu, self.session, &hash) {
+        match Enu::charger_sans_verification_signature(self.chemin_enu, &hash) {
             Err(e) => Some(Err(e)),
 
             Ok(enu) => {
@@ -98,23 +115,49 @@ impl<'a> Iterator for Descendants<'a> {
 }
 
 impl<'a> Descendants<'a> {
-    /// Prépare le parcours sans rien lire — seul `next` déclenche un chargement.
+    /// Authentifie le point de départ, puis prépare le parcours sans rien lire —
+    /// seul `next` déclenche un chargement.
+    ///
+    /// **C'est ici que se paie la seule vérification de signature du parcours**, et
+    /// elle n'est pas optionnelle : le chaînage de Merkle ne vaut que par son
+    /// origine. Sans elle, un appelant pourrait relancer un parcours depuis une
+    /// ENU issue d'un parcours précédent, et toute la descendance serait chaînée
+    /// à un point que rien n'a jamais authentifié. Le hash de l'enveloppe est
+    /// vérifié d'abord — c'est lui qui amorce la file, il ne peut pas mentir sur
+    /// la carte qui vient d'être signée.
     ///
     /// **L'ENU de départ fait partie du parcours** : son hash est le premier de
-    /// la file, elle sera donc rechargée et réauthentifiée avant d'être rendue.
-    /// Le coût est un chargement de plus ; en échange le parcours couvre
-    /// réellement tout le sous-arbre, racine comprise, ce dont a besoin qui
-    /// veut inventorier les foyers d'un arbre avant de le retirer.
+    /// la file, elle sera donc relue avant d'être rendue. Le coût est un
+    /// chargement de plus ; en échange le parcours couvre réellement tout le
+    /// sous-arbre, racine comprise, ce dont a besoin qui veut inventorier les
+    /// foyers d'un arbre avant de le retirer.
     ///
     /// `pub(crate)` et non `pub` : `chemin_enu` est un champ privé du
     /// [`Scribe`](super::Scribe), qu'aucun appelant extérieur ne peut fournir —
     /// l'emplacement du dépôt sur le disque n'a pas à sortir du crate. Le point
     /// d'entrée public est une commande de [`FeuApplication`](crate::FeuApplication).
-    pub(crate) fn new(chemin_enu: &'a Path, session: &'a SessionApplication, enu: &Enu) -> Self {
-        Self {
-            chemin_enu,
-            session,
-            a_visiter: VecDeque::from([enu.hash_carte()]),
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeEnuNonIntegre`] si l'enveloppe ne
+    /// s'accorde pas avec sa carte, [`ErreurFeuApplication::ScribeEnuNonAuthentique`]
+    /// si la signature n'est pas validée, et propage les refus de
+    /// [`Enu::authentique`](super::enu::Enu) — braise inconnue, foyer sans clé.
+    pub(crate) fn new(
+        chemin_enu: &'a Path,
+        session: &'a SessionApplication,
+        enu: &Enu,
+    ) -> ResultFeuApplication<Self> {
+        if !enu.integre(&enu.hash_carte()) {
+            return Err(ErreurFeuApplication::ScribeEnuNonIntegre);
         }
+        if !enu.authentique(session)? {
+            return Err(ErreurFeuApplication::ScribeEnuNonAuthentique);
+        }
+
+        Ok(Self {
+            chemin_enu,
+            a_visiter: VecDeque::from([enu.hash_carte()]),
+        })
     }
 }

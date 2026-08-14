@@ -166,11 +166,13 @@ fn cycle_disque_enu() {
 }
 
 /// Barrière de confiance : une ENU dont la signature a été altérée sur le
-/// disque est rejetée par `charger` (`ENU-003`).
+/// disque est rejetée par `charger`.
 ///
 /// Prouve que la vérification de signature est réellement branchée — ce qu'un
 /// round-trip nominal, où tout est sain, ne peut pas distinguer d'un `charger`
-/// qui ne vérifierait rien.
+/// qui ne vérifierait rien. Depuis que le parcours s'en passe, c'est aussi le
+/// seul test qui prouve que `charger` fait plus que
+/// `charger_sans_verification_signature`.
 #[test]
 fn falsification_avant_chargement_enu() {
     let (_tmp, chemin_enu, _, noyau, _, session) = cree_noyau_et_foyer_ouvert();
@@ -185,21 +187,23 @@ fn falsification_avant_chargement_enu() {
 
     write(enu.chemin(&chemin_enu), octets).unwrap();
 
-    // Cibler ENU-003 : d'autres causes (braise inconnue, désérialisation)
-    // sortent aussi en `Interne` — seul ce code prouve le rejet par la signature.
+    // La carte n'est pas touchée : le hash passe, et seule la signature peut
+    // faire échouer le chargement. Toute autre variante ici dirait que le refus
+    // vient d'ailleurs.
     assert!(matches!(
         Enu::charger(&chemin_enu, &session, &enu.hash_carte()),
-        Err(ErreurFeuApplication::ScribeEnuNonAuthentifiee)
+        Err(ErreurFeuApplication::ScribeEnuNonAuthentique)
     ));
 
     fermer_foyer(noyau, session);
 }
 
 /// Barrière de confiance : une ENU dont la braise a été altérée sur le disque
-/// est rejetée par `charger` (`ENU-003`).
+/// est rejetée par `charger`.
 ///
-/// La braise reste bien formée mais ne résout plus vers aucun foyer : aucune clé
-/// publique ne peut alors vérifier la signature.
+/// La braise reste bien formée mais ne résout plus vers aucun foyer. Le refus
+/// tombe donc en amont de la signature, sur le routage vers la clé — d'où une
+/// variante distincte de celle du test précédent.
 #[test]
 fn falsification_braise_avant_chargement_enu() {
     let (_tmp, chemin_enu, _, noyau, _, session) = cree_noyau_et_foyer_ouvert();
@@ -208,15 +212,15 @@ fn falsification_braise_avant_chargement_enu() {
 
     let mut octets = read(enu.chemin(&chemin_enu)).unwrap();
     // Octet du corps de la braise, remplacé par un autre caractère de l'alphabet
-    // BASE32 : la braise reste bien formée (sinon ENU-005 à la désérialisation)
-    // mais ne désigne plus aucun foyer de la session.
+    // BASE32 : la braise reste bien formée (sinon le refus tomberait dès la
+    // désérialisation) mais ne désigne plus aucun foyer de la session.
     octets[0] = if octets[0] == b'a' { b'b' } else { b'a' };
 
     write(enu.chemin(&chemin_enu), octets).unwrap();
 
     assert!(matches!(
         Enu::charger(&chemin_enu, &session, &enu.hash_carte()),
-        Err(ErreurFeuApplication::ScribeEnuNonAuthentifiee)
+        Err(ErreurFeuApplication::ScribeBraiseInconnue)
     ));
 
     fermer_foyer(noyau, session);
@@ -303,7 +307,7 @@ fn cycle_racine() {
 /// Éprouve [`Enu::remplacer`] sur trois substitutions, de la plus triviale à la
 /// plus profonde.
 ///
-/// - **Garde `ENU-007`** : refuser un remplacement dont la carte est déjà celle
+/// - **Garde du remplacement sans effet** : refuser un remplacement dont la carte est déjà celle
 ///   de la racine courante — aucune nouvelle version à produire.
 /// - **Cible = la racine** : cas de base de la récursion — le sommet (vide, issu
 ///   de la genèse) est remplacé par une arborescence entière, dont la carte
