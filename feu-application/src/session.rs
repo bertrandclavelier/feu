@@ -190,12 +190,9 @@ impl SessionApplication {
 
     /// Retourne le nombre de foyers actuellement ouverts.
     ///
-    /// Itère sur `etat_foyers` et compte les entrées à `true`. Complément de
-    /// [`foyers_fermes`](Self::foyers_fermes) : quand
-    /// [`foyers_fermes`](Self::foyers_fermes) répond à la précondition de
-    /// [`commande_extinction_noeud`](crate::FeuApplication::commande_extinction_noeud),
-    /// `nombre_foyers_ouverts` alimente la couche de présentation pour décider,
-    /// par exemple, quelles touches activer dans la table de dispatch.
+    /// Complément de [`foyers_fermes`](Self::foyers_fermes), qui répond à une
+    /// précondition : ce compte-ci sert la couche de présentation, qui a besoin
+    /// du nombre et pas seulement du booléen.
     pub fn nombre_foyers_ouverts(&self) -> usize {
         self.etat_foyers.iter().filter(|&&b| b).count()
     }

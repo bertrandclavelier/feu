@@ -63,6 +63,12 @@ use scribe::Scribe;
 /// confiance ne vient pas de l'encapsulation mais de la vérification de la
 /// signature à chaque chargement.
 pub use scribe::enu::{Carte, Enu};
+/// Parcours d'arborescence exposés à la couche de présentation.
+///
+/// Les deux types sont publics parce qu'ils apparaissent dans la signature des
+/// commandes qui les rendent. Ni l'un ni l'autre ne se construit de l'extérieur :
+/// leurs `new` sont `pub(crate)` et réclament le chemin du dossier `enu/`, que
+/// le Scribe ne laisse pas sortir.
 pub use scribe::iterateurs::{Descendants, RacinesAnterieures};
 pub use session::SessionApplication;
 
@@ -240,8 +246,14 @@ pub struct FeuApplication {
     /// [`ErreurFeuApplication::NoeudEteint`] si le noyau n'est pas encore allumé.
     feu_noyau: Option<FeuNoyau>,
 
+    /// État applicatif de la session — miroir lisible de ce que détiennent le
+    /// noyau et le Scribe. Cloné vers la couche de présentation après chaque
+    /// commande mutante, remplacé par une session neuve à l'extinction.
     session: SessionApplication,
 
+    /// Tenant de la couche ENU. Champ plein et non `Option` : construit avec
+    /// [`FeuApplication`], il porte lui-même la marque de son activation, que
+    /// l'allumage pose après le noyau dont son amorce a besoin.
     scribe: Scribe,
 }
 

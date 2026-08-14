@@ -43,8 +43,9 @@
 //!    du passage entre un dossier de l'OS et le nœud, par arborescences entières.
 //! 4. **Blobs** — chargement, suppression, existence, informations : le contenu
 //!    chiffré, un fichier à la fois.
-//! 5. **ENU** — dernière racine, chargement par hash, dépôt d'un texte court.
-//!    La structure, sans quoi la partie 4 n'aurait rien à désigner.
+//! 5. **ENU** — dernière racine, chargement par hash, dépôt d'un texte court,
+//!    et les deux parcours (descendance, versions antérieures). La structure,
+//!    sans quoi la partie 4 n'aurait rien à désigner.
 //!
 //! # Désigner une donnée
 //!
@@ -460,9 +461,8 @@ impl FeuApplication {
     /// que le nœud reste allumé, l'extinction l'annulant définitivement.
     ///
     /// Le Scribe l'inscrit au passage dans la session, dont cette commande envoie
-    /// un clone à la couche de présentation : celle-ci n'a donc rien à retenir de
-    /// l'appel pour savoir ce qui est ouvert. Le retour direct sert l'appelant
-    /// qui enchaîne, la session sert celui qui affiche.
+    /// un clone : le retour direct sert l'appelant qui enchaîne, la session celui
+    /// qui affiche.
     ///
     /// # Erreurs
     ///
@@ -827,31 +827,31 @@ impl FeuApplication {
     ///
     /// Chaque item est une [`Enu`] **intègre mais non authentifiée**, ou l'erreur
     /// rencontrée en tentant de la charger — un échec ne met pas fin au parcours.
-    /// Seule `enu` est authentifiée, à l'appel ; la descendance tient ensuite par
-    /// le chaînage de Merkle, ce qui rend le parcours praticable sur un arbre
-    /// entier. Une ENU ainsi obtenue n'engage rien : toute commande qui agit sur
-    /// un blob la revérifie. Voir [`Descendants`] pour l'ordre, le sort des
-    /// doublons et le détail des erreurs.
+    /// Aucune signature n'est vérifiée, pas même celle de `enu` : la descendance
+    /// tient par le chaînage de Merkle, ce qui rend le parcours praticable sur un
+    /// arbre entier. Une ENU ainsi obtenue n'engage rien : toute commande qui
+    /// agit sur un blob la revérifie. Voir [`Descendants`] pour l'ordre, le sort
+    /// des doublons et le détail des erreurs.
     ///
-    /// Aucun foyer n'a besoin d'être ouvert pour parcourir. Il en faut un pour
-    /// **partir** d'une ENU signée par lui : la session ne détient sa clé
-    /// publique qu'après une ouverture, quand celle du nœud lui vient de
-    /// l'allumage.
+    /// **Aucun foyer n'a besoin d'être ouvert**, même pour partir d'une ENU
+    /// signée par lui. C'est l'intérêt du parcours : afficher une arborescence
+    /// est une navigation, et rien de ce qu'elle rend ne donne accès aux blobs.
     ///
-    /// L'emprunt de `&self` court aussi longtemps que l'itérateur : rien ne peut
-    /// modifier la session tant que le parcours n'est pas terminé ou abandonné.
+    /// L'emprunt de `&self` court aussi longtemps que l'itérateur : le Scribe lui
+    /// prête son `chemin_enu`, rien ne peut donc éteindre le nœud tant que le
+    /// parcours n'est pas terminé ou abandonné.
     ///
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud n'est pas
-    /// allumé, et propage les refus d'authentification du point de départ —
-    /// signature non validée, braise inconnue, foyer sans clé.
+    /// allumé, et [`ErreurFeuApplication::ScribeEnuNonIntegre`] si l'enveloppe de
+    /// `enu` ne s'accorde pas avec sa carte.
     pub fn commande_descendants<'a>(&'a self, enu: &Enu) -> ResultFeuApplication<Descendants<'a>> {
         if !self.scribe.est_actif() {
             return Err(ErreurFeuApplication::NoeudEteint);
         }
 
-        self.scribe.donne_descendants(&self.session, enu)
+        self.scribe.donne_descendants(enu)
     }
 
     /// Rend un itérateur sur les racines du nœud, de `enu` jusqu'à la genèse,

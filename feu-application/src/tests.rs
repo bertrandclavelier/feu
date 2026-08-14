@@ -891,3 +891,179 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
 
     Ok(())
 }
+
+/// Le parcours descendant rend tout le sous-arbre, dans l'ordre annoncé, **foyer
+/// fermé**.
+///
+/// L'arbre est déposé, puis le nœud éteint et rallumé avant le moindre parcours :
+/// la session est neuve, aucun foyer n'y a jamais été ouvert. Refermer le foyer
+/// n'aurait pas suffi à le prouver — sa clé publique de signature survit à la
+/// fermeture et n'est effacée qu'à l'extinction.
+///
+/// **Sur une racine sans enfant**, le parcours rend un item : l'ENU de départ.
+/// C'est le premier point de [`Descendants::new`] — la racine fait partie du
+/// parcours, et un itérateur qui ne rendrait que la descendance passerait
+/// inaperçu sur un arbre peuplé.
+///
+/// **Sur l'arbre de [`remplir_dossier`]**, la forme est établie en relançant un
+/// parcours sur chaque ENU rendue : la taille de son propre sous-arbre. Triée,
+/// la suite vaut `[1, 1, 1, 2, 4, 6]` — six nœuds, et une seule forme d'arbre
+/// derrière. Compter les items ne dirait que le nombre, pas la structure.
+///
+/// **Avant le tri, ces mêmes tailles disent la largeur d'abord** : leur somme
+/// par niveau — 6, puis 5, puis 3, puis 1 — ne dépend pas de l'ordre à
+/// l'intérieur d'un niveau, qui suit les hashs et non les noms. Un parcours en
+/// profondeur donnerait 6 au deuxième niveau au lieu de 5. Les deux assertions
+/// se complètent : les sommes ne fixent pas les tailles une à une, le tri si.
+///
+/// [`flatten`](Iterator::flatten) écarte les `Err`. Sur un arbre sain il n'y en
+/// a aucune, et une erreur de chargement ferait tomber les comptes plutôt que
+/// de passer inaperçue.
+#[test]
+fn descendants() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+
+    let interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    let enu_racine = app.commande_derniere_enu_racine()?;
+
+    let descendants: Vec<ResultFeuApplication<Enu>> =
+        app.commande_descendants(&enu_racine)?.collect();
+    assert_eq!(descendants.len(), 1);
+
+    let enu = descendants[0].as_ref().unwrap();
+
+    assert_eq!(enu.hash_carte(), enu_racine.hash_carte());
+
+    app.commande_ouverture_foyer(&interface_test, 1)?;
+
+    let dossier_temporaire = TempDir::new().unwrap();
+
+    let chemin_comptoir = dossier_temporaire.path().join("comptoir_depot");
+
+    let index_comptoir =
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir, 1, 0)?;
+
+    remplir_dossier(&chemin_comptoir)?;
+
+    app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine)?;
+
+    // Extinction plutôt que simple fermeture : la session repart vierge, sans la
+    // clé publique du foyer qu'une fermeture aurait laissée en place.
+    app.commande_fermeture_foyer(&interface_test, 1)?;
+    app.commande_extinction_noeud(&interface_test)?;
+    app.commande_allumage_noeud(&interface_test, None)?;
+    let deuxieme_enu_racine = app.commande_derniere_enu_racine()?;
+
+    let descendants: Vec<Enu> = app
+        .commande_descendants(&deuxieme_enu_racine)?
+        .flatten()
+        .collect();
+
+    // Taille du sous-arbre de chaque ENU rendue, dans l'ordre du parcours.
+    let mut tailles: Vec<usize> = descendants
+        .iter()
+        .map(|enu| app.commande_descendants(enu).unwrap().count())
+        .collect();
+
+    // Sommes par niveau : la racine, puis les deux enfants, les deux
+    // petits-enfants, l'arrière-petit-enfant. Insensibles à l'ordre au sein d'un
+    // niveau, qui suit les hashs.
+    assert_eq!(tailles[0], 6);
+    assert_eq!(tailles[1] + tailles[2], 5);
+    assert_eq!(tailles[3] + tailles[4], 3);
+    assert_eq!(tailles[5], 1);
+
+    // Triées, les mêmes tailles fixent la forme de l'arbre.
+    tailles.sort();
+
+    assert_eq!(tailles, [1, 1, 1, 2, 4, 6]);
+
+    assert_eq!(descendants[0], (deuxieme_enu_racine));
+
+    app.commande_extinction_noeud(&interface_test)?;
+
+    Ok(())
+}
+
+/// Le parcours remontant suit la chaîne des racines jusqu'à la genèse.
+///
+/// **Sur un nœud neuf**, un seul item : la racine de départ est la genèse, et le
+/// parcours s'arrête sur elle. C'est la moitié qui prouve la terminaison.
+///
+/// **Après dix dépôts**, onze racines — les dix plus la genèse. Chacune porte
+/// dans sa méta `_racine` le hash de la suivante, et celui de la genèse est
+/// vide : c'est ce chaînage, vérifié paire à paire, qui distingue le parcours
+/// d'une simple lecture du dossier `enu/`.
+///
+/// **Le nombre d'enfants décroît de dix à zéro.** Chaque item est donc bien
+/// l'état de l'arbre à une version antérieure, et dans le bon sens — la plus
+/// récente d'abord. Relancer un descendant sur chaque racine le dirait aussi,
+/// pour bien plus cher.
+///
+/// Le foyer est refermé avant de remonter : les racines sont signées par le
+/// nœud, dont la clé publique vient de l'allumage.
+#[test]
+fn racines_anterieures() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+
+    let interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    let enu_racine = app.commande_derniere_enu_racine()?;
+
+    let racines: Vec<ResultFeuApplication<Enu>> =
+        app.commande_racines_anterieures(&enu_racine)?.collect();
+    assert_eq!(racines.len(), 1);
+
+    let enu = racines[0].as_ref().unwrap();
+    assert_eq!(enu, &enu_racine);
+
+    app.commande_ouverture_foyer(&interface_test, 1)?;
+
+    // Chaque dépôt remplace la racine du nœud et allonge la chaîne d'un maillon.
+    for i in 0..10 {
+        let enu_racine = app.commande_derniere_enu_racine()?;
+        app.commande_depot_enu_texte(&enu_racine, 1, &format!("fichier{}", i), "contenu")?;
+    }
+
+    app.commande_fermeture_foyer(&interface_test, 1)?;
+
+    let enu_racine = app.commande_derniere_enu_racine()?;
+    let racines: Vec<Enu> = app
+        .commande_racines_anterieures(&enu_racine)?
+        .flatten()
+        .collect();
+
+    assert_eq!(racines.len(), 11);
+
+    // Chaque racine désigne la suivante par sa méta `_racine`, en hexadécimal.
+    for paire in racines.windows(2) {
+        assert_eq!(
+            paire[0].carte().metas()["_racine"],
+            HEXLOWER.encode(&paire[1].hash_carte())
+        );
+    }
+
+    assert!(racines.last().unwrap().carte().metas()["_racine"].is_empty());
+
+    // Un texte de plus à chaque version : la décroissance dit le sens du parcours.
+    let nombre_filles: Vec<_> = racines
+        .iter()
+        .map(|enu| enu.carte().hashs_enu().unwrap().len())
+        .collect();
+
+    assert_eq!(nombre_filles, [10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
+
+    app.commande_extinction_noeud(&interface_test)?;
+    Ok(())
+}

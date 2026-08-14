@@ -49,8 +49,8 @@
 //!   transité par l'un des deux chargements `pub(super)` : [`Enu::charger`],
 //!   qui valide le hash **et** la signature, ou
 //!   [`Enu::charger_sans_verification_signature`], réservé au parcours, qui ne
-//!   valide que le hash contre celui qu'annonçait un parent authentifié. Une
-//!   [`Enu`] venue d'un parcours n'engage donc rien tant qu'elle n'a pas repassé
+//!   valide que le hash annoncé par la carte du parent. Une [`Enu`] venue d'un
+//!   parcours n'engage donc rien tant qu'elle n'a pas repassé
 //!   [`Enu::authentique`], barrière de toute action sur un blob.
 //!   Construire une [`Enu`] directement depuis l'extérieur est impossible
 //!   (champs privés, pas de `new` public).
@@ -67,13 +67,11 @@
 //!   ([`Carte::ajout_meta`], [`Carte::ajout_tag`],
 //!   [`Carte::ajout_hash_enu`]) restent `pub(super)`.
 //!
-//!   Les accesseurs [`Carte::metas`] et [`Carte::tags`], communs aux trois
-//!   variantes, sont maintenus : ils évitent de répéter le match pour des
-//!   champs présents partout. L'accesseur `hashs_enu()` ne concerne que la
-//!   variante [`Carte::Repertoire`] et rend donc une [`Option`] : `None` sur une
-//!   `Donnee` ou une `Texte`, ce qui distingue la feuille du répertoire
-//!   réellement vide. Les getters `hash_donnee()` et `contenu()`, eux, ont été
-//!   supprimés — le pattern matching les rend redondants.
+//!   Les accesseurs [`Carte::metas`] et [`Carte::tags`] sont maintenus : ils
+//!   évitent de répéter le match pour des champs présents partout.
+//!   `hashs_enu()` ne concerne que [`Carte::Repertoire`] et rend donc une
+//!   [`Option`], ce qui distingue la feuille du répertoire réellement vide. Pas
+//!   de getter pour `hash_donnee` ni `contenu` — le pattern matching suffit.
 
 use data_encoding::HEXLOWER;
 use std::fs::rename;
@@ -327,12 +325,12 @@ impl Enu {
 
     /// Recalcule l'empreinte de la carte et la compare au hash attendu.
     ///
-    /// Seule garantie du parcours qui ne vérifie pas les signatures : le hash
-    /// attendu vient d'un parent déjà authentifié, et le chaînage Merkle porte
-    /// alors l'intégrité de proche en proche. Lui passer le `hash_carte` de
-    /// l'enveloppe elle-même ne prouve rien de tel — un fichier forgé s'accorde
-    /// avec lui-même ; ça ne vaut que là où la signature suit, pour établir que
-    /// le hash annoncé désigne bien la carte qui vient d'être authentifiée.
+    /// Seule garantie du parcours, qui ne vérifie aucune signature : le hash
+    /// attendu vient de la carte du parent, et le chaînage Merkle porte alors
+    /// l'intégrité de proche en proche à partir du point de départ. Lui passer le
+    /// `hash_carte` de l'enveloppe elle-même ne prouve rien de tel — un fichier
+    /// forgé s'accorde avec lui-même ; ça ne vaut que là où la signature suit,
+    /// pour établir que le hash annoncé désigne bien la carte authentifiée.
     pub(crate) fn integre(&self, hash_attendu: &[u8; 32]) -> bool {
         let hash = FeuNoyau::creation_empreinte(&self.carte.vers_octets());
 
@@ -387,14 +385,11 @@ impl Enu {
     /// indépendamment de l'enveloppe qui la transporte. Le fichier est créé en
     /// mode `0o600` (lecture/écriture réservées au propriétaire).
     ///
-    /// **Idempotent.** Si le fichier existe déjà, l'écriture est shuntée et la
-    /// méthode renvoie son chemin sans rien réécrire : le nom étant le hash de
-    /// la carte, un fichier de même nom encode forcément la même carte — il n'y
-    /// a rien à réécrire. Une `date` ou une `signature` différentes dans la
-    /// nouvelle enveloppe sont sans incidence : ces champs ne participent ni au
-    /// hash ni au nom. Un contenu identique n'est donc stocké qu'une fois et
-    /// peut être référencé par autant d'ENU que nécessaire (déduplication à
-    /// l'échelle du nœud).
+    /// **Idempotent.** Si le fichier existe déjà, l'écriture est shuntée : le
+    /// nom étant le hash de la carte, un fichier de même nom encode forcément la
+    /// même carte. Une `date` ou une `signature` différentes sont sans
+    /// incidence — elles ne participent ni au hash ni au nom. D'où une
+    /// déduplication à l'échelle du nœud.
     ///
     /// # Retour
     ///
@@ -445,17 +440,14 @@ impl Enu {
     /// Charge **et authentifie** une ENU depuis le disque : le chargement complet,
     /// hash puis signature.
     ///
-    /// Là où [`Enu::octets_vers_enu`] ne valide que la structure, cette méthode
-    /// franchit la frontière de confiance. Elle n'ajoute qu'une ligne à
+    /// Elle n'ajoute qu'une ligne à
     /// [`Self::charger_sans_verification_signature`] — la barrière
-    /// [`Self::authentique`] — mais c'est cette ligne qui distingue les deux
+    /// [`Self::authentique`] — mais c'est cette ligne qui sépare les deux
     /// usages : navigation d'un côté, action de l'autre.
     ///
     /// La `braise` restant hors signature, la falsifier ne peut que router vers
     /// la mauvaise clé et faire **échouer** la vérification — jamais faire
-    /// accepter une ENU. C'est le modèle de confiance du module : la braise est
-    /// un indice de routage, la signature est le contrôle. Une enveloppe au
-    /// signataire inconnu, falsifiée ou corrompue ne passe jamais la barrière.
+    /// accepter une ENU.
     ///
     /// # Erreurs
     ///
@@ -486,9 +478,9 @@ impl Enu {
     /// ne vaut donc rien par lui-même : il localise, il ne prouve pas.
     ///
     /// Réservé au **parcours** ([`Descendants`](super::iterateurs::Descendants)),
-    /// où le hash attendu vient d'un parent déjà authentifié et où le chaînage de
-    /// Merkle porte l'intégrité de proche en proche. Ce qui l'appelle sans cette
-    /// garantie d'origine ne vérifie rien du tout. Le nom est long à dessein :
+    /// où le hash attendu vient de la carte du parent et où le chaînage de Merkle
+    /// porte l'intégrité de proche en proche. Ce qui en sort n'engage rien tant
+    /// que [`Self::authentique`] n'est pas repassée. Le nom est long à dessein :
     /// aucun appelant ne doit pouvoir s'y tromper.
     ///
     /// # Erreurs

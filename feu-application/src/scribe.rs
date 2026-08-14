@@ -169,15 +169,13 @@ impl Scribe {
     /// Facteur commun des quatre fonctions de blob — [`charge_blob`](Self::charge_blob),
     /// [`supprime_blob`](Self::supprime_blob), [`existence_blob`](Self::existence_blob)
     /// et [`informations_blob`](Self::informations_blob) — qui ne diffèrent que
-    /// par l'appel noyau qui suit. Les tenir ensemble ici garantit qu'elles ne
-    /// divergeront pas sur la façon de résoudre leur cible.
+    /// par l'appel noyau qui suit.
     ///
     /// **C'est aussi la barrière d'authenticité de ces quatre-là.** Une ENU peut
-    /// venir d'un parcours, qui ne vérifie aucune signature : elle est donc
-    /// repassée par [`Enu::authentique`] avant que quoi que ce soit ne parte vers
-    /// le noyau. Ici et pas dans chacune des quatre — aucune ne peut l'oublier,
-    /// et celle qui s'ajoutera plus tard l'aura sans y penser. Le contrôle vient
-    /// en tête, avant la résolution de braise, qu'il couvre déjà.
+    /// venir d'un parcours, qui ne vérifie aucune signature : elle repasse donc
+    /// par [`Enu::authentique`] avant que quoi que ce soit ne parte vers le
+    /// noyau. Ici et pas dans chacune des quatre — aucune ne peut l'oublier, et
+    /// celle qui s'ajoutera plus tard l'aura sans y penser.
     ///
     /// # Erreurs
     ///
@@ -878,19 +876,18 @@ impl Scribe {
     /// disque reste un détail interne.
     ///
     /// Aucune lecture disque ici — le premier chargement n'a lieu qu'au premier
-    /// `next`. La construction n'est pas pour autant gratuite : elle authentifie
-    /// le point de départ, sans quoi le chaînage du parcours partirait de rien.
+    /// `next`. Aucune session non plus : le descendant ne vérifie pas la
+    /// signature du point de départ, ce qui lui permet de parcourir un arbre dont
+    /// le foyer est fermé.
     ///
     /// # Erreurs
     ///
-    /// Propage les refus de [`Descendants::new`] : ENU de départ non intègre, non
-    /// authentique, braise inconnue ou foyer sans clé.
+    /// Propage le seul refus de [`Descendants::new`] : ENU de départ non intègre.
     pub(super) fn donne_descendants<'a>(
         &'a self,
-        session: &'a SessionApplication,
         enu: &Enu,
     ) -> ResultFeuApplication<Descendants<'a>> {
-        Descendants::new(&self.chemin_enu, session, enu)
+        Descendants::new(&self.chemin_enu, enu)
     }
 
     /// Fabrique un parcours remontant à partir de `enu`.
