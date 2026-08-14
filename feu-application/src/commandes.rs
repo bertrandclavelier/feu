@@ -72,7 +72,10 @@ use std::io::Write;
 
 use feu_noyau::{Anomalie, DonneesBlob, FeuNoyau};
 
-use crate::scribe::{enu::Enu, iterateurs::Descendants};
+use crate::scribe::{
+    enu::Enu,
+    iterateurs::{Descendants, RacinesAnterieures},
+};
 
 use super::*;
 
@@ -849,5 +852,36 @@ impl FeuApplication {
         }
 
         self.scribe.donne_descendants(&self.session, enu)
+    }
+
+    /// Rend un itérateur sur les racines du nœud, de `enu` jusqu'à la genèse,
+    /// celle-ci comprise.
+    ///
+    /// Répond à « qu'y avait-il avant ? » : chaque item est une racine
+    /// **authentifiée**, l'état de l'arbre à une version antérieure. Composé avec
+    /// [`commande_descendants`](Self::commande_descendants), lancé sur chacune
+    /// d'elles, il dit ce que l'arbre contenait à ce moment-là.
+    ///
+    /// Un échec met fin au parcours : la lignée est une chaîne, la racine
+    /// précédente n'est connue que par celle qu'on vient de lire. Voir
+    /// [`RacinesAnterieures`] pour le détail.
+    ///
+    /// Aucun foyer n'a besoin d'être ouvert : les racines sont signées par le
+    /// nœud, dont la session tient la clé publique dès l'allumage.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud n'est pas
+    /// allumé — sans la clé publique du nœud, chaque racine échouerait en
+    /// authentification, ce qui ne dirait pas à l'appelant ce qui manque.
+    pub fn commande_racines_anterieures<'a>(
+        &'a self,
+        enu: &Enu,
+    ) -> ResultFeuApplication<RacinesAnterieures<'a>> {
+        if !self.scribe.est_actif() {
+            return Err(ErreurFeuApplication::NoeudEteint);
+        }
+
+        Ok(self.scribe.donne_racines_anterieures(&self.session, enu))
     }
 }

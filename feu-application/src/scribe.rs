@@ -50,7 +50,7 @@ use crate::{
     scribe::{
         comptoir::ComptoirDepot,
         enu::{Carte, Enu},
-        iterateurs::Descendants,
+        iterateurs::{Descendants, RacinesAnterieures},
     },
 };
 
@@ -891,6 +891,20 @@ impl Scribe {
         enu: &Enu,
     ) -> ResultFeuApplication<Descendants<'a>> {
         Descendants::new(&self.chemin_enu, session, enu)
+    }
+
+    /// Fabrique un parcours remontant à partir de `enu`.
+    ///
+    /// Même raison d'être que [`Self::donne_descendants`] : le Scribe arme
+    /// l'itérateur plutôt que de laisser sortir `chemin_enu`. Infaillible, en
+    /// revanche — [`RacinesAnterieures`] ne vérifie rien à la construction,
+    /// chaque racine étant authentifiée au moment où elle est chargée.
+    pub(super) fn donne_racines_anterieures<'a>(
+        &'a self,
+        session: &'a SessionApplication,
+        enu: &Enu,
+    ) -> RacinesAnterieures<'a> {
+        RacinesAnterieures::new(&self.chemin_enu, session, enu)
     }
 
     /// Cœur récursif de [`Self::retrait_lecture_seule`] : matérialise **une**

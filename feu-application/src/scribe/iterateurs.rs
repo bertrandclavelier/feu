@@ -8,13 +8,19 @@
 
 //! Parcours d'une arborescence ENU.
 //!
+//! Deux axes, deux itérateurs : [`Descendants`] descend l'espace en suivant les
+//! `hashs_enu` d'une arborescence, [`RacinesAnterieures`] remonte le temps de
+//! racine en racine par la méta `_racine`. Ils se composent — le descendant
+//! lancé sur chaque racine rendue par le remontant dit ce que contenait l'arbre
+//! à cette version-là.
+//!
 //! Ces itérateurs **naviguent, ils ne construisent jamais**. Ils ne signent
 //! rien, n'écrivent rien, ne remontent aucune modification : les fonctions qui
 //! bâtissent l'arborescence ([`remplacer`](super::enu::Enu) et la greffe
 //! d'enfants) ou la déposent sur le disque gardent leur récursion, parce
 //! qu'elles portent un état de construction qu'un parcours ne peut pas porter.
 //!
-//! **Le parcours ne vérifie aucune signature.** Il n'authentifie que son point
+//! **Le descendant ne vérifie aucune signature.** Il n'authentifie que son point
 //! de départ, puis ne recalcule à chaque pas que le hash de la carte
 //! ([`Enu::integre`](super::enu::Enu)) : l'arborescence est un DAG de Merkle,
 //! une carte de répertoire portant les `hashs_enu` de ses enfants. Partir d'une
@@ -23,12 +29,18 @@
 //! lieu d'une par ENU traversée — ce qui rend praticable l'usage visé, ouvrir
 //! beaucoup d'ENU pour afficher une arborescence.
 //!
-//! **Une ENU rendue par un itérateur n'engage donc rien.** Tout ce qui agit sur
+//! **Une ENU rendue par le descendant n'engage donc rien.** Tout ce qui agit sur
 //! un blob — lecture, suppression, description, retrait sur le disque — la
 //! repasse par [`Enu::authentique`](super::enu::Enu). Il n'existe pas de type
 //! distinct pour la marquer : la confiance vient de la vérification, pas de
 //! l'encapsulation. La `braise` reste hors garantie, couverte ni par le hash ni
 //! par la signature.
+//!
+//! **Le remontant, lui, authentifie chaque pas** ([`Enu::charger`](super::enu::Enu)).
+//! Ce qu'il traverse n'est pas de la même nature : des racines, toutes signées
+//! par le nœud, dont la session tient la clé publique dès l'allumage — là où le
+//! descendant croise des ENU de foyers, et bien plus nombreuses. Il n'a donc pas
+//! de point de départ à protéger, chaque racine étant vérifiée pour elle-même.
 //!
 //! Le parcours est **paresseux** : rien n'est lu avant l'appel à `next`, et
 //! l'itérateur ne conserve aucune des ENU qu'il a rendues. Qui veut la
@@ -37,6 +49,9 @@
 //! sans rien savoir de l'usage.
 
 use std::{collections::VecDeque, path::Path};
+
+use data_encoding::HEXLOWER;
+use feu_noyau::BRAISE_VIDE;
 
 use crate::{Enu, ErreurFeuApplication, ResultFeuApplication, SessionApplication};
 
@@ -159,5 +174,118 @@ impl<'a> Descendants<'a> {
             chemin_enu,
             a_visiter: VecDeque::from([enu.hash_carte()]),
         })
+    }
+}
+
+/// Remonte les racines du nœud, de la plus récente vers la genèse.
+///
+/// Suit la méta `_racine`, que chaque racine porte pour désigner celle qu'elle a
+/// remplacée. C'est une liste chaînée, pas un arbre : un seul successeur par pas,
+/// ni file ni déduplication — le contraire de [`Descendants`], qui parcourt un
+/// DAG et doit tenir plusieurs branches en attente.
+///
+/// **La racine de départ fait partie du parcours**, comme chez [`Descendants`] :
+/// elle est rechargée avant d'être rendue. Le nom dit l'axe du parcours, pas une
+/// garantie que le premier item soit antérieur à quoi que ce soit.
+///
+/// Le parcours s'arrête sur la genèse, que rien ne précède : sa méta `_racine`
+/// est **vide, pas absente** ([`Enu::new_racine`](super::enu::Enu), cas `None`).
+///
+/// La durée de vie `'a` couvre les deux emprunts : un `RacinesAnterieures` ne
+/// survit ni au Scribe dont il tient le chemin, ni à la session dont il tire la
+/// clé de vérification à chaque pas.
+pub struct RacinesAnterieures<'a> {
+    /// Dossier `enu/` où sont lus les fichiers, propriété du
+    /// [`Scribe`](super::Scribe).
+    chemin_enu: &'a Path,
+    /// Session interrogée à chaque pas pour authentifier la racine chargée.
+    session: &'a SessionApplication,
+    /// Racine restant à charger. `None` = parcours terminé, que ce soit par la
+    /// genèse ou par un échec.
+    hash_suivant: Option<[u8; 32]>,
+}
+
+impl<'a> Iterator for RacinesAnterieures<'a> {
+    /// L'erreur est celle de l'API publique, comme pour [`Descendants`].
+    type Item = ResultFeuApplication<Enu>;
+
+    /// Rend la racine suivante, ou l'échec rencontré en la chargeant.
+    ///
+    /// **Une erreur termine le parcours**, contrairement au descendant qui perd
+    /// une branche et continue sur sa file. Rien à décider ici : la racine
+    /// précédente n'est connue que par la méta de celle qu'on n'a pas pu lire,
+    /// il n'y a donc plus de chaîne à suivre. `take` vide le champ avant le
+    /// chargement — l'arrêt en découle sans une ligne de plus.
+    fn next(&mut self) -> Option<Self::Item> {
+        let hash = self.hash_suivant.take()?;
+
+        Some(self.charge_et_avance(&hash))
+    }
+}
+
+impl<'a> RacinesAnterieures<'a> {
+    /// Prépare le parcours sans rien lire ni rien vérifier.
+    ///
+    /// **Infaillible, à la différence de [`Descendants::new`]** : il n'y a pas de
+    /// point de départ à authentifier, puisque `charge_et_avance` recharge `enu`
+    /// par [`Enu::charger`](super::enu::Enu) au premier `next` et lui applique
+    /// les mêmes contrôles qu'à toutes les suivantes. Les répéter ici
+    /// n'avancerait l'erreur que d'un tour, au prix d'un `Result` sur une
+    /// construction qui ne fait que poser trois champs.
+    ///
+    /// Le hash de `enu` n'est pas davantage contrôlé : s'il ne correspond pas à
+    /// sa carte, le chargement qui suit le dira.
+    ///
+    /// `pub(crate)` pour la même raison que [`Descendants::new`] — `chemin_enu`
+    /// est un champ privé du [`Scribe`](super::Scribe).
+    pub(crate) fn new(chemin_enu: &'a Path, session: &'a SessionApplication, enu: &Enu) -> Self {
+        Self {
+            chemin_enu,
+            session,
+            hash_suivant: Some(enu.hash_carte()),
+        }
+    }
+
+    /// Charge la racine de `hash` et arme le pas suivant à partir de sa méta
+    /// `_racine`.
+    ///
+    /// Tient tout le travail de `next`, qui ne peut pas l'écrire lui-même : `?`
+    /// ne s'applique qu'à un type de retour homogène, et `next` rend un
+    /// `Option<Result<…>>` où il propagerait l'absence, pas l'échec.
+    ///
+    /// Deux contrôles s'ajoutent à ceux de [`Enu::charger`](super::enu::Enu) :
+    /// braise vide et méta `_racine` présente. Une ENU de contenu atteinte par
+    /// ce chemin serait une anomalie de la chaîne des versions, pas un contenu à
+    /// rendre.
+    ///
+    /// `hash_suivant` n'est réarmé que si la méta est non vide — vide, c'est la
+    /// genèse, et le champ reste `None`, ce qui termine le parcours au tour
+    /// suivant.
+    ///
+    /// # Erreurs
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeEnuRacineAttendue`] si la racine
+    /// n'en est pas une ou si sa méta `_racine` n'est pas un hash de 32 octets,
+    /// [`ErreurFeuApplication::DecodeError`] si elle n'est pas de l'hexadécimal,
+    /// et propage les refus de [`Enu::charger`](super::enu::Enu).
+    fn charge_et_avance(&mut self, hash: &[u8; 32]) -> ResultFeuApplication<Enu> {
+        let enu = Enu::charger(self.chemin_enu, self.session, hash)?;
+
+        if enu.braise() != BRAISE_VIDE {
+            return Err(ErreurFeuApplication::ScribeEnuRacineAttendue);
+        }
+        let Some(hash_string) = enu.carte().metas().get("_racine") else {
+            return Err(ErreurFeuApplication::ScribeEnuRacineAttendue);
+        };
+        if !hash_string.is_empty() {
+            self.hash_suivant = Some(
+                HEXLOWER
+                    .decode(hash_string.as_bytes())?
+                    .try_into()
+                    .map_err(|_| ErreurFeuApplication::ScribeEnuRacineAttendue)?,
+            )
+        }
+
+        Ok(enu)
     }
 }
