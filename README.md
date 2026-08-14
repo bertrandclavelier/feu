@@ -8,19 +8,24 @@ L'architecture cible repose sur un dispositif matériel dédié, à l'image des 
 
 ---
 
-## Statut
+## Où en est Feu
 
 Projet en développement actif. Fonctionnel localement, sans réseau.
 
-**v0.0.5** — Intégration des ENU : arborescence d'enveloppes signées (ML-DSA-87) tenue à la racine du nœud, donc lisible foyers fermés. Dépôt d'un dossier entier par comptoir et retrait en lecture seule, pilotés depuis la TUI. Accès aux blobs par l'ENU seule, sans désigner ni foyer ni classeur. Type `Braise` dans le noyau. 61 tests, intégrés aux crates. Toujours aucun réseau.
+### v0.0.5 — 12 août 2026
 
-**v0.0.4** — Migration post-quantique : signatures ML-DSA-87, chiffrement asymétrique ML-KEM-1024, dérivation HKDF-SHA3-256 directe depuis la seed (abandon de SLIP-0010), identité foyer par adresse `.braise` (découplée de l'ancienne `.onion`), seed 24 mots. Noyau stable sur le plan cryptographique. Toujours aucun réseau.
+Intégration des ENU, les Enveloppes Numériques Universelles, jusque-là absentes du code. Une couche applicative neuve, le **Scribe**, tient une arborescence d'enveloppes signées qui nomme et organise les blobs du nœud sans jamais les toucher. Second chantier de la version : le code ne comportait aucun test, il en compte 61.
 
-**v0.0.3** — Restructuration architecturale : workspace réorganisé en trois crates (`feu-noyau`, `feu-application`, `feu-tui`), nouvelle interface TUI (Ratatui) en remplacement de la CLI. Aucune nouvelle fonctionnalité métier. Toujours aucun réseau.
+- **ENU** : enveloppe signée `Enu` et carte `Carte` (Donnée, Texte, Répertoire), content-addressed, signature ML-DSA-87 sur la carte. Exposées en lecture seule.
+- **Arborescence** tenue à la racine du nœud, donc lisible foyers fermés : racines signées par le nœud, chaînées entre elles, sommet courant désigné par un symlink.
+- **Comptoir de dépôt** : un dossier est rempli puis refermé, son contenu est rangé en blobs et en ENU, puis greffé sous la racine du nœud. Piloté depuis la TUI.
+- **Retrait en lecture seule** : matérialisation de l'arborescence d'une ENUr dans un dossier OS, sans reprise.
+- **Accès aux blobs par l'ENU seule**, sans désigner ni foyer ni classeur.
+- **Type `Braise`** dans le noyau, qui remplace la `String` partout ; API recentrée sur l'index.
+- **61 tests** là où il n'y en avait aucun, intégrés aux crates.
+- Cryptographie inchangée. Toujours aucun réseau.
 
-**v0.0.2** — Stockage chiffré de données structuré en classeurs, signatures, vérification de signatures, dépôt idempotent, diagnostics de présence des fichiers. Toujours aucun réseau.
-
-**v0.0.1** — Fondations cryptographiques et cycle de vie local. Interface CLI persistante, initialisation d'un nœud depuis une seed, ouverture et fermeture de foyers sous forme d'archives chiffrées. Aucun réseau, aucune donnée utilisateur.
+Les versions antérieures sont dans le [changelog](CHANGELOG.md).
 
 ---
 
@@ -55,6 +60,19 @@ Linux et macOS uniquement.
 
 - [Livre blanc](documentation/livre_blanc.md) — vision et architecture du protocole
 - [Note de release](documentation/release.md) — détails techniques de la version courante
+
+---
+
+## Signaler un problème, proposer une idée
+
+Tout le suivi se passe sur la forge, sur le dépôt de référence :
+[git.clavelier.me/bertrand/feu](https://git.clavelier.me/bertrand/feu/issues).
+Ouvrir un ticket demande un compte, que chacun peut créer librement en confirmant
+une adresse mail.
+
+Les propositions y ont autant leur place que les bugs : une idée, une objection
+de conception, un usage auquel je n'ai pas pensé. Les contributions de code, en
+revanche, ne sont pas ouvertes à ce jour.
 
 ---
 
