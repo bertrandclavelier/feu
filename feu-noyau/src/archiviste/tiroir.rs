@@ -87,7 +87,7 @@ impl Tiroir {
             if n == 0 {
                 break;
             }
-            if self.blob.len() + n >= MAX_TAILLE_BLOB {
+            if self.blob.len() + n > MAX_TAILLE_BLOB {
                 return Err(crate::ErreurFeuNoyau::TailleMaxDepasseeBlob(
                     self.blob.len() + n,
                 ));

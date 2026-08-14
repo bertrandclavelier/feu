@@ -21,11 +21,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::scribe::erreur::{ErreurScribe, ResultScribe};
-
-/// Le dossier existe déjà — un comptoir ne peut pas écraser un dossier
-/// existant.
-const ERR_COM_D_001: &str = "COM_D-001 > Le dossier existe déjà";
+use crate::{ErreurFeuApplication, ResultFeuApplication};
 
 /// Dossier OS servant de point de dépôt.
 ///
@@ -73,12 +69,15 @@ impl ComptoirDepot {
     ///
     /// # Erreurs
     ///
-    /// Retourne une erreur si le dossier existe déjà ou si la création
-    /// échoue (permissions insuffisantes, système de fichiers en lecture
-    /// seule).
-    pub(super) fn ouvrir(&self) -> ResultScribe<()> {
+    /// Retourne [`ErreurFeuApplication::ScribeDossierDejaExistant`] si le
+    /// chemin est déjà pris — un comptoir n'écrase pas un dossier existant.
+    /// Propage [`ErreurFeuApplication::IoError`] si la création échoue
+    /// (permissions insuffisantes, système de fichiers en lecture seule).
+    pub(super) fn ouvrir(&self) -> ResultFeuApplication<()> {
         if self.chemin.exists() {
-            return Err(ErreurScribe::Interne(String::from(ERR_COM_D_001)));
+            return Err(ErreurFeuApplication::ScribeDossierDejaExistant(
+                self.chemin.clone(),
+            ));
         }
         DirBuilder::new()
             .mode(0o700)
@@ -96,9 +95,9 @@ impl ComptoirDepot {
     ///
     /// # Erreurs
     ///
-    /// Propage une [`ErreurScribe::IoError`] si le dossier est absent ou si la
-    /// suppression échoue.
-    pub(super) fn supprimer(&self) -> ResultScribe<()> {
+    /// Propage [`ErreurFeuApplication::IoError`] si le dossier est absent ou si
+    /// la suppression échoue.
+    pub(super) fn supprimer(&self) -> ResultFeuApplication<()> {
         remove_dir_all(&self.chemin)?;
 
         Ok(())
@@ -125,13 +124,15 @@ mod tests {
 
     use tempfile::TempDir;
 
+    use crate::ResultFeuApplication;
+
     use super::*;
 
     /// Cycle de vie complet : construction sans dossier, ouverture, refus
     /// d'écraser un dossier existant, dépôt de contenu, suppression, refus de
     /// supprimer un dossier déjà absent.
     #[test]
-    fn cycle_vie_comptoir_depot() -> ResultScribe<()> {
+    fn cycle_vie_comptoir_depot() -> ResultFeuApplication<()> {
         let tmp = TempDir::new()?;
 
         // Création du chemin et du comptoir
@@ -155,7 +156,10 @@ mod tests {
         assert_eq!(mode & 0o777, 0o700);
 
         // On peut pas créer un comptoir sur le même chemin
-        assert!(matches!(comptoir.ouvrir(), Err(ErreurScribe::Interne(_))));
+        assert!(matches!(
+            comptoir.ouvrir(),
+            Err(ErreurFeuApplication::ScribeDossierDejaExistant(_))
+        ));
 
         // Création d'une petite arborescence dans le dossier du comptoir
         let chemin2 = chemin.join("sous-dossier");

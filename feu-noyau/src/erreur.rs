@@ -231,22 +231,22 @@ pub enum ErreurFeuNoyau {
 
     /// Blob plus grand que [`MAX_TAILLE_BLOB`], borne posée au remplissage du
     /// tiroir. Porte la taille atteinte.
-    #[error("NOY > Blob trop grand : {0} octets (max {max} octets)", max = MAX_TAILLE_BLOB - 1)]
+    #[error("NOY > Blob trop grand : {0} octets (max {max} octets)", max = MAX_TAILLE_BLOB )]
     TailleMaxDepasseeBlob(usize),
 
     /// Message à chiffrer plus grand que [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`].
     /// Porte la taille reçue, seule information non déductible du nom.
-    #[error("NOY > Message à chiffrer trop grand : {0} octets (max {max} octets)", max = MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE - 1)]
+    #[error("NOY > Message à chiffrer trop grand : {0} octets (max {max} octets)", max = MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE )]
     TailleMaxDepasseeChiffrementAsymetrique(usize),
 
     /// Message chiffré plus grand que la limite du clair augmentée du surcoût
     /// KEM — 1568 octets de ciphertext, 12 de nonce, 16 de tag.
-    #[error("NOY > Message à déchiffrer trop grand : {0} octets (max {max} octets)", max = MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE + 1595)]
+    #[error("NOY > Message à déchiffrer trop grand : {0} octets (max {max} octets)", max = MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE + 1596)]
     TailleMaxDepasseeDechiffrementAsymetrique(usize),
 
     /// Message à signer plus grand que [`MAX_TAILLE_SIGNATURE`], que la clé
     /// engagée soit celle du nœud ou celle d'un foyer — cause et borne communes.
-    #[error("NOY > Message à signer trop grand : {0} octets (max {max} octets)", max = MAX_TAILLE_SIGNATURE - 1)]
+    #[error("NOY > Message à signer trop grand : {0} octets (max {max} octets)", max = MAX_TAILLE_SIGNATURE )]
     TailleMaxDepasseeSignature(usize),
 
     /// Échec d'entrée-sortie remonté tel quel par `?` : le variant porte

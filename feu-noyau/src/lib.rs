@@ -57,12 +57,23 @@ pub const MAX_FOYERS: usize = 3;
 /// Nombre maximum de classeurs par foyer.
 pub const MAX_CLASSEURS: usize = 5;
 /// Taille maximum d'un blob — 512 Mio.
+///
+/// **Borne incluse**, comme les deux `MAX_TAILLE_*` qui suivent : un blob de
+/// cette taille exacte passe, la garde est un `>` strict. Une taille est une
+/// quantité, pas un cardinal d'index — le `>=` de [`MAX_FOYERS`] et
+/// [`MAX_CLASSEURS`], où l'index valide s'arrête à MAX-1, ne s'applique pas ici.
 pub const MAX_TAILLE_BLOB: usize = 512 * 1024 * 1024;
 
 /// Taille maximum d'un message à chiffrer via ML-KEM-1024 + AES-256-GCM — 1 Mio.
+///
+/// Borne incluse. Le déchiffrement accepte la même valeur augmentée du surcoût
+/// KEM (1596 octets), sans quoi un message chiffré à la taille maximale ne
+/// serait pas déchiffrable.
 pub const MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE: usize = 1024 * 1024;
 
 /// Taille maximum d'un message à signer — 64 Kio.
+///
+/// Borne incluse.
 pub const MAX_TAILLE_SIGNATURE: usize = 64 * 1024;
 
 pub(crate) const TAILLE_CHUNK: usize = 8 * 1024;
@@ -1224,7 +1235,7 @@ impl FeuNoyau {
         cle_publique_destinataire: &[u8; 1568],
         octets_a_chiffrer: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
-        if octets_a_chiffrer.len() >= MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE {
+        if octets_a_chiffrer.len() > MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE {
             return Err(ErreurFeuNoyau::TailleMaxDepasseeChiffrementAsymetrique(
                 octets_a_chiffrer.len(),
             ));
@@ -1261,7 +1272,7 @@ impl FeuNoyau {
         if !self.session.foyers[index_foyer].est_ouvert {
             return Err(ErreurFeuNoyau::FoyerFerme(index_foyer));
         }
-        if octets_a_dechiffrer.len() >= MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE + 1596 {
+        if octets_a_dechiffrer.len() > MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE + 1596 {
             return Err(ErreurFeuNoyau::TailleMaxDepasseeDechiffrementAsymetrique(
                 octets_a_dechiffrer.len(),
             ));
@@ -1288,7 +1299,7 @@ impl FeuNoyau {
     /// Retourne [`ErreurFeuNoyau::TailleMaxDepasseeSignature`] si la taille
     /// dépasse [`MAX_TAILLE_SIGNATURE`], ou propage l'échec de la signature.
     pub fn signature_noeud(&self, octets_a_signer: &[u8]) -> ResultFeuNoyau<[u8; 4627]> {
-        if octets_a_signer.len() >= MAX_TAILLE_SIGNATURE {
+        if octets_a_signer.len() > MAX_TAILLE_SIGNATURE {
             return Err(ErreurFeuNoyau::TailleMaxDepasseeSignature(
                 octets_a_signer.len(),
             ));
@@ -1324,7 +1335,7 @@ impl FeuNoyau {
         if !self.session.foyers[index_foyer].est_ouvert {
             return Err(ErreurFeuNoyau::FoyerFerme(index_foyer));
         }
-        if octets_a_signer.len() >= MAX_TAILLE_SIGNATURE {
+        if octets_a_signer.len() > MAX_TAILLE_SIGNATURE {
             return Err(ErreurFeuNoyau::TailleMaxDepasseeSignature(
                 octets_a_signer.len(),
             ));

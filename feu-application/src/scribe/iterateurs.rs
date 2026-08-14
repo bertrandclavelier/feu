@@ -60,9 +60,9 @@ pub struct Descendants<'a> {
 }
 
 impl<'a> Iterator for Descendants<'a> {
-    /// L'erreur est celle de l'API publique, pas `ErreurScribe` : `Descendants`
-    /// traverse la frontière du crate, et aucun type du Scribe ne la traverse.
-    /// La conversion se fait ici, à la source.
+    /// L'erreur est celle de l'API publique : `Descendants` traverse la
+    /// frontière du crate, et [`ErreurFeuApplication`](crate::ErreurFeuApplication)
+    /// est le seul type d'erreur qu'il expose.
     type Item = ResultFeuApplication<Enu>;
 
     /// Charge l'ENU suivante et empile ses enfants s'il y en a.
@@ -85,7 +85,7 @@ impl<'a> Iterator for Descendants<'a> {
         let hash = self.a_visiter.pop_front()?;
 
         match Enu::charger(self.chemin_enu, self.session, &hash) {
-            Err(e) => Some(Err(e.into())),
+            Err(e) => Some(Err(e)),
 
             Ok(enu) => {
                 if let Carte::Repertoire {

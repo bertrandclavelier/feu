@@ -28,7 +28,6 @@
 
 mod comptoir;
 pub mod enu;
-pub(super) mod erreur;
 pub mod iterateurs;
 
 #[cfg(test)]
@@ -47,57 +46,13 @@ use feu_noyau::{BRAISE_VIDE, DonneesBlob, FeuNoyau, MAX_CLASSEURS, MAX_FOYERS};
 use walkdir::WalkDir;
 
 use crate::{
-    SessionApplication,
+    ErreurFeuApplication, ResultFeuApplication, SessionApplication,
     scribe::{
         comptoir::ComptoirDepot,
         enu::{Carte, Enu},
-        erreur::{ErreurScribe, ResultScribe},
         iterateurs::Descendants,
     },
 };
-
-/// L'ID fourni ne correspond à aucun comptoir de dépôt actif dans
-/// [`Scribe::comptoirs_depot`].
-const ERR_SCR_001: &str = "SCR-001 > Index du comptoir invalide";
-/// Le chemin visé par un retrait est déjà un dossier — le retrait refuse
-/// d'écrire dans un dossier existant, il crée toujours le sien.
-const ERR_SCR_002: &str = "SCR-002 > Le dossier existe déjà";
-/// L'ENU fournie comme racine de retrait n'est pas une `EnuR`
-/// ([`Carte::Repertoire`]) : seul un répertoire peut ouvrir une arborescence.
-const ERR_SCR_003: &str = "SCR-003 > Ce doit être une EnuR";
-
-/// La braise portée par une ENU ne résout vers aucun foyer de la session —
-/// nécessaire pour savoir à quel foyer demander le déchiffrement d'un blob.
-const ERR_SCR_004: &str = "SCR-004 > Braise inconnue";
-
-/// L'ENU fournie pour un chargement de données n'est pas une `EnuD`
-/// ([`Carte::Donnee`]) : elle ne référence donc aucun blob.
-const ERR_SCR_005: &str = "SCR-005 > Ce doit être une EnuD";
-
-/// L'`index_foyer` fourni dépasse [`MAX_FOYERS`]. Refusé sous le code du Scribe
-/// plutôt que de laisser une erreur applicative faire l'aller-retour.
-///
-/// Sert aussi à traiter le `None` de [`SessionApplication::braise_foyer`] à la
-/// fermeture d'un comptoir : l'index y est déjà validé par l'ouverture, mais
-/// l'`Option` rendue par l'API se traite quand même.
-const ERR_SCR_006: &str = "SCR-006 > Index de foyer invalide";
-
-/// Le dossier du comptoir a disparu entre son ouverture et sa fermeture —
-/// supprimé ou déplacé hors de Feu. Constaté avant le parcours, pour rendre un
-/// code du Scribe plutôt que l'[`ErreurScribe::IoError`] brute que produirait
-/// [`read_dir`] sur un chemin absent.
-const ERR_SCR_007: &str = "SCR-007 > Dossier du dépôt introuvable";
-
-/// Le foyer de destination du comptoir a été fermé depuis son ouverture. Sans
-/// cette garde, l'échec ne viendrait que du noyau, au premier `depot_blob` —
-/// donc après lecture des fichiers, et sous une erreur qui ne nomme pas le
-/// comptoir.
-const ERR_SCR_008: &str = "SCR-008 > Foyer fermé";
-
-/// L'`index_classeur` fourni dépasse [`MAX_CLASSEURS`]. Refusé à l'ouverture du
-/// comptoir : l'index y est figé, un comptoir créé avec un classeur hors bornes
-/// échouerait à chaque fermeture sans recours.
-const ERR_SCR_009: &str = "SCR-009 > Index de classeur invalide";
 
 /// Tenant de la couche ENU — créé et maintient `~/.feu/enu/`.
 ///
@@ -130,7 +85,8 @@ pub(super) struct Scribe {
     ///
     /// Jamais remis à zéro, pas même à l'extinction : un identifiant distribué
     /// avant elle ne peut ainsi désigner aucun comptoir neuf, il échoue en
-    /// `SCR-001` au lieu d'en atteindre un autre.
+    /// [`ErreurFeuApplication::ScribeIndexComptoirInconnu`] au lieu d'en
+    /// atteindre un autre.
     prochain_id: usize,
 }
 
@@ -167,7 +123,10 @@ impl Scribe {
     ///
     /// Propage les erreurs de [`Enu::charger_derniere_racine`] : lien absent,
     /// lecture, authentification.
-    pub(super) fn derniere_enu_racine(&self, session: &SessionApplication) -> ResultScribe<Enu> {
+    pub(super) fn derniere_enu_racine(
+        &self,
+        session: &SessionApplication,
+    ) -> ResultFeuApplication<Enu> {
         Enu::charger_derniere_racine(&self.chemin_derniere_racine, session)
     }
 
@@ -189,7 +148,7 @@ impl Scribe {
         &self,
         session: &SessionApplication,
         hash: &[u8; 32],
-    ) -> ResultScribe<Option<Enu>> {
+    ) -> ResultFeuApplication<Option<Enu>> {
         if !Enu::hash_carte_vers_chemin(hash, &self.chemin_enu).exists() {
             return Ok(None);
         }
@@ -214,16 +173,17 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Retourne `SCR-004` si la braise ne résout vers aucun foyer de la session,
-    /// `SCR-005` si la carte n'est pas une [`Carte::Donnee`] et ne référence
-    /// donc aucun blob.
+    /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la braise ne
+    /// résout vers aucun foyer de la session, et
+    /// [`ErreurFeuApplication::ScribeEnuDAttendue`] si la carte n'est pas une
+    /// [`Carte::Donnee`] et ne référence donc aucun blob.
     fn index_et_hash_blob(
         &self,
         session: &SessionApplication,
         enu: &Enu,
-    ) -> ResultScribe<(usize, [u8; 32])> {
+    ) -> ResultFeuApplication<(usize, [u8; 32])> {
         let Some(index) = session.braise_vers_index(enu.braise()) else {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_004)));
+            return Err(ErreurFeuApplication::ScribeBraiseInconnue);
         };
 
         let Carte::Donnee {
@@ -232,7 +192,7 @@ impl Scribe {
             hash_donnee,
         } = enu.carte()
         else {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_005)));
+            return Err(ErreurFeuApplication::ScribeEnuDAttendue);
         };
 
         Ok((index, *hash_donnee))
@@ -248,16 +208,16 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Propage `SCR-004` et `SCR-005` de [`index_et_hash_blob`](Self::index_et_hash_blob),
-    /// puis les erreurs du noyau : foyer fermé, blob introuvable, déchiffrement,
-    /// donnée corrompue.
+    /// Propage les deux refus de
+    /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
+    /// noyau : foyer fermé, blob introuvable, déchiffrement, donnée corrompue.
     pub(super) fn charge_blob(
         &self,
         noyau: &mut FeuNoyau,
         session: &SessionApplication,
         enu: &Enu,
         destination: impl Write,
-    ) -> ResultScribe<()> {
+    ) -> ResultFeuApplication<()> {
         let (index, hash_donnees) = self.index_et_hash_blob(session, enu)?;
 
         noyau.lecture_blob(index, &HEXLOWER.encode(&hash_donnees), destination)?;
@@ -275,15 +235,15 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Propage `SCR-004` et `SCR-005` de [`index_et_hash_blob`](Self::index_et_hash_blob),
-    /// puis les erreurs du noyau : foyer fermé, blob introuvable, suppression
-    /// disque.
+    /// Propage les deux refus de
+    /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
+    /// noyau : foyer fermé, blob introuvable, suppression disque.
     pub(super) fn supprime_blob(
         &self,
         noyau: &mut FeuNoyau,
         session: &SessionApplication,
         enu: &Enu,
-    ) -> ResultScribe<()> {
+    ) -> ResultFeuApplication<()> {
         let (index, hash_donnees) = self.index_et_hash_blob(session, enu)?;
 
         noyau.suppression_blob(index, &HEXLOWER.encode(&hash_donnees))?;
@@ -301,7 +261,7 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Propage `SCR-004` et `SCR-005` de
+    /// Propage les deux refus de
     /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
     /// noyau : foyer fermé. Un blob absent est un `Ok(false)`.
     pub(super) fn existence_blob(
@@ -309,7 +269,7 @@ impl Scribe {
         noyau: &FeuNoyau,
         session: &SessionApplication,
         enu: &Enu,
-    ) -> ResultScribe<bool> {
+    ) -> ResultFeuApplication<bool> {
         let (index, hash_donnees) = self.index_et_hash_blob(session, enu)?;
 
         Ok(noyau.existence_blob(index, &HEXLOWER.encode(&hash_donnees))?)
@@ -322,7 +282,7 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Propage `SCR-004` et `SCR-005` de
+    /// Propage les deux refus de
     /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
     /// noyau : foyer fermé, blob introuvable — ici une erreur, contrairement à
     /// [`existence_blob`](Self::existence_blob).
@@ -331,7 +291,7 @@ impl Scribe {
         noyau: &FeuNoyau,
         session: &SessionApplication,
         enu: &Enu,
-    ) -> ResultScribe<DonneesBlob> {
+    ) -> ResultFeuApplication<DonneesBlob> {
         let (index, hash_donnees) = self.index_et_hash_blob(session, enu)?;
 
         Ok(noyau.informations_blob(index, &HEXLOWER.encode(&hash_donnees))?)
@@ -363,7 +323,7 @@ impl Scribe {
         &mut self,
         feu_noyau: &FeuNoyau,
         session: &SessionApplication,
-    ) -> ResultScribe<()> {
+    ) -> ResultFeuApplication<()> {
         if !&self.chemin_enu.exists() {
             DirBuilder::new()
                 .mode(0o700)
@@ -412,21 +372,24 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] si l'index de foyer (`SCR-006`) ou de
-    /// classeur (`SCR-009`) sort des bornes, et propage l'échec de création du
-    /// dossier — notamment s'il existe déjà.
+    /// Retourne [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] ou
+    /// [`ErreurFeuApplication::ScribeIndexClasseurInvalide`] si l'index sort des
+    /// bornes, et propage l'échec de création du dossier — notamment s'il existe
+    /// déjà.
     pub(super) fn ouverture_comptoir_depot(
         &mut self,
         session: &mut SessionApplication,
         chemin: &Path,
         index_foyer: usize,
         index_classeur: usize,
-    ) -> ResultScribe<usize> {
+    ) -> ResultFeuApplication<usize> {
         if index_foyer >= MAX_FOYERS {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_006)));
+            return Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(index_foyer));
         }
         if index_classeur >= MAX_CLASSEURS {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_009)));
+            return Err(ErreurFeuApplication::ScribeIndexClasseurInvalide(
+                index_classeur,
+            ));
         }
 
         let comptoir = ComptoirDepot::new(chemin.to_path_buf(), index_foyer, index_classeur);
@@ -495,16 +458,19 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Quatre refus, tous en [`ErreurScribe::Interne`], dont un seul laisse une
-    /// seconde chance : `SCR-008`, foyer de destination fermé depuis l'ouverture
-    /// — le comptoir est encore enregistré, la fermeture se retente une fois le
-    /// foyer rouvert. `SCR-006` sort au même endroit, mais ne couvre ici que le
-    /// `None` de [`SessionApplication::braise_foyer`], que la validation d'index
-    /// à l'ouverture rend inatteignable.
+    /// Trois refus, dont un seul laisse une seconde chance :
+    /// [`ErreurFeuApplication::ScribeFoyerFerme`], foyer de destination fermé
+    /// depuis l'ouverture — le comptoir est encore enregistré, la fermeture se
+    /// retente une fois le foyer rouvert.
+    /// [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] sort au même endroit,
+    /// mais ne couvre ici que le `None` de
+    /// [`SessionApplication::braise_foyer`], que la validation d'index à
+    /// l'ouverture rend inatteignable.
     ///
-    /// Les deux autres sont sans retour : ID de comptoir inconnu (`SCR-001`), et
-    /// dossier disparu du disque (`SCR-007`), constaté après le retrait — il n'y
-    /// a plus de comptoir à refermer.
+    /// Les deux autres sont sans retour :
+    /// [`ErreurFeuApplication::ScribeIndexComptoirInconnu`], et
+    /// [`ErreurFeuApplication::ScribeDossierDepotIntrouvable`], constaté après
+    /// le retrait — il n'y a plus de comptoir à refermer.
     ///
     /// Propage ensuite toute erreur d'E/S, de dépôt de données ou de signature —
     /// y compris l'échec de signature si un foyer du chemin reconstruit par
@@ -517,28 +483,41 @@ impl Scribe {
         session: &mut SessionApplication,
         index_comptoir: usize,
         enu_racine_depot: &Enu,
-    ) -> ResultScribe<()> {
+    ) -> ResultFeuApplication<()> {
         let Some(comptoir) = self.comptoirs_depot.get(&index_comptoir) else {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_001)));
+            return Err(ErreurFeuApplication::ScribeIndexComptoirInconnu(
+                index_comptoir,
+            ));
         };
 
         let Some(braise) = session.braise_foyer(comptoir.index_foyer()) else {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_006)));
+            return Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(
+                comptoir.index_foyer(),
+            ));
         };
 
         if !session.etat_foyers()[comptoir.index_foyer()] {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_008)));
+            return Err(ErreurFeuApplication::ScribeFoyerFerme(
+                comptoir.index_foyer(),
+            ));
         }
 
+        // `None` inatteignable : le `get` d'entrée a réussi et rien entre les
+        // deux ne touche à la map. Un refus plutôt qu'un `expect`, au cas où une
+        // garde future s'y glisserait.
         let Some(comptoir) = self.comptoirs_depot.remove(&index_comptoir) else {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_001)));
+            return Err(ErreurFeuApplication::ScribeIndexComptoirInconnu(
+                index_comptoir,
+            ));
         };
         session
             .mut_comptoirs_depot_ouverts()
             .remove(&index_comptoir);
 
         if !comptoir.chemin().exists() {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_007)));
+            return Err(ErreurFeuApplication::ScribeDossierDepotIntrouvable(
+                comptoir.chemin().clone(),
+            ));
         }
 
         let dir = read_dir(comptoir.chemin())?;
@@ -572,9 +551,10 @@ impl Scribe {
                     &contenu[..],
                 )?;
 
+                // le noyau nomme ses blobs par l'hexadécimal d'un SHA3-256 :
+                // 32 octets une fois décodés, la conversion ne peut pas échouer
                 let hash_fichier: [u8; 32] = HEXLOWER
-                    .decode(hash_fichier.as_bytes())
-                    .map_err(|e| ErreurScribe::Interne(format!("hex invalide : {e}")))?
+                    .decode(hash_fichier.as_bytes())?
                     .try_into()
                     .unwrap();
 
@@ -645,7 +625,8 @@ impl Scribe {
     /// - **racine du nœud** ([`BRAISE_VIDE`], que seule une racine porte) — la
     ///   greffe se fait à même le sommet : sa carte enrichie repart directement
     ///   en [`Enu::new_racine`], qui la signe *nœud*. Passer par [`Enu::new`]
-    ///   échouerait (`ENU-005`) — cette braise ne désigne aucun foyer — et
+    ///   échouerait en [`ErreurFeuApplication::ScribeBraiseInconnue`] — cette
+    ///   braise ne désigne aucun foyer — et
     ///   re-signer une racine sous un foyer serait un contresens : le sommet
     ///   appartient au nœud, quel que soit le foyer qui reçoit les contenus.
     ///
@@ -677,16 +658,17 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] (`ENU-004`) si `enu_racine_depot`
-    /// n'est pas un répertoire. Propage toute erreur d'E/S, d'authentification
-    /// ou de signature — notamment un foyer fermé sur le chemin remonté.
+    /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si
+    /// `enu_racine_depot` n'est pas un répertoire. Propage toute erreur d'E/S,
+    /// d'authentification ou de signature — notamment un foyer fermé sur le
+    /// chemin remonté.
     fn greffe_enfants(
         &self,
         noyau: &FeuNoyau,
         session: &SessionApplication,
         enu_racine_depot: &Enu,
         hashs_nouveaux_enfants: &[[u8; 32]],
-    ) -> ResultScribe<()> {
+    ) -> ResultFeuApplication<()> {
         let mut nouvelle_carte = enu_racine_depot.carte().clone();
 
         for h in hashs_nouveaux_enfants {
@@ -740,7 +722,7 @@ impl Scribe {
         session: &SessionApplication,
         enu_racine_depot: &Enu,
         enu: &Enu,
-    ) -> ResultScribe<()> {
+    ) -> ResultFeuApplication<()> {
         enu.sauvegarder(&self.chemin_enu)?;
 
         self.greffe_enfants(noyau, session, enu_racine_depot, &[enu.hash_carte()])?;
@@ -773,13 +755,15 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Propage [`ErreurScribe::Interne`] si le texte dépasse `MAX_TAILLE_TEXTE`
-    /// (`ENU-006`) ou si `nom` est refusé comme composant de chemin (`ENU-009`)
-    /// — les deux via [`Carte::new_texte`] — ou si `enu_racine_depot` n'est pas
-    /// un répertoire (`ENU-004`, via `ajout_hash_enu`) ou si `index_foyer`
-    /// sort des bornes (`SCR-006`). Propage toute erreur d'E/S,
-    /// d'authentification ou de signature — notamment si un foyer du chemin
-    /// reconstruit est fermé.
+    /// Propage [`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`] si le
+    /// texte dépasse `MAX_TAILLE_TEXTE`, ou
+    /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] si `nom` est refusé
+    /// comme composant de chemin — les deux via [`Carte::new_texte`] —, ou
+    /// [`ErreurFeuApplication::ScribeEnuRAttendue`] si `enu_racine_depot` n'est
+    /// pas un répertoire (via `ajout_hash_enu`), ou
+    /// [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] si `index_foyer` sort
+    /// des bornes. Propage toute erreur d'E/S, d'authentification ou de
+    /// signature — notamment si un foyer du chemin reconstruit est fermé.
     pub(super) fn depot_enu_texte(
         &self,
         noyau: &FeuNoyau,
@@ -788,9 +772,9 @@ impl Scribe {
         index_foyer: usize,
         nom: &str,
         contenu: &str,
-    ) -> ResultScribe<()> {
+    ) -> ResultFeuApplication<()> {
         let Some(braise) = session.braise_foyer(index_foyer) else {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_006)));
+            return Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(index_foyer));
         };
 
         let enu_texte = Enu::new(Carte::new_texte(nom, contenu)?, noyau, session, braise)?;
@@ -826,20 +810,23 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] si `chemin_retrait` est un dossier
-    /// existant (`SCR-002`) ou si `enu_r` n'est pas un répertoire (`SCR-003`).
-    /// Propage les erreurs de la descente : authentification d'un enfant,
-    /// nom absent ou invalide (`ENU-008`/`ENU-009`), E/S et lecture de blob
-    /// (foyer fermé, blob introuvable).
+    /// Retourne [`ErreurFeuApplication::ScribeDossierDejaExistant`] si
+    /// `chemin_retrait` est un dossier existant, ou
+    /// [`ErreurFeuApplication::ScribeEnuRAttendue`] si `enu_r` n'est pas un
+    /// répertoire. Propage les erreurs de la descente : authentification d'un
+    /// enfant, nom absent ou invalide, E/S et lecture de blob (foyer fermé,
+    /// blob introuvable).
     pub(super) fn retrait_lecture_seule(
         &self,
         noyau: &mut FeuNoyau,
         session: &SessionApplication,
         chemin_retrait: &Path,
         enu_r: &Enu,
-    ) -> ResultScribe<()> {
+    ) -> ResultFeuApplication<()> {
         if chemin_retrait.is_dir() {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_002)));
+            return Err(ErreurFeuApplication::ScribeDossierDejaExistant(
+                chemin_retrait.to_path_buf(),
+            ));
         }
         let Carte::Repertoire {
             metas: _,
@@ -847,7 +834,7 @@ impl Scribe {
             hashs_enu,
         } = enu_r.carte()
         else {
-            return Err(ErreurScribe::Interne(String::from(ERR_SCR_003)));
+            return Err(ErreurFeuApplication::ScribeEnuRAttendue);
         };
 
         DirBuilder::new()
@@ -905,8 +892,9 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] si le nom est absent ou invalide
-    /// (`ENU-008`/`ENU-009`). Propage les erreurs d'E/S, d'authentification
+    /// Retourne [`ErreurFeuApplication::ScribeMetaNomAbsente`] ou
+    /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] selon que le nom est
+    /// absent ou refusé. Propage les erreurs d'E/S, d'authentification
     /// d'un enfant ([`Enu::charger`]) et de lecture de blob — notamment foyer
     /// fermé ou blob introuvable.
     fn retrait_lecture_seule_recursif(
@@ -915,7 +903,7 @@ impl Scribe {
         session: &SessionApplication,
         chemin_courant: &Path,
         enu_courante: &Enu,
-    ) -> ResultScribe<()> {
+    ) -> ResultFeuApplication<()> {
         // nom validé avant tout join — il vient du disque et pourrait sinon
         // faire écrire hors du dossier de retrait, quelle que soit la variante
         let nom_fichier = enu_courante.carte().nom_fichier()?;

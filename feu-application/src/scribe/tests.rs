@@ -188,8 +188,8 @@ fn falsification_avant_chargement_enu() {
     // Cibler ENU-003 : d'autres causes (braise inconnue, désérialisation)
     // sortent aussi en `Interne` — seul ce code prouve le rejet par la signature.
     assert!(matches!(
-            Enu::charger(&chemin_enu, &session, &enu.hash_carte()),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-003")
+        Enu::charger(&chemin_enu, &session, &enu.hash_carte()),
+        Err(ErreurFeuApplication::ScribeEnuNonAuthentifiee)
     ));
 
     fermer_foyer(noyau, session);
@@ -215,8 +215,8 @@ fn falsification_braise_avant_chargement_enu() {
     write(enu.chemin(&chemin_enu), octets).unwrap();
 
     assert!(matches!(
-            Enu::charger(&chemin_enu, &session, &enu.hash_carte()),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-003")
+        Enu::charger(&chemin_enu, &session, &enu.hash_carte()),
+        Err(ErreurFeuApplication::ScribeEnuNonAuthentifiee)
     ));
 
     fermer_foyer(noyau, session);
@@ -323,8 +323,15 @@ fn cycle_remplacements() {
 
     // garde : remplacement de même hash de carte que la racine courante → refus
     assert!(matches!(
-            Enu::remplacer(&chemin_enu, &chemin_derniere_racine,  &enu_racine.hash_carte(), &enu_racine, &noyau, &session),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-007")
+        Enu::remplacer(
+            &chemin_enu,
+            &chemin_derniere_racine,
+            &enu_racine.hash_carte(),
+            &enu_racine,
+            &noyau,
+            &session
+        ),
+        Err(ErreurFeuApplication::ScribeRemplacementSansEffet)
     ));
 
     // Première arborescence : deux niveaux de répertoires foyer (enur_1 → enur_2
@@ -446,7 +453,7 @@ fn cycle_remplacements() {
 ///   re-forgée et `.DERNIERE_RACINE` repointé, plutôt que l'ancienne complétée
 ///   en place.
 #[test]
-fn greffe_enfants_racine() -> ResultScribe<()> {
+fn greffe_enfants_racine() -> ResultFeuApplication<()> {
     let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
         cree_noyau_et_foyer_ouvert();
 
@@ -568,7 +575,7 @@ fn greffe_enfants_racine() -> ResultScribe<()> {
 /// - **remontée** : le sommet a été reconstruit et n'a toujours qu'un enfant,
 ///   la nouvelle EnuR ayant remplacé l'ancienne au lieu de s'y ajouter.
 #[test]
-fn greffe_enfants() -> ResultScribe<()> {
+fn greffe_enfants() -> ResultFeuApplication<()> {
     let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
         cree_noyau_et_foyer_ouvert();
 
@@ -670,7 +677,7 @@ fn greffe_enfants() -> ResultScribe<()> {
 /// racine re-forgée à contenu identique se trahirait par sa date et par sa
 /// signature, qu'une comparaison de cartes seules laisserait passer.
 #[test]
-fn greffe_enfants_doublon() -> ResultScribe<()> {
+fn greffe_enfants_doublon() -> ResultFeuApplication<()> {
     let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
         cree_noyau_et_foyer_ouvert();
 

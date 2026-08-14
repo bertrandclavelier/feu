@@ -482,9 +482,10 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
 
     assert!(matches!(app.commande_chargement_enu(&[0u8; 32]), Ok(None)));
 
-    assert!(
-        matches!(app.commande_existence_blob(&enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-004"))
-    );
+    assert!(matches!(
+        app.commande_existence_blob(&enu_racine),
+        Err(ErreurFeuApplication::ScribeBraiseInconnue)
+    ));
 
     app.commande_suppression_blob(&enu_rechargee)?;
 
@@ -539,12 +540,24 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
     //
     let chemin_comptoir1 = dossier_temporaire.path().join("comptoir_depot1");
 
-    assert!(
-        matches!(app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir1, MAX_FOYERS + 1, 0), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-006"))
-    );
-    assert!(
-        matches!(app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir1, 0, MAX_CLASSEURS + 1), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-009"))
-    );
+    assert!(matches!(
+        app.commande_ouverture_comptoir_depot(
+            &interface_test,
+            &chemin_comptoir1,
+            MAX_FOYERS + 1,
+            0
+        ),
+        Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(_))
+    ));
+    assert!(matches!(
+        app.commande_ouverture_comptoir_depot(
+            &interface_test,
+            &chemin_comptoir1,
+            0,
+            MAX_CLASSEURS + 1
+        ),
+        Err(ErreurFeuApplication::ScribeIndexClasseurInvalide(_))
+    ));
 
     let index_comptoir =
         app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir1, 0, 0)?;
@@ -557,9 +570,10 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
 
     app.commande_fermeture_foyer(&interface_test, 0)?;
 
-    assert!(
-        matches!(app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-008"))
-    );
+    assert!(matches!(
+        app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine),
+        Err(ErreurFeuApplication::ScribeFoyerFerme(_))
+    ));
     // SCR-008 tombe avant le retrait : l'identifiant reste des deux côtés, sans
     // quoi la retentative qui suit n'aurait plus rien à désigner
     assert!(
@@ -570,15 +584,17 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
 
     app.commande_ouverture_foyer(&interface_test, 0)?;
 
-    assert!(
-        matches!(app.commande_fermeture_comptoir_depot(&interface_test, 1, &enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-001"))
-    );
+    assert!(matches!(
+        app.commande_fermeture_comptoir_depot(&interface_test, 1, &enu_racine),
+        Err(ErreurFeuApplication::ScribeIndexComptoirInconnu(_))
+    ));
 
     remove_dir(&chemin_comptoir1).unwrap();
 
-    assert!(
-        matches!(app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-007"))
-    );
+    assert!(matches!(
+        app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine),
+        Err(ErreurFeuApplication::ScribeDossierDepotIntrouvable(_))
+    ));
     // SCR-007 est constaté après le retrait : le Scribe a lâché le comptoir, la
     // session l'a lâché avec lui, sur un chemin qui rend pourtant une erreur
     assert!(app.session.comptoirs_depot_ouverts().is_empty());
@@ -690,8 +706,9 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
     let dossier_temporaire2 = TempDir::new().unwrap();
 
     assert!(matches!(
-            app.commande_retrait_lecture_seule(dossier_temporaire2.path(), &deuxieme_enu_racine) ,
-        Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-002")));
+        app.commande_retrait_lecture_seule(dossier_temporaire2.path(), &deuxieme_enu_racine),
+        Err(ErreurFeuApplication::ScribeDossierDejaExistant(_))
+    ));
 
     //
     // Deuxième retrait avec un chemin correct
@@ -729,9 +746,10 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
         enu2
     };
 
-    assert!(
-        matches!(app.commande_existence_blob(&enur), Err(ErreurFeuApplication::Scribe(m)) if m.contains("SCR-005"))
-    );
+    assert!(matches!(
+        app.commande_existence_blob(&enur),
+        Err(ErreurFeuApplication::ScribeEnuDAttendue)
+    ));
 
     app.commande_fermeture_foyer(&interface_test, 0)?;
 
@@ -836,9 +854,10 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
     let contenus = HashSet::from([contenu1.as_str(), contenu2.as_str()]);
     assert_eq!(contenus, HashSet::from(["enu test 1", "enu test 2"]));
 
-    assert!(
-        matches!(app.commande_depot_enu_texte(&enu1, 1, "test", "enu test 3"), Err(ErreurFeuApplication::Scribe(m)) if m.contains("ENU-004"))
-    );
+    assert!(matches!(
+        app.commande_depot_enu_texte(&enu1, 1, "test", "enu test 3"),
+        Err(ErreurFeuApplication::ScribeEnuRAttendue)
+    ));
 
     let chemin_retrait = tmp.path().join("retrait");
     app.commande_retrait_lecture_seule(&chemin_retrait, &troisieme_enu_racine)?;

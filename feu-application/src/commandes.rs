@@ -464,7 +464,11 @@ impl FeuApplication {
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : dossier déjà existant ou impossible à
+    /// propage les erreurs du Scribe : index de foyer
+    /// ([`ErreurFeuApplication::ScribeIndexFoyerInvalide`]) ou de classeur
+    /// ([`ErreurFeuApplication::ScribeIndexClasseurInvalide`]) hors bornes,
+    /// dossier déjà existant
+    /// ([`ErreurFeuApplication::ScribeDossierDejaExistant`]) ou impossible à
     /// créer. Un échec ne laisse aucun identifiant dans la session, et rien
     /// n'est notifié.
     pub fn commande_ouverture_comptoir_depot(
@@ -507,20 +511,24 @@ impl FeuApplication {
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : comptoir invalide (`SCR-001`), dossier du
-    /// comptoir disparu (`SCR-007`), foyer de destination fermé (`SCR-008`) ou
-    /// braise introuvable (`SCR-006`), E/S, dépôt de données ou signature
-    /// (notamment si un foyer du chemin reconstruit est fermé).
+    /// propage les erreurs du Scribe : comptoir inconnu
+    /// ([`ErreurFeuApplication::ScribeIndexComptoirInconnu`]), dossier du
+    /// comptoir disparu ([`ErreurFeuApplication::ScribeDossierDepotIntrouvable`]),
+    /// foyer de destination fermé ([`ErreurFeuApplication::ScribeFoyerFerme`])
+    /// ou braise introuvable
+    /// ([`ErreurFeuApplication::ScribeIndexFoyerInvalide`]), E/S, dépôt de
+    /// données ou signature (notamment si un foyer du chemin reconstruit est
+    /// fermé).
     ///
-    /// Seul `SCR-008` est rattrapable : l'identifiant y reste valable, et la
-    /// fermeture se retente une fois le foyer rouvert. Tout autre échec consomme
-    /// le comptoir et laisse son dossier à l'utilisateur.
+    /// Seul le foyer fermé est rattrapable : l'identifiant y reste valable, et
+    /// la fermeture se retente une fois le foyer rouvert. Tout autre échec
+    /// consomme le comptoir et laisse son dossier à l'utilisateur.
     ///
     /// La session suit le sort du comptoir, pas celui de la commande : le Scribe
-    /// l'en retire à l'instant où il le lâche lui-même. `SCR-006` et `SCR-008`
-    /// tombent avant ce point et y laissent donc l'identifiant — ce que la
-    /// retentative promise par `SCR-008` exige. Les échecs plus tardifs l'ont
-    /// déjà emporté, le comptoir n'existant plus nulle part.
+    /// l'en retire à l'instant où il le lâche lui-même. Le foyer fermé et la
+    /// braise introuvable tombent avant ce point et y laissent donc
+    /// l'identifiant — ce que la retentative exige. Les échecs plus tardifs
+    /// l'ont déjà emporté, le comptoir n'existant plus nulle part.
     pub fn commande_fermeture_comptoir_depot(
         &mut self,
         interface_feu_application: &impl InterfaceFeuApplication,
@@ -604,7 +612,8 @@ impl FeuApplication {
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
-    /// (`SCR-004`), carte qui n'est pas une [`Carte::Donnee`] (`SCR-005`), foyer
+    /// ([`ErreurFeuApplication::ScribeBraiseInconnue`]), carte qui n'est pas une
+    /// [`Carte::Donnee`] ([`ErreurFeuApplication::ScribeEnuDAttendue`]), foyer
     /// fermé, blob introuvable, déchiffrement, ou hash recalculé divergent —
     /// donnée corrompue.
     pub fn commande_chargement_blob(
@@ -639,7 +648,8 @@ impl FeuApplication {
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
-    /// (`SCR-004`), carte qui n'est pas une [`Carte::Donnee`] (`SCR-005`), foyer
+    /// ([`ErreurFeuApplication::ScribeBraiseInconnue`]), carte qui n'est pas une
+    /// [`Carte::Donnee`] ([`ErreurFeuApplication::ScribeEnuDAttendue`]), foyer
     /// fermé, blob introuvable, ou échec de la suppression disque.
     pub fn commande_suppression_blob(&mut self, enu: &Enu) -> ResultFeuApplication<()> {
         let noyau = self
@@ -665,7 +675,8 @@ impl FeuApplication {
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
-    /// (`SCR-004`), carte qui n'est pas une [`Carte::Donnee`] (`SCR-005`), foyer
+    /// ([`ErreurFeuApplication::ScribeBraiseInconnue`]), carte qui n'est pas une
+    /// [`Carte::Donnee`] ([`ErreurFeuApplication::ScribeEnuDAttendue`]), foyer
     /// fermé.
     pub fn commande_existence_blob(&self, enu: &Enu) -> ResultFeuApplication<bool> {
         let noyau = self
@@ -673,7 +684,7 @@ impl FeuApplication {
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        Ok(self.scribe.existence_blob(noyau, &self.session, enu)?)
+        self.scribe.existence_blob(noyau, &self.session, enu)
     }
 
     /// Retourne les métadonnées système du blob désigné par `enu` — taille,
@@ -686,7 +697,8 @@ impl FeuApplication {
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
-    /// (`SCR-004`), carte qui n'est pas une [`Carte::Donnee`] (`SCR-005`), foyer
+    /// ([`ErreurFeuApplication::ScribeBraiseInconnue`]), carte qui n'est pas une
+    /// [`Carte::Donnee`] ([`ErreurFeuApplication::ScribeEnuDAttendue`]), foyer
     /// fermé, blob introuvable — ici une erreur, contrairement à
     /// [`commande_existence_blob`](Self::commande_existence_blob).
     pub fn commande_informations_blob(&self, enu: &Enu) -> ResultFeuApplication<DonneesBlob> {
@@ -695,7 +707,7 @@ impl FeuApplication {
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        Ok(self.scribe.informations_blob(noyau, &self.session, enu)?)
+        self.scribe.informations_blob(noyau, &self.session, enu)
     }
 
     //
@@ -727,7 +739,7 @@ impl FeuApplication {
             return Err(ErreurFeuApplication::NoeudEteint);
         }
 
-        Ok(self.scribe.derniere_enu_racine(&self.session)?)
+        self.scribe.derniere_enu_racine(&self.session)
     }
 
     /// Charge l'[`Enu`] désignée par `hash`, authentifiée — `None` si aucune ne
@@ -753,7 +765,7 @@ impl FeuApplication {
             return Err(ErreurFeuApplication::NoeudEteint);
         }
 
-        Ok(self.scribe.charge_enu(&self.session, hash)?)
+        self.scribe.charge_enu(&self.session, hash)
     }
 
     /// Dépose un texte dans un foyer : crée une `EnuT` (une [`Enu`] portant une
@@ -777,10 +789,12 @@ impl FeuApplication {
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : texte trop long (`ENU-006`), nom invalide
-    /// (`ENU-009`), `index_foyer` hors bornes (`SCR-006`), répertoire d'accueil
-    /// invalide (`ENU-004`), E/S ou signature (notamment si un foyer du chemin
-    /// reconstruit est fermé).
+    /// propage les erreurs du Scribe : texte trop long
+    /// ([`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`]), nom invalide
+    /// ([`ErreurFeuApplication::ScribeNomFichierInvalide`]), `index_foyer` hors
+    /// bornes ([`ErreurFeuApplication::ScribeIndexFoyerInvalide`]), répertoire
+    /// d'accueil invalide ([`ErreurFeuApplication::ScribeEnuRAttendue`]), E/S ou
+    /// signature (notamment si un foyer du chemin reconstruit est fermé).
     pub fn commande_depot_enu_texte(
         &self,
         enu_racine_depot: &Enu,

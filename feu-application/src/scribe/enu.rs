@@ -66,14 +66,15 @@
 //!   Les accesseurs [`Carte::metas`] et [`Carte::tags`], communs aux trois
 //!   variantes, sont maintenus : ils évitent de répéter le match pour des
 //!   champs présents partout. L'accesseur `hashs_enu()` ne concerne que la
-//!   variante [`Carte::Repertoire`] et renvoie donc un `ResultScribe` (erreur
-//!   `ENU-004` sur une `Donnee` ou une `Texte`). Les getters `hash_donnee()` et
-//!   `contenu()`, eux, ont été supprimés — le pattern matching les rend
-//!   redondants.
+//!   variante [`Carte::Repertoire`] et renvoie donc un `ResultFeuApplication`
+//!   ([`ErreurFeuApplication::ScribeEnuRAttendue`] sur une `Donnee` ou une
+//!   `Texte`). Les getters `hash_donnee()` et `contenu()`, eux, ont été
+//!   supprimés — le pattern matching les rend redondants.
 
 use data_encoding::HEXLOWER;
 use std::fs::rename;
 use std::os::unix::fs::symlink;
+use std::str::from_utf8;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{OpenOptions, read, remove_file},
@@ -85,10 +86,7 @@ use std::{
 
 use feu_noyau::{BRAISE_VIDE, Braise, FeuNoyau};
 
-use crate::{
-    SessionApplication,
-    scribe::erreur::{ErreurScribe, ResultScribe},
-};
+use crate::{ErreurFeuApplication, ResultFeuApplication, SessionApplication};
 
 /// Plafond du contenu d'une [`Carte::Texte`], en octets UTF-8.
 ///
@@ -96,40 +94,11 @@ use crate::{
 /// (`MAX_TAILLE_SIGNATURE`, 64 kio) : la marge restante absorbe l'en-tête de la
 /// carte sérialisée (discriminant, métadonnées, tags, préfixe de longueur) sans
 /// avoir à le calculer finement. 60 kio reste très large pour du texte brut.
-const MAX_TAILLE_TEXTE: usize = 1024 * 60;
-
-/// Le buffer est trop court, porte un discriminant de carte inconnu, ou laisse
-/// des octets résiduels après désérialisation.
-const ERR_ENU_001: &str = "ENU-001 > Problème désérialisation";
-/// Les octets censés être du texte ne sont pas du UTF-8 valide.
-const ERR_ENU_002: &str = "ENU-002 > UTF-8 invalide";
-/// L'ENU lue sur disque n'a pas pu être authentifiée : signataire inconnu de la
-/// session, signature invalide, ou hash de carte ne correspondant pas.
-const ERR_ENU_003: &str = "ENU-003 > Problème ouverture ENU";
-/// La carte ciblée n'est pas une [`Carte::Repertoire`] : impossible d'y
-/// ajouter le hash d'une ENU enfant.
-const ERR_ENU_004: &str = "ENU-004 > Ce n'est pas une EnuR";
-
-/// Les 62 octets censés porter l'adresse `.braise` ne forment pas une braise
-/// bien formée, ou la braise annoncée n'identifie aucun foyer de la session.
-const ERR_ENU_005: &str = "ENU-005 > Braise incorrecte";
-
-/// Le contenu textuel dépasse [`MAX_TAILLE_TEXTE`] : la [`Carte::Texte`] est
-/// refusée avant même d'être mise sous enveloppe et signée.
-const ERR_ENU_006: &str = "ENU-006 > Texte pour EnuT trop long";
-
-/// La cible du remplacement porte le même `hash_carte` que le remplacement
-/// lui-même — aucune nouvelle version à produire.
-/// Le remplacement proposé à [`Enu::remplacer`] porte le même `hash_carte` que
-/// la racine courante : la substitution n'aurait rien à produire.
-const ERR_ENU_007: &str = "ENU-007 > Problème Enu racine ou remplacement";
-
-/// La carte ne porte pas de méta `"nom"` : impossible de la matérialiser sur le
-/// système de fichiers.
-const ERR_ENU_008: &str = "ENU-008 > Nom de fichier introuvable";
-/// Le nom refusé comme composant de chemin : vide, contenant un séparateur
-/// `/`, ou valant `.` / `..` (voir [`Carte::nom_fichier_valide`]).
-const ERR_ENU_009: &str = "ENU-009 > Nom de fichier invalide";
+///
+/// **Borne incluse** : 61440 octets passent, la garde est un `>` strict. Une
+/// taille est une quantité, pas un cardinal d'index — le `>=` de `MAX_FOYERS` et
+/// `MAX_CLASSEURS`, où l'index valide s'arrête à MAX-1, ne s'applique pas ici.
+pub(crate) const MAX_TAILLE_TEXTE: usize = 1024 * 60;
 
 /// Enveloppe Numérique Universelle.
 ///
@@ -171,18 +140,18 @@ impl Enu {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] (`ENU-005`) si la braise n'identifie
-    /// aucun foyer de la session. Propage toute erreur de signature du noyau —
-    /// notamment si le foyer est fermé ou si la carte dépasse
+    /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la braise
+    /// n'identifie aucun foyer de la session. Propage toute erreur de signature
+    /// du noyau — notamment si le foyer est fermé ou si la carte dépasse
     /// [`MAX_TAILLE_SIGNATURE`](feu_noyau::MAX_TAILLE_SIGNATURE).
     pub(super) fn new(
         carte: Carte,
         feu_noyau: &FeuNoyau,
         session: &SessionApplication,
         braise: Braise,
-    ) -> ResultScribe<Self> {
+    ) -> ResultFeuApplication<Self> {
         let Some(index_foyer) = session.braise_vers_index(braise) else {
-            return Err(ErreurScribe::Interne(String::from(ERR_ENU_005)));
+            return Err(ErreurFeuApplication::ScribeBraiseInconnue);
         };
 
         let octets_carte = carte.vers_octets();
@@ -245,7 +214,7 @@ impl Enu {
         chemin_enu: &Path,
         chemin_derniere_racine: &Path,
         carte: Option<Carte>,
-    ) -> ResultScribe<()> {
+    ) -> ResultFeuApplication<()> {
         let carte = {
             if let Some(mut carte) = carte {
                 let derniere_racine_noeud =
@@ -376,9 +345,9 @@ impl Enu {
     ///
     /// # Erreurs
     ///
-    /// Propage une [`ErreurScribe::IoError`] si le dossier `~/.feu/enu/` est
-    /// absent ou sur tout autre échec d'écriture.
-    pub(super) fn sauvegarder(&self, chemin_enu: &Path) -> ResultScribe<PathBuf> {
+    /// Propage [`ErreurFeuApplication::IoError`] si le dossier `~/.feu/enu/`
+    /// est absent ou sur tout autre échec d'écriture.
+    pub(super) fn sauvegarder(&self, chemin_enu: &Path) -> ResultFeuApplication<PathBuf> {
         let chemin = self.chemin(chemin_enu);
 
         if !chemin.exists() {
@@ -403,10 +372,10 @@ impl Enu {
     ///
     /// # Erreurs
     ///
-    /// Propage une [`ErreurScribe::IoError`] si le fichier est absent ou si la
-    /// suppression échoue.
+    /// Propage [`ErreurFeuApplication::IoError`] si le fichier est absent ou si
+    /// la suppression échoue.
     #[allow(dead_code)]
-    pub(super) fn supprimer(&self, chemin_enu: &Path) -> ResultScribe<()> {
+    pub(super) fn supprimer(&self, chemin_enu: &Path) -> ResultFeuApplication<()> {
         let chemin = self.chemin(chemin_enu);
 
         remove_file(&chemin)?;
@@ -445,15 +414,15 @@ impl Enu {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] (`ENU-003`) si l'ENU n'est pas
-    /// authentifiable, et propage toute erreur d'E/S
-    /// ([`ErreurScribe::IoError`]), de désérialisation ou cryptographique
-    /// ([`ErreurScribe::FeuNoyau`]) rencontrée en chemin.
+    /// Retourne [`ErreurFeuApplication::ScribeEnuNonAuthentifiee`] si l'ENU
+    /// n'est pas authentifiable, et propage toute erreur d'E/S
+    /// ([`ErreurFeuApplication::IoError`]), de désérialisation ou
+    /// cryptographique ([`ErreurFeuApplication::FeuNoyau`]) rencontrée en chemin.
     pub(super) fn charger(
         chemin_enu: &Path,
         session: &SessionApplication,
         hash_carte: &[u8; 32],
-    ) -> ResultScribe<Enu> {
+    ) -> ResultFeuApplication<Enu> {
         let chemin = Self::hash_carte_vers_chemin(hash_carte, chemin_enu);
 
         let enu = Self::octets_vers_enu(&read(chemin)?)?;
@@ -481,7 +450,7 @@ impl Enu {
             return Ok(enu);
         }
 
-        Err(ErreurScribe::Interne(String::from(ERR_ENU_003)))
+        Err(ErreurFeuApplication::ScribeEnuNonAuthentifiee)
     }
 
     /// Charge et authentifie la racine **courante** du nœud, atteinte par le
@@ -501,13 +470,14 @@ impl Enu {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] (`ENU-003`) si la cible n'est pas une
-    /// racine nœud authentique, et propage toute erreur d'E/S, de désérialisation
-    /// ou cryptographique ([`ErreurScribe::FeuNoyau`]) rencontrée en chemin.
+    /// Retourne [`ErreurFeuApplication::ScribeEnuNonAuthentifiee`] si la cible
+    /// n'est pas une racine nœud authentique, et propage toute erreur d'E/S, de
+    /// désérialisation ou cryptographique
+    /// ([`ErreurFeuApplication::FeuNoyau`]) rencontrée en chemin.
     pub(super) fn charger_derniere_racine(
         chemin_derniere_racine: &Path,
         session: &SessionApplication,
-    ) -> ResultScribe<Enu> {
+    ) -> ResultFeuApplication<Enu> {
         let enu = Self::octets_vers_enu(&read(chemin_derniere_racine)?)?;
         let octets_carte = enu.carte.vers_octets();
 
@@ -524,7 +494,7 @@ impl Enu {
             return Ok(enu);
         }
 
-        Err(ErreurScribe::Interne(String::from(ERR_ENU_003)))
+        Err(ErreurFeuApplication::ScribeEnuNonAuthentifiee)
     }
 
     /// Sérialise l'enveloppe pour écriture disque.
@@ -556,16 +526,14 @@ impl Enu {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] si le buffer est trop court
-    /// (`ENU-001`), si le discriminant de carte est inconnu (`ENU-001`), si un
-    /// champ texte n'est pas du UTF-8 valide (`ENU-002`), ou si les 62 octets de
-    /// braise ne forment pas une adresse `.braise` bien formée (`ENU-005`).
-    fn octets_vers_enu(octets: &[u8]) -> ResultScribe<Enu> {
+    /// Retourne [`ErreurFeuApplication::ScribeCarteMalFormee`] si le buffer est
+    /// trop court ou si le discriminant de carte est inconnu, et propage
+    /// [`ErreurFeuApplication::Utf8Error`] sur un champ texte qui n'est pas de
+    /// l'UTF-8 valide. Les 62 octets de braise mal formés remontent du noyau en
+    /// [`ErreurFeuApplication::FeuNoyau`], via `Braise::try_from`.
+    fn octets_vers_enu(octets: &[u8]) -> ResultFeuApplication<Enu> {
         let (mut octets, mut reste) = prendre_octets(octets, 62)?;
-        let braise = Braise::try_from(
-            str::from_utf8(octets).map_err(|_| ErreurScribe::Interne(String::from(ERR_ENU_002)))?,
-        )
-        .map_err(|_| ErreurScribe::Interne(String::from(ERR_ENU_005)))?;
+        let braise = Braise::try_from(from_utf8(octets)?)?;
 
         (octets, reste) = prendre_octets(reste, 32)?;
         let hash_carte: [u8; 32] = octets.try_into().unwrap(); // pas d'erreur possible
@@ -622,11 +590,11 @@ impl Enu {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] (`ENU-007`) si `remplacement` est
-    /// identique (même hash de carte) à la racine courante. Propage les erreurs
-    /// de [`Self::remplacer_recursif`] (E/S, authentification, signature —
-    /// notamment si un foyer du chemin reconstruit est fermé) et de
-    /// [`Enu::new_racine`].
+    /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si
+    /// `remplacement` est identique (même hash de carte) à la racine courante.
+    /// Propage les erreurs de [`Self::remplacer_recursif`] (E/S,
+    /// authentification, signature — notamment si un foyer du chemin
+    /// reconstruit est fermé) et de [`Enu::new_racine`].
     pub(super) fn remplacer(
         chemin_enu: &Path,
         chemin_derniere_racine: &Path,
@@ -634,11 +602,11 @@ impl Enu {
         remplacement: &Enu,
         noyau: &FeuNoyau,
         session: &SessionApplication,
-    ) -> ResultScribe<()> {
+    ) -> ResultFeuApplication<()> {
         let racine = Enu::charger_derniere_racine(chemin_derniere_racine, session)?;
 
         if racine.hash_carte() == remplacement.hash_carte() {
-            return Err(ErreurScribe::Interne(ERR_ENU_007.to_string()));
+            return Err(ErreurFeuApplication::ScribeRemplacementSansEffet);
         }
 
         let racine = Self::remplacer_recursif(
@@ -711,7 +679,7 @@ impl Enu {
         remplacement: &Enu,
         noyau: &FeuNoyau,
         session: &SessionApplication,
-    ) -> ResultScribe<Enu> {
+    ) -> ResultFeuApplication<Enu> {
         // cible atteinte : on substitue, la remontée s'arrête ici
         if racine.hash_carte() == *hash_a_remplacer {
             return Ok(remplacement.clone());
@@ -871,21 +839,21 @@ impl Carte {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] (`ENU-004`) si la carte n'est pas un
-    /// répertoire.
+    /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si la carte n'est
+    /// pas un répertoire.
     #[allow(dead_code)]
-    pub(crate) fn hashs_enu(&self) -> ResultScribe<BTreeSet<[u8; 32]>> {
+    pub(crate) fn hashs_enu(&self) -> ResultFeuApplication<BTreeSet<[u8; 32]>> {
         match self {
             Self::Donnee {
                 metas: _,
                 tags: _,
                 hash_donnee: _,
-            } => Err(ErreurScribe::Interne(String::from(ERR_ENU_004))),
+            } => Err(ErreurFeuApplication::ScribeEnuRAttendue),
             Self::Texte {
                 metas: _,
                 tags: _,
                 contenu: _,
-            } => Err(ErreurScribe::Interne(String::from(ERR_ENU_004))),
+            } => Err(ErreurFeuApplication::ScribeEnuRAttendue),
             Self::Repertoire {
                 metas: _,
                 tags: _,
@@ -930,16 +898,17 @@ impl Carte {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] si la méta `"nom"` est absente
-    /// (`ENU-008`) ou si le nom est refusé comme composant de chemin
-    /// (`ENU-009`).
-    pub(super) fn nom_fichier(&self) -> ResultScribe<String> {
+    /// Retourne [`ErreurFeuApplication::ScribeMetaNomAbsente`] si la méta
+    /// `"nom"` est absente, ou
+    /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] si le nom est refusé
+    /// comme composant de chemin.
+    pub(super) fn nom_fichier(&self) -> ResultFeuApplication<String> {
         let Some(nom) = self.metas().get("nom") else {
-            return Err(ErreurScribe::Interne(String::from(ERR_ENU_008)));
+            return Err(ErreurFeuApplication::ScribeMetaNomAbsente);
         };
 
         if !Self::nom_fichier_valide(nom) {
-            return Err(ErreurScribe::Interne(String::from(ERR_ENU_009)));
+            return Err(ErreurFeuApplication::ScribeNomFichierInvalide);
         }
 
         Ok(nom.to_string())
@@ -971,16 +940,19 @@ impl Carte {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] si `contenu` dépasse
-    /// [`MAX_TAILLE_TEXTE`] (`ENU-006`) ou si `nom` est refusé comme composant
-    /// de chemin (`ENU-009`).
-    pub(super) fn new_texte(nom: &str, contenu: &str) -> ResultScribe<Self> {
+    /// Retourne [`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`] si
+    /// `contenu` dépasse [`MAX_TAILLE_TEXTE`], ou
+    /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] si `nom` est refusé
+    /// comme composant de chemin.
+    pub(super) fn new_texte(nom: &str, contenu: &str) -> ResultFeuApplication<Self> {
         if contenu.len() > MAX_TAILLE_TEXTE {
-            return Err(ErreurScribe::Interne(String::from(ERR_ENU_006)));
+            return Err(ErreurFeuApplication::ScribeTailleMaxDepasseeTexte(
+                contenu.len(),
+            ));
         }
 
         if !Self::nom_fichier_valide(nom) {
-            return Err(ErreurScribe::Interne(String::from(ERR_ENU_009)));
+            return Err(ErreurFeuApplication::ScribeNomFichierInvalide);
         }
 
         let mut enu = Self::Texte {
@@ -1075,10 +1047,10 @@ impl Carte {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurScribe::Interne`] (`ENU-004`) si la carte n'est pas un
-    /// répertoire : une [`Carte::Donnee`] ou une [`Carte::Texte`] n'a pas
-    /// d'enfants.
-    pub(super) fn ajout_hash_enu(&mut self, hash: &[u8; 32]) -> ResultScribe<()> {
+    /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si la carte n'est
+    /// pas un répertoire : une [`Carte::Donnee`] ou une [`Carte::Texte`] n'a
+    /// pas d'enfants.
+    pub(super) fn ajout_hash_enu(&mut self, hash: &[u8; 32]) -> ResultFeuApplication<()> {
         if let Carte::Repertoire {
             metas: _,
             tags: _,
@@ -1088,7 +1060,7 @@ impl Carte {
             hashs_enu.insert(*hash);
             Ok(())
         } else {
-            Err(ErreurScribe::Interne(String::from(ERR_ENU_004)))
+            Err(ErreurFeuApplication::ScribeEnuRAttendue)
         }
     }
 
@@ -1145,7 +1117,7 @@ impl Carte {
     /// tags (via [`octets_vers_tags`]), puis contenu spécifique au variant (32 o
     /// hash, `u64` len + texte, ou `u32` nb hashs + 32o × n). Inverse de
     /// [`Carte::vers_octets`].
-    fn octets_vers_carte(octets: &[u8]) -> ResultScribe<Carte> {
+    fn octets_vers_carte(octets: &[u8]) -> ResultFeuApplication<Carte> {
         let (mut octets, reste) = prendre_octets(octets, 1)?;
 
         let (metas, reste) = octets_vers_metas(reste)?;
@@ -1156,7 +1128,7 @@ impl Carte {
                 let hash_donnee: [u8; 32] = hash.try_into().unwrap(); // pas d'erreur possible
 
                 if !reste.is_empty() {
-                    return Err(ErreurScribe::Interne(String::from(ERR_ENU_001)));
+                    return Err(ErreurFeuApplication::ScribeCarteMalFormee);
                 }
 
                 Ok(Carte::Donnee {
@@ -1171,12 +1143,10 @@ impl Carte {
 
                 (octets, reste) = prendre_octets(reste, longueur as usize)?;
 
-                let contenu = str::from_utf8(octets)
-                    .map_err(|_| ErreurScribe::Interne(String::from(ERR_ENU_002)))?
-                    .to_string();
+                let contenu = from_utf8(octets)?.to_string();
 
                 if !reste.is_empty() {
-                    return Err(ErreurScribe::Interne(String::from(ERR_ENU_001)));
+                    return Err(ErreurFeuApplication::ScribeCarteMalFormee);
                 }
 
                 Ok(Carte::Texte {
@@ -1199,7 +1169,7 @@ impl Carte {
                 }
 
                 if !reste.is_empty() {
-                    return Err(ErreurScribe::Interne(String::from(ERR_ENU_001)));
+                    return Err(ErreurFeuApplication::ScribeCarteMalFormee);
                 }
 
                 Ok(Carte::Repertoire {
@@ -1209,7 +1179,7 @@ impl Carte {
                 })
             }
 
-            _ => Err(ErreurScribe::Interne(String::from(ERR_ENU_001))),
+            _ => Err(ErreurFeuApplication::ScribeCarteMalFormee),
         }
     }
 }
@@ -1230,7 +1200,7 @@ fn tags_vers_octets(buf: &mut Vec<u8>, tags: &BTreeSet<String>) {
 ///
 /// Format : `u32` nb_tags, puis pour chaque tag `u32` len_utf8 suivi des octets
 /// UTF-8. Retourne les tags et le reste du buffer non consommé.
-fn octets_vers_tags(octets: &[u8]) -> ResultScribe<(BTreeSet<String>, &[u8])> {
+fn octets_vers_tags(octets: &[u8]) -> ResultFeuApplication<(BTreeSet<String>, &[u8])> {
     let mut tags = BTreeSet::new();
     let (mut octets, mut reste) = prendre_octets(octets, 4)?;
     let n_tags = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
@@ -1241,11 +1211,7 @@ fn octets_vers_tags(octets: &[u8]) -> ResultScribe<(BTreeSet<String>, &[u8])> {
 
         (octets, reste) = prendre_octets(reste, longueur as usize)?;
 
-        tags.insert(
-            str::from_utf8(octets)
-                .map_err(|_| ErreurScribe::Interne(String::from(ERR_ENU_002)))?
-                .to_string(),
-        );
+        tags.insert(from_utf8(octets)?.to_string());
     }
 
     Ok((tags, reste))
@@ -1274,7 +1240,7 @@ fn metas_vers_octets(buf: &mut Vec<u8>, metas: &BTreeMap<String, String>) {
 /// Format : `u32` nb_metas, puis pour chaque paire `u32` len_cle, clé UTF-8,
 /// `u32` len_valeur, valeur UTF-8. Retourne les métadonnées et le reste du
 /// buffer non consommé.
-fn octets_vers_metas(octets: &[u8]) -> ResultScribe<(BTreeMap<String, String>, &[u8])> {
+fn octets_vers_metas(octets: &[u8]) -> ResultFeuApplication<(BTreeMap<String, String>, &[u8])> {
     let mut metas = BTreeMap::new();
     let (mut octets, mut reste) = prendre_octets(octets, 4)?;
     let n_metas = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
@@ -1284,17 +1250,13 @@ fn octets_vers_metas(octets: &[u8]) -> ResultScribe<(BTreeMap<String, String>, &
         let longueur = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
 
         (octets, reste) = prendre_octets(reste, longueur as usize)?;
-        let cle = str::from_utf8(octets)
-            .map_err(|_| ErreurScribe::Interne(String::from(ERR_ENU_002)))?
-            .to_string();
+        let cle = from_utf8(octets)?.to_string();
 
         (octets, reste) = prendre_octets(reste, 4)?;
         let longueur = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
 
         (octets, reste) = prendre_octets(reste, longueur as usize)?;
-        let valeur = str::from_utf8(octets)
-            .map_err(|_| ErreurScribe::Interne(String::from(ERR_ENU_002)))?
-            .to_string();
+        let valeur = from_utf8(octets)?.to_string();
 
         metas.insert(cle, valeur);
     }
@@ -1305,9 +1267,9 @@ fn octets_vers_metas(octets: &[u8]) -> ResultScribe<(BTreeMap<String, String>, &
 /// Extrait les `n` premiers octets du buffer.
 ///
 /// Retourne `(extrait, reste)` ou une erreur si le buffer est trop court.
-fn prendre_octets(buf: &[u8], n: usize) -> ResultScribe<(&[u8], &[u8])> {
+fn prendre_octets(buf: &[u8], n: usize) -> ResultFeuApplication<(&[u8], &[u8])> {
     if buf.len() < n {
-        return Err(ErreurScribe::Interne(String::from(ERR_ENU_001)));
+        return Err(ErreurFeuApplication::ScribeCarteMalFormee);
     }
     Ok((&buf[0..n], &buf[n..]))
 }
@@ -1325,13 +1287,15 @@ mod tests {
     //! y monte un noyau allumé et un foyer ouvert, seule façon de signer puis de
     //! relire une ENU authentifiée.
 
+    use crate::ResultFeuApplication;
+
     use super::*;
 
     // --- prendre_octets ---
 
     /// Buffer exactement de la bonne taille → extraction complète, reste vide.
     #[test]
-    fn prendre_octets_reste_vide() -> ResultScribe<()> {
+    fn prendre_octets_reste_vide() -> ResultFeuApplication<()> {
         let octets: &[u8] = &[1, 2, 3];
         let (octets_pris, reste) = prendre_octets(octets, 3)?;
 
@@ -1344,7 +1308,7 @@ mod tests {
     /// Buffer plus grand que la demande → extraction des n premiers, reste non
     /// vide.
     #[test]
-    fn prendre_octets_reste_non_vide() -> ResultScribe<()> {
+    fn prendre_octets_reste_non_vide() -> ResultFeuApplication<()> {
         let octets: &[u8] = &[1, 2, 3, 4, 5, 6];
         let (octets_pris, reste) = prendre_octets(octets, 2)?;
 
@@ -1354,20 +1318,20 @@ mod tests {
         Ok(())
     }
 
-    /// Buffer trop court → [`ErreurScribe::Interne`].
+    /// Buffer trop court → [`ErreurFeuApplication::ScribeCarteMalFormee`].
     #[test]
     fn prendre_octets_trop_court() {
         let octets: &[u8] = &[1, 2, 3];
 
         assert!(matches!(
             prendre_octets(octets, 5),
-            Err(ErreurScribe::Interne(_))
+            Err(ErreurFeuApplication::ScribeCarteMalFormee)
         ));
     }
 
     /// Demande de 0 octets → extrait vide, reste = buffer entier.
     #[test]
-    fn prendre_octets_vide() -> ResultScribe<()> {
+    fn prendre_octets_vide() -> ResultFeuApplication<()> {
         let octets: &[u8] = &[1, 2, 3];
         let (octets_pris, reste) = prendre_octets(octets, 0)?;
 
@@ -1381,7 +1345,7 @@ mod tests {
 
     /// Round-trip balise vide : 0 tag → octets → 0 tag, reste vide.
     #[test]
-    fn tags_vide_vers_octets() -> ResultScribe<()> {
+    fn tags_vide_vers_octets() -> ResultFeuApplication<()> {
         let tags = BTreeSet::new();
         let mut octets = Vec::new();
 
@@ -1396,7 +1360,7 @@ mod tests {
 
     /// Round-trip balise unique.
     #[test]
-    fn tags_unique_vers_octets() -> ResultScribe<()> {
+    fn tags_unique_vers_octets() -> ResultFeuApplication<()> {
         let tags = BTreeSet::from([String::from("tag1")]);
         let mut octets = Vec::new();
 
@@ -1411,7 +1375,7 @@ mod tests {
 
     /// Round-trip balises multiples, ordre BTreeSet (déterminé).
     #[test]
-    fn tags_multi_vers_octets() -> ResultScribe<()> {
+    fn tags_multi_vers_octets() -> ResultFeuApplication<()> {
         let tags = BTreeSet::from([String::from("z"), String::from("b"), String::from("a")]);
         let mut octets = Vec::new();
 
@@ -1426,7 +1390,7 @@ mod tests {
 
     /// Round-trip métadonnées vides : 0 paire → octets → 0 paire, reste vide.
     #[test]
-    fn metas_vide_vers_octets() -> ResultScribe<()> {
+    fn metas_vide_vers_octets() -> ResultFeuApplication<()> {
         let metas = BTreeMap::new();
         let mut octets = Vec::new();
 
@@ -1441,7 +1405,7 @@ mod tests {
 
     /// Round-trip métadonnée unique : une paire clé/valeur préservée.
     #[test]
-    fn metas_unique_vers_octets() -> ResultScribe<()> {
+    fn metas_unique_vers_octets() -> ResultFeuApplication<()> {
         let metas = BTreeMap::from([(String::from("clé1"), String::from("valeur1"))]);
         let mut octets = Vec::new();
 
@@ -1456,7 +1420,7 @@ mod tests {
 
     /// Round-trip métadonnées multiples : tri par clé (ordre BTreeMap) préservé.
     #[test]
-    fn metas_multi_vers_octets() -> ResultScribe<()> {
+    fn metas_multi_vers_octets() -> ResultFeuApplication<()> {
         let metas = BTreeMap::from([
             (String::from("clé5"), String::from("valeur5")),
             (String::from("clé1"), String::from("valeur1")),
@@ -1477,7 +1441,7 @@ mod tests {
 
     /// Round-trip CaD : metas + tags + hash → octets → même carte.
     #[test]
-    fn carte_donnee_vers_octets() -> ResultScribe<()> {
+    fn carte_donnee_vers_octets() -> ResultFeuApplication<()> {
         let metas = BTreeMap::from([
             (String::from("clé1"), String::from("valeur1")),
             (String::from("clé2"), String::from("valeur2")),
@@ -1501,7 +1465,7 @@ mod tests {
 
     /// Round-trip CaT : metas + tags + texte → octets → même carte.
     #[test]
-    fn carte_texte_vers_octets() -> ResultScribe<()> {
+    fn carte_texte_vers_octets() -> ResultFeuApplication<()> {
         let metas = BTreeMap::from([
             (String::from("clé1"), String::from("valeur1")),
             (String::from("clé2"), String::from("valeur2")),
@@ -1525,7 +1489,7 @@ mod tests {
 
     /// Round-trip CaR : metas + tags + 2 hashs enfants → octets → même carte.
     #[test]
-    fn carte_repertoire_vers_octets() -> ResultScribe<()> {
+    fn carte_repertoire_vers_octets() -> ResultFeuApplication<()> {
         let metas = BTreeMap::from([
             (String::from("clé1"), String::from("valeur1")),
             (String::from("clé2"), String::from("valeur2")),
@@ -1554,7 +1518,7 @@ mod tests {
 
     /// Round-trip complet : Enu → octets → Enu, tous champs identiques.
     #[test]
-    fn enu_vers_octets_et_retour() -> ResultScribe<()> {
+    fn enu_vers_octets_et_retour() -> ResultFeuApplication<()> {
         let braise =
             Braise::try_from("aaaaabbbbbcccccdddddeeeeefffffggggghhhhhiiiiijjjjjkkkkk.braise")
                 .unwrap();
@@ -1593,16 +1557,16 @@ mod tests {
     }
 
     /// Cycle complet sur `Carte::Donnee` : hash conservé à la construction,
-    /// refus de `ajout_hash_enu` (`ERR_ENU_004`), tags et metas insérés
+    /// refus de `ajout_hash_enu` (`ScribeEnuRAttendue`), tags et metas insérés
     /// puis relus via les accesseurs communs.
     #[test]
-    fn carte_donnee() -> ResultScribe<()> {
+    fn carte_donnee() -> ResultFeuApplication<()> {
         let hash_donnee = [0u8; 32];
         let mut carte = Carte::new_donnee(hash_donnee);
 
         assert!(matches!(
             carte.ajout_hash_enu(&hash_donnee),
-            Err(ErreurScribe::Interne(_))
+            Err(ErreurFeuApplication::ScribeEnuRAttendue)
         ));
 
         if let Carte::Donnee {
@@ -1632,16 +1596,17 @@ mod tests {
     }
 
     /// Cycle complet sur `Carte::Texte` : contenu conservé et méta `"nom"`
-    /// posée dès la construction, refus de `ajout_hash_enu` (`ERR_ENU_004`),
+    /// posée dès la construction, refus de `ajout_hash_enu`
+    /// (`ScribeEnuRAttendue`),
     /// tags et metas insérés puis relus via les accesseurs communs.
     #[test]
-    fn carte_texte() -> ResultScribe<()> {
+    fn carte_texte() -> ResultFeuApplication<()> {
         let hash_donnee = [0u8; 32];
         let mut carte = Carte::new_texte("Test", "Contenu court de test")?;
 
         assert!(matches!(
             carte.ajout_hash_enu(&hash_donnee),
-            Err(ErreurScribe::Interne(_))
+            Err(ErreurFeuApplication::ScribeEnuRAttendue)
         ));
 
         if let Carte::Texte {
@@ -1670,19 +1635,22 @@ mod tests {
         Ok(())
     }
 
-    /// Contenu dépassant `MAX_TAILLE_TEXTE` d'un octet → refus (`ERR_ENU_006`).
+    /// Contenu dépassant `MAX_TAILLE_TEXTE` d'un octet → refus
+    /// (`ScribeTailleMaxDepasseeTexte`).
     #[test]
-    fn carte_texte_trop_grande() -> ResultScribe<()> {
+    fn carte_texte_trop_grande() -> ResultFeuApplication<()> {
         let contenu = "a".repeat(MAX_TAILLE_TEXTE + 1);
 
         assert!(matches!(
             Carte::new_texte("test", &contenu),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-006")));
+            Err(ErreurFeuApplication::ScribeTailleMaxDepasseeTexte(_))
+        ));
 
         Ok(())
     }
 
-    /// Nom contenant un séparateur de chemin → refus (`ERR_ENU_009`).
+    /// Nom contenant un séparateur de chemin → refus
+    /// (`ScribeNomFichierInvalide`).
     ///
     /// Éprouve la validation à la **construction**, distincte de celle de
     /// `nom_fichier` (couverte par le test du même nom) : `new_texte` reçoit son
@@ -1693,7 +1661,7 @@ mod tests {
     fn carte_texte_mauvais_nom() {
         assert!(matches!(
             Carte::new_texte("te/st", "contenu"),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
     }
 
@@ -1701,7 +1669,7 @@ mod tests {
     /// `ajout_hash_enu`, tags et metas insérés puis relus via les
     /// accesseurs communs.
     #[test]
-    fn carte_repertoire() -> ResultScribe<()> {
+    fn carte_repertoire() -> ResultFeuApplication<()> {
         let hash_donnee1 = [0u8; 32];
         let hash_donnee2 = [1u8; 32];
         let mut carte = Carte::new_repertoire(BTreeSet::new());
@@ -1747,12 +1715,14 @@ mod tests {
     /// Validation du nom par `nom_fichier`, sur ses deux refus et son corpus
     /// accepté.
     ///
-    /// - `ENU-008` : méta `"nom"` absente — éprouvé en premier, sur une carte
-    ///   neuve, seul moment où elle l'est.
-    /// - `ENU-009` : vide, et toute forme de `/` (en tête, au milieu, en queue,
-    ///   multiple) — le nom vient d'une ENU lue sur disque, un `/` en tête
-    ///   remplacerait le chemin cible d'un `join` au lieu de s'y ajouter.
-    /// - `ENU-009` : `.` et `..` **exacts**, les deux composants spéciaux.
+    /// - `ScribeMetaNomAbsente` : méta `"nom"` absente — éprouvé en premier,
+    ///   sur une carte neuve, seul moment où elle l'est.
+    /// - `ScribeNomFichierInvalide` : vide, et toute forme de `/` (en tête, au
+    ///   milieu, en queue, multiple) — le nom vient d'une ENU lue sur disque, un
+    ///   `/` en tête remplacerait le chemin cible d'un `join` au lieu de s'y
+    ///   ajouter.
+    /// - `ScribeNomFichierInvalide` : `.` et `..` **exacts**, les deux
+    ///   composants spéciaux.
     ///
     /// Les cas acceptés portent tous des points sans être ces composants
     /// (`.test`, `..test`, `test..`, `test..2`…) : ils distinguent l'égalité
@@ -1763,71 +1733,71 @@ mod tests {
     /// Une seule carte traverse le test, la méta `"nom"` étant écrasée à chaque
     /// cas (`BTreeMap::insert`).
     #[test]
-    fn nom_fichier() -> ResultScribe<()> {
+    fn nom_fichier() -> ResultFeuApplication<()> {
         let hash_donnee = [0u8; 32];
 
         let mut carte = Carte::new_donnee(hash_donnee);
 
         // Pas de meta nom
         assert!(matches!(
-                carte.nom_fichier(),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-008")
+            carte.nom_fichier(),
+            Err(ErreurFeuApplication::ScribeMetaNomAbsente)
         ));
 
         // Nom vide
         carte.ajout_meta("nom", "");
 
         assert!(matches!(
-                carte.nom_fichier(),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+            carte.nom_fichier(),
+            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
         // Nom commence par '/'
         carte.ajout_meta("nom", "/azerty");
 
         assert!(matches!(
-                carte.nom_fichier(),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+            carte.nom_fichier(),
+            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
         // Nom contient '/'
         carte.ajout_meta("nom", "aa/bbb");
 
         assert!(matches!(
-                carte.nom_fichier(),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+            carte.nom_fichier(),
+            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
         // Nom contient plusieurs '/'
         carte.ajout_meta("nom", "/aa/bbb/");
 
         assert!(matches!(
-                carte.nom_fichier(),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+            carte.nom_fichier(),
+            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
         // Nom termine par '/'
         carte.ajout_meta("nom", "azerty/");
 
         assert!(matches!(
-                carte.nom_fichier(),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+            carte.nom_fichier(),
+            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
         // Nom est '.'
         carte.ajout_meta("nom", ".");
 
         assert!(matches!(
-                carte.nom_fichier(),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+            carte.nom_fichier(),
+            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
         // Nom est '..'
         carte.ajout_meta("nom", "..");
 
         assert!(matches!(
-                carte.nom_fichier(),
-            Err(ErreurScribe::Interne(m)) if m.contains("ENU-009")
+            carte.nom_fichier(),
+            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
         // Nom débute par '.'
