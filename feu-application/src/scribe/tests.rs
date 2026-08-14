@@ -294,7 +294,7 @@ fn cycle_racine() {
     // le reste de la carte fournie est conservé tel quel
     assert_eq!(
         enu_racine_3.carte().hashs_enu().unwrap(),
-        BTreeSet::from([[0u8; 32]])
+        &BTreeSet::from([[0u8; 32]])
     );
 
     fermer_foyer(noyau, session);
@@ -411,7 +411,7 @@ fn cycle_remplacements() {
 
     // enur_2 reconstruit a un nouveau hash, inconnu du test : on le retrouve par
     // élimination — l'enfant du sommet qui n'est pas enud_1 (branche inchangée).
-    let mut h = nouvelle_racine2.carte().hashs_enu().unwrap();
+    let mut h = nouvelle_racine2.carte().hashs_enu().unwrap().clone();
     assert_eq!(h.len(), 2);
     h.remove(&enud_1.hash_carte());
     let hash_enur_2n = h.first().unwrap();
@@ -478,23 +478,26 @@ fn greffe_enfants_racine() -> ResultFeuApplication<()> {
         Some(&HEXLOWER.encode(&enu_racine.hash_carte()))
     );
 
-    assert_eq!(deuxieme_enu_racine.carte().hashs_enu()?.len(), 3);
+    assert_eq!(deuxieme_enu_racine.carte().hashs_enu().unwrap().len(), 3);
     assert!(
         deuxieme_enu_racine
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu1.hash_carte())
     );
     assert!(
         deuxieme_enu_racine
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu2.hash_carte())
     );
     assert!(
         deuxieme_enu_racine
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu3.hash_carte())
     );
 
@@ -513,29 +516,33 @@ fn greffe_enfants_racine() -> ResultFeuApplication<()> {
         Some(&HEXLOWER.encode(&deuxieme_enu_racine.hash_carte()))
     );
 
-    assert_eq!(troisieme_enu_racine.carte().hashs_enu()?.len(), 4);
+    assert_eq!(troisieme_enu_racine.carte().hashs_enu().unwrap().len(), 4);
     assert!(
         troisieme_enu_racine
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu1.hash_carte())
     );
     assert!(
         troisieme_enu_racine
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu2.hash_carte())
     );
     assert!(
         troisieme_enu_racine
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu3.hash_carte())
     );
     assert!(
         troisieme_enu_racine
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu4.hash_carte())
     );
 
@@ -606,48 +613,58 @@ fn greffe_enfants() -> ResultFeuApplication<()> {
 
     // l'EnuR reconstruite a remplacé l'ancienne sous le sommet, elle ne s'y est
     // pas ajoutée : le fils unique est donc sa version courante
-    assert_eq!(troisieme_enu_racine.carte().hashs_enu()?.len(), 1);
+    assert_eq!(troisieme_enu_racine.carte().hashs_enu().unwrap().len(), 1);
 
     let nouvelle_enur = Enu::charger(
         &chemin_enu,
         &session,
-        troisieme_enu_racine.carte().hashs_enu()?.first().unwrap(),
+        troisieme_enu_racine
+            .carte()
+            .hashs_enu()
+            .unwrap()
+            .first()
+            .unwrap(),
     )?;
 
     // greffer ne déplace pas : le contenu reste sous le foyer d'origine
     assert_eq!(nouvelle_enur.braise(), enur.braise());
 
     // les trois enfants d'origine survivent aux deux greffés
-    assert_eq!(nouvelle_enur.carte().hashs_enu()?.len(), 5);
+    assert_eq!(nouvelle_enur.carte().hashs_enu().unwrap().len(), 5);
 
     assert!(
         nouvelle_enur
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu1.hash_carte())
     );
     assert!(
         nouvelle_enur
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu2.hash_carte())
     );
     assert!(
         nouvelle_enur
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu3.hash_carte())
     );
     assert!(
         nouvelle_enur
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu4.hash_carte())
     );
     assert!(
         nouvelle_enur
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu5.hash_carte())
     );
 
@@ -699,11 +716,12 @@ fn greffe_enfants_doublon() -> ResultFeuApplication<()> {
     let troisieme_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
 
     assert_eq!(deuxieme_enu_racine, troisieme_enu_racine);
-    assert_eq!(troisieme_enu_racine.carte().hashs_enu()?.len(), 1);
+    assert_eq!(troisieme_enu_racine.carte().hashs_enu().unwrap().len(), 1);
     assert!(
         troisieme_enu_racine
             .carte()
-            .hashs_enu()?
+            .hashs_enu()
+            .unwrap()
             .contains(&enu1.hash_carte())
     );
 

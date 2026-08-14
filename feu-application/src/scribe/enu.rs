@@ -66,9 +66,9 @@
 //!   Les accesseurs [`Carte::metas`] et [`Carte::tags`], communs aux trois
 //!   variantes, sont maintenus : ils évitent de répéter le match pour des
 //!   champs présents partout. L'accesseur `hashs_enu()` ne concerne que la
-//!   variante [`Carte::Repertoire`] et renvoie donc un `ResultFeuApplication`
-//!   ([`ErreurFeuApplication::ScribeEnuRAttendue`] sur une `Donnee` ou une
-//!   `Texte`). Les getters `hash_donnee()` et `contenu()`, eux, ont été
+//!   variante [`Carte::Repertoire`] et rend donc une [`Option`] : `None` sur une
+//!   `Donnee` ou une `Texte`, ce qui distingue la feuille du répertoire
+//!   réellement vide. Les getters `hash_donnee()` et `contenu()`, eux, ont été
 //!   supprimés — le pattern matching les rend redondants.
 
 use data_encoding::HEXLOWER;
@@ -823,42 +823,38 @@ impl Carte {
         }
     }
 
-    /// Retourne les hashs des ENU enfants — spécifique à [`Carte::Repertoire`].
+    /// Retourne les hashs des ENU enfants — `None` sur une carte qui n'est pas
+    /// un répertoire.
     ///
     /// Contrairement à [`Self::metas`] et [`Self::tags`], communs aux trois
-    /// variantes, les enfants n'existent que pour un répertoire : appelée sur
-    /// une [`Carte::Donnee`] ou une [`Carte::Texte`], la méthode échoue plutôt
-    /// que de renvoyer un ensemble vide qui laisserait croire à un répertoire
-    /// sans enfant.
+    /// variantes, les enfants n'existent que pour un répertoire. L'absence n'est
+    /// pas un incident — une feuille est le cas normal d'un parcours —, d'où
+    /// l'[`Option`] plutôt qu'un refus qu'un appelant devrait tester puis jeter.
+    /// Le `None` distingue par ailleurs la feuille du répertoire réellement vide,
+    /// que renvoyer un ensemble vide confondrait.
     ///
-    /// Le `#[allow(dead_code)]` est **temporaire** : seuls les tests l'appellent
-    /// aujourd'hui. `feu-application` en aura besoin pour l'itérateur descendant,
-    /// qui suit précisément les `hashs_enu` d'un répertoire pour parcourir
-    /// l'arborescence. Elle reste `pub(crate)` en attendant — ce qui sort de la
-    /// crate sort par une `commande_*`, pas par un accesseur.
+    /// Rend une référence : le parcours descendant traverse tous les répertoires
+    /// de l'arbre, un clone par pas y serait payé pour rien.
     ///
-    /// # Erreurs
-    ///
-    /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si la carte n'est
-    /// pas un répertoire.
-    #[allow(dead_code)]
-    pub(crate) fn hashs_enu(&self) -> ResultFeuApplication<BTreeSet<[u8; 32]>> {
+    /// `pub(crate)` — ce qui sort de la crate sort par une `commande_*`, pas par
+    /// un accesseur.
+    pub(crate) fn hashs_enu(&self) -> Option<&BTreeSet<[u8; 32]>> {
         match self {
             Self::Donnee {
                 metas: _,
                 tags: _,
                 hash_donnee: _,
-            } => Err(ErreurFeuApplication::ScribeEnuRAttendue),
+            } => None,
             Self::Texte {
                 metas: _,
                 tags: _,
                 contenu: _,
-            } => Err(ErreurFeuApplication::ScribeEnuRAttendue),
+            } => None,
             Self::Repertoire {
                 metas: _,
                 tags: _,
                 hashs_enu,
-            } => Ok(hashs_enu.clone()),
+            } => Some(hashs_enu),
         }
     }
 

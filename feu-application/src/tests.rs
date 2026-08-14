@@ -381,10 +381,17 @@ fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
     let nouvelle_racine = app.commande_derniere_enu_racine()?;
 
     assert_ne!(nouvelle_racine, enu_racine);
-    assert_eq!(nouvelle_racine.carte().hashs_enu()?.len(), 1);
+    assert_eq!(nouvelle_racine.carte().hashs_enu().unwrap().len(), 1);
 
     let enu_rechargee = app
-        .commande_chargement_enu(nouvelle_racine.carte().hashs_enu()?.first().unwrap())?
+        .commande_chargement_enu(
+            nouvelle_racine
+                .carte()
+                .hashs_enu()
+                .unwrap()
+                .first()
+                .unwrap(),
+        )?
         .unwrap();
 
     assert_eq!(
@@ -469,7 +476,14 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
     let nouvelle_racine = app.commande_derniere_enu_racine()?;
 
     let enu_rechargee = app
-        .commande_chargement_enu(nouvelle_racine.carte().hashs_enu()?.first().unwrap())?
+        .commande_chargement_enu(
+            nouvelle_racine
+                .carte()
+                .hashs_enu()
+                .unwrap()
+                .first()
+                .unwrap(),
+        )?
         .unwrap();
 
     assert!(app.commande_existence_blob(&enu_rechargee)?);
@@ -640,8 +654,9 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
 ///
 /// Le répertoire se retrouve parmi les deux enfants de la racine, l'autre étant
 /// le fichier de niveau 1. Les deux hashs se tirent d'**un seul** `BTreeSet`
-/// gardé en variable : `hashs_enu` le rend par valeur, deux appels successifs
-/// rendraient chacun leur propre plus petit élément, donc deux fois la même ENU.
+/// cloné en variable : le premier hash retiré, le second se lit au même endroit.
+/// Deux appels à `hashs_enu` rendraient chacun leur propre plus petit élément,
+/// donc deux fois la même ENU.
 /// Le `assert_eq!` sur son cardinal fixe l'hypothèse et cède franchement si
 /// [`remplir_dossier`] change de forme, là où la sélection se contenterait de
 /// choisir mal.
@@ -723,7 +738,7 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
     assert_eq!(arborescence_origine, arborescence_relue);
 
     // Récupération de l'EnuR sous la racine
-    let hashs = &mut deuxieme_enu_racine.carte().hashs_enu().unwrap();
+    let hashs = &mut deuxieme_enu_racine.carte().hashs_enu().unwrap().clone();
     assert_eq!(hashs.len(), 2);
 
     let enu1 = app
@@ -820,7 +835,7 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
     app.commande_depot_enu_texte(&deuxieme_enu_racine, 1, "test", "enu test 2")?;
     let troisieme_enu_racine = app.commande_derniere_enu_racine()?;
 
-    let hashs = &mut troisieme_enu_racine.carte().hashs_enu().unwrap();
+    let hashs = &mut troisieme_enu_racine.carte().hashs_enu().unwrap().clone();
     assert_eq!(hashs.len(), 2);
 
     let enu1 = app

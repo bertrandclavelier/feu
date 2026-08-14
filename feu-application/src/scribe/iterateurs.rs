@@ -27,14 +27,14 @@
 
 use std::{collections::VecDeque, path::Path};
 
-use crate::{Carte, Enu, ResultFeuApplication, SessionApplication};
+use crate::{Enu, ResultFeuApplication, SessionApplication};
 
 /// Descend une arborescence ENU depuis une racine donnée, en largeur d'abord.
 ///
-/// Suit les `hashs_enu` de chaque [`Carte::Repertoire`] rencontrée. Les feuilles
-/// ([`Carte::Donnee`], [`Carte::Texte`]) n'ouvrent rien : elles sont rendues et
-/// le parcours continue. Aucun cycle n'est possible, le hash d'une ENU dérivant
-/// de son contenu.
+/// Suit les `hashs_enu` de chaque [`Carte::Repertoire`](crate::Carte) rencontrée.
+/// Les feuilles ([`Carte::Donnee`](crate::Carte), [`Carte::Texte`](crate::Carte))
+/// n'ouvrent rien : elles sont rendues et le parcours continue. Aucun cycle
+/// n'est possible, le hash d'une ENU dérivant de son contenu.
 ///
 /// **Largeur d'abord** : `a_visiter` est une file, les enfants passent après
 /// tous les nœuds déjà en attente. L'ordre est déterministe — les `hashs_enu`
@@ -77,9 +77,8 @@ impl<'a> Iterator for Descendants<'a> {
     /// Sur erreur, la branche est perdue : sans la carte, il n'y a pas d'enfants
     /// à connaître. Le reste de l'arbre, lui, continue d'être parcouru.
     ///
-    /// Les hashs enfants sont lus directement dans le motif plutôt que par
-    /// [`hashs_enu`](Carte), qui échoue sur une feuille — un fichier n'est pas
-    /// un incident de parcours, et le motif évite en prime le clone de
+    /// Une feuille rend `None` et n'ouvre rien : ce n'est pas un incident de
+    /// parcours, et `Carte::hashs_enu` le dit sans fabriquer d'erreur ni cloner
     /// l'ensemble.
     fn next(&mut self) -> Option<Self::Item> {
         let hash = self.a_visiter.pop_front()?;
@@ -88,14 +87,9 @@ impl<'a> Iterator for Descendants<'a> {
             Err(e) => Some(Err(e)),
 
             Ok(enu) => {
-                if let Carte::Repertoire {
-                    metas: _,
-                    tags: _,
-                    hashs_enu,
-                } = enu.carte()
-                {
+                if let Some(hashs_enu) = enu.carte().hashs_enu() {
                     self.a_visiter.extend(hashs_enu);
-                };
+                }
 
                 Some(Ok(enu))
             }
