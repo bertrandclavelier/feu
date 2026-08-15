@@ -31,7 +31,8 @@
 //!
 //! [`Ecran`] désigne l'écran de travail affiché, et rien d'autre : ce qu'il
 //! contient, ses sous-écrans compris, appartient à son module — voir
-//! [`ecran_pilotage`]. [`ModeSaisie`] décide comment les touches sont
+//! [`ecran_pilotage`] et [`ecran_arborescence_enu`]. `Tab` passe de l'un à
+//! l'autre, en cycle. [`ModeSaisie`] décide comment les touches sont
 //! interprétées : `Normal` (dispatch via la table de commandes), `Insertion`
 //! (accumulation dans un buffer, validation par Entrée), `Information`
 //! (avancement par Entrée uniquement). [`commandes::CommandesActives`] enfin
@@ -52,6 +53,7 @@
 //! `!` affiche l'à-propos.
 
 mod commandes;
+mod ecran_arborescence_enu;
 mod ecran_pilotage;
 mod rendu;
 
@@ -68,7 +70,7 @@ use secrecy::SecretString;
 
 use crate::{
     connecteurs::{ConnecteurVersCoeur, MessageCoeurTui, MessageTuiCoeur},
-    tui::ecran_pilotage::EtatPilotage,
+    tui::{ecran_arborescence_enu::EtatArborescenceEnu, ecran_pilotage::EtatPilotage},
 };
 use commandes::{Commande, CommandesActives};
 
@@ -105,6 +107,12 @@ enum Ecran {
     /// L'usage courant du nœud, et les modales qu'il ouvre — cf.
     /// [`ecran_pilotage`].
     Pilotage,
+
+    /// L'arborescence des ENU du nœud — cf. [`ecran_arborescence_enu`].
+    ///
+    /// Branché mais vide : seul le chemin qui y mène est établi, son contenu
+    /// viendra ensuite.
+    ArborescenceEnu,
 }
 
 /// Axe d'interprétation des touches clavier — indépendant de l'écran affiché.
@@ -198,6 +206,11 @@ struct EtatTui {
     /// courante. Opaque d'ici : seul son module en lit le contenu.
     etat_pilotage: EtatPilotage,
 
+    /// Ce que l'écran d'arborescence retient — rien encore, l'écran ayant été
+    /// branché avant d'avoir un contenu. Clippy le signale comme jamais lu tant
+    /// qu'il reste vide.
+    etat_arborescence_enu: EtatArborescenceEnu,
+
     /// Table de dispatch touche → commande, filtrée par le contexte courant.
     ///
     /// Source de vérité unique : une touche absente ne déclenche rien, point —
@@ -259,6 +272,7 @@ impl EtatTui {
             ecran: Ecran::Pilotage,
             mode_saisie: ModeSaisie::Normal,
             etat_pilotage: EtatPilotage::new(),
+            etat_arborescence_enu: EtatArborescenceEnu,
             commandes_actives: CommandesActives::vide(),
             validation_buffer_saisie: ValidationBufferSaisie::Rien,
             message_erreur: (None, 0),
@@ -328,6 +342,26 @@ impl EtatTui {
             self.message_aide.1 -= 1;
             if self.message_aide.1 == 0 {
                 self.message_aide.0 = None;
+            }
+        }
+    }
+
+    /// Passe à l'écran de travail suivant, en cycle.
+    ///
+    /// Le seul endroit qui connaisse l'ordre des écrans — la table des
+    /// commandes dit quand basculer, pas vers quoi. Ici plutôt que dans un
+    /// module d'écran : aucun d'eux ne sait ce qui le suit.
+    ///
+    /// Rien à poser d'autre que [`EtatTui::ecran`] : chaque écran de travail
+    /// s'entre en [`ModeSaisie::Normal`], mode dans lequel on est forcément
+    /// déjà puisque la table n'y est consultée que là.
+    fn passer_ecran_suivant(&mut self) {
+        match self.ecran {
+            Ecran::Pilotage => {
+                self.ecran = Ecran::ArborescenceEnu;
+            }
+            Ecran::ArborescenceEnu => {
+                self.ecran = Ecran::Pilotage;
             }
         }
     }
@@ -494,6 +528,9 @@ impl Tui {
                 }
                 Commande::ChangerPositionFoyer(index) => {
                     self.etat_tui.etat_pilotage.position_courante.foyer = *index;
+                }
+                Commande::EcranSuivant => {
+                    self.etat_tui.passer_ecran_suivant();
                 }
                 Commande::EteindreNoeud => {
                     self.connecteur_vers_coeur

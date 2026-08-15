@@ -20,7 +20,10 @@
 
 use ratatui::{Frame, style::Color};
 
-use crate::tui::ecran_pilotage::dessiner_ecran_pilotage;
+use crate::tui::{
+    ecran_arborescence_enu::dessiner_ecran_arborescence_enu,
+    ecran_pilotage::dessiner_ecran_pilotage,
+};
 
 use super::{Ecran, EtatTui};
 
@@ -52,5 +55,6 @@ pub(crate) struct Dimensions {
 pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &EtatTui) {
     match &etat_tui.ecran {
         Ecran::Pilotage => dessiner_ecran_pilotage(frame, etat_tui),
+        Ecran::ArborescenceEnu => dessiner_ecran_arborescence_enu(frame, etat_tui),
     }
 }

@@ -1,0 +1,32 @@
+use ratatui::{
+    Frame,
+    layout::{Constraint, Layout},
+    widgets::Block,
+};
+
+use crate::tui::{EtatTui, rendu::Dimensions};
+
+const DIMENSIONS_ECRAN_ENU: Dimensions = Dimensions {
+    largeur: 70,
+    hauteur: 35,
+};
+
+pub(super) struct EtatArborescenceEnu;
+
+pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, _etat_tui: &EtatTui) {
+    let lignes = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(DIMENSIONS_ECRAN_ENU.hauteur),
+        Constraint::Fill(1),
+    ])
+    .split(frame.area());
+
+    let colonnes = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(DIMENSIONS_ECRAN_ENU.largeur),
+        Constraint::Fill(1),
+    ])
+    .split(lignes[1]);
+
+    frame.render_widget(Block::bordered(), colonnes[1]);
+}

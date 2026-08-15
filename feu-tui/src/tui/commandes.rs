@@ -26,13 +26,13 @@
 //!
 //! # Cartographie clavier
 //!
-//! Touches actives selon le contexte. Deux touches sont toujours actives, quel
-//! que soit l'état du nœud et la position : `?` liste les touches courantes et
-//! `!` affiche l'écran « à propos ». Toutes deux sont omises ci-dessous pour ne
-//! pas alourdir.
+//! Deux touches sont actives partout, quel que soit l'écran : `Tab` passe à
+//! l'écran suivant, `?` liste ce qui est actif. Le reste dépend de l'écran, et
+//! les cas ci-dessous sont ceux du pilotage — seul écran à porter des
+//! commandes aujourd'hui.
 //!
-//! `r` fait exception dans l'autre sens : active partout dès que le nœud est
-//! allumé, elle n'est pas répétée à chaque cas ci-dessous.
+//! Deux autres sont omises de la liste pour ne pas l'alourdir : `!` affiche
+//! l'à-propos en toute circonstance, `r` dès que le nœud est allumé.
 //!
 //! - **Nœud éteint, racine** : `a` allume le nœud, `q` quitte Feu.
 //! - **Nœud allumé, racine, aucun foyer ouvert** : `e` éteint le nœud, `o`
@@ -80,32 +80,27 @@
 //! de son entrée.
 //!
 //! Ce choix maintient l'invariant fondamental — *la table reflète toujours
-//! l'état courant* — sans qu'aucun chemin du code n'ait à se rappeler de
-//! coupler une transition métier (ouverture d'un foyer, extinction du nœud,
-//! déplacement de la position) avec la mutation correspondante de la table.
-//! La reconstruction est déclenchée depuis [`crate::tui::Tui::lancer`] à deux
-//! points : à la réception d'un
-//! [`crate::connecteurs::MessageCoeurTui::EnvoiSessionApplication`] (changement
-//! d'état applicatif) et après chaque commande dispatchée en mode normal
-//! (changement potentiel de position courante).
+//! l'état courant* — sans qu'aucun chemin du code n'ait à coupler une
+//! transition métier (ouverture d'un foyer, extinction du nœud, changement
+//! d'écran) avec la mutation correspondante de la table. La reconstruction est
+//! déclenchée depuis [`crate::tui::Tui::lancer`] à deux points : à la réception
+//! d'une session, et après chaque commande dispatchée en mode normal.
 //!
 //! # Filtrage strict
 //!
-//! Toutes les commandes sont filtrées strictement : présence dans la table ⇔
-//! effet réel possible dans le contexte courant. Une touche absente n'a aucun
-//! effet ; une touche présente déclenche systématiquement quelque chose.
+//! Présence dans la table ⇔ effet réel possible dans le contexte courant. Une
+//! touche absente n'a aucun effet ; une touche présente déclenche toujours
+//! quelque chose.
 //!
-//! Cette homogénéité tient à ce que la position courante compte parmi les
-//! entrées de [`CommandesActives::new`] : la table sait sur quel foyer pointe
-//! le `f`, ou si la touche `1` doit entrer dans un foyer ouvert ou dans un
-//! classeur valide. Aucune commande n'est exposée « en bloc » avec un
-//! filtrage à l'exécution.
+//! Cette homogénéité tient à ce que l'état entier est en entrée : la table sait
+//! quel écran est affiché, sur quel foyer pointe le `f`, ou si la touche `1`
+//! doit entrer dans un foyer ouvert ou dans un classeur valide.
 
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
-use crate::tui::EtatTui;
+use crate::tui::{Ecran, EtatTui};
 
 /// Intention métier déclenchée par une frappe clavier.
 ///
@@ -169,6 +164,16 @@ pub(super) enum Commande {
     /// - dans un foyer (`foyer = Some(_)`, `classeur = None`), liée à
     ///   `Backspace` — remontée à la racine.
     ChangerPositionFoyer(Option<usize>),
+
+    /// Passe à l'écran de travail suivant, en cycle — `Tab`.
+    ///
+    /// Toujours active, quel que soit l'écran et l'état du nœud : c'est le seul
+    /// chemin entre les écrans, et rien ne justifierait de l'y enfermer. Aucun
+    /// message au cœur, aucun effet métier.
+    ///
+    /// Le cycle lui-même est tenu par `passer_ecran_suivant` : la table dit
+    /// *quand* on peut changer d'écran, jamais *vers lequel*.
+    EcranSuivant,
 
     /// Demande l'extinction du nœud — émet [`crate::connecteurs::MessageTuiCoeur::ExtinctionNoeud`].
     ///
@@ -309,54 +314,66 @@ impl CommandesActives {
 
     /// Construit la table qui reflète l'état courant de l'interface.
     ///
-    /// Fonction pure de [`crate::tui::EtatTui`] — aucun état caché. Elle y lit
-    /// aujourd'hui la session et la position courante ; prendre l'état entier
-    /// plutôt que ces deux morceaux laisse les règles s'ouvrir à d'autres
-    /// dimensions sans changer sa signature ni ses appels.
+    /// Fonction pure de [`crate::tui::EtatTui`] — aucun état caché. Prendre
+    /// l'état entier plutôt que les morceaux qu'elle lit laisse les règles
+    /// s'ouvrir à d'autres dimensions sans changer sa signature ni ses appels.
     ///
-    /// Chaque variante de [`Commande`] documente ses propres conditions
-    /// d'activation ; les règles, vues d'ensemble :
-    ///
-    /// - `session_application = None` (nœud éteint) → `AllumerNoeud`, `Quitter` ;
-    /// - `Some(session)` (nœud allumé) :
-    ///   - `RetraitLectureSeule`, sans autre condition ;
-    ///   - `EteindreNoeud` si `nombre_foyers_ouverts == 0` ;
-    ///   - `OuvrirFoyer` si `nombre_foyers_ouverts < nombre_foyers` ;
-    ///   - si `nombre_foyers_ouverts > 0`, le bloc « navigation » dépend de
-    ///     `position_courante` :
-    ///     - racine → `1`-`9` mappés sur les foyers ouverts via
-    ///       `ChangerPositionFoyer(Some(_))` ;
-    ///     - dans un foyer → `f` ferme via `FermerFoyer(index)`, `Backspace`
-    ///       remonte via `ChangerPositionFoyer(None)`, `1`-`9` descendent
-    ///       dans les classeurs via `ChangerPositionClasseur(Some(_))` ;
-    ///     - dans un classeur → `f` ferme le foyer parent via
-    ///       `FermerFoyer(index_foyer)`, `Backspace` remonte via
-    ///       `ChangerPositionClasseur(None)`, et selon que
-    ///       `comptoirs_depot_ouverts` est vide ou non, `d` ouvre un comptoir
-    ///       de dépôt vers ce classeur via `OuvrirComptoirDepot` ou `c` ferme
-    ///       le comptoir ouvert via `FermerComptoirDepot` ;
-    /// - dans tous les cas → `ListeCommandesActives`.
-    ///
-    /// La borne `1`-`9` n'est pas un choix de capacité métier : elle reflète
-    /// le mapping `KeyCode::Char((b'0' + n) as char)` qui ne tient pas au-delà
-    /// de la dixième position. Les capacités du noyau (`MAX_FOYERS = 3`,
-    /// `MAX_CLASSEURS = 5`) restent largement en deçà.
+    /// Ne pose ici que les deux touches valables partout — `Tab` bascule
+    /// d'écran, `?` liste ce qui est actif —, puis délègue à l'écran courant :
+    /// tout le reste dépend de ce qui est affiché, et un écran n'a pas à
+    /// connaître les touches d'un autre.
     ///
     /// # Filtrage strict
     ///
-    /// Toute touche présente dans la table déclenche un effet réel dans le
-    /// contexte courant ; toute touche absente est ignorée silencieusement.
-    /// Le filtrage tient compte à la fois de la session (état des foyers,
-    /// capacité libre, comptoirs ouverts) et de la position courante (depuis
-    /// quel niveau l'utilisateur navigue) — pas de touche « activée en bloc »
-    /// avec un rejet à l'exécution.
-    ///
-    /// La session suffit à tout décider parce qu'elle porte désormais aussi les
-    /// comptoirs ouverts : la table se reconstruit à sa réception, sans que la
-    /// TUI ait à retenir quoi que ce soit entre deux envois.
-    pub(super) fn new(etat_tui: &EtatTui) -> Self {
+    /// Toute touche présente déclenche un effet réel dans le contexte courant ;
+    /// toute touche absente est ignorée silencieusement. Aucune n'est « activée
+    /// en bloc » pour être rejetée à l'exécution.
+    pub(crate) fn new(etat_tui: &EtatTui) -> Self {
         let mut commandes_actives: HashMap<(KeyCode, KeyModifiers), Commande> = HashMap::new();
 
+        commandes_actives.insert((KeyCode::Tab, KeyModifiers::NONE), Commande::EcranSuivant);
+
+        commandes_actives.insert(
+            (KeyCode::Char('?'), KeyModifiers::NONE),
+            Commande::ListeCommandesActives,
+        );
+
+        match etat_tui.ecran {
+            Ecran::Pilotage => Self::new_ecran_pilotage(etat_tui, &mut commandes_actives),
+            Ecran::ArborescenceEnu => {}
+        }
+
+        Self(commandes_actives)
+    }
+
+    /// Ajoute à la table les touches propres à l'écran de pilotage.
+    ///
+    /// Les règles, vues d'ensemble — chaque variante de [`Commande`] documente
+    /// les siennes en détail :
+    ///
+    /// - nœud éteint → `AllumerNoeud`, `Quitter` ;
+    /// - nœud allumé → `RetraitLectureSeule` sans condition, `EteindreNoeud`
+    ///   si aucun foyer n'est ouvert, `OuvrirFoyer` s'il reste une place ;
+    /// - au moins un foyer ouvert, la navigation suit la position courante :
+    ///   à la racine, `1`-`9` entrent dans les foyers ouverts ; dans un foyer,
+    ///   `f` le ferme, `Backspace` remonte, `1`-`9` descendent dans les
+    ///   classeurs ; dans un classeur, `f` ferme le foyer parent, `Backspace`
+    ///   remonte, et `d` ouvre un comptoir de dépôt ou `c` ferme celui qui
+    ///   l'est, selon que la session en porte un ou non ;
+    /// - `!` dans tous les cas.
+    ///
+    /// `!` n'est pas remontée avec `Tab` et `?` : elle ouvre une modale du
+    /// pilotage, qui se referme sur lui — l'activer ailleurs ferait changer
+    /// d'écran sans retour.
+    ///
+    /// La borne `1`-`9` n'est pas une capacité métier : elle reflète le mapping
+    /// `KeyCode::Char((b'0' + n) as char)`, qui ne tient pas au-delà de la
+    /// dixième position. Le noyau (`MAX_FOYERS = 3`, `MAX_CLASSEURS = 5`) reste
+    /// largement en deçà.
+    fn new_ecran_pilotage(
+        etat_tui: &EtatTui,
+        commandes_actives: &mut HashMap<(KeyCode, KeyModifiers), Commande>,
+    ) {
         if let Some(session) = &etat_tui.session_application {
             commandes_actives.insert(
                 (KeyCode::Char('r'), KeyModifiers::NONE),
@@ -446,14 +463,7 @@ impl CommandesActives {
             commandes_actives.insert((KeyCode::Char('q'), KeyModifiers::NONE), Commande::Quitter);
         }
 
-        commandes_actives.insert(
-            (KeyCode::Char('?'), KeyModifiers::NONE),
-            Commande::ListeCommandesActives,
-        );
-
         commandes_actives.insert((KeyCode::Char('!'), KeyModifiers::NONE), Commande::APropos);
-
-        Self(commandes_actives)
     }
 
     /// Retourne la commande liée à une touche dans le contexte courant, `None` si absente.
@@ -466,18 +476,18 @@ impl CommandesActives {
 
     /// Retourne une chaîne énumérant les touches actives, séparées par des espaces.
     ///
-    /// Format : chaque caractère imprimable est entouré de guillemets simples
-    /// (`'a'`, `'1'`…), `Backspace` par le glyphe entre guillemets `'⌫'`. Les autres
-    /// `KeyCode` (non utilisés par la table aujourd'hui) seraient ignorés.
+    /// Chaque touche est rendue entre guillemets simples : le caractère lui-même
+    /// (`'a'`, `'1'`…), ou un glyphe pour les deux touches nommées de la table,
+    /// `'⌫'` et `'⇥'`. Tout autre `KeyCode` serait ignoré — aucune liaison n'en
+    /// utilise, et une touche muette dans l'aide vaut mieux qu'un nom illisible.
     ///
-    /// Appelée par le bras d'exécution de [`Commande::ListeCommandesActives`]
-    /// pour alimenter [`crate::tui::EtatTui::message_aide`].
+    /// Alimente [`crate::tui::EtatTui::message_aide`] via
+    /// [`Commande::ListeCommandesActives`].
     ///
-    /// L'ordre des touches dans la chaîne suit l'itération du `HashMap`
-    /// interne, *non déterministe d'un appel à l'autre*. Compromis temporaire :
-    /// l'aide reste utilisable pour repérer ce qui est actif, mais l'ordre
-    /// stable sera traité quand le module sera enrichi (libellés par commande,
-    /// regroupement par catégorie).
+    /// L'ordre suit l'itération du `HashMap`, *non déterministe d'un appel à
+    /// l'autre*. Compromis assumé : l'aide sert à repérer ce qui est actif, pas
+    /// à être lue deux fois. L'ordre stable viendra avec l'enrichissement du
+    /// module — libellés par commande, regroupement par catégorie.
     pub(super) fn liste_commandes_actives(&self) -> String {
         let mut liste_commandes = String::new();
 
@@ -485,6 +495,7 @@ impl CommandesActives {
             match key_code {
                 KeyCode::Char(c) => liste_commandes.push_str(&format!(" '{c}'")),
 
+                KeyCode::Tab => liste_commandes.push_str(" '⇥'"),
                 KeyCode::Backspace => liste_commandes.push_str(" '⌫'"),
                 _ => {}
             }
