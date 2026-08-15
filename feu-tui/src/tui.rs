@@ -26,31 +26,33 @@
 //!
 //! # Modèle d'interaction
 //!
-//! L'état courant se lit sur quatre axes orthogonaux qui évoluent indépendamment.
+//! L'état courant se lit sur trois axes orthogonaux qui évoluent
+//! indépendamment.
 //!
-//! [`Ecran`] décide quelle famille visuelle est dessinée : carré normal pour
-//! l'usage courant, cadres arrondis orange pour les écrans pilotés par le cœur
-//! (saisie du mot de passe, affichage de la seed). [`ModeSaisie`] décide
-//! comment les touches sont interprétées : `Normal` (dispatch via la table de
-//! commandes), `Insertion` (accumulation dans un buffer, validation par Entrée),
-//! `Information` (avancement par Entrée uniquement). [`PositionCourante`]
-//! décrit où l'utilisateur est dans la pseudo-arborescence foyer → classeur,
-//! affichée en fil d'Ariane dans l'invite et lue par
-//! [`commandes::CommandesActives`] pour décider quelles touches activer.
-//! [`commandes::CommandesActives`] enfin liste les touches actives,
-//! reconstruite à chaque changement de session ou de position courante.
+//! [`Ecran`] désigne l'écran de travail affiché, et rien d'autre : ce qu'il
+//! contient, ses sous-écrans compris, appartient à son module — voir
+//! [`ecran_pilotage`]. [`ModeSaisie`] décide comment les touches sont
+//! interprétées : `Normal` (dispatch via la table de commandes), `Insertion`
+//! (accumulation dans un buffer, validation par Entrée), `Information`
+//! (avancement par Entrée uniquement). [`commandes::CommandesActives`] enfin
+//! liste les touches actives, reconstruite à chaque changement de session ou
+//! de position.
 //!
-//! Le geste utilisateur typique au clavier : `a` pour allumer le nœud, mot de
-//! passe, seed validée par deux pressions d'Entrée, puis `o` pour ouvrir un
-//! foyer (saisie du numéro), `1`-`9` pour entrer dans un foyer ouvert puis
-//! dans un de ses classeurs, `d` pour y ouvrir un comptoir de dépôt et `c`
-//! pour le fermer, `r` pour retirer l'arborescence sur le disque,
-//! `Backspace` pour remonter d'un niveau, `f` pour
-//! fermer le foyer où l'on est positionné, `e` pour éteindre quand tous les
-//! foyers sont fermés, `q` pour quitter quand le nœud est éteint. À tout
-//! moment `?` affiche la liste des touches actives dans le contexte courant.
+//! Ce module ne connaît donc aucun écran de l'intérieur. Chacun apporte dans
+//! son fichier son état, son rendu et les transitions qui y mènent — celles-ci
+//! s'écrivant en `impl EtatTui`, puisqu'elles posent aussi le mode de saisie.
+//!
+//! Le geste typique au clavier : `a` allume le nœud, mot de passe, seed
+//! validée par deux pressions d'Entrée ; `o` ouvre un foyer (saisie du
+//! numéro), `1`-`9` entrent dans un foyer ouvert puis dans un de ses
+//! classeurs, `d` y ouvre un comptoir de dépôt et `c` le ferme, `r` retire
+//! l'arborescence sur le disque, `Backspace` remonte d'un niveau, `f` ferme le
+//! foyer où l'on est, `e` éteint quand tous les foyers sont fermés, `q` quitte
+//! quand le nœud est éteint. À tout moment, `?` liste les touches actives et
+//! `!` affiche l'à-propos.
 
 mod commandes;
+mod ecran_pilotage;
 mod rendu;
 
 use std::{
@@ -64,7 +66,10 @@ use feu_application::SessionApplication;
 use ratatui::DefaultTerminal;
 use secrecy::SecretString;
 
-use crate::connecteurs::{ConnecteurVersCoeur, MessageCoeurTui, MessageTuiCoeur};
+use crate::{
+    connecteurs::{ConnecteurVersCoeur, MessageCoeurTui, MessageTuiCoeur},
+    tui::ecran_pilotage::EtatPilotage,
+};
 use commandes::{Commande, CommandesActives};
 
 /// Emplacement du dossier de dépôt, en dur le temps de brancher la TUI.
@@ -86,105 +91,56 @@ use commandes::{Commande, CommandesActives};
 /// `connecteurs`), posé là où le cœur le lit.
 const CHEMIN_COMPTOIR_DEPOT: &str = concat!(env!("HOME"), "/Desktop/depot");
 
-/// Axe de rendu : détermine quelle famille visuelle est dessinée à chaque frame.
+/// Axe de rendu : quel écran de travail est dessiné à chaque frame.
 ///
-/// Chaque variante porte les données propres à son écran — [`Ecran::AffichageSeed`]
-/// embarque les mots directement, garantissant que le rendu dispose de tout ce
-/// dont il a besoin sans interroger d'autre partie de l'état. Le compilateur
-/// garantit l'exhaustivité du `match` dans [`rendu::dessiner`].
+/// Pur sélecteur — les variantes ne portent aucune donnée. Chaque écran garde
+/// les siennes dans son module, ce qui laisse cet enum stable quand l'un
+/// d'eux s'enrichit, et vaut au `match` de [`rendu::dessiner`] d'être
+/// exhaustif sans rien savoir d'eux.
 ///
-/// Orthogonal à [`ModeSaisie`] : un même écran peut traverser plusieurs modes.
-/// [`Ecran::Normal`] sera utilisé avec les trois modes à mesure que les commandes
-/// s'étoffent. Fusionner ces deux axes recouperait le rendu et l'interprétation
-/// des touches, deux responsabilités indépendantes.
-pub(crate) enum Ecran {
-    /// Carré centré à angles droits — état de repos de l'interface.
-    ///
-    /// Utilisé avec [`ModeSaisie::Normal`] pour le dispatch des commandes filtrées
-    /// par contexte, et avec [`ModeSaisie::Insertion`] lorsque l'invite porte un
-    /// prompt de commande (numéro de foyer pour [`Commande::OuvrirFoyer`]).
-    /// Accueillera également [`ModeSaisie::Information`] à mesure que des
-    /// confirmations contextuelles s'ajouteront.
-    Normal,
-
-    /// Cadre arrondi orange centré — affiché quand le cœur demande un mot de passe.
-    ///
-    /// Toujours associé à [`ModeSaisie::Insertion`] et [`ValidationBufferSaisie::EnvoiMdp`].
-    /// Déclenché par [`crate::connecteurs::MessageCoeurTui::AttenteMdp`].
-    SaisieMdp,
-
-    /// Cadre arrondi orange centré — affiché après génération de la seed.
-    ///
-    /// Toujours associé à [`ModeSaisie::Information`].
-    /// Déclenché par [`crate::connecteurs::MessageCoeurTui::EnvoiSeed`].
-    /// `rappel` passe à `true` à la première pression d'Entrée pour afficher le message de confirmation.
-    AffichageSeed {
-        seed: Vec<SecretString>,
-        rappel: bool,
-    },
-
-    /// Cadre arrondi orange centré — écran générique d'affichage d'un message.
-    ///
-    /// Associé à [`ModeSaisie::Information`]. Conçu pour être réutilisable : toute
-    /// information textuelle à présenter hors du flux normal (à-propos, aide,
-    /// message ponctuel) passe par cette variante plutôt que par un écran dédié.
-    ///
-    /// `titre` et `information` sont affichés **en clair** : cette variante est
-    /// réservée à de l'information publique. Aucune donnée sensible (seed, clé,
-    /// adresse `.braise`) ne doit y transiter — celles-ci relèvent d'un écran
-    /// dédié comme [`Ecran::AffichageSeed`], qui protège son contenu via
-    /// `secrecy::SecretString`.
-    AffichageInformation {
-        /// Titre affiché centré en haut du cadre.
-        titre: String,
-        /// Corps du message, rendu en paragraphe centré ; chaque `\n` délimite
-        /// une ligne affichée.
-        information: String,
-    },
+/// Orthogonal à [`ModeSaisie`] : un même écran traverse plusieurs modes.
+/// Fusionner les deux axes recouperait le rendu et l'interprétation des
+/// touches, deux responsabilités indépendantes.
+enum Ecran {
+    /// L'usage courant du nœud, et les modales qu'il ouvre — cf.
+    /// [`ecran_pilotage`].
+    Pilotage,
 }
 
 /// Axe d'interprétation des touches clavier — indépendant de l'écran affiché.
 ///
-/// Transversal à [`Ecran`] : un même écran peut traverser plusieurs modes selon
-/// son état. [`Ecran::Normal`] traverse aujourd'hui `Normal` (dispatch des
-/// commandes filtrées par contexte) et `Insertion` (saisie d'un argument de
-/// commande, par exemple un numéro de foyer) ; il accueillera `Information`
-/// quand des confirmations contextuelles seront ajoutées.
-/// Fusionner cet axe avec [`Ecran`] recouperait l'interprétation des touches et
-/// la logique de rendu, deux responsabilités indépendantes.
-pub(crate) enum ModeSaisie {
+/// Transversal à [`Ecran`] : un même écran traverse plusieurs modes selon son
+/// état. Le mode est posé par la transition qui mène à l'écran, pas déduit de
+/// lui — ce qui laisse la boucle clavier dispatcher sans jamais consulter
+/// [`EtatTui::ecran`].
+enum ModeSaisie {
     /// Touches dispatchées via [`EtatTui::commandes_actives`] : la table
     /// indique quelle commande exécuter, ou rien si la touche n'y figure pas.
     Normal,
 
     /// Touches accumulées dans [`EtatTui::buffer_saisie`] ; Entrée valide, Échap annule.
     ///
-    /// Utilisé par [`Ecran::SaisieMdp`] pour le mot de passe et par [`Ecran::Normal`]
-    /// pour les prompts de commande (numéro de foyer). La destination du buffer à la
-    /// validation est portée par [`ValidationBufferSaisie`].
+    /// Sert au mot de passe comme aux prompts de commande. Ce qu'il advient du
+    /// buffer à la validation est porté par [`ValidationBufferSaisie`], jamais
+    /// par l'écran.
     Insertion,
 
-    /// Entrée (sans modificateur) avance l'état de l'écran courant — toute autre touche est ignorée.
+    /// Entrée (sans modificateur) avance l'écran courant — toute autre touche est ignorée.
     ///
-    /// Utilisé par [`Ecran::AffichageSeed`] : première pression d'Entrée déclenche le rappel,
-    /// deuxième pression envoie [`crate::connecteurs::MessageTuiCoeur::SeedBienRecue`].
+    /// L'écran seul sait ce qu'« avancer » veut dire, et si le cœur doit en
+    /// être averti (cf. `entree_mode_information`).
     Information,
 }
 
 /// Destination du contenu de [`EtatTui::buffer_saisie`] à la validation (Entrée).
 ///
-/// Positionné avant de basculer en [`ModeSaisie::Insertion`] par le bras qui
-/// déclenche la saisie — réception de [`crate::connecteurs::MessageCoeurTui::AttenteMdp`]
-/// pour [`Self::EnvoiMdp`], dispatch d'une commande [`Commande::OuvrirFoyer`]
-/// pour [`Self::OuvertureFoyer`].
-/// Consommé et remis à [`Self::Rien`] par `saisie_mode_insertion`, qui n'a ainsi
-/// pas à connaître l'écran courant pour décider quoi émettre.
+/// Posé avant de basculer en [`ModeSaisie::Insertion`] par ce qui déclenche la
+/// saisie, consommé et remis à [`Self::Rien`] par `saisie_mode_insertion` —
+/// qui n'a ainsi pas à connaître l'écran courant pour décider quoi émettre.
 ///
-/// La fermeture d'un foyer ne passe pas par ce mécanisme : elle est immédiate
-/// depuis le foyer où l'on est positionné (cf. [`Commande::FermerFoyer`]),
-/// l'index étant capturé depuis [`EtatTui::position_courante`] au moment de la
-/// construction de la table des commandes actives.
-pub(crate) enum ValidationBufferSaisie {
+/// La fermeture d'un foyer ne passe pas par là : elle agit sur le foyer où
+/// l'on est positionné, sans rien demander (cf. [`Commande::FermerFoyer`]).
+enum ValidationBufferSaisie {
     /// Le buffer est vidé sans envoyer de message au cœur.
     ///
     /// État de repos restauré après chaque validation ou annulation.
@@ -204,85 +160,24 @@ pub(crate) enum ValidationBufferSaisie {
     OuvertureFoyer,
 }
 
-/// Position de navigation dans la pseudo-arborescence foyer → classeur.
-///
-/// Sépare la navigation TUI des commandes noyau : la position est purement un
-/// curseur de présentation, elle ne déclenche aucune action métier en elle-même.
-/// Elle est en revanche une entrée de [`CommandesActives::new`] — le contexte
-/// de navigation conditionne quelles touches sont actives, et l'index porté
-/// par [`Commande::FermerFoyer`] est capturé depuis cette position au moment
-/// de la construction de la table.
-///
-/// # Niveaux et invariants
-///
-/// Trois niveaux successifs, encodés par la combinaison des deux `Option` :
-/// - racine : `foyer = None`, `classeur = None` ;
-/// - dans un foyer : `foyer = Some(i)`, `classeur = None` ;
-/// - dans un classeur : `foyer = Some(i)`, `classeur = Some(j)`.
-///
-/// L'invariant *« `classeur = Some(_)` implique `foyer = Some(_)` »* est tenu
-/// par la logique de transition (cf. les bras `ChangerPositionFoyer` et
-/// `ChangerPositionClasseur` dans [`Tui::saisie_mode_normal`]) plutôt que par
-/// le type.
-///
-/// # Réconciliation avec la session
-///
-/// La position courante doit toujours rester cohérente avec la session du nœud :
-/// si l'utilisateur ferme le foyer où il est positionné, la position est
-/// immédiatement remise à la racine au moment où la commande de fermeture est
-/// émise. Comme [`Commande::FermerFoyer`] est l'unique chemin de fermeture
-/// d'un foyer, l'invariant tient en cascade : à l'extinction du nœud (qui exige
-/// que tous les foyers soient fermés), la position est nécessairement déjà à la
-/// racine.
-pub(crate) struct PositionCourante {
-    /// Index 1-based du foyer où l'utilisateur est positionné, `None` à la racine.
-    ///
-    /// Posé par [`Commande::ChangerPositionFoyer(Some(_))`](Commande::ChangerPositionFoyer)
-    /// depuis la racine — la table n'expose la touche que pour les foyers
-    /// effectivement ouverts dans la session courante. Effacé par
-    /// [`Commande::ChangerPositionFoyer(None)`](Commande::ChangerPositionFoyer)
-    /// (Backspace depuis le niveau foyer) ou par [`Commande::FermerFoyer`]
-    /// (qui ramène la position complète à la racine).
-    foyer: Option<usize>,
-
-    /// Index 1-based du classeur où l'utilisateur est positionné, `None` si l'on
-    /// n'est pas descendu jusqu'à un classeur.
-    ///
-    /// Posé par [`Commande::ChangerPositionClasseur(Some(_))`](Commande::ChangerPositionClasseur)
-    /// depuis un foyer — la table expose les touches `1`-`9` dans la limite de
-    /// `nombre_classeurs` (aucune notion d'« ouverture » pour les classeurs
-    /// aujourd'hui : tous les indices valides sont accessibles). Effacé par
-    /// [`Commande::ChangerPositionClasseur(None)`](Commande::ChangerPositionClasseur)
-    /// (Backspace depuis le niveau classeur) ou par [`Commande::FermerFoyer`].
-    classeur: Option<usize>,
-}
-
 /// État courant de l'interface entre deux frames.
 ///
-/// Regroupe dix dimensions orthogonales dont aucune ne peut être absorbée
-/// par une autre :
-/// - `session_application` : clone de la session reçu après chaque commande mutante,
-///   `None` quand le nœud est éteint ;
-/// - [`Ecran`] : quoi dessiner ;
-/// - [`ModeSaisie`] : comment interpréter les touches ;
-/// - [`PositionCourante`] : où l'utilisateur est positionné dans la
-///   pseudo-arborescence foyer → classeur, indépendant de l'écran et du mode ;
-/// - `commandes_actives` : quelles touches déclenchent quelle commande dans le
-///   contexte courant ;
-/// - [`ValidationBufferSaisie`] : quoi émettre lors de la validation du buffer ;
-/// - `message_erreur` : transversal aux écrans, porte le texte et son compte à
-///   rebours d'effacement automatique (cf. [`EtatTui::decremente_temps`]) ;
-/// - `message_aide` : message éphémère destiné à l'utilisateur (aujourd'hui
-///   alimenté par `?` qui liste les commandes actives), même mécanisme que
-///   `message_erreur` mais durée plus courte ;
-/// - `prompt` : libellé affiché en regard du buffer pendant une saisie
-///   ([`ModeSaisie::Insertion`]) ;
-/// - `buffer_saisie` : accumulateur de saisie, aveugle à l'écran courant.
+/// Deux natures s'y côtoient. **Le transversal**, à plat ici : la session, les
+/// deux axes ([`Ecran`], [`ModeSaisie`]), la table des commandes, la mécanique
+/// de saisie (`prompt`, `buffer_saisie`, [`ValidationBufferSaisie`]) et les
+/// messages éphémères. Il survit aux changements d'écran, et c'est la raison
+/// d'être de sa place : une erreur née pendant la saisie du mot de passe doit
+/// rester lisible sur l'écran qui suit. **Le propre à un écran**, dans un
+/// champ par écran — aujourd'hui `etat_pilotage` — dont le module de cet écran
+/// est seul à connaître le contenu.
 ///
 /// Aucun état applicatif n'est retenu hors de `session_application` : ce que le
 /// nœud sait, la TUI le lit dans le clone qu'elle reçoit, elle n'en garde pas
 /// de copie à resynchroniser.
-pub(crate) struct EtatTui {
+///
+/// Les méthodes de ce type ne sont pas toutes ici : chaque module d'écran
+/// ajoute en `impl EtatTui` les transitions qui mènent au sien.
+struct EtatTui {
     /// Session applicative courante — `None` quand le nœud est éteint.
     ///
     /// Peuplé par [`crate::connecteurs::MessageCoeurTui::EnvoiSessionApplication`]
@@ -291,64 +186,49 @@ pub(crate) struct EtatTui {
     /// résultat d'une extinction réussie ; `Some(_)` signifie nœud allumé.
     /// Pas de booléen séparé — la présence du clone est la preuve que l'allumage
     /// a réussi, son absence celle de l'extinction.
-    pub(crate) session_application: Option<SessionApplication>,
+    session_application: Option<SessionApplication>,
 
     /// Écran actuellement affiché — détermine la fonction de rendu appelée.
-    pub(crate) ecran: Ecran,
+    ecran: Ecran,
 
     /// Mode de saisie courant — détermine l'interprétation des touches.
-    pub(crate) mode_saisie: ModeSaisie,
+    mode_saisie: ModeSaisie,
 
-    /// Position de navigation TUI — racine, foyer, ou foyer + classeur.
-    ///
-    /// Curseur de présentation, indépendant de l'écran et du mode. Affiché en
-    /// fil d'Ariane dans l'invite (`feu/foy.N/cla.M ›`) et lu par
-    /// [`CommandesActives::new`] pour décider quelles touches activer ; l'index
-    /// foyer est capturé dans [`Commande::FermerFoyer`] au moment de la
-    /// construction de la table.
-    pub(crate) position_courante: PositionCourante,
+    /// Ce que l'écran de pilotage retient — son sous-écran et la position
+    /// courante. Opaque d'ici : seul son module en lit le contenu.
+    etat_pilotage: EtatPilotage,
 
     /// Table de dispatch touche → commande, filtrée par le contexte courant.
     ///
-    /// Source de vérité unique pour les commandes accessibles à un instant donné :
-    /// une touche absente de la table ne déclenche rien, point. Le filtrage par
-    /// contexte n'a donc aucun cas particulier à gérer dans la boucle.
+    /// Source de vérité unique : une touche absente ne déclenche rien, point —
+    /// la boucle n'a aucun cas particulier à traiter.
     ///
-    /// Reconstruite intégralement à chaque changement d'état pertinent via
-    /// [`CommandesActives::new`] : à la réception d'une nouvelle session dans
-    /// [`Tui::lancer`] ([`crate::connecteurs::MessageCoeurTui::EnvoiSessionApplication`])
-    /// et après chaque commande dispatchée par [`Tui::saisie_mode_normal`].
-    /// La sortie est une fonction pure de l'état — aucune mutation incrémentale,
-    /// aucun risque de désynchronisation entre la table, l'état applicatif et
-    /// la position courante.
+    /// Reconstruite intégralement à la réception d'une session et après chaque
+    /// commande dispatchée. Fonction pure de l'état, donc sans mutation
+    /// incrémentale ni risque de la voir diverger de ce qu'elle décrit.
     commandes_actives: CommandesActives,
 
     /// Ce que l'on fait du buffer à la validation — positionné avant de passer en [`ModeSaisie::Insertion`].
-    pub(crate) validation_buffer_saisie: ValidationBufferSaisie,
+    validation_buffer_saisie: ValidationBufferSaisie,
 
     /// Dernier message d'erreur et son compte à rebours en secondes.
     ///
-    /// Champ privé — accès en lecture via [`EtatTui::message_erreur`],
-    /// écriture via [`EtatTui::ajouter_message_erreur`].
-    /// Le tuple garantit que texte et durée sont toujours posés et effacés ensemble.
+    /// Le tuple garantit que texte et durée sont posés et effacés ensemble —
+    /// d'où les accesseurs [`EtatTui::message_erreur`] et
+    /// [`EtatTui::ajouter_message_erreur`], jamais l'affectation directe.
     ///
-    /// À plat dans [`EtatTui`] pour survivre aux transitions d'écran : une erreur née
-    /// pendant [`Ecran::SaisieMdp`] doit rester visible sur l'écran qui suit sa fermeture.
-    /// Effacé automatiquement quand le compte à rebours atteint zéro via [`EtatTui::decremente_temps`].
+    /// À plat ici pour survivre aux transitions d'écran : une erreur née pendant
+    /// la saisie du mot de passe doit rester visible sur l'écran qui suit.
+    /// Effacé quand le compte à rebours atteint zéro (cf. [`EtatTui::decremente_temps`]).
     message_erreur: (Option<String>, u8),
 
     /// Dernier message éphémère à destination de l'utilisateur, et son compte
-    /// à rebours en secondes.
+    /// à rebours en secondes. Même mécanique que [`EtatTui::message_erreur`],
+    /// accesseurs compris.
     ///
-    /// Champ privé — accès en lecture via [`EtatTui::message_aide`],
-    /// écriture via [`EtatTui::ajouter_message_aide`].
-    ///
-    /// Aujourd'hui alimenté par le bras d'exécution de
-    /// [`Commande::ListeCommandesActives`], qui y dépose la liste formatée des
-    /// touches actives. Durée volontairement courte (2 s contre 5 s pour les
-    /// erreurs) : un message d'aide doit disparaître vite pour ne pas
-    /// encombrer l'écran. Effacé automatiquement quand le compte à rebours
-    /// atteint zéro via [`EtatTui::decremente_temps`].
+    /// Alimenté aujourd'hui par [`Commande::ListeCommandesActives`], qui y
+    /// dépose la liste formatée des touches actives. Durée volontairement
+    /// courte — 2 s contre 5 pour une erreur : une aide doit disparaître vite.
     message_aide: (Option<String>, u8),
 
     /// Libellé affiché en regard du buffer pendant une saisie.
@@ -357,45 +237,44 @@ pub(crate) struct EtatTui {
     /// [`ModeSaisie::Insertion`] (par exemple `"ouvre"` pour
     /// [`Commande::OuvrirFoyer`]) ; vidé par `saisie_mode_insertion` à la
     /// validation comme à l'annulation, en miroir de [`Self::buffer_saisie`].
-    pub(crate) prompt: String,
+    prompt: String,
 
-    /// Accumulateur de la saisie en mode [`ModeSaisie::Insertion`]. Vidé après chaque validation ou annulation.
+    /// Accumulateur de la saisie en [`ModeSaisie::Insertion`], vidé après
+    /// chaque validation ou annulation.
     ///
-    /// À plat dans [`EtatTui`] parce que la boucle d'accumulation est indépendante de l'écran :
-    /// `saisie_mode_insertion` n'a pas à `match` sur [`EtatTui::ecran`] pour accumuler les frappes.
-    pub(crate) buffer_saisie: String,
+    /// À plat ici parce que l'accumulation ne dépend pas de l'écran :
+    /// `saisie_mode_insertion` n'a jamais à consulter [`EtatTui::ecran`].
+    buffer_saisie: String,
 }
 
 impl EtatTui {
-    /// Crée un [`EtatTui`] en état initial : écran normal.
+    /// État initial : nœud éteint, écran de pilotage, mode normal.
+    ///
+    /// La table des commandes se construit en deux temps — vide d'abord,
+    /// puisqu'elle est une fonction de l'état qui n'existe pas encore, remplie
+    /// aussitôt après (cf. [`CommandesActives::vide`]).
     fn new() -> Self {
-        Self {
+        let mut etat_tui = Self {
             session_application: None,
-            ecran: Ecran::Normal,
+            ecran: Ecran::Pilotage,
             mode_saisie: ModeSaisie::Normal,
-            position_courante: PositionCourante {
-                foyer: None,
-                classeur: None,
-            },
-            commandes_actives: CommandesActives::new(
-                &None,
-                &PositionCourante {
-                    foyer: None,
-                    classeur: None,
-                },
-            ),
+            etat_pilotage: EtatPilotage::new(),
+            commandes_actives: CommandesActives::vide(),
             validation_buffer_saisie: ValidationBufferSaisie::Rien,
             message_erreur: (None, 0),
             message_aide: (None, 0),
             prompt: String::new(),
             buffer_saisie: String::new(),
-        }
+        };
+        etat_tui.commandes_actives = CommandesActives::new(&etat_tui);
+
+        etat_tui
     }
 
     /// Retourne le texte du message d'erreur courant, `None` si aucun.
     ///
     /// Expose uniquement le texte — le compte à rebours est un détail interne.
-    pub(crate) fn message_erreur(&self) -> &Option<String> {
+    fn message_erreur(&self) -> &Option<String> {
         &self.message_erreur.0
     }
 
@@ -403,7 +282,7 @@ impl EtatTui {
     ///
     /// Toujours appelé à la place d'une affectation directe : garantit que
     /// texte et durée sont posés atomiquement et ne peuvent pas se désynchroniser.
-    pub(crate) fn ajouter_message_erreur(&mut self, message_erreur: String) {
+    fn ajouter_message_erreur(&mut self, message_erreur: String) {
         self.message_erreur.0 = Some(message_erreur);
         self.message_erreur.1 = 5;
     }
@@ -411,7 +290,7 @@ impl EtatTui {
     /// Retourne le texte du message d'aide courant, `None` si aucun.
     ///
     /// Expose uniquement le texte — le compte à rebours est un détail interne.
-    pub(crate) fn message_aide(&self) -> &Option<String> {
+    fn message_aide(&self) -> &Option<String> {
         &self.message_aide.0
     }
 
@@ -419,7 +298,7 @@ impl EtatTui {
     ///
     /// Toujours appelé à la place d'une affectation directe : garantit que
     /// texte et durée sont posés atomiquement et ne peuvent pas se désynchroniser.
-    pub(crate) fn ajouter_message_aide(&mut self, message_aide: String) {
+    fn ajouter_message_aide(&mut self, message_aide: String) {
         self.message_aide.0 = Some(message_aide);
         self.message_aide.1 = 2;
     }
@@ -462,7 +341,9 @@ impl EtatTui {
 /// décrémentation périodique des éléments éphémères, traitement des
 /// événements clavier, et dépouillement non bloquant du canal cœur→TUI.
 pub(crate) struct Tui {
+    /// L'état que la boucle dessine, fait évoluer, et transmet au rendu.
     etat_tui: EtatTui,
+    /// L'extrémité TUI des deux canaux — seul chemin vers le nœud.
     connecteur_vers_coeur: ConnecteurVersCoeur,
 }
 
@@ -488,15 +369,12 @@ impl Tui {
     ///    [`EtatTui::commandes_actives`] et exécution de la commande retournée),
     ///    insertion (accumulation dans le buffer, Entrée → validation,
     ///    Échap → annulation), ou information (Entrée → avancement de l'écran courant).
-    /// 4. `try_recv` non bloquant sur le canal cœur→TUI : met à jour
-    ///    [`EtatTui::message_erreur`] sur [`MessageCoeurTui::AffichageErreur`],
-    ///    bascule sur [`Ecran::SaisieMdp`] sur [`MessageCoeurTui::AttenteMdp`],
-    ///    bascule sur [`Ecran::AffichageSeed`] sur [`MessageCoeurTui::EnvoiSeed`],
-    ///    met à jour [`EtatTui::session_application`] et reconstruit
-    ///    [`EtatTui::commandes_actives`] via [`CommandesActives::new`] sur
-    ///    [`MessageCoeurTui::EnvoiSessionApplication`] — le payload à `None`
-    ///    (extinction) suffisant à tout éteindre d'un coup —, ou signale la
-    ///    déconnexion du thread cœur.
+    /// 4. `try_recv` non bloquant sur le canal cœur→TUI : pose le message
+    ///    d'erreur, appelle la transition qui correspond au message reçu
+    ///    (`AttenteMdp`, `EnvoiSeed`), ou remplace la session et reconstruit
+    ///    [`EtatTui::commandes_actives`] — le payload à `None` (extinction)
+    ///    suffisant à tout éteindre d'un coup. La déconnexion du thread cœur
+    ///    est signalée comme une erreur ordinaire.
     pub(crate) fn lancer(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         let mut horloge = Instant::now();
         loop {
@@ -530,23 +408,14 @@ impl Tui {
                 Ok(message) => match message {
                     MessageCoeurTui::AffichageErreur(m) => self.etat_tui.ajouter_message_erreur(m),
                     MessageCoeurTui::AttenteMdp => {
-                        self.etat_tui.ecran = Ecran::SaisieMdp;
-                        self.etat_tui.mode_saisie = ModeSaisie::Insertion;
-                        self.etat_tui.validation_buffer_saisie = ValidationBufferSaisie::EnvoiMdp;
+                        self.etat_tui.vers_saisie_mdp();
                     }
                     MessageCoeurTui::EnvoiSeed(seed) => {
-                        self.etat_tui.ecran = Ecran::AffichageSeed {
-                            seed,
-                            rappel: false,
-                        };
-                        self.etat_tui.mode_saisie = ModeSaisie::Information;
+                        self.etat_tui.vers_affichage_seed(seed);
                     }
                     MessageCoeurTui::EnvoiSessionApplication(session_application) => {
                         self.etat_tui.session_application = session_application;
-                        self.etat_tui.commandes_actives = CommandesActives::new(
-                            &self.etat_tui.session_application,
-                            &self.etat_tui.position_courante,
-                        );
+                        self.etat_tui.commandes_actives = CommandesActives::new(&self.etat_tui);
                     }
                 },
             }
@@ -611,21 +480,20 @@ impl Tui {
                         .envoyer_message_tui_coeur(MessageTuiCoeur::AllumageNoeud);
                 }
                 Commande::APropos => {
-                    self.etat_tui.ecran = Ecran::AffichageInformation {
-                        titre: String::from("Feu"),
-                        information: format!(
-                            "Version {} · GPL-3.0-or-later\n\n\
+                    let titre = String::from("Feu");
+                    let information = format!(
+                        "Version {} · GPL-3.0-or-later\n\n\
                              © 2026 Bertrand CLAVELIER\n\n",
-                            env!("CARGO_PKG_VERSION")
-                        ),
-                    };
-                    self.etat_tui.mode_saisie = ModeSaisie::Information;
+                        env!("CARGO_PKG_VERSION")
+                    );
+
+                    self.etat_tui.vers_affichage_information(titre, information);
                 }
                 Commande::ChangerPositionClasseur(index) => {
-                    self.etat_tui.position_courante.classeur = *index;
+                    self.etat_tui.etat_pilotage.position_courante.classeur = *index;
                 }
                 Commande::ChangerPositionFoyer(index) => {
-                    self.etat_tui.position_courante.foyer = *index;
+                    self.etat_tui.etat_pilotage.position_courante.foyer = *index;
                 }
                 Commande::EteindreNoeud => {
                     self.connecteur_vers_coeur
@@ -645,8 +513,8 @@ impl Tui {
                 Commande::FermerFoyer(index) => {
                     self.connecteur_vers_coeur
                         .envoyer_message_tui_coeur(MessageTuiCoeur::FermetureFoyer(*index));
-                    self.etat_tui.position_courante.foyer = None;
-                    self.etat_tui.position_courante.classeur = None;
+                    self.etat_tui.etat_pilotage.position_courante.foyer = None;
+                    self.etat_tui.etat_pilotage.position_courante.classeur = None;
                 }
                 Commande::ListeCommandesActives => {
                     self.etat_tui.ajouter_message_aide(
@@ -678,10 +546,7 @@ impl Tui {
                 }
             }
 
-            self.etat_tui.commandes_actives = CommandesActives::new(
-                &self.etat_tui.session_application,
-                &self.etat_tui.position_courante,
-            );
+            self.etat_tui.commandes_actives = CommandesActives::new(&self.etat_tui);
         }
 
         Ok(true)
@@ -701,10 +566,10 @@ impl Tui {
     ///   d'erreur est affiché et aucun message n'est envoyé au cœur ;
     /// - [`ValidationBufferSaisie::Rien`] → no-op (état hors-saisie indue).
     ///
-    /// Quel que soit le bras pris, l'écran repasse à [`Ecran::Normal`], le mode à
-    /// [`ModeSaisie::Normal`], la destination du buffer à
-    /// [`ValidationBufferSaisie::Rien`], et `prompt` comme `buffer_saisie` sont
-    /// vidés. `saisie_mode_insertion` n'a jamais à connaître l'écran courant.
+    /// Quel que soit le bras pris, l'écran revient à son état de repos, la
+    /// destination du buffer à [`ValidationBufferSaisie::Rien`], et `prompt`
+    /// comme `buffer_saisie` sont vidés — sans jamais consulter l'écran
+    /// courant.
     ///
     /// À l'annulation (Échap), vide buffer et prompt, restaure l'écran et le mode,
     /// puis envoie [`MessageTuiCoeur::Annulation`] — utile aux attentes bloquantes
@@ -719,8 +584,7 @@ impl Tui {
                 self.etat_tui.buffer_saisie.pop();
             }
             Some((KeyCode::Enter, KeyModifiers::NONE)) => {
-                self.etat_tui.ecran = Ecran::Normal;
-                self.etat_tui.mode_saisie = ModeSaisie::Normal;
+                self.etat_tui.vers_ecran_principal();
                 match self.etat_tui.validation_buffer_saisie {
                     ValidationBufferSaisie::EnvoiMdp => {
                         self.connecteur_vers_coeur.envoyer_message_tui_coeur(
@@ -751,8 +615,7 @@ impl Tui {
             Some((KeyCode::Esc, KeyModifiers::NONE)) => {
                 self.etat_tui.prompt.clear();
                 self.etat_tui.buffer_saisie.clear();
-                self.etat_tui.ecran = Ecran::Normal;
-                self.etat_tui.mode_saisie = ModeSaisie::Normal;
+                self.etat_tui.vers_ecran_principal();
                 self.connecteur_vers_coeur
                     .envoyer_message_tui_coeur(MessageTuiCoeur::Annulation);
             }
@@ -763,31 +626,19 @@ impl Tui {
 
     /// Traite une touche en mode [`ModeSaisie::Information`] : avancement sur Entrée uniquement.
     ///
-    /// Seule `Entrée` sans modificateur est active — tout autre événement est ignoré.
-    /// Ce choix est intentionnel : il évite qu'un redimensionnement de fenêtre ou un
-    /// clic souris ne fasse progresser l'écran sans action explicite de l'utilisateur.
+    /// Seule `Entrée` sans modificateur est active — tout autre événement est
+    /// ignoré, pour qu'un redimensionnement de fenêtre ou un clic souris ne
+    /// fasse pas progresser l'écran sans geste de l'utilisateur.
     ///
-    /// Le comportement dépend de l'écran courant :
-    /// - [`Ecran::AffichageSeed`] : déroulement en deux temps — la première
-    ///   pression pose `rappel = true` (affiche le message de confirmation), la
-    ///   seconde revient à [`Ecran::Normal`] et envoie [`MessageTuiCoeur::SeedBienRecue`] ;
-    /// - tout autre écran d'information (aujourd'hui [`Ecran::AffichageInformation`]) :
-    ///   une seule pression suffit à revenir à [`Ecran::Normal`], sans message au cœur.
+    /// Ce qu'« avancer » signifie revient à l'écran affiché ; cette méthode ne
+    /// garde que ce qu'elle seule peut faire — prévenir le cœur, dont elle
+    /// tient le connecteur.
     fn saisie_mode_information(&mut self) -> std::io::Result<()> {
-        if let Some((KeyCode::Enter, KeyModifiers::NONE)) = Self::lire_touche()? {
-            if let Ecran::AffichageSeed { seed: _, rappel } = &mut self.etat_tui.ecran {
-                if *rappel {
-                    self.etat_tui.ecran = Ecran::Normal;
-                    self.etat_tui.mode_saisie = ModeSaisie::Normal;
-                    self.connecteur_vers_coeur
-                        .envoyer_message_tui_coeur(MessageTuiCoeur::SeedBienRecue);
-                } else {
-                    *rappel = true;
-                }
-            } else {
-                self.etat_tui.ecran = Ecran::Normal;
-                self.etat_tui.mode_saisie = ModeSaisie::Normal;
-            }
+        if let Some((KeyCode::Enter, KeyModifiers::NONE)) = Self::lire_touche()?
+            && self.etat_tui.entree_mode_information()
+        {
+            self.connecteur_vers_coeur
+                .envoyer_message_tui_coeur(MessageTuiCoeur::SeedBienRecue);
         }
         Ok(())
     }

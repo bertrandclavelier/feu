@@ -65,20 +65,19 @@
 //! Ouvrir un foyer demande une saisie d'index ([`Commande::OuvrirFoyer`])
 //! parce qu'on ne peut pas naviguer vers un foyer qui n'existe pas encore.
 //! Fermer un foyer ne demande pas de saisie ([`Commande::FermerFoyer`]) :
-//! l'index est capturé depuis [`crate::tui::EtatTui::position_courante`] au
-//! moment où la table est construite, donc on ferme toujours *le foyer où
-//! l'on est positionné*. Le geste utilisateur est *naviguer puis fermer* :
-//! `3` puis `f` ferme le foyer 3. Cette asymétrie reflète la nature des
-//! actions : création (index explicite obligatoire) vs suppression (cible
-//! contextuelle suffit).
+//! l'index est capturé depuis la position courante au moment où la table est
+//! construite, donc on ferme toujours *le foyer où l'on est positionné*. Le
+//! geste est *naviguer puis fermer* : `3` puis `f` ferme le foyer 3. Cette
+//! asymétrie reflète la nature des actions : création (index explicite
+//! obligatoire) vs suppression (cible contextuelle suffit).
 //!
 //! # Reconstruction déclarative
 //!
 //! La table est reconstruite intégralement à chaque changement d'état pertinent
-//! via [`CommandesActives::new`], qui prend la session applicative et la
-//! position courante et déduit les commandes actives à partir d'un jeu de
-//! règles simples. Aucune mutation incrémentale, aucun état caché : la sortie
-//! de `new` est une fonction pure de ses entrées.
+//! via [`CommandesActives::new`], qui lit l'état de l'interface et en déduit
+//! les commandes actives à partir d'un jeu de règles simples. Aucune mutation
+//! incrémentale, aucun état caché : la sortie de `new` est une fonction pure
+//! de son entrée.
 //!
 //! Ce choix maintient l'invariant fondamental — *la table reflète toujours
 //! l'état courant* — sans qu'aucun chemin du code n'ait à se rappeler de
@@ -96,18 +95,17 @@
 //! effet réel possible dans le contexte courant. Une touche absente n'a aucun
 //! effet ; une touche présente déclenche systématiquement quelque chose.
 //!
-//! Cette homogénéité est permise par le fait que la position courante fait
-//! partie des entrées de [`CommandesActives::new`] : la table sait, par
-//! exemple, sur quel foyer pointe le `f` ou si la touche `1` doit entrer dans
-//! un foyer ouvert ou dans un classeur valide. Aucune commande n'est exposée
-//! « en bloc » avec un filtrage à l'exécution.
+//! Cette homogénéité tient à ce que la position courante compte parmi les
+//! entrées de [`CommandesActives::new`] : la table sait sur quel foyer pointe
+//! le `f`, ou si la touche `1` doit entrer dans un foyer ouvert ou dans un
+//! classeur valide. Aucune commande n'est exposée « en bloc » avec un
+//! filtrage à l'exécution.
 
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyModifiers};
-use feu_application::SessionApplication;
 
-use crate::tui::PositionCourante;
+use crate::tui::EtatTui;
 
 /// Intention métier déclenchée par une frappe clavier.
 ///
@@ -137,11 +135,11 @@ pub(super) enum Commande {
     /// ni aux foyers.
     ///
     /// Le bras d'exécution dans [`crate::tui::Tui::saisie_mode_normal`] bascule
-    /// l'écran sur [`crate::tui::Ecran::AffichageInformation`] ; l'utilisateur en
-    /// sort par Entrée (cf. [`crate::tui::ModeSaisie::Information`]).
+    /// sur l'écran d'information du pilotage ; l'utilisateur en sort par Entrée
+    /// (cf. [`crate::tui::ModeSaisie::Information`]).
     APropos,
 
-    /// Affecte directement [`crate::tui::PositionCourante::classeur`] à la valeur portée.
+    /// Affecte directement la position courante, côté classeur.
     ///
     /// Pure navigation TUI — aucun message vers le cœur, aucun effet métier.
     /// `Some(index)` pose la position à `Some(index)` (descente d'un foyer vers
@@ -156,7 +154,7 @@ pub(super) enum Commande {
     ///   remontée.
     ChangerPositionClasseur(Option<usize>),
 
-    /// Affecte directement [`crate::tui::PositionCourante::foyer`] à la valeur portée.
+    /// Affecte directement la position courante, côté foyer.
     ///
     /// Pure navigation TUI — aucun message vers le cœur, aucun effet métier.
     /// `Some(index)` pose la position à `Some(index)` (descente de la racine
@@ -197,22 +195,19 @@ pub(super) enum Commande {
     /// [`crate::connecteurs::MessageTuiCoeur::FermetureFoyer`].
     ///
     /// Active uniquement lorsque l'utilisateur est positionné dans un foyer ou
-    /// dans un classeur. L'index est *capturé* depuis
-    /// [`crate::tui::EtatTui::position_courante`] au moment où la table est
-    /// construite ; il n'y a donc pas de saisie utilisateur. Le geste typique
-    /// est *naviguer dans le foyer (`1`-`9`) puis le fermer (`f`)*.
+    /// dans un classeur. L'index est *capturé* depuis la position courante au
+    /// moment où la table est construite ; aucune saisie, donc. Le geste
+    /// typique est *naviguer dans le foyer (`1`-`9`) puis le fermer (`f`)*.
     ///
-    /// L'asymétrie avec [`Commande::OuvrirFoyer`] (qui passe par une saisie) est
-    /// délibérée : on ne peut pas naviguer vers un foyer qui n'existe pas encore,
-    /// donc l'ouverture exige un index explicite ; tandis que la fermeture agit
-    /// sur le foyer courant, l'index est porté par le contexte.
+    /// L'asymétrie avec [`Commande::OuvrirFoyer`], qui passe par une saisie,
+    /// est délibérée : on ne peut pas naviguer vers un foyer qui n'existe pas
+    /// encore, alors que la fermeture agit sur celui où l'on est.
     ///
     /// Le bras d'exécution dans [`crate::tui::Tui::saisie_mode_normal`] remet
-    /// [`crate::tui::EtatTui::position_courante`] à la racine après émission du
-    /// message — l'utilisateur ne peut plus être *dans* un foyer qu'il vient
-    /// de fermer. Comme c'est l'unique chemin de fermeture, l'invariant tient
-    /// en cascade : à l'extinction du nœud (qui exige tous les foyers fermés),
-    /// la position est nécessairement déjà à la racine.
+    /// la position à la racine après émission — on ne peut plus être *dans* un
+    /// foyer qu'on vient de fermer. Comme c'est l'unique chemin de fermeture,
+    /// l'invariant tient en cascade : à l'extinction du nœud, qui exige tous
+    /// les foyers fermés, la position y est nécessairement déjà.
     FermerFoyer(usize),
 
     /// Affiche l'aide contextuelle listant les touches actuellement actives.
@@ -241,9 +236,9 @@ pub(super) enum Commande {
     ///
     /// Active uniquement quand l'utilisateur est positionné dans un classeur :
     /// c'est le seul contexte où les deux index que réclame la commande
-    /// applicative sont connus, capturés depuis [`crate::tui::PositionCourante`]
-    /// au moment où la table est construite. Aucune saisie, donc — même geste
-    /// que [`Commande::FermerFoyer`].
+    /// applicative sont connus, capturés depuis la position courante au moment
+    /// où la table est construite. Aucune saisie, donc — même geste que
+    /// [`Commande::FermerFoyer`].
     ///
     /// La variante ne porte que les deux index : le chemin est posé au dispatch
     /// dans [`crate::tui::Tui::saisie_mode_normal`], depuis
@@ -303,9 +298,22 @@ pub(super) enum Commande {
 pub(super) struct CommandesActives(HashMap<(KeyCode, KeyModifiers), Commande>);
 
 impl CommandesActives {
-    /// Construit la table reflétant la session applicative et la position courante.
+    /// Table sans aucune liaison — rien ne répond au clavier.
     ///
-    /// Fonction pure — la sortie ne dépend que des entrées, aucun état caché.
+    /// Sert le temps d'un instant à [`crate::tui::EtatTui::new`] : la table
+    /// étant une fonction de l'état, elle ne peut être construite qu'une fois
+    /// l'état complet, donc après lui. Elle est remplacée dans la foulée.
+    pub(super) fn vide() -> Self {
+        Self(HashMap::new())
+    }
+
+    /// Construit la table qui reflète l'état courant de l'interface.
+    ///
+    /// Fonction pure de [`crate::tui::EtatTui`] — aucun état caché. Elle y lit
+    /// aujourd'hui la session et la position courante ; prendre l'état entier
+    /// plutôt que ces deux morceaux laisse les règles s'ouvrir à d'autres
+    /// dimensions sans changer sa signature ni ses appels.
+    ///
     /// Chaque variante de [`Commande`] documente ses propres conditions
     /// d'activation ; les règles, vues d'ensemble :
     ///
@@ -346,13 +354,10 @@ impl CommandesActives {
     /// La session suffit à tout décider parce qu'elle porte désormais aussi les
     /// comptoirs ouverts : la table se reconstruit à sa réception, sans que la
     /// TUI ait à retenir quoi que ce soit entre deux envois.
-    pub(super) fn new(
-        session_application: &Option<SessionApplication>,
-        position_courante: &PositionCourante,
-    ) -> Self {
+    pub(super) fn new(etat_tui: &EtatTui) -> Self {
         let mut commandes_actives: HashMap<(KeyCode, KeyModifiers), Commande> = HashMap::new();
 
-        if let Some(session) = session_application {
+        if let Some(session) = &etat_tui.session_application {
             commandes_actives.insert(
                 (KeyCode::Char('r'), KeyModifiers::NONE),
                 Commande::RetraitLectureSeule,
@@ -371,7 +376,10 @@ impl CommandesActives {
                 );
             }
             if session.nombre_foyers_ouverts() > 0 {
-                match (position_courante.foyer, position_courante.classeur) {
+                match (
+                    etat_tui.etat_pilotage.position_courante.foyer,
+                    etat_tui.etat_pilotage.position_courante.classeur,
+                ) {
                     (None, _) => {
                         for (i, etat) in session.etat_foyers().iter().enumerate() {
                             if *etat && i < 9 {

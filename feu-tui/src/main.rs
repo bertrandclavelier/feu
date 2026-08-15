@@ -16,7 +16,8 @@
 //! Les deux threads communiquent via deux canaux `mpsc` typés, créés ici et
 //! distribués aux connecteurs. Ce fichier ne fait qu'amorcer l'exécution —
 //! toute la logique réside dans [`connecteurs`] et [`tui`], ce dernier
-//! orchestrant ses propres sous-modules de rendu et de commandes.
+//! orchestrant ses sous-modules : la table des commandes, l'aiguillage du
+//! rendu, et un module par écran.
 //!
 //! En cas de panique du thread cœur, le processus sort avec le code 1.
 //! Le terminal est restauré automatiquement par le guard de [`ratatui::run`]

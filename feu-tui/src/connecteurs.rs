@@ -61,20 +61,19 @@ pub(crate) enum MessageCoeurTui {
     ///
     /// Émis par [`ConnecteurVersTui`] sur erreur de [`FeuApplication`] ;
     /// consommé par la boucle [`crate::tui::Tui::lancer`] qui pose
-    /// [`crate::tui::EtatTui::message_erreur`].
+    /// le message d'erreur de la TUI.
     AffichageErreur(String),
 
     /// Le cœur a besoin du mot de passe — la TUI doit basculer sur l'écran de saisie.
     ///
-    /// Émis par [`ConnecteurVersTui::demander_mdp`] ; déclenche côté TUI le basculement
-    /// vers [`crate::tui::Ecran::SaisieMdp`], [`crate::tui::ModeSaisie::Insertion`]
-    /// et [`crate::tui::ValidationBufferSaisie::EnvoiMdp`].
+    /// Émis par [`ConnecteurVersTui::demander_mdp`] ; la TUI bascule sur son
+    /// écran de saisie, en mode insertion, le buffer destiné au mot de passe.
     AttenteMdp,
 
     /// La seed vient d'être générée — la TUI doit basculer sur l'écran d'affichage.
     ///
-    /// Émis par [`ConnecteurVersTui::recevoir_seed`] ; déclenche le basculement vers
-    /// [`crate::tui::Ecran::AffichageSeed`] et [`crate::tui::ModeSaisie::Information`].
+    /// Émis par [`ConnecteurVersTui::recevoir_seed`] ; la TUI bascule sur son
+    /// écran d'affichage, en mode information.
     EnvoiSeed(Vec<SecretString>),
 
     /// Session applicative mise à jour — la TUI doit rafraîchir son état.
@@ -86,7 +85,7 @@ pub(crate) enum MessageCoeurTui {
     /// - `None` — extinction du nœud, la TUI repasse à l'état initial.
     ///
     /// Consommé par la boucle [`crate::tui::Tui::lancer`] qui affecte directement
-    /// [`crate::tui::EtatTui::session_application`] à la valeur reçue.
+    /// la session que la TUI détient à la valeur reçue.
     EnvoiSessionApplication(Option<SessionApplication>),
 }
 
@@ -94,14 +93,14 @@ pub(crate) enum MessageCoeurTui {
 pub(crate) enum MessageTuiCoeur {
     /// Lance l'initialisation ou l'allumage du nœud via [`FeuApplication`].
     ///
-    /// Émis par [`crate::tui::Tui`] sur frappe `a` en [`crate::tui::ModeSaisie::Normal`] ;
+    /// Émis par [`crate::tui::Tui`] sur frappe `a` en mode normal ;
     /// consommé par la boucle de [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
     /// [`FeuApplication::commande_allumage_noeud`].
     AllumageNoeud,
 
     /// Demande l'extinction du nœud — symétrique de [`Self::AllumageNoeud`].
     ///
-    /// Émis par [`crate::tui::Tui`] sur frappe `e` en [`crate::tui::ModeSaisie::Normal`] ;
+    /// Émis par [`crate::tui::Tui`] sur frappe `e` en mode normal ;
     /// consommé par la boucle de [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
     /// [`FeuApplication::commande_extinction_noeud`]. L'erreur éventuelle (foyer
     /// encore ouvert, nœud déjà éteint) est propagée via
@@ -130,17 +129,16 @@ pub(crate) enum MessageTuiCoeur {
     /// la position courante de l'utilisateur).
     ///
     /// Émis par [`crate::tui::Tui`] sur dispatch de la commande `FermerFoyer` —
-    /// l'index est capturé depuis [`crate::tui::EtatTui::position_courante`] au
-    /// moment de la reconstruction de la table de commandes actives, il n'y a
-    /// pas de saisie.
+    /// l'index est capturé depuis la position courante au moment de la
+    /// reconstruction de la table des commandes actives, sans saisie.
     /// Consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
     /// [`feu_application::FeuApplication::commande_fermeture_foyer`].
     FermetureFoyer(usize),
 
     /// Demande l'ouverture du foyer à l'index donné (base 1, tel que saisi par l'utilisateur).
     ///
-    /// Émis par [`crate::tui::Tui`] lors de la validation du buffer en
-    /// [`crate::tui::ValidationBufferSaisie::OuvertureFoyer`] ;
+    /// Émis par [`crate::tui::Tui`] à la validation d'un buffer destiné à
+    /// l'ouverture d'un foyer ;
     /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
     /// [`feu_application::FeuApplication::commande_ouverture_foyer`].
     OuvertureFoyer(usize),
@@ -149,8 +147,8 @@ pub(crate) enum MessageTuiCoeur {
     /// et le classeur portés (base 1, dans cet ordre).
     ///
     /// Émis par [`crate::tui::Tui`] sur dispatch de `OuvrirComptoirDepot` — les
-    /// deux index sont capturés depuis [`crate::tui::EtatTui::position_courante`]
-    /// à la construction de la table, il n'y a pas de saisie.
+    /// deux index sont capturés depuis la position courante à la construction
+    /// de la table, sans saisie.
     /// Consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
     /// [`FeuApplication::commande_ouverture_comptoir_depot`]. Aucune réponse
     /// dédiée : la commande inscrit l'identifiant dans la session, dont l'envoi
@@ -173,14 +171,14 @@ pub(crate) enum MessageTuiCoeur {
 
     /// L'utilisateur a confirmé l'enregistrement de la seed — débloque le thread cœur en attente.
     ///
-    /// Émis par [`crate::tui::Tui`] à la deuxième frappe en [`crate::tui::ModeSaisie::Information`] ;
+    /// Émis par [`crate::tui::Tui`] à la deuxième frappe en mode information ;
     /// débloque [`ConnecteurVersTui::recevoir_seed`].
     SeedBienRecue,
 
     /// L'utilisateur a annulé la saisie en cours (Échap).
     ///
-    /// Émis par [`crate::tui::Tui`] sur Échap en [`crate::tui::ModeSaisie::Insertion`],
-    /// quel que soit le contenu de [`crate::tui::ValidationBufferSaisie`].
+    /// Émis par [`crate::tui::Tui`] sur Échap en mode insertion, quelle que
+    /// soit la destination prévue pour le buffer.
     /// Sa réception côté cœur dépend du contexte :
     /// - pendant un [`Self::EnvoieMdp`] attendu, débloque [`ConnecteurVersTui::demander_mdp`]
     ///   qui retourne `None` à [`FeuApplication`] ;
@@ -190,7 +188,7 @@ pub(crate) enum MessageTuiCoeur {
 
     /// Demande d'arrêt propre : le thread cœur doit terminer sa boucle.
     ///
-    /// Émis par [`crate::tui::Tui`] sur frappe `q` en [`crate::tui::ModeSaisie::Normal`] ;
+    /// Émis par [`crate::tui::Tui`] sur frappe `q` en mode normal ;
     /// consommé par la boucle de [`ConnecteurVersTui::lancer_thread_coeur`].
     Quitter,
 }
@@ -421,7 +419,8 @@ impl InterfaceFeuApplication for ConnecteurVersTui {
         }
     }
 
-    /// Toujours `true` — la confirmation est gérée via l'écran [`crate::tui::Ecran::AffichageSeed`].
+    /// Toujours `true` — la confirmation se joue sur l'écran d'affichage de la
+    /// seed, côté TUI.
     fn confirmer_enregistrement_seed(&self) -> bool {
         true
     }
