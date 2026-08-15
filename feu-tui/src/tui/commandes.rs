@@ -27,11 +27,11 @@
 //! # Cartographie clavier
 //!
 //! Deux touches sont actives partout, quel que soit l'écran : `Tab` passe à
-//! l'écran suivant, `?` liste ce qui est actif. Le reste dépend de l'écran, et
-//! les cas ci-dessous sont ceux du pilotage — seul écran à porter des
-//! commandes aujourd'hui.
+//! l'écran suivant, `?` liste ce qui est actif. Le reste dépend de l'écran —
+//! sur celui de l'arborescence, `R` charge ou rafraîchit l'arbre, et c'est
+//! tout ; les cas ci-dessous sont ceux du pilotage.
 //!
-//! Deux autres sont omises de la liste pour ne pas l'alourdir : `!` affiche
+//! Deux autres y sont omises pour ne pas alourdir la liste : `!` affiche
 //! l'à-propos en toute circonstance, `r` dès que le nœud est allumé.
 //!
 //! - **Nœud éteint, racine** : `a` allume le nœud, `q` quitte Feu.
@@ -62,9 +62,9 @@
 //!
 //! # Asymétrie ouverture / fermeture
 //!
-//! Ouvrir un foyer demande une saisie d'index ([`Commande::OuvrirFoyer`])
+//! Ouvrir un foyer demande une saisie d'index ([`Commande::PilotageOuvrirFoyer`])
 //! parce qu'on ne peut pas naviguer vers un foyer qui n'existe pas encore.
-//! Fermer un foyer ne demande pas de saisie ([`Commande::FermerFoyer`]) :
+//! Fermer un foyer ne demande pas de saisie ([`Commande::PilotageFermerFoyer`]) :
 //! l'index est capturé depuis la position courante au moment où la table est
 //! construite, donc on ferme toujours *le foyer où l'on est positionné*. Le
 //! geste est *naviguer puis fermer* : `3` puis `f` ferme le foyer 3. Cette
@@ -113,26 +113,60 @@ use crate::tui::{Ecran, EtatTui};
 /// dictée par les conditions énumérées ci-dessous — voir [`CommandesActives::new`]
 /// pour l'implémentation des règles.
 pub(super) enum Commande {
+    /// Passe à l'écran de travail suivant, en cycle — `Tab`.
+    ///
+    /// Toujours active, quel que soit l'écran et l'état du nœud : c'est le seul
+    /// chemin entre les écrans, et rien ne justifierait de l'y enfermer. Aucun
+    /// message au cœur, aucun effet métier.
+    ///
+    /// Le cycle lui-même est tenu par `passer_ecran_suivant` : la table dit
+    /// *quand* on peut changer d'écran, jamais *vers lequel*.
+    EcranSuivant,
+
+    /// Charge l'arborescence des ENU du nœud — `R`, sur son écran.
+    ///
+    /// Le chargement est explicite, jamais déclenché par l'arrivée sur l'écran :
+    /// il lit un fichier par ENU de l'arbre, un coût que l'utilisateur doit
+    /// décider de payer. Ce qui a déjà été chargé survit aux allers-retours par
+    /// `Tab` — la même touche rafraîchit.
+    ///
+    /// Émet [`crate::connecteurs::MessageTuiCoeur::ChargementArborescenceEnu`],
+    /// qui ne porte rien : le cœur tient la racine de départ.
+    EnuChargerArborescence,
+
+    /// Affiche l'aide contextuelle listant les touches actuellement actives.
+    ///
+    /// Toujours active : `?` fonctionne quel que soit l'état du nœud et la
+    /// position courante — c'est la seule porte d'entrée pour découvrir les
+    /// autres commandes accessibles à un instant donné.
+    ///
+    /// Le bras d'exécution dans [`crate::tui::Tui::saisie_mode_normal`] délègue
+    /// à [`CommandesActives::liste_commandes_actives`] le formatage de la liste
+    /// et la pose dans [`crate::tui::EtatTui::message_aide`] (compte à rebours
+    /// court — cf. [`crate::tui::EtatTui::ajouter_message_aide`]).
+    ListeCommandesActives,
+
     /// Demande l'allumage du nœud — émet [`crate::connecteurs::MessageTuiCoeur::AllumageNoeud`].
     ///
     /// Active uniquement lorsque le nœud est éteint (`session_application` à `None`).
     /// Le succès de l'allumage est signalé via
     /// [`crate::connecteurs::MessageCoeurTui::EnvoiSessionApplication`], qui déclenche
-    /// la reconstruction de la table : `AllumerNoeud` disparaît alors au profit des
+    /// la reconstruction de la table : la variante disparaît alors au profit des
     /// commandes du nœud allumé.
-    AllumerNoeud,
+    PilotageAllumerNoeud,
 
     /// Affiche l'écran « à propos » : identité du programme, version, licence, copyright.
     ///
-    /// Toujours active, comme [`Commande::ListeCommandesActives`] : `!` fonctionne
-    /// quel que soit l'état du nœud et la position courante. Méta-commande
-    /// purement informationnelle — aucun effet métier, elle ne touche ni au nœud
-    /// ni aux foyers.
+    /// Active sur le pilotage en toute circonstance — quel que soit l'état du
+    /// nœud et la position courante —, mais sur lui seul : elle ouvre une
+    /// modale qui se referme sur cet écran, l'activer ailleurs ferait changer
+    /// d'écran sans retour. Méta-commande purement informationnelle, elle ne
+    /// touche ni au nœud ni aux foyers.
     ///
     /// Le bras d'exécution dans [`crate::tui::Tui::saisie_mode_normal`] bascule
     /// sur l'écran d'information du pilotage ; l'utilisateur en sort par Entrée
     /// (cf. [`crate::tui::ModeSaisie::Information`]).
-    APropos,
+    PilotageAPropos,
 
     /// Affecte directement la position courante, côté classeur.
     ///
@@ -147,7 +181,7 @@ pub(super) enum Commande {
     ///   limite de `nombre_classeurs` — descente ;
     /// - dans un classeur (`classeur = Some(_)`), liée à `Backspace` —
     ///   remontée.
-    ChangerPositionClasseur(Option<usize>),
+    PilotageChangerPositionClasseur(Option<usize>),
 
     /// Affecte directement la position courante, côté foyer.
     ///
@@ -163,17 +197,7 @@ pub(super) enum Commande {
     ///   exposer les positions fermées) — descente ;
     /// - dans un foyer (`foyer = Some(_)`, `classeur = None`), liée à
     ///   `Backspace` — remontée à la racine.
-    ChangerPositionFoyer(Option<usize>),
-
-    /// Passe à l'écran de travail suivant, en cycle — `Tab`.
-    ///
-    /// Toujours active, quel que soit l'écran et l'état du nœud : c'est le seul
-    /// chemin entre les écrans, et rien ne justifierait de l'y enfermer. Aucun
-    /// message au cœur, aucun effet métier.
-    ///
-    /// Le cycle lui-même est tenu par `passer_ecran_suivant` : la table dit
-    /// *quand* on peut changer d'écran, jamais *vers lequel*.
-    EcranSuivant,
+    PilotageChangerPositionFoyer(Option<usize>),
 
     /// Demande l'extinction du nœud — émet [`crate::connecteurs::MessageTuiCoeur::ExtinctionNoeud`].
     ///
@@ -182,7 +206,7 @@ pub(super) enum Commande {
     /// foyer est ouvert — l'erreur remonterait via
     /// [`crate::connecteurs::MessageCoeurTui::AffichageErreur`] —, mais le filtrage
     /// par contexte évite à l'utilisateur de la déclencher pour rien.
-    EteindreNoeud,
+    PilotageEteindreNoeud,
 
     /// Ferme le comptoir de dépôt ouvert — émet
     /// [`crate::connecteurs::MessageTuiCoeur::FermetureComptoirDepot`].
@@ -192,9 +216,9 @@ pub(super) enum Commande {
     /// [`crate::tui::Tui::saisie_mode_normal`] prend le premier identifiant de
     /// [`feu_application::SessionApplication::comptoirs_depot_ouverts`]. C'est
     /// suffisant tant qu'un seul comptoir peut être ouvert à la fois — la
-    /// condition posée par [`Commande::OuvrirComptoirDepot`], dont elle prend
+    /// condition posée par [`Commande::PilotageOuvrirComptoirDepot`], dont elle prend
     /// la place dans la table, jamais les deux ensemble.
-    FermerComptoirDepot,
+    PilotageFermerComptoirDepot,
 
     /// Ferme le foyer dont l'index (base 1) est porté par la variante — émet
     /// [`crate::connecteurs::MessageTuiCoeur::FermetureFoyer`].
@@ -204,7 +228,7 @@ pub(super) enum Commande {
     /// moment où la table est construite ; aucune saisie, donc. Le geste
     /// typique est *naviguer dans le foyer (`1`-`9`) puis le fermer (`f`)*.
     ///
-    /// L'asymétrie avec [`Commande::OuvrirFoyer`], qui passe par une saisie,
+    /// L'asymétrie avec [`Commande::PilotageOuvrirFoyer`], qui passe par une saisie,
     /// est délibérée : on ne peut pas naviguer vers un foyer qui n'existe pas
     /// encore, alors que la fermeture agit sur celui où l'on est.
     ///
@@ -213,27 +237,7 @@ pub(super) enum Commande {
     /// foyer qu'on vient de fermer. Comme c'est l'unique chemin de fermeture,
     /// l'invariant tient en cascade : à l'extinction du nœud, qui exige tous
     /// les foyers fermés, la position y est nécessairement déjà.
-    FermerFoyer(usize),
-
-    /// Affiche l'aide contextuelle listant les touches actuellement actives.
-    ///
-    /// Toujours active : `?` fonctionne quel que soit l'état du nœud et la
-    /// position courante — c'est la seule porte d'entrée pour découvrir les
-    /// autres commandes accessibles à un instant donné.
-    ///
-    /// Le bras d'exécution dans [`crate::tui::Tui::saisie_mode_normal`] délègue
-    /// à [`CommandesActives::liste_commandes_actives`] le formatage de la liste
-    /// et la pose dans [`crate::tui::EtatTui::message_aide`] (compte à rebours
-    /// court — cf. [`crate::tui::EtatTui::ajouter_message_aide`]).
-    ListeCommandesActives,
-
-    /// Prépare l'ouverture d'un foyer — bascule l'invite en mode saisie pour collecter le numéro.
-    ///
-    /// Active uniquement lorsque le nœud est allumé **et** qu'au moins une place
-    /// reste libre (`nombre_foyers_ouverts < nombre_foyers`). La saisie du numéro
-    /// et l'envoi de [`crate::connecteurs::MessageTuiCoeur::OuvertureFoyer`] sont
-    /// gérés par `saisie_mode_insertion` une fois le buffer validé.
-    OuvrirFoyer,
+    PilotageFermerFoyer(usize),
 
     /// Ouvre un comptoir de dépôt à destination du foyer et du classeur portés
     /// (base 1) — émet
@@ -243,7 +247,7 @@ pub(super) enum Commande {
     /// c'est le seul contexte où les deux index que réclame la commande
     /// applicative sont connus, capturés depuis la position courante au moment
     /// où la table est construite. Aucune saisie, donc — même geste que
-    /// [`Commande::FermerFoyer`].
+    /// [`Commande::PilotageFermerFoyer`].
     ///
     /// La variante ne porte que les deux index : le chemin est posé au dispatch
     /// dans [`crate::tui::Tui::saisie_mode_normal`], depuis
@@ -257,9 +261,26 @@ pub(super) enum Commande {
     /// dossier, et le second échouerait à la création. La limite tombera avec
     /// [`super::CHEMIN_COMPTOIR_DEPOT`].
     ///
-    /// Elle revient dans la table quand [`Commande::FermerComptoirDepot`] a
+    /// Elle revient dans la table quand [`Commande::PilotageFermerComptoirDepot`] a
     /// retiré l'identifiant de la session.
-    OuvrirComptoirDepot(usize, usize),
+    PilotageOuvrirComptoirDepot(usize, usize),
+
+    /// Prépare l'ouverture d'un foyer — bascule l'invite en mode saisie pour collecter le numéro.
+    ///
+    /// Active uniquement lorsque le nœud est allumé **et** qu'au moins une place
+    /// reste libre (`nombre_foyers_ouverts < nombre_foyers`). La saisie du numéro
+    /// et l'envoi de [`crate::connecteurs::MessageTuiCoeur::OuvertureFoyer`] sont
+    /// gérés par `saisie_mode_insertion` une fois le buffer validé.
+    PilotageOuvrirFoyer,
+
+    /// Demande l'arrêt propre de l'application — émet [`crate::connecteurs::MessageTuiCoeur::Quitter`].
+    ///
+    /// Active uniquement lorsque le nœud est éteint, par symétrie avec
+    /// [`Commande::PilotageAllumerNoeud`]. Cette contrainte garantit qu'aucun foyer n'est
+    /// ouvert au moment de l'arrêt — l'extinction elle-même exige que tous les
+    /// foyers soient fermés. La touche `q` est silencieusement ignorée tant que
+    /// le nœud est allumé : l'utilisateur doit d'abord l'éteindre.
+    PilotageQuitter,
 
     /// Matérialise l'arborescence de la dernière racine dans un dossier de l'OS
     /// — émet [`crate::connecteurs::MessageTuiCoeur::RetraitLectureSeule`].
@@ -275,16 +296,7 @@ pub(super) enum Commande {
     /// [`CommandesActives::new`] — parcourir l'arbre pour dresser la liste des
     /// foyers requis demande un itérateur qui n'existe pas encore. L'erreur
     /// remonte en [`crate::connecteurs::MessageCoeurTui::AffichageErreur`].
-    RetraitLectureSeule,
-
-    /// Demande l'arrêt propre de l'application — émet [`crate::connecteurs::MessageTuiCoeur::Quitter`].
-    ///
-    /// Active uniquement lorsque le nœud est éteint, par symétrie avec
-    /// [`Commande::AllumerNoeud`]. Cette contrainte garantit qu'aucun foyer n'est
-    /// ouvert au moment de l'arrêt — l'extinction elle-même exige que tous les
-    /// foyers soient fermés. La touche `q` est silencieusement ignorée tant que
-    /// le nœud est allumé : l'utilisateur doit d'abord l'éteindre.
-    Quitter,
+    PilotageRetraitLectureSeule,
 }
 
 /// Table de dispatch des commandes actives dans le contexte courant.
@@ -340,7 +352,7 @@ impl CommandesActives {
 
         match etat_tui.ecran {
             Ecran::Pilotage => Self::new_ecran_pilotage(etat_tui, &mut commandes_actives),
-            Ecran::ArborescenceEnu => {}
+            Ecran::ArborescenceEnu => Self::new_ecran_enu(&mut commandes_actives),
         }
 
         Self(commandes_actives)
@@ -351,9 +363,10 @@ impl CommandesActives {
     /// Les règles, vues d'ensemble — chaque variante de [`Commande`] documente
     /// les siennes en détail :
     ///
-    /// - nœud éteint → `AllumerNoeud`, `Quitter` ;
-    /// - nœud allumé → `RetraitLectureSeule` sans condition, `EteindreNoeud`
-    ///   si aucun foyer n'est ouvert, `OuvrirFoyer` s'il reste une place ;
+    /// - nœud éteint → `PilotageAllumerNoeud`, `PilotageQuitter` ;
+    /// - nœud allumé → `PilotageRetraitLectureSeule` sans condition,
+    ///   `PilotageEteindreNoeud` si aucun foyer n'est ouvert,
+    ///   `PilotageOuvrirFoyer` s'il reste une place ;
     /// - au moins un foyer ouvert, la navigation suit la position courante :
     ///   à la racine, `1`-`9` entrent dans les foyers ouverts ; dans un foyer,
     ///   `f` le ferme, `Backspace` remonte, `1`-`9` descendent dans les
@@ -377,19 +390,19 @@ impl CommandesActives {
         if let Some(session) = &etat_tui.session_application {
             commandes_actives.insert(
                 (KeyCode::Char('r'), KeyModifiers::NONE),
-                Commande::RetraitLectureSeule,
+                Commande::PilotageRetraitLectureSeule,
             );
 
             if session.nombre_foyers_ouverts() == 0 {
                 commandes_actives.insert(
                     (KeyCode::Char('e'), KeyModifiers::NONE),
-                    Commande::EteindreNoeud,
+                    Commande::PilotageEteindreNoeud,
                 );
             }
             if session.nombre_foyers_ouverts() < session.nombre_foyers {
                 commandes_actives.insert(
                     (KeyCode::Char('o'), KeyModifiers::NONE),
-                    Commande::OuvrirFoyer,
+                    Commande::PilotageOuvrirFoyer,
                 );
             }
             if session.nombre_foyers_ouverts() > 0 {
@@ -405,7 +418,7 @@ impl CommandesActives {
                                         KeyCode::Char((b'0' + (i + 1) as u8) as char),
                                         KeyModifiers::NONE,
                                     ),
-                                    Commande::ChangerPositionFoyer(Some(i + 1)),
+                                    Commande::PilotageChangerPositionFoyer(Some(i + 1)),
                                 );
                             }
                         }
@@ -413,11 +426,11 @@ impl CommandesActives {
                     (Some(index), None) => {
                         commandes_actives.insert(
                             (KeyCode::Char('f'), KeyModifiers::NONE),
-                            Commande::FermerFoyer(index),
+                            Commande::PilotageFermerFoyer(index),
                         );
                         commandes_actives.insert(
                             (KeyCode::Backspace, KeyModifiers::NONE),
-                            Commande::ChangerPositionFoyer(None),
+                            Commande::PilotageChangerPositionFoyer(None),
                         );
 
                         for i in 0..session.nombre_classeurs {
@@ -427,7 +440,7 @@ impl CommandesActives {
                                         KeyCode::Char((b'0' + (i + 1) as u8) as char),
                                         KeyModifiers::NONE,
                                     ),
-                                    Commande::ChangerPositionClasseur(Some(i + 1)),
+                                    Commande::PilotageChangerPositionClasseur(Some(i + 1)),
                                 );
                             }
                         }
@@ -435,21 +448,21 @@ impl CommandesActives {
                     (Some(index_foyer), Some(index_classeur)) => {
                         commandes_actives.insert(
                             (KeyCode::Char('f'), KeyModifiers::NONE),
-                            Commande::FermerFoyer(index_foyer),
+                            Commande::PilotageFermerFoyer(index_foyer),
                         );
                         commandes_actives.insert(
                             (KeyCode::Backspace, KeyModifiers::NONE),
-                            Commande::ChangerPositionClasseur(None),
+                            Commande::PilotageChangerPositionClasseur(None),
                         );
                         if session.comptoirs_depot_ouverts().is_empty() {
                             commandes_actives.insert(
                                 (KeyCode::Char('d'), KeyModifiers::NONE),
-                                Commande::OuvrirComptoirDepot(index_foyer, index_classeur),
+                                Commande::PilotageOuvrirComptoirDepot(index_foyer, index_classeur),
                             );
                         } else {
                             commandes_actives.insert(
                                 (KeyCode::Char('c'), KeyModifiers::NONE),
-                                Commande::FermerComptoirDepot,
+                                Commande::PilotageFermerComptoirDepot,
                             );
                         }
                     }
@@ -458,12 +471,37 @@ impl CommandesActives {
         } else {
             commandes_actives.insert(
                 (KeyCode::Char('a'), KeyModifiers::NONE),
-                Commande::AllumerNoeud,
+                Commande::PilotageAllumerNoeud,
             );
-            commandes_actives.insert((KeyCode::Char('q'), KeyModifiers::NONE), Commande::Quitter);
+            commandes_actives.insert(
+                (KeyCode::Char('q'), KeyModifiers::NONE),
+                Commande::PilotageQuitter,
+            );
         }
 
-        commandes_actives.insert((KeyCode::Char('!'), KeyModifiers::NONE), Commande::APropos);
+        commandes_actives.insert(
+            (KeyCode::Char('!'), KeyModifiers::NONE),
+            Commande::PilotageAPropos,
+        );
+    }
+
+    /// Ajoute à la table les touches propres à l'écran d'arborescence.
+    ///
+    /// Une seule pour l'instant, `R`, et aucune condition : le chargement est
+    /// toujours proposé, qu'un arbre soit déjà en mémoire ou non — c'est aussi
+    /// le geste de rafraîchissement.
+    ///
+    /// Ne reçoit pas l'état, contrairement à
+    /// [`Self::new_ecran_pilotage`](CommandesActives::new_ecran_pilotage) :
+    /// rien ici ne dépend encore de la session ni de ce qui est affiché.
+    ///
+    /// `R` est une majuscule, donc `KeyModifiers::SHIFT` — le lookup étant une
+    /// égalité exacte sur le tuple, l'oublier rendrait la touche muette.
+    fn new_ecran_enu(commandes_actives: &mut HashMap<(KeyCode, KeyModifiers), Commande>) {
+        commandes_actives.insert(
+            (KeyCode::Char('R'), KeyModifiers::SHIFT),
+            Commande::EnuChargerArborescence,
+        );
     }
 
     /// Retourne la commande liée à une touche dans le contexte courant, `None` si absente.

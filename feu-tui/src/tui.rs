@@ -49,8 +49,9 @@
 //! classeurs, `d` y ouvre un comptoir de dépôt et `c` le ferme, `r` retire
 //! l'arborescence sur le disque, `Backspace` remonte d'un niveau, `f` ferme le
 //! foyer où l'on est, `e` éteint quand tous les foyers sont fermés, `q` quitte
-//! quand le nœud est éteint. À tout moment, `?` liste les touches actives et
-//! `!` affiche l'à-propos.
+//! quand le nœud est éteint, `!` affiche l'à-propos. Sur l'écran
+//! d'arborescence, `R` charge ou rafraîchit l'arbre. `Tab` et `?` sont les
+//! seules à valoir partout — changer d'écran, et lister ce qui y est actif.
 
 mod commandes;
 mod ecran_arborescence_enu;
@@ -87,7 +88,7 @@ use commandes::{Commande, CommandesActives};
 /// provisoire, et c'est ce qui garde tout chemin personnel hors des sources,
 /// `workspace/` étant public.
 ///
-/// Elle est lue au dispatch de [`Commande::OuvrirComptoirDepot`], qui ne porte
+/// Elle est lue au dispatch de [`Commande::PilotageOuvrirComptoirDepot`], qui ne porte
 /// que les deux index : le chemin ne traverse pas la table des commandes.
 /// Son pendant pour le retrait est `CHEMIN_COMPTOIR_RETRAIT` (module
 /// `connecteurs`), posé là où le cœur le lit.
@@ -147,7 +148,7 @@ enum ModeSaisie {
 /// qui n'a ainsi pas à connaître l'écran courant pour décider quoi émettre.
 ///
 /// La fermeture d'un foyer ne passe pas par là : elle agit sur le foyer où
-/// l'on est positionné, sans rien demander (cf. [`Commande::FermerFoyer`]).
+/// l'on est positionné, sans rien demander (cf. [`Commande::PilotageFermerFoyer`]).
 enum ValidationBufferSaisie {
     /// Le buffer est vidé sans envoyer de message au cœur.
     ///
@@ -161,7 +162,7 @@ enum ValidationBufferSaisie {
     /// [`crate::connecteurs::MessageTuiCoeur::OuvertureFoyer`].
     ///
     /// Posé par [`Tui::saisie_mode_normal`] sur dispatch de
-    /// [`Commande::OuvrirFoyer`]. À la validation, le buffer est parsé en
+    /// [`Commande::PilotageOuvrirFoyer`]. À la validation, le buffer est parsé en
     /// `usize` et l'index doit être strictement positif ; sinon un message
     /// d'erreur est affiché et aucun message n'est envoyé au cœur. La
     /// conversion en index base 0 reste à la charge du connecteur cœur.
@@ -248,7 +249,7 @@ struct EtatTui {
     ///
     /// Posé par [`Tui::saisie_mode_normal`] au moment de basculer en
     /// [`ModeSaisie::Insertion`] (par exemple `"ouvre"` pour
-    /// [`Commande::OuvrirFoyer`]) ; vidé par `saisie_mode_insertion` à la
+    /// [`Commande::PilotageOuvrirFoyer`]) ; vidé par `saisie_mode_insertion` à la
     /// validation comme à l'annulation, en miroir de [`Self::buffer_saisie`].
     prompt: String,
 
@@ -272,7 +273,7 @@ impl EtatTui {
             ecran: Ecran::Pilotage,
             mode_saisie: ModeSaisie::Normal,
             etat_pilotage: EtatPilotage::new(),
-            etat_arborescence_enu: EtatArborescenceEnu,
+            etat_arborescence_enu: EtatArborescenceEnu::new(),
             commandes_actives: CommandesActives::vide(),
             validation_buffer_saisie: ValidationBufferSaisie::Rien,
             message_erreur: (None, 0),
@@ -444,6 +445,10 @@ impl Tui {
                     MessageCoeurTui::AttenteMdp => {
                         self.etat_tui.vers_saisie_mdp();
                     }
+                    MessageCoeurTui::EnvoiArborescenceEnu(arborescence_enus) => {
+                        self.etat_tui.etat_arborescence_enu.arborescence_enus =
+                            Some(arborescence_enus);
+                    }
                     MessageCoeurTui::EnvoiSeed(seed) => {
                         self.etat_tui.vers_affichage_seed(seed);
                     }
@@ -498,22 +503,34 @@ impl Tui {
     /// filtrage par contexte reste entièrement dans [`commandes`].
     ///
     /// Une fois la commande dispatchée, [`EtatTui::commandes_actives`] est
-    /// reconstruite via [`CommandesActives::new`] : la position courante a pu
-    /// changer (`ChangerPositionFoyer`, `ChangerPositionClasseur`, `FermerFoyer`)
-    /// et la table doit refléter le nouveau contexte avant la prochaine frappe.
+    /// reconstruite via [`CommandesActives::new`] : la position courante ou
+    /// l'écran ont pu changer, et la table doit refléter le nouveau contexte
+    /// avant la prochaine frappe.
     ///
     /// Retourne `false` pour signaler à la boucle principale de s'arrêter
-    /// (déclenché par [`Commande::Quitter`]).
+    /// (déclenché par [`Commande::PilotageQuitter`]).
     fn saisie_mode_normal(&mut self) -> std::io::Result<bool> {
         if let Some(touche) = Self::lire_touche()?
             && let Some(commande) = self.etat_tui.commandes_actives.get(&touche)
         {
             match commande {
-                Commande::AllumerNoeud => {
+                Commande::EcranSuivant => {
+                    self.etat_tui.passer_ecran_suivant();
+                }
+                Commande::EnuChargerArborescence => {
+                    self.connecteur_vers_coeur
+                        .envoyer_message_tui_coeur(MessageTuiCoeur::ChargementArborescenceEnu);
+                }
+                Commande::ListeCommandesActives => {
+                    self.etat_tui.ajouter_message_aide(
+                        self.etat_tui.commandes_actives.liste_commandes_actives(),
+                    );
+                }
+                Commande::PilotageAllumerNoeud => {
                     self.connecteur_vers_coeur
                         .envoyer_message_tui_coeur(MessageTuiCoeur::AllumageNoeud);
                 }
-                Commande::APropos => {
+                Commande::PilotageAPropos => {
                     let titre = String::from("Feu");
                     let information = format!(
                         "Version {} · GPL-3.0-or-later\n\n\
@@ -523,20 +540,17 @@ impl Tui {
 
                     self.etat_tui.vers_affichage_information(titre, information);
                 }
-                Commande::ChangerPositionClasseur(index) => {
+                Commande::PilotageChangerPositionClasseur(index) => {
                     self.etat_tui.etat_pilotage.position_courante.classeur = *index;
                 }
-                Commande::ChangerPositionFoyer(index) => {
+                Commande::PilotageChangerPositionFoyer(index) => {
                     self.etat_tui.etat_pilotage.position_courante.foyer = *index;
                 }
-                Commande::EcranSuivant => {
-                    self.etat_tui.passer_ecran_suivant();
-                }
-                Commande::EteindreNoeud => {
+                Commande::PilotageEteindreNoeud => {
                     self.connecteur_vers_coeur
                         .envoyer_message_tui_coeur(MessageTuiCoeur::ExtinctionNoeud);
                 }
-                Commande::FermerComptoirDepot => {
+                Commande::PilotageFermerComptoirDepot => {
                     if let Some(session) = &self.etat_tui.session_application {
                         let index_comptoir = session
                             .comptoirs_depot_ouverts()
@@ -547,23 +561,13 @@ impl Tui {
                         );
                     }
                 }
-                Commande::FermerFoyer(index) => {
+                Commande::PilotageFermerFoyer(index) => {
                     self.connecteur_vers_coeur
                         .envoyer_message_tui_coeur(MessageTuiCoeur::FermetureFoyer(*index));
                     self.etat_tui.etat_pilotage.position_courante.foyer = None;
                     self.etat_tui.etat_pilotage.position_courante.classeur = None;
                 }
-                Commande::ListeCommandesActives => {
-                    self.etat_tui.ajouter_message_aide(
-                        self.etat_tui.commandes_actives.liste_commandes_actives(),
-                    );
-                }
-                Commande::OuvrirFoyer => {
-                    self.etat_tui.prompt = String::from("ouvre");
-                    self.etat_tui.mode_saisie = ModeSaisie::Insertion;
-                    self.etat_tui.validation_buffer_saisie = ValidationBufferSaisie::OuvertureFoyer;
-                }
-                Commande::OuvrirComptoirDepot(index_foyer, index_classeur) => {
+                Commande::PilotageOuvrirComptoirDepot(index_foyer, index_classeur) => {
                     self.connecteur_vers_coeur.envoyer_message_tui_coeur(
                         MessageTuiCoeur::OuvertureComptoir(
                             PathBuf::from(CHEMIN_COMPTOIR_DEPOT),
@@ -572,14 +576,19 @@ impl Tui {
                         ),
                     );
                 }
-                Commande::RetraitLectureSeule => {
-                    self.connecteur_vers_coeur
-                        .envoyer_message_tui_coeur(MessageTuiCoeur::RetraitLectureSeule);
+                Commande::PilotageOuvrirFoyer => {
+                    self.etat_tui.prompt = String::from("ouvre");
+                    self.etat_tui.mode_saisie = ModeSaisie::Insertion;
+                    self.etat_tui.validation_buffer_saisie = ValidationBufferSaisie::OuvertureFoyer;
                 }
-                Commande::Quitter => {
+                Commande::PilotageQuitter => {
                     self.connecteur_vers_coeur
                         .envoyer_message_tui_coeur(MessageTuiCoeur::Quitter);
                     return Ok(false);
+                }
+                Commande::PilotageRetraitLectureSeule => {
+                    self.connecteur_vers_coeur
+                        .envoyer_message_tui_coeur(MessageTuiCoeur::RetraitLectureSeule);
                 }
             }
 

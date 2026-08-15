@@ -8,16 +8,21 @@
 
 //! Écran d'arborescence des ENU.
 //!
-//! **Squelette** : le chemin qui y mène est établi — `Tab` l'atteint depuis le
-//! pilotage et y revient —, mais l'écran ne dessine qu'un carré vide et ne
-//! porte aucune donnée. Brancher d'abord, remplir ensuite : ce qui reste à
-//! faire est le contenu, pas le raccordement.
+//! Le circuit est complet — `Tab` y mène depuis le pilotage, `R` demande
+//! l'arbre au cœur, qui le renvoie et qu'on garde —, mais **rien n'est encore
+//! dessiné** : l'écran affiche un carré vide. Le raccordement d'abord, le
+//! contenu ensuite.
 //!
-//! Il n'a donc aucune commande à lui, et n'expose que le strict nécessaire au
-//! branchement — un état vide, une fonction de dessin. Les transitions `vers_*`
-//! du pilotage n'ont pas d'équivalent ici : `Tab` suffit à entrer, et
-//! `passer_ecran_suivant` tient le cycle.
+//! **Le chargement est explicite, jamais automatique.** Arriver sur l'écran ne
+//! déclenche rien : le parcours lit un fichier par ENU de l'arbre, et ce coût
+//! se décide. En contrepartie l'arbre survit aux allers-retours par `Tab`, et
+//! peut donc être périmé — un dépôt crée une nouvelle racine que l'écran ne
+//! voit pas tant que `R` n'est pas rappuyé.
+//!
+//! Les transitions `vers_*` du pilotage n'ont pas d'équivalent ici : `Tab`
+//! suffit à entrer, et `passer_ecran_suivant` tient le cycle.
 
+use feu_application::Enu;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout},
@@ -35,17 +40,33 @@ const DIMENSIONS_ECRAN_ENU: Dimensions = Dimensions {
     hauteur: 35,
 };
 
-/// Ce que l'écran d'arborescence retient d'une frame à l'autre — rien encore.
+/// Ce que l'écran d'arborescence retient d'une frame à l'autre.
 ///
-/// Struct unité le temps du branchement. L'arbre chargé, le curseur, les
-/// nœuds dépliés et le défilement viendront ici.
-pub(super) struct EtatArborescenceEnu;
+/// L'arbre chargé pour l'instant ; le curseur, les nœuds dépliés et le
+/// défilement viendront ici.
+pub(super) struct EtatArborescenceEnu {
+    /// Le dernier arbre reçu du cœur, à plat et en largeur d'abord.
+    ///
+    /// `None` ne veut pas dire « arbre vide » mais **jamais demandé** — c'est
+    /// lui qui distingue l'écran au premier abord d'un nœud sans contenu, et
+    /// qui décidera lequel des deux messages afficher.
+    pub(super) arborescence_enus: Option<Vec<Enu>>,
+}
+
+impl EtatArborescenceEnu {
+    /// État initial : aucun chargement demandé.
+    pub(super) fn new() -> Self {
+        Self {
+            arborescence_enus: None,
+        }
+    }
+}
 
 /// Dessine le cadre de l'écran, vide.
 ///
-/// L'état est reçu mais pas encore lu : la signature est celle qu'attend
-/// [`super::rendu::dessiner`], et elle ne changera pas quand il y aura quelque
-/// chose à afficher.
+/// L'état est reçu mais pas encore lu — l'arbre est chargé, rien ne l'affiche
+/// : c'est le seul morceau qui manque. La signature est celle qu'attend
+/// [`super::rendu::dessiner`] et ne changera pas.
 pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, _etat_tui: &EtatTui) {
     let lignes = Layout::vertical([
         Constraint::Fill(1),

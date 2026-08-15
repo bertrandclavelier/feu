@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{JoinHandle, spawn};
 
-use feu_application::{FeuApplication, InterfaceFeuApplication, SessionApplication};
+use feu_application::{Enu, FeuApplication, InterfaceFeuApplication, SessionApplication};
 use secrecy::SecretString;
 
 /// Emplacement du dossier de retrait, en dur le temps de brancher la TUI.
@@ -70,6 +70,19 @@ pub(crate) enum MessageCoeurTui {
     /// écran de saisie, en mode insertion, le buffer destiné au mot de passe.
     AttenteMdp,
 
+    /// L'arborescence demandée, à plat — la TUI la garde jusqu'au prochain
+    /// chargement.
+    ///
+    /// Émis par le bras `ChargementArborescenceEnu` de
+    /// [`ConnecteurVersTui::lancer_thread_coeur`], en réponse à une demande
+    /// explicite de l'utilisateur.
+    ///
+    /// Le `Vec` est le parcours en largeur de l'arbre, racine comprise : la
+    /// relation parent → enfant n'y est pas portée, elle se relit dans les
+    /// `hashs_enu` de chaque carte. C'est le flux brut du Scribe, que la TUI
+    /// remettra en forme pour l'affichage.
+    EnvoiArborescenceEnu(Vec<Enu>),
+
     /// La seed vient d'être générée — la TUI doit basculer sur l'écran d'affichage.
     ///
     /// Émis par [`ConnecteurVersTui::recevoir_seed`] ; la TUI bascule sur son
@@ -107,6 +120,19 @@ pub(crate) enum MessageTuiCoeur {
     /// [`MessageCoeurTui::AffichageErreur`].
     ExtinctionNoeud,
 
+    /// Demande le chargement de l'arborescence des ENU du nœud.
+    ///
+    /// Émis par [`crate::tui::Tui`] sur dispatch de
+    /// `EnuChargerArborescence` — la variante ne porte rien : le bras enchaîne
+    /// [`FeuApplication::commande_derniere_enu_racine`] puis
+    /// [`FeuApplication::commande_descendants`], et c'est donc le cœur qui
+    /// décide d'où partir. Rien ne remonte de la TUI, ce qui évite au canal de
+    /// transporter une [`Enu`] et sa signature de 4 627 octets.
+    ///
+    /// La réponse est [`MessageCoeurTui::EnvoiArborescenceEnu`] ; l'erreur, en
+    /// [`MessageCoeurTui::AffichageErreur`].
+    ChargementArborescenceEnu,
+
     /// Mot de passe saisi par l'utilisateur, en réponse à [`MessageCoeurTui::AttenteMdp`].
     ///
     /// Émis par [`crate::tui::Tui`] lors de la validation du buffer de saisie ;
@@ -117,7 +143,7 @@ pub(crate) enum MessageTuiCoeur {
     /// Demande la fermeture du comptoir de dépôt dont l'identifiant est porté.
     ///
     /// Émis par [`crate::tui::Tui`] sur dispatch de la commande
-    /// `FermerComptoirDepot` — l'identifiant est lu dans
+    /// `PilotageFermerComptoirDepot` — l'identifiant est lu dans
     /// [`SessionApplication::comptoirs_depot_ouverts`], pas saisi. Le bras de la
     /// boucle enchaîne [`FeuApplication::commande_derniere_enu_racine`] puis
     /// [`FeuApplication::commande_fermeture_comptoir_depot`], qui réclame cette
@@ -128,7 +154,7 @@ pub(crate) enum MessageTuiCoeur {
     /// Demande la fermeture du foyer à l'index donné (base 1, tel que désigné par
     /// la position courante de l'utilisateur).
     ///
-    /// Émis par [`crate::tui::Tui`] sur dispatch de la commande `FermerFoyer` —
+    /// Émis par [`crate::tui::Tui`] sur dispatch de `PilotageFermerFoyer` —
     /// l'index est capturé depuis la position courante au moment de la
     /// reconstruction de la table des commandes actives, sans saisie.
     /// Consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
@@ -146,7 +172,7 @@ pub(crate) enum MessageTuiCoeur {
     /// Demande l'ouverture d'un comptoir de dépôt au chemin porté, vers le foyer
     /// et le classeur portés (base 1, dans cet ordre).
     ///
-    /// Émis par [`crate::tui::Tui`] sur dispatch de `OuvrirComptoirDepot` — les
+    /// Émis par [`crate::tui::Tui`] sur dispatch de `PilotageOuvrirComptoirDepot` — les
     /// deux index sont capturés depuis la position courante à la construction
     /// de la table, sans saisie.
     /// Consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
@@ -161,7 +187,7 @@ pub(crate) enum MessageTuiCoeur {
     /// Demande la matérialisation de la dernière racine dans un dossier de l'OS.
     ///
     /// Émis par [`crate::tui::Tui`] sur dispatch de la commande
-    /// `RetraitLectureSeule` — la variante ne porte rien : le chemin est
+    /// `PilotageRetraitLectureSeule` — la variante ne porte rien : le chemin est
     /// [`CHEMIN_COMPTOIR_RETRAIT`], lu ici, et la racine est demandée au même
     /// endroit. Le bras enchaîne
     /// [`FeuApplication::commande_derniere_enu_racine`] puis
@@ -284,6 +310,29 @@ impl ConnecteurVersTui {
                             self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
                                 e.to_string(),
                             ));
+                        }
+                    }
+                    Ok(MessageTuiCoeur::ChargementArborescenceEnu) => {
+                        match feu_application.commande_derniere_enu_racine() {
+                            Err(e) => self.envoyer_message_coeur_tui(
+                                MessageCoeurTui::AffichageErreur(e.to_string()),
+                            ),
+                            Ok(enu_racine) => {
+                                match feu_application.commande_descendants(&enu_racine) {
+                                    Err(e) => self.envoyer_message_coeur_tui(
+                                        MessageCoeurTui::AffichageErreur(e.to_string()),
+                                    ),
+                                    Ok(descendants) => {
+                                        self.envoyer_message_coeur_tui(
+                                            MessageCoeurTui::EnvoiArborescenceEnu(
+                                                descendants
+                                                    .collect::<Result<Vec<Enu>, _>>()
+                                                    .unwrap(),
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                     Ok(MessageTuiCoeur::ExtinctionNoeud) => {

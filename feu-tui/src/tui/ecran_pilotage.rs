@@ -131,7 +131,7 @@ enum EcranPilotage {
 /// Curseur de présentation : il ne déclenche aucune action métier, mais entre
 /// dans [`super::commandes::CommandesActives::new`], qui en tire les touches
 /// actives et y capture l'index que porte
-/// [`super::commandes::Commande::FermerFoyer`].
+/// [`super::commandes::Commande::PilotageFermerFoyer`].
 ///
 /// Trois niveaux, encodés par la combinaison des deux `Option` : racine (deux
 /// `None`), dans un foyer (`foyer` seul), dans un classeur (les deux). Le type
