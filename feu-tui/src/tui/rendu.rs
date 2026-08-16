@@ -10,8 +10,33 @@
 //!
 //! [`dessiner`] est le point d'entrée unique, appelé à chaque frame : il ne
 //! dessine rien lui-même et passe la main au module de l'écran actif. Le reste
-//! du module tient le peu de vocabulaire visuel commun — la couleur d'accent
-//! et le type [`Dimensions`].
+//! du module tient le vocabulaire visuel commun — la couleur d'accent, les
+//! caractères d'interface et le type [`Dimensions`].
+//!
+//! # Les caractères
+//!
+//! Tout caractère qui vaut comme **symbole** est nommé ici, et nulle part
+//! ailleurs — les lettres accentuées des textes affichés n'en sont pas, elles
+//! restent dans leurs phrases. Un symbole écrit en toutes lettres dans un
+//! écran échapperait aux trois contrôles ci-dessous, et au remplacement du jeu
+//! entier.
+//!
+//! **Une seule cellule chacun.** Ratatui mesure ses colonnes avec
+//! `unicode-width`, qui rend 1 pour tous ceux retenus ; un caractère plus large
+//! décalerait la ligne et, de proche en proche, la bordure du carré.
+//!
+//! **Aucune propriété `Emoji` ni `Extended_Pictographic`.** Un terminal peut
+//! rendre en présentation emoji les caractères qui les portent — sur deux
+//! cellules, donc hors du compte de Ratatui. C'est ce qui écarte `▶` (U+25B6)
+//! et `▪` (U+25AA), tous deux emoji, au profit de voisins qui ne le sont pas.
+//!
+//! **Présents dans WGL4** quand c'est possible — le jeu commun à toute police
+//! monospace. Les triangles `▾ ▸ ▻` en sortent : les équivalents WGL4 `▼ ►`
+//! ont d'abord été retenus, puis écartés comme trop lourds à l'écran.
+//!
+//! Les symboles d'arborescence forment une grammaire : la forme dit la famille
+//! — triangle pour un répertoire, point pour une donnée, barres pour un texte
+//! — et l'orientation du triangle dit l'état du pli.
 //!
 //! Fonction libre plutôt que méthode sur [`crate::tui::Ecran`] : la définition
 //! de l'état reste dans [`crate::tui`], les opérations qui le lisent vivent
@@ -33,6 +58,23 @@ use super::{Ecran, EtatTui};
 /// cœur, messages d'erreur. Aucune autre couleur n'est introduite : la
 /// hiérarchie visuelle repose sur la casse et le gras.
 pub(crate) const COULEUR_ACCENT: Color = Color::Rgb(255, 90, 31);
+
+pub(crate) const GUIDE_TUYAU: &str = "│";
+
+pub(crate) const SYMBOLE_RACINE: &str = "⌂";
+pub(crate) const SYMBOLE_REPERTOIRE_DEPLIE: &str = "▾";
+pub(crate) const SYMBOLE_REPERTOIRE_REPLIE: &str = "▸";
+pub(crate) const SYMBOLE_REPERTOIRE_VIDE: &str = "▻";
+pub(crate) const SYMBOLE_DONNEE: &str = "•";
+pub(crate) const SYMBOLE_TEXTE: &str = "≡";
+
+pub(crate) const PASTILLE_ALLUMEE: &str = "●";
+pub(crate) const PASTILLE_ETEINTE: &str = "○";
+
+pub(crate) const CHEVRON_INVITE: &str = "›";
+pub(crate) const CURSEUR: &str = "▌";
+pub(crate) const MASQUE_MOT_DE_PASSE: &str = "•";
+pub(crate) const SEPARATEUR: &str = "·";
 
 /// Paire largeur/hauteur en cellules terminal, pour dimensionner les zones
 /// rectangulaires centrées dans le frame.

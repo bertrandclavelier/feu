@@ -13,6 +13,11 @@
 //! ni dépliage, ni défilement — un arbre plus haut que le carré est **coupé en
 //! bas sans le dire**.
 //!
+//! Chaque ligne porte un guide par niveau, puis le symbole de la carte, puis le
+//! nom. Le guide est le même à tous les niveaux : le cœur envoie une profondeur,
+//! pas une fratrie, et distinguer le dernier enfant d'un `└` demanderait de
+//! reconstruire après coup une information que le parcours a jetée.
+//!
 //! **La forme retenue est l'arbre repliable**, non une liste par niveau : c'est
 //! le repli, pas la mise en page, qui rend un dépôt réel lisible — un dossier de
 //! build tient alors sur une ligne au lieu de remplir l'écran. Il vient donc
@@ -27,7 +32,9 @@
 //! Les transitions `vers_*` du pilotage n'ont pas d'équivalent ici : `Tab`
 //! suffit à entrer, et `passer_ecran_suivant` tient le cycle.
 
-use feu_application::fiche::Fiche;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use feu_application::{Carte, fiche::Fiche};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Margin},
@@ -38,7 +45,10 @@ use ratatui::{
 
 use crate::tui::{
     EtatTui,
-    rendu::{COULEUR_ACCENT, Dimensions},
+    rendu::{
+        COULEUR_ACCENT, Dimensions, GUIDE_TUYAU, SYMBOLE_DONNEE, SYMBOLE_RACINE,
+        SYMBOLE_REPERTOIRE_DEPLIE, SYMBOLE_REPERTOIRE_VIDE, SYMBOLE_TEXTE,
+    },
 };
 
 /// Dimensions du carré de l'écran, identiques à celles du pilotage.
@@ -49,6 +59,12 @@ const DIMENSIONS_ECRAN_ENU: Dimensions = Dimensions {
     largeur: 70,
     hauteur: 35,
 };
+
+/// Longueur maximale d'un libellé affiché, ellipse comprise.
+///
+/// Comptée en caractères, jamais en octets. Le pourquoi de la borne est dans
+/// [`libelle`], seul endroit qui l'applique.
+const MAX_LONGUEUR_MOT: usize = 30;
 
 /// Ce que l'écran d'arborescence retient d'une frame à l'autre.
 ///
@@ -106,19 +122,21 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &Etat
 
     // Découpage à l'intérieur de la bordure pour ne pas l'écraser.
     let carre = colonnes[1].inner(Margin {
-        horizontal: 1,
-        vertical: 1,
+        horizontal: 4,
+        vertical: 2,
     });
 
     let carre_lignes = Layout::vertical([
-        Constraint::Length(1), // Titre
-        Constraint::Fill(1),   // Arbre
-        Constraint::Length(1), // Séparation
+        Constraint::Length(1), // titre
+        Constraint::Length(1), // respiration
+        Constraint::Fill(1),   // arbre
+        Constraint::Length(2), // respiration
         Constraint::Length(1), // message d'erreur
         Constraint::Length(1), // message d'aide
     ])
     .split(carre);
 
+    // Titre
     let ligne_titre = Line::from(vec![Span::styled(
         "Arborescence des ENU",
         Style::default()
@@ -129,6 +147,7 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &Etat
 
     frame.render_widget(ligne_titre, carre_lignes[0]);
 
+    // Message d'erreur
     if let Some(message) = etat_tui.message_erreur() {
         let affichage_erreur = Line::from(vec![Span::styled(
             message,
@@ -136,8 +155,10 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &Etat
         )])
         .centered();
 
-        frame.render_widget(affichage_erreur, carre_lignes[3]);
+        frame.render_widget(affichage_erreur, carre_lignes[4]);
     }
+
+    // Message d'aide
     if let Some(message) = etat_tui.message_aide() {
         let affichage_commande = Line::from(vec![
             Span::styled(" <", Style::default().fg(COULEUR_ACCENT)),
@@ -145,9 +166,10 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &Etat
             Span::styled(">", Style::default().fg(COULEUR_ACCENT)),
         ]);
 
-        frame.render_widget(affichage_commande, carre_lignes[4]);
+        frame.render_widget(affichage_commande, carre_lignes[5]);
     }
 
+    // Arborescence
     match &etat_tui.etat_arborescence_enu.arborescence_enus {
         None => {
             let zone_message = Layout::vertical([
@@ -155,7 +177,7 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &Etat
                 Constraint::Length(1),
                 Constraint::Fill(1),
             ])
-            .split(carre_lignes[1]);
+            .split(carre_lignes[2]);
 
             let texte = Line::from(vec![Span::raw("'R' pour charger l'arborescence")]).centered();
             frame.render_widget(texte, zone_message[1]);
@@ -164,16 +186,27 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &Etat
             let lignes = arborescence_enu
                 .iter()
                 .map(|(profondeur, fiche)| {
-                    Line::from(format!("{}{}", "| ".repeat(*profondeur), libelle(fiche)))
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{GUIDE_TUYAU} ").repeat(*profondeur),
+                            Style::default().add_modifier(Modifier::DIM),
+                        ),
+                        Span::raw(match libelle(fiche) {
+                            // La racine n'a pas de nom : son symbole tient seul
+                            // la ligne, sans espace à traîner derrière lui.
+                            libelle if libelle.is_empty() => symbole(fiche).to_string(),
+                            libelle => format!("{} {}", symbole(fiche), libelle),
+                        }),
+                    ])
                 })
                 .collect::<Vec<Line>>();
 
-            frame.render_widget(Paragraph::new(lignes), carre_lignes[1]);
+            frame.render_widget(Paragraph::new(lignes), carre_lignes[2]);
         }
     }
 }
 
-/// Ce qui s'affiche à droite de l'indentation, pour une entrée de l'arbre.
+/// Le nom affiché d'une entrée, à droite de son symbole.
 ///
 /// **Point de passage unique du nom vers l'écran, et donc là où il est
 /// assaini.** Un nom de fichier Unix accepte tout sauf `/` et l'octet nul :
@@ -183,24 +216,95 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &Etat
 /// remplacés plutôt que supprimés — deux noms distincts ne doivent pas devenir
 /// identiques à l'écran, et le `?` montre l'anomalie au lieu de la masquer.
 ///
+/// **Le nom est borné à [`MAX_LONGUEUR_MOT`]**, le dernier caractère portant
+/// l'ellipse. Le `Paragraph` couperait de toute façon à droite : la limite est
+/// là pour que la coupe se voie, et pour qu'un nom à rallonge ne masque pas les
+/// lignes voisines. Comptée en caractères et non en octets — un accent en pèse
+/// deux, et trancher un `&str` au milieu de l'un d'eux paniquerait.
+///
 /// **Une racine se reconnaît à sa méta `_racine`**, non à sa position : elle est
 /// la seule entrée sans méta `nom`, mais la reconnaître par ce qu'elle porte
-/// tient même si le parcours part un jour d'ailleurs que du sommet.
+/// tient même si le parcours part un jour d'ailleurs que du sommet. Elle rend
+/// une chaîne vide — son symbole la désigne déjà, un mot n'apprendrait rien.
 ///
 /// Le hash a été écarté comme repli : le dépôt pose toujours `nom`, une entrée
 /// qui en manque relève de l'anomalie, et huit caractères d'hexadécimal ne
 /// l'expliqueraient à personne.
 fn libelle(fiche: &Fiche) -> String {
     match fiche.carte().metas().get("nom") {
-        Some(nom) => nom
-            .chars()
-            .map(|c| if c.is_control() { '?' } else { c })
-            .collect::<String>(),
+        Some(nom) => {
+            let mut libelle = String::from(nom);
+            if libelle.chars().count() > MAX_LONGUEUR_MOT {
+                libelle = libelle
+                    .chars()
+                    .take(MAX_LONGUEUR_MOT - 1)
+                    .collect::<String>();
+                libelle.push('…');
+            }
+
+            libelle
+                .chars()
+                .map(|c| if c.is_control() { '?' } else { c })
+                .collect::<String>()
+        }
         None => {
             if fiche.carte().metas().get("_racine").is_some() {
-                return String::from("(racine)");
+                return String::new();
             }
             String::from("(sans nom)")
         }
+    }
+}
+
+/// Le symbole qui précède le libellé, d'après la variante de [`Carte`].
+///
+/// La racine passe avant le `match` : c'est une [`Carte::Repertoire`] comme une
+/// autre, seule sa méta `_racine` la distingue, et elle mérite sa marque parce
+/// qu'elle seule n'a pas de nom à afficher.
+///
+/// Un répertoire vide reçoit le sien : le déplier ne montrerait rien, et lui
+/// laisser la marque des répertoires peuplés promettrait un contenu.
+///
+/// [`crate::tui::rendu::SYMBOLE_REPERTOIRE_REPLIE`] n'a aucun cas ici — l'arbre
+/// arrive entièrement déplié, et rien ne se replie encore.
+fn symbole(fiche: &Fiche) -> &'static str {
+    if fiche.carte().metas().get("_racine").is_some() {
+        return SYMBOLE_RACINE;
+    }
+
+    match fiche.carte() {
+        Carte::Donnee { .. } => SYMBOLE_DONNEE,
+        Carte::Texte { .. } => SYMBOLE_TEXTE,
+        Carte::Repertoire { hashs_enu, .. } => {
+            if hashs_enu.is_empty() {
+                SYMBOLE_REPERTOIRE_VIDE
+            } else {
+                SYMBOLE_REPERTOIRE_DEPLIE
+            }
+        }
+    }
+}
+
+/// Le temps écoulé depuis une date d'ENU, en une poignée de caractères.
+///
+/// Relatif et non calendaire : distinguer deux racines demande de savoir
+/// laquelle est la plus récente, pas le jour exact. Ça évite d'embarquer une
+/// crate de dates, et surtout le piège du fuseau — la date d'une ENU est en UTC,
+/// une date affichée telle quelle serait fausse d'une heure ou deux.
+///
+/// `saturating_sub` n'est pas décoratif : une ENU déposée par une machine dont
+/// l'horloge avance porte une date supérieure à maintenant, et la soustraction
+/// de deux `u64` paniquerait en debug. Elle rend alors « à l'instant ».
+fn age(date: u64) -> String {
+    let maintenant = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    match maintenant.saturating_sub(date) {
+        s if s < 60 => String::from("à l'instant"),
+        s if s < 3_600 => format!("il y a {} min", s / 60),
+        s if s < 86_400 => format!("il y a {} h", s / 3_600),
+        s => format!("il y a {} j", s / 86_400),
     }
 }

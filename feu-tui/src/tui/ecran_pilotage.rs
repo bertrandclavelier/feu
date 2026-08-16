@@ -33,7 +33,10 @@ use secrecy::{ExposeSecret, SecretString};
 
 use crate::tui::{
     Ecran, EtatTui, ModeSaisie, ValidationBufferSaisie,
-    rendu::{COULEUR_ACCENT, Dimensions},
+    rendu::{
+        CHEVRON_INVITE, COULEUR_ACCENT, CURSEUR, Dimensions, MASQUE_MOT_DE_PASSE, PASTILLE_ALLUMEE,
+        PASTILLE_ETEINTE, SEPARATEUR,
+    },
 };
 
 /// Dimensions du carré de l'écran principal.
@@ -310,7 +313,7 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
 
     // Découpage à l'intérieur de la bordure pour ne pas l'écraser.
     let carre = colonnes[1].inner(Margin {
-        horizontal: 1,
+        horizontal: 4,
         vertical: 1,
     });
 
@@ -323,6 +326,7 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
         Constraint::Length(2), // espace vide
         Constraint::Fill(1),
         Constraint::Length(1), // ligne affichage commande
+        Constraint::Length(1), // pied
     ])
     .split(carre);
 
@@ -335,9 +339,9 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
 
     // Pastille du noeud
     let span = if etat_tui.session_application.is_some() {
-        Span::styled("●", Style::default().fg(COULEUR_ACCENT))
+        Span::styled(PASTILLE_ALLUMEE, Style::default().fg(COULEUR_ACCENT))
     } else {
-        Span::raw("○")
+        Span::raw(PASTILLE_ETEINTE)
     };
     frame.render_widget(
         span,
@@ -352,9 +356,12 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
     if let Some(session) = &etat_tui.session_application {
         let donne_span_foyer = |i| -> Span {
             if session.etat_foyer(i).unwrap_or(false) {
-                Span::styled("● ", Style::default().fg(COULEUR_ACCENT))
+                Span::styled(
+                    format!("{PASTILLE_ALLUMEE} "),
+                    Style::default().fg(COULEUR_ACCENT),
+                )
             } else {
-                Span::raw("○ ")
+                Span::raw(format!("{PASTILLE_ETEINTE} "))
             }
         };
         let vecteur_span: Vec<Span> = (0..session.nombre_foyers).map(donne_span_foyer).collect();
@@ -388,14 +395,17 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
         spans_invite.push(Span::raw(format!("/cla.{index}")));
     }
     spans_invite.extend([
-        Span::styled(" › ", Style::default().fg(COULEUR_ACCENT)),
+        Span::styled(
+            format!(" {CHEVRON_INVITE} "),
+            Style::default().fg(COULEUR_ACCENT),
+        ),
         Span::raw(etat_tui.prompt.clone()),
         Span::raw(" "),
         Span::raw(etat_tui.buffer_saisie.clone()),
     ]);
 
     if matches!(etat_tui.mode_saisie, ModeSaisie::Insertion) {
-        spans_invite.push(Span::raw("▌"));
+        spans_invite.push(Span::raw(CURSEUR));
     }
 
     frame.render_widget(
@@ -465,12 +475,16 @@ fn dessiner_ecran_saisie_mdp(frame: &mut Frame, etat_tui: &EtatTui) {
 
     frame.render_widget(titre, zone_interieure_lignes[1]);
 
-    let saisie = Line::from(vec![Span::raw("•".repeat(etat_tui.buffer_saisie.len()))]).centered();
-
+    let saisie = Line::from(vec![Span::raw(
+        MASQUE_MOT_DE_PASSE.repeat(etat_tui.buffer_saisie.len()),
+    )])
+    .centered();
     frame.render_widget(saisie, zone_interieure_lignes[3]);
 
-    let texte_aide =
-        Line::from(vec![Span::raw("Entrée pour valider · Échap pour annuler")]).centered();
+    let texte_aide = Line::from(vec![Span::raw(format!(
+        "Entrée pour valider {SEPARATEUR} Échap pour annuler"
+    ))])
+    .centered();
 
     frame.render_widget(texte_aide, zone_interieure_lignes[5]);
 }
@@ -537,7 +551,7 @@ fn dessiner_ecran_affichage_seed(frame: &mut Frame, seed: &[SecretString], rappe
             if i * NOMBRE_COLONNES_SEED + j < seed.len() {
                 frame.render_widget(
                     Line::from(vec![Span::raw(format!(
-                        "  {:02} · {}",
+                        "  {:02} {SEPARATEUR} {}",
                         i * NOMBRE_COLONNES_SEED + j + 1,
                         seed[i * NOMBRE_COLONNES_SEED + j].expose_secret()
                     ))]),
