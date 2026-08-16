@@ -826,9 +826,9 @@ impl FeuApplication {
     /// Rend un itérateur sur tout le sous-arbre situé sous `fiche`, celle-ci
     /// comprise.
     ///
-    /// Chaque item est la [`Fiche`] d'une ENU **intègre mais non authentifiée**,
-    /// ou l'erreur rencontrée en tentant de la charger — un échec ne met pas fin
-    /// au parcours. Aucune signature n'est vérifiée, pas même celle du point de
+    /// Chaque item est la [`Fiche`] d'une ENU **intègre mais non authentifiée**
+    /// et sa profondeur dans l'arbre, ou l'erreur rencontrée en tentant de la
+    /// charger — un échec ne met pas fin au parcours. Aucune signature n'est vérifiée, pas même celle du point de
     /// départ : la descendance tient par le chaînage de Merkle, ce qui rend le
     /// parcours praticable sur un arbre entier. Une fiche n'engage rien : toute
     /// commande qui agit sur un blob recharge l'ENU et la vérifie. Voir

@@ -78,11 +78,10 @@ pub(crate) enum MessageCoeurTui {
     /// [`ConnecteurVersTui::lancer_thread_coeur`], en réponse à une demande
     /// explicite de l'utilisateur.
     ///
-    /// Le `Vec` est le parcours en largeur de l'arbre, racine comprise : la
-    /// relation parent → enfant n'y est pas portée, elle se relit dans les
-    /// `hashs_enu` de chaque carte. C'est le flux brut du Scribe, que la TUI
-    /// remettra en forme pour l'affichage.
-    EnvoiArborescenceEnu(Vec<Fiche>),
+    /// Le `Vec` est le parcours en profondeur de l'arbre, racine comprise,
+    /// chaque fiche précédée de sa profondeur. C'est l'ordre de l'affichage et
+    /// son décalage : la TUI n'a rien à reconstruire, elle indente et dessine.
+    EnvoiArborescenceEnu(Vec<(usize, Fiche)>),
 
     /// La seed vient d'être générée — la TUI doit basculer sur l'écran d'affichage.
     ///
@@ -327,7 +326,7 @@ impl ConnecteurVersTui {
                                         self.envoyer_message_coeur_tui(
                                             MessageCoeurTui::EnvoiArborescenceEnu(
                                                 descendants
-                                                    .collect::<Result<Vec<Fiche>, _>>()
+                                                    .collect::<Result<Vec<(usize, Fiche)>, _>>()
                                                     .unwrap(),
                                             ),
                                         );

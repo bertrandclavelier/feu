@@ -36,8 +36,9 @@
 //! est une navigation, pas un accès au contenu — les blobs, eux, restent
 //! illisibles.
 //!
-//! **Les deux itérateurs rendent des [`Fiche`]** : l'ENU du pas courant est
-//! projetée puis relâchée, sa signature ne quitte pas le crate. Rien de ce qui
+//! **Les deux itérateurs rendent des [`Fiche`]**, le descendant accompagnées de
+//! la profondeur du pas : l'ENU courante est projetée puis relâchée, sa
+//! signature ne quitte pas le crate. Rien de ce qui
 //! sort n'engage un blob — lecture, suppression, description, retrait rechargent
 //! l'ENU et la repassent par [`Enu::authentique`](super::enu::Enu). La fiche est
 //! une vue, pas une marque de confiance : celle-ci vient de la vérification, pas
@@ -56,7 +57,7 @@
 //! avoir payé le reste de l'arbre. Aucun cache ici : sa cohérence serait à tenir
 //! sans rien savoir de l'usage.
 
-use std::{collections::VecDeque, path::Path};
+use std::path::Path;
 
 use data_encoding::HEXLOWER;
 use feu_noyau::BRAISE_VIDE;
@@ -64,17 +65,24 @@ use feu_noyau::BRAISE_VIDE;
 use crate::scribe::enu::Enu;
 use crate::{ErreurFeuApplication, ResultFeuApplication, SessionApplication, fiche::Fiche};
 
-/// Descend une arborescence ENU depuis une racine donnée, en largeur d'abord.
+/// Descend une arborescence ENU depuis une racine donnée, en profondeur d'abord.
 ///
 /// Suit les `hashs_enu` de chaque [`Carte::Repertoire`](crate::Carte) rencontrée.
 /// Les feuilles ([`Carte::Donnee`](crate::Carte), [`Carte::Texte`](crate::Carte))
 /// n'ouvrent rien : elles sont rendues et le parcours continue. Aucun cycle
 /// n'est possible, le hash d'une ENU dérivant de son contenu.
 ///
-/// **Largeur d'abord** : `a_visiter` est une file, les enfants passent après
-/// tous les nœuds déjà en attente. L'ordre est déterministe — les `hashs_enu`
-/// viennent d'un `BTreeSet`, donc triés, et rien d'autre n'influe sur la
-/// séquence.
+/// **Profondeur d'abord** : `a_visiter` est une pile, le sous-arbre d'un enfant
+/// est rendu avant ses frères — l'ordre dans lequel une arborescence se lit, et
+/// ce qui permet à un affichage de la dessiner sans rien reconstruire. L'ordre
+/// est déterministe : les `hashs_enu` viennent d'un `BTreeSet`, donc triés, et
+/// ils sont empilés à l'envers pour ressortir dans cet ordre-là.
+///
+/// **Chaque item porte sa profondeur**, comptée à partir de 0 sur l'ENU de
+/// départ : connue gratuitement en descendant, elle coûterait cher à retrouver
+/// après coup. Elle ne peut pas vivre dans la [`Fiche`] — dans un DAG, la même
+/// ENU se rencontre à deux profondeurs sous deux parents. C'est une propriété du
+/// pas, pas de l'ENU.
 ///
 /// **Les doublons sont conservés.** L'arborescence est un DAG : un sous-arbre
 /// identique peut être l'enfant de plusieurs répertoires, et il sera alors rendu
@@ -89,25 +97,27 @@ pub struct Descendants<'a> {
     /// Dossier `enu/` où sont lus les fichiers, propriété du
     /// [`Scribe`](super::Scribe).
     chemin_enu: &'a Path,
-    /// Hashs restant à charger, en attente. File vide = parcours terminé.
-    a_visiter: VecDeque<[u8; 32]>,
+    /// Hashs restant à charger, chacun avec sa profondeur. Pile vide = parcours
+    /// terminé.
+    a_visiter: Vec<(usize, [u8; 32])>,
 }
 
 impl<'a> Iterator for Descendants<'a> {
     /// L'erreur est celle de l'API publique : `Descendants` traverse la
     /// frontière du crate, et [`ErreurFeuApplication`](crate::ErreurFeuApplication)
     /// est le seul type d'erreur qu'il expose.
-    type Item = ResultFeuApplication<Fiche>;
+    type Item = ResultFeuApplication<(usize, Fiche)>;
 
-    /// Charge l'ENU suivante, empile ses enfants s'il y en a, et rend sa fiche.
+    /// Charge l'ENU suivante, empile ses enfants s'il y en a, et rend sa fiche
+    /// avec sa profondeur.
     ///
-    /// Le hash tiré de la file vient de la carte du parent, déjà vérifiée : c'est
+    /// Le hash tiré de la pile vient de la carte du parent, déjà vérifiée : c'est
     /// lui que `Enu::charger_sans_verification_signature`
     /// compare à l'empreinte recalculée, et le maillon de plus dans la chaîne
     /// d'intégrité. Aucune signature n'est vérifiée ici.
     ///
     /// **Un échec de chargement n'arrête pas le parcours** : l'erreur est rendue
-    /// comme un item ordinaire et la file reste intacte pour le pas suivant.
+    /// comme un item ordinaire et la pile reste intacte pour le pas suivant.
     /// C'est ce que permet la forme `Option<Result<…>>` — seul `None` termine,
     /// le `Result` ne parle que de l'élément courant. L'appelant qui préfère
     /// s'arrêter au premier échec l'obtient sans une ligne de code ici, avec
@@ -120,17 +130,18 @@ impl<'a> Iterator for Descendants<'a> {
     /// parcours, et `Carte::hashs_enu` le dit sans fabriquer d'erreur ni cloner
     /// l'ensemble.
     fn next(&mut self) -> Option<Self::Item> {
-        let hash = self.a_visiter.pop_front()?;
+        let (profondeur, hash) = self.a_visiter.pop()?;
 
         match Enu::charger_sans_verification_signature(self.chemin_enu, &hash) {
             Err(e) => Some(Err(e)),
 
             Ok(enu) => {
                 if let Some(hashs_enu) = enu.carte().hashs_enu() {
-                    self.a_visiter.extend(hashs_enu);
+                    self.a_visiter
+                        .extend(hashs_enu.iter().rev().map(|hash| (profondeur + 1, *hash)));
                 }
 
-                Some(Ok(Fiche::new(&enu)))
+                Some(Ok((profondeur, Fiche::new(&enu))))
             }
         }
     }
@@ -150,8 +161,8 @@ impl<'a> Descendants<'a> {
     /// construction qui pose deux champs.
     ///
     /// **L'ENU de départ fait partie du parcours** : son hash est le premier de
-    /// la file, elle sera donc relue avant d'être rendue. Le coût est un
-    /// chargement de plus ; en échange le parcours couvre réellement tout le
+    /// la pile, à la profondeur 0, et sera donc relu avant d'être rendu. Le coût
+    /// est un chargement de plus ; en échange le parcours couvre tout le
     /// sous-arbre, racine comprise, ce dont a besoin qui veut inventorier les
     /// foyers d'un arbre avant de le retirer.
     ///
@@ -162,7 +173,7 @@ impl<'a> Descendants<'a> {
     pub(crate) fn new(chemin_enu: &'a Path, hash_carte: &[u8; 32]) -> Self {
         Self {
             chemin_enu,
-            a_visiter: VecDeque::from([*hash_carte]),
+            a_visiter: Vec::from([(0, *hash_carte)]),
         }
     }
 }

@@ -45,12 +45,13 @@ const DIMENSIONS_ECRAN_ENU: Dimensions = Dimensions {
 /// L'arbre chargé pour l'instant ; le curseur, les nœuds dépliés et le
 /// défilement viendront ici.
 pub(super) struct EtatArborescenceEnu {
-    /// Le dernier arbre reçu du cœur, à plat et en largeur d'abord.
+    /// Le dernier arbre reçu du cœur, à plat et prêt à dessiner : l'ordre est
+    /// celui de l'affichage, la profondeur son décalage.
     ///
     /// `None` ne veut pas dire « arbre vide » mais **jamais demandé** — c'est
     /// lui qui distingue l'écran au premier abord d'un nœud sans contenu, et
     /// qui décidera lequel des deux messages afficher.
-    pub(super) arborescence_enus: Option<Vec<Fiche>>,
+    pub(super) arborescence_enus: Option<Vec<(usize, Fiche)>>,
 }
 
 impl EtatArborescenceEnu {

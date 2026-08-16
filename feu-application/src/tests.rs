@@ -894,29 +894,35 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
     Ok(())
 }
 
-/// Le parcours descendant rend tout le sous-arbre, dans l'ordre annoncé, **foyer
-/// fermé**.
+/// Le parcours descendant rend tout le sous-arbre, sa forme et ses profondeurs,
+/// **foyer fermé**.
 ///
 /// L'arbre est déposé, puis le nœud éteint et rallumé avant le moindre parcours :
 /// la session est neuve, aucun foyer n'y a jamais été ouvert. Refermer le foyer
 /// n'aurait pas suffi à le prouver — sa clé publique de signature survit à la
 /// fermeture et n'est effacée qu'à l'extinction.
 ///
-/// **Sur une racine sans enfant**, le parcours rend un item : l'ENU de départ.
-/// C'est le premier point de [`Descendants::new`] — la racine fait partie du
-/// parcours, et un itérateur qui ne rendrait que la descendance passerait
-/// inaperçu sur un arbre peuplé.
+/// **Sur une racine sans enfant**, le parcours rend un item : l'ENU de départ,
+/// à la profondeur 0. C'est le premier point de [`Descendants::new`] — la racine
+/// fait partie du parcours, et un itérateur qui ne rendrait que la descendance
+/// passerait inaperçu sur un arbre peuplé. La même vérification est reprise sur
+/// l'arbre peuplé : c'est bien la racine qui ouvre le parcours, et le compte des
+/// profondeurs part d'elle.
 ///
 /// **Sur l'arbre de [`remplir_dossier`]**, la forme est établie en relançant un
 /// parcours sur chaque ENU rendue : la taille de son propre sous-arbre. Triée,
 /// la suite vaut `[1, 1, 1, 2, 4, 6]` — six nœuds, et une seule forme d'arbre
 /// derrière. Compter les items ne dirait que le nombre, pas la structure.
 ///
-/// **Avant le tri, ces mêmes tailles disent la largeur d'abord** : leur somme
-/// par niveau — 6, puis 5, puis 3, puis 1 — ne dépend pas de l'ordre à
-/// l'intérieur d'un niveau, qui suit les hashs et non les noms. Un parcours en
-/// profondeur donnerait 6 au deuxième niveau au lieu de 5. Les deux assertions
-/// se complètent : les sommes ne fixent pas les tailles une à une, le tri si.
+/// **Les profondeurs, triées, valent `[0, 1, 1, 2, 2, 3]`** : les six nœuds se
+/// répartissent sur quatre niveaux. Triées parce que l'ordre entre frères suit
+/// les hashs, pas les noms ; le multiensemble, lui, ne dépend d'aucun ordre.
+///
+/// **Ce test n'établit pas l'ordre du parcours.** L'arbre de [`remplir_dossier`]
+/// est une chaîne — un seul sous-dossier par niveau —, et un parcours en largeur
+/// peut y produire exactement la même séquence qu'un parcours en profondeur.
+/// Le distinguer demanderait deux dossiers frères peuplés, l'un devant être
+/// épuisé avant que l'autre ne commence.
 ///
 /// [`flatten`](Iterator::flatten) écarte les `Err`. Sur un arbre sain il n'y en
 /// a aucune, et une erreur de chargement ferait tomber les comptes plutôt que
@@ -934,13 +940,14 @@ fn descendants() -> ResultFeuApplication<()> {
 
     let enu_racine = app.commande_derniere_enu_racine()?;
 
-    let descendants: Vec<ResultFeuApplication<Fiche>> =
-        app.commande_descendants(&enu_racine)?.collect();
+    let descendants: Vec<(usize, Fiche)> =
+        app.commande_descendants(&enu_racine)?.flatten().collect();
     assert_eq!(descendants.len(), 1);
+    assert_eq!(descendants[0].0, 0);
 
-    let enu = descendants[0].as_ref().unwrap();
+    let fiche = &descendants[0].1;
 
-    assert_eq!(enu.hash_carte(), enu_racine.hash_carte());
+    assert_eq!(fiche.hash_carte(), enu_racine.hash_carte());
 
     app.commande_ouverture_foyer(&interface_test, 1)?;
 
@@ -962,31 +969,36 @@ fn descendants() -> ResultFeuApplication<()> {
     app.commande_allumage_noeud(&interface_test, None)?;
     let deuxieme_enu_racine = app.commande_derniere_enu_racine()?;
 
-    let descendants: Vec<Fiche> = app
+    let descendants: Vec<(usize, Fiche)> = app
         .commande_descendants(&deuxieme_enu_racine)?
         .flatten()
         .collect();
 
+    let mut profondeurs: Vec<usize> = descendants
+        .iter()
+        .map(|(profondeur, _)| *profondeur)
+        .collect();
+
+    profondeurs.sort();
+
+    assert_eq!(profondeurs, [0, 1, 1, 2, 2, 3]);
+
     // Taille du sous-arbre de chaque ENU rendue, dans l'ordre du parcours.
     let mut tailles: Vec<usize> = descendants
         .iter()
-        .map(|enu| app.commande_descendants(enu).unwrap().count())
+        .map(|(_, fiche)| app.commande_descendants(fiche).unwrap().count())
         .collect();
-
-    // Sommes par niveau : la racine, puis les deux enfants, les deux
-    // petits-enfants, l'arrière-petit-enfant. Insensibles à l'ordre au sein d'un
-    // niveau, qui suit les hashs.
-    assert_eq!(tailles[0], 6);
-    assert_eq!(tailles[1] + tailles[2], 5);
-    assert_eq!(tailles[3] + tailles[4], 3);
-    assert_eq!(tailles[5], 1);
 
     // Triées, les mêmes tailles fixent la forme de l'arbre.
     tailles.sort();
 
     assert_eq!(tailles, [1, 1, 1, 2, 4, 6]);
 
-    assert_eq!(descendants[0], (deuxieme_enu_racine));
+    assert_eq!(descendants[0].0, 0);
+    assert_eq!(
+        descendants[0].1.hash_carte(),
+        deuxieme_enu_racine.hash_carte()
+    );
 
     app.commande_extinction_noeud(&interface_test)?;
 
