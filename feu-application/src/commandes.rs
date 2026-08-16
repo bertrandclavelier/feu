@@ -58,10 +58,10 @@
 //! encore, il n'y a pas d'autre façon de dire où ranger.
 //!
 //! **Ensuite, tout passe par l'ENU, sans exception.** Charger, supprimer,
-//! interroger un blob se fait en fournissant son [`Enu`], jamais un couple
-//! foyer/hash — l'ENU porte les deux (braise et `hash_donnee`), et les tenir
-//! ensemble interdit d'en former une paire incohérente. Pas d'ENU, pas de
-//! donnée.
+//! interroger un blob se fait en fournissant sa [`Fiche`](fiche::Fiche), jamais
+//! un couple foyer/hash — la carte porte les deux (braise et `hash_donnee`), et
+//! les tenir ensemble interdit d'en former une paire incohérente. Pas d'ENU, pas
+//! de donnée.
 //!
 //! Rien ici n'accepte donc un hash de blob, ni n'en énumère : de l'extérieur,
 //! les seuls hashs qui ouvrent quelque chose sont ceux des ENU
@@ -73,9 +73,9 @@ use std::io::Write;
 
 use feu_noyau::{Anomalie, DonneesBlob, FeuNoyau};
 
-use crate::scribe::{
-    enu::Enu,
-    iterateurs::{Descendants, RacinesAnterieures},
+use crate::{
+    fiche::Fiche,
+    scribe::iterateurs::{Descendants, RacinesAnterieures},
 };
 
 use super::*;
@@ -498,11 +498,11 @@ impl FeuApplication {
     }
 
     /// Ferme un comptoir de dépôt : range son contenu, le greffe sous
-    /// `enu_racine_depot`, puis propage la nouvelle racine jusqu'à la racine du nœud.
+    /// `fiche_racine_depot`, puis propage la nouvelle racine jusqu'à la racine du nœud.
     ///
     /// Parcourt le dossier du comptoir, dépose chaque fichier chiffré dans le
     /// classeur de destination, encapsule fichiers et sous-dossiers dans des ENU
-    /// signées, puis ajoute le tout comme enfants de `enu_racine_depot`. Le dossier
+    /// signées, puis ajoute le tout comme enfants de `fiche_racine_depot`. Le dossier
     /// physique du comptoir est supprimé à l'issue ; le détail du rangement est
     /// porté par le Scribe.
     ///
@@ -536,7 +536,7 @@ impl FeuApplication {
         &mut self,
         interface_feu_application: &impl InterfaceFeuApplication,
         index_comptoir: usize,
-        enu_racine_depot: &Enu,
+        fiche_racine_depot: &Fiche,
     ) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
@@ -547,7 +547,7 @@ impl FeuApplication {
             noyau,
             &mut self.session,
             index_comptoir,
-            enu_racine_depot,
+            fiche_racine_depot,
         )?;
 
         interface_feu_application.recevoir_session_application(Some(self.session.clone()));
@@ -559,7 +559,7 @@ impl FeuApplication {
     /// seule — opération inverse du dépôt par comptoir.
     ///
     /// Crée le dossier `chemin_retrait` (qui ne doit pas exister) et y
-    /// reconstruit ce que décrit `enu_r` : fichiers depuis les blobs déchiffrés
+    /// reconstruit ce que décrit `fiche_r` : fichiers depuis les blobs déchiffrés
     /// et les textes embarqués, sous-dossiers depuis les répertoires. Chaque ENU
     /// est authentifiée avant d'être écrite. Le détail est porté par le Scribe.
     ///
@@ -570,13 +570,13 @@ impl FeuApplication {
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : dossier de sortie déjà existant, `enu_r`
-    /// qui n'est pas un répertoire, nom absent ou invalide, braise inconnue,
+    /// propage les erreurs du Scribe : dossier de sortie déjà existant, `fiche_r`
+    /// qui ne désigne pas un répertoire, nom absent ou invalide, braise inconnue,
     /// authentification, E/S ou lecture de blob (foyer fermé, blob introuvable).
     pub fn commande_retrait_lecture_seule(
         &mut self,
         chemin_retrait: &Path,
-        enu_r: &Enu,
+        fiche_r: &Fiche,
     ) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
@@ -584,7 +584,7 @@ impl FeuApplication {
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
         self.scribe
-            .retrait_lecture_seule(noyau, &self.session, chemin_retrait, enu_r)?;
+            .retrait_lecture_seule(noyau, &self.session, chemin_retrait, fiche_r)?;
 
         Ok(())
     }
@@ -593,11 +593,11 @@ impl FeuApplication {
     // 4. Blobs
     //
     // Le contenu chiffré, un fichier à la fois. Les quatre commandes désignent
-    // leur cible par la seule `Enu`, comme le pose le « Désigner une donnée »
+    // leur cible par la seule `Fiche`, comme le pose le « Désigner une donnée »
     // du module.
     //
 
-    /// Lit et déchiffre le blob désigné par `enu`, et écrit le clair dans
+    /// Lit et déchiffre le blob désigné par `fiche`, et écrit le clair dans
     /// `destination`.
     ///
     /// Dernier maillon de la descente ouverte par
@@ -621,7 +621,7 @@ impl FeuApplication {
     /// donnée corrompue.
     pub fn commande_chargement_blob(
         &mut self,
-        enu: &Enu,
+        fiche: &Fiche,
         destination: impl Write,
     ) -> ResultFeuApplication<()> {
         let noyau = self
@@ -630,12 +630,12 @@ impl FeuApplication {
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
         self.scribe
-            .charge_blob(noyau, &self.session, enu, destination)?;
+            .charge_blob(noyau, &self.session, fiche, destination)?;
 
         Ok(())
     }
 
-    /// Supprime le blob désigné par `enu` — le fichier `<hash>.dat` sur disque.
+    /// Supprime le blob désigné par `fiche` — le fichier `<hash>.dat` sur disque.
     /// L'opération est irréversible.
     ///
     /// Symétrique de
@@ -654,18 +654,18 @@ impl FeuApplication {
     /// ([`ErreurFeuApplication::ScribeBraiseInconnue`]), carte qui n'est pas une
     /// [`Carte::Donnee`] ([`ErreurFeuApplication::ScribeEnuDAttendue`]), foyer
     /// fermé, blob introuvable, ou échec de la suppression disque.
-    pub fn commande_suppression_blob(&mut self, enu: &Enu) -> ResultFeuApplication<()> {
+    pub fn commande_suppression_blob(&mut self, fiche: &Fiche) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
             .as_mut()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        self.scribe.supprime_blob(noyau, &self.session, enu)?;
+        self.scribe.supprime_blob(noyau, &self.session, fiche)?;
 
         Ok(())
     }
 
-    /// Indique si le blob désigné par `enu` est présent sur disque.
+    /// Indique si le blob désigné par `fiche` est présent sur disque.
     ///
     /// Une ENU peut survivre à son blob :
     /// [`commande_suppression_blob`](Self::commande_suppression_blob) retire le
@@ -681,16 +681,16 @@ impl FeuApplication {
     /// ([`ErreurFeuApplication::ScribeBraiseInconnue`]), carte qui n'est pas une
     /// [`Carte::Donnee`] ([`ErreurFeuApplication::ScribeEnuDAttendue`]), foyer
     /// fermé.
-    pub fn commande_existence_blob(&self, enu: &Enu) -> ResultFeuApplication<bool> {
+    pub fn commande_existence_blob(&self, fiche: &Fiche) -> ResultFeuApplication<bool> {
         let noyau = self
             .feu_noyau
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        self.scribe.existence_blob(noyau, &self.session, enu)
+        self.scribe.existence_blob(noyau, &self.session, fiche)
     }
 
-    /// Retourne les métadonnées système du blob désigné par `enu` — taille,
+    /// Retourne les métadonnées système du blob désigné par `fiche` — taille,
     /// dates d'accès et de modification.
     ///
     /// Voir [`DonneesBlob`] pour le détail des champs. Renseigne sur le fichier,
@@ -704,13 +704,13 @@ impl FeuApplication {
     /// [`Carte::Donnee`] ([`ErreurFeuApplication::ScribeEnuDAttendue`]), foyer
     /// fermé, blob introuvable — ici une erreur, contrairement à
     /// [`commande_existence_blob`](Self::commande_existence_blob).
-    pub fn commande_informations_blob(&self, enu: &Enu) -> ResultFeuApplication<DonneesBlob> {
+    pub fn commande_informations_blob(&self, fiche: &Fiche) -> ResultFeuApplication<DonneesBlob> {
         let noyau = self
             .feu_noyau
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        self.scribe.informations_blob(noyau, &self.session, enu)
+        self.scribe.informations_blob(noyau, &self.session, fiche)
     }
 
     //
@@ -724,7 +724,8 @@ impl FeuApplication {
     ///
     /// Avec [`commande_chargement_enu`](Self::commande_chargement_enu), forme la porte
     /// d'entrée de la couche ENU : celle-ci donne le point de départ, l'autre
-    /// permet la descente. Aucune autre commande ne produit d'[`Enu`] — sans
+    /// permet la descente. Ce sont les deux seules à produire une fiche sans en
+    /// recevoir une — les parcours, eux, partent d'une fiche existante. Sans
     /// elles, [`commande_fermeture_comptoir_depot`](Self::commande_fermeture_comptoir_depot)
     /// et [`commande_retrait_lecture_seule`](Self::commande_retrait_lecture_seule),
     /// qui en réclament une, restaient inappelables depuis la présentation.
@@ -737,15 +738,15 @@ impl FeuApplication {
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : lien `.DERNIERE_RACINE` absent, lecture,
     /// authentification.
-    pub fn commande_derniere_enu_racine(&self) -> ResultFeuApplication<Enu> {
+    pub fn commande_derniere_enu_racine(&self) -> ResultFeuApplication<Fiche> {
         if !self.scribe.est_actif() {
             return Err(ErreurFeuApplication::NoeudEteint);
         }
 
-        self.scribe.derniere_enu_racine(&self.session)
+        Ok(Fiche::new(&self.scribe.derniere_enu_racine(&self.session)?))
     }
 
-    /// Charge l'[`Enu`] désignée par `hash`, authentifiée — `None` si aucune ne
+    /// Charge l'ENU désignée par `hash`, authentifiée — `None` si aucune ne
     /// porte ce hash.
     ///
     /// Assure la descente de l'arborescence : une [`Carte::Repertoire`] ne
@@ -763,7 +764,7 @@ impl FeuApplication {
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : lecture, authentification.
-    pub fn commande_chargement_enu(&self, hash: &[u8; 32]) -> ResultFeuApplication<Option<Enu>> {
+    pub fn commande_chargement_enu(&self, hash: &[u8; 32]) -> ResultFeuApplication<Option<Fiche>> {
         if !self.scribe.est_actif() {
             return Err(ErreurFeuApplication::NoeudEteint);
         }
@@ -771,8 +772,8 @@ impl FeuApplication {
         self.scribe.charge_enu(&self.session, hash)
     }
 
-    /// Dépose un texte dans un foyer : crée une `EnuT` (une [`Enu`] portant une
-    /// `Carte::Texte`), l'accroche sous `enu_racine_depot`, puis propage la
+    /// Dépose un texte dans un foyer : crée une `EnuT` (une ENU portant une
+    /// `Carte::Texte`), l'accroche sous `fiche_racine_depot`, puis propage la
     /// nouvelle racine jusqu'à la racine du nœud.
     ///
     /// Le texte est embarqué dans la carte (aucun blob, aucun classeur) et borné
@@ -781,7 +782,7 @@ impl FeuApplication {
     /// rangement est porté par le Scribe.
     ///
     /// `index_foyer` désigne le foyer sous la braise duquel le texte est signé ;
-    /// `enu_racine_depot` peut être un répertoire de foyer ou la racine du nœud.
+    /// `fiche_racine_depot` peut désigner un répertoire de foyer ou la racine du nœud.
     /// Tout foyer concerné — celui du texte, celui du répertoire d'accueil s'il
     /// en a un, ceux du chemin remonté — doit être ouvert.
     ///
@@ -800,7 +801,7 @@ impl FeuApplication {
     /// signature (notamment si un foyer du chemin reconstruit est fermé).
     pub fn commande_depot_enu_texte(
         &self,
-        enu_racine_depot: &Enu,
+        fiche_racine_depot: &Fiche,
         index_foyer: usize,
         nom: &str,
         contenu: &str,
@@ -813,7 +814,7 @@ impl FeuApplication {
         self.scribe.depot_enu_texte(
             noyau,
             &self.session,
-            enu_racine_depot,
+            fiche_racine_depot,
             index_foyer,
             nom,
             contenu,
@@ -822,16 +823,17 @@ impl FeuApplication {
         Ok(())
     }
 
-    /// Rend un itérateur sur tout le sous-arbre situé sous `enu`, celle-ci
+    /// Rend un itérateur sur tout le sous-arbre situé sous `fiche`, celle-ci
     /// comprise.
     ///
-    /// Chaque item est une [`Enu`] **intègre mais non authentifiée**, ou l'erreur
-    /// rencontrée en tentant de la charger — un échec ne met pas fin au parcours.
-    /// Aucune signature n'est vérifiée, pas même celle de `enu` : la descendance
-    /// tient par le chaînage de Merkle, ce qui rend le parcours praticable sur un
-    /// arbre entier. Une ENU ainsi obtenue n'engage rien : toute commande qui
-    /// agit sur un blob la revérifie. Voir [`Descendants`] pour l'ordre, le sort
-    /// des doublons et le détail des erreurs.
+    /// Chaque item est la [`Fiche`] d'une ENU **intègre mais non authentifiée**,
+    /// ou l'erreur rencontrée en tentant de la charger — un échec ne met pas fin
+    /// au parcours. Aucune signature n'est vérifiée, pas même celle du point de
+    /// départ : la descendance tient par le chaînage de Merkle, ce qui rend le
+    /// parcours praticable sur un arbre entier. Une fiche n'engage rien : toute
+    /// commande qui agit sur un blob recharge l'ENU et la vérifie. Voir
+    /// [`Descendants`] pour l'ordre, le sort des doublons et le détail des
+    /// erreurs.
     ///
     /// **Aucun foyer n'a besoin d'être ouvert**, même pour partir d'une ENU
     /// signée par lui. C'est l'intérêt du parcours : afficher une arborescence
@@ -844,21 +846,24 @@ impl FeuApplication {
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud n'est pas
-    /// allumé, et [`ErreurFeuApplication::ScribeEnuNonIntegre`] si l'enveloppe de
-    /// `enu` ne s'accorde pas avec sa carte.
-    pub fn commande_descendants<'a>(&'a self, enu: &Enu) -> ResultFeuApplication<Descendants<'a>> {
+    /// allumé — seul refus possible. Une enveloppe qui ne s'accorde pas avec sa
+    /// carte se voit au premier `next`, rendue comme item.
+    pub fn commande_descendants<'a>(
+        &'a self,
+        fiche: &Fiche,
+    ) -> ResultFeuApplication<Descendants<'a>> {
         if !self.scribe.est_actif() {
             return Err(ErreurFeuApplication::NoeudEteint);
         }
 
-        self.scribe.donne_descendants(enu)
+        Ok(self.scribe.donne_descendants(&fiche.hash_carte()))
     }
 
-    /// Rend un itérateur sur les racines du nœud, de `enu` jusqu'à la genèse,
+    /// Rend un itérateur sur les racines du nœud, de `fiche` jusqu'à la genèse,
     /// celle-ci comprise.
     ///
-    /// Répond à « qu'y avait-il avant ? » : chaque item est une racine
-    /// **authentifiée**, l'état de l'arbre à une version antérieure. Composé avec
+    /// Répond à « qu'y avait-il avant ? » : chaque item est la [`Fiche`] d'une
+    /// racine **authentifiée**, l'état de l'arbre à une version antérieure. Composé avec
     /// [`commande_descendants`](Self::commande_descendants), lancé sur chacune
     /// d'elles, il dit ce que l'arbre contenait à ce moment-là.
     ///
@@ -876,12 +881,14 @@ impl FeuApplication {
     /// authentification, ce qui ne dirait pas à l'appelant ce qui manque.
     pub fn commande_racines_anterieures<'a>(
         &'a self,
-        enu: &Enu,
+        fiche: &Fiche,
     ) -> ResultFeuApplication<RacinesAnterieures<'a>> {
         if !self.scribe.est_actif() {
             return Err(ErreurFeuApplication::NoeudEteint);
         }
 
-        Ok(self.scribe.donne_racines_anterieures(&self.session, enu))
+        Ok(self
+            .scribe
+            .donne_racines_anterieures(&self.session, &fiche.hash_carte()))
     }
 }

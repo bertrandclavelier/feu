@@ -24,10 +24,11 @@
 //! `hash_donnee`, le déchiffrer, le supprimer sont l'affaire du noyau. Il fait
 //! la charnière — traduire une ENU en index de foyer et en empreinte de blob
 //! (voir [`Scribe::index_et_hash_blob`]) — pour que ses appelants ne désignent
-//! jamais une donnée autrement que par son ENU.
+//! jamais une donnée autrement que par la [`Fiche`] de son ENU.
 
 mod comptoir;
 pub mod enu;
+pub mod fiche;
 pub mod iterateurs;
 
 #[cfg(test)]
@@ -47,6 +48,7 @@ use walkdir::WalkDir;
 
 use crate::{
     ErreurFeuApplication, ResultFeuApplication, SessionApplication,
+    fiche::Fiche,
     scribe::{
         comptoir::ComptoirDepot,
         enu::{Carte, Enu},
@@ -130,7 +132,8 @@ impl Scribe {
         Enu::charger_derniere_racine(&self.chemin_derniere_racine, session)
     }
 
-    /// Charge l'ENU de `hash` — `None` si aucun fichier ne lui correspond.
+    /// Charge l'ENU de `hash` et en rend la [`Fiche`] — `None` si aucun fichier
+    /// ne lui correspond.
     ///
     /// L'existence est testée avant le chargement pour que l'absence ne se
     /// confonde pas avec un échec d'authentification : [`Enu::charger`] refuse
@@ -148,12 +151,16 @@ impl Scribe {
         &self,
         session: &SessionApplication,
         hash: &[u8; 32],
-    ) -> ResultFeuApplication<Option<Enu>> {
+    ) -> ResultFeuApplication<Option<Fiche>> {
         if !Enu::hash_carte_vers_chemin(hash, &self.chemin_enu).exists() {
             return Ok(None);
         }
 
-        Ok(Some(Enu::charger(&self.chemin_enu, session, hash)?))
+        Ok(Some(Fiche::new(&Enu::charger(
+            &self.chemin_enu,
+            session,
+            hash,
+        )?)))
     }
 
     /// Traduit une ENU en ce que le noyau attend : l'index du foyer et
@@ -171,16 +178,13 @@ impl Scribe {
     /// et [`informations_blob`](Self::informations_blob) — qui ne diffèrent que
     /// par l'appel noyau qui suit.
     ///
-    /// **C'est aussi la barrière d'authenticité de ces quatre-là.** Une ENU peut
-    /// venir d'un parcours, qui ne vérifie aucune signature : elle repasse donc
-    /// par [`Enu::authentique`] avant que quoi que ce soit ne parte vers le
-    /// noyau. Ici et pas dans chacune des quatre — aucune ne peut l'oublier, et
-    /// celle qui s'ajoutera plus tard l'aura sans y penser.
+    /// **Rien n'est authentifié ici** : les quatre reçoivent une [`Fiche`] et
+    /// rechargent l'ENU par [`Enu::charger`], qui vérifie la signature. La
+    /// refaire ici en vérifierait une deuxième par appel.
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurFeuApplication::ScribeEnuNonAuthentique`] si la signature
-    /// n'est pas validée, [`ErreurFeuApplication::ScribeBraiseInconnue`] si la
+    /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la
     /// braise ne résout vers aucun foyer de la session, et
     /// [`ErreurFeuApplication::ScribeEnuDAttendue`] si la carte n'est pas une
     /// [`Carte::Donnee`] et ne référence donc aucun blob.
@@ -189,9 +193,6 @@ impl Scribe {
         session: &SessionApplication,
         enu: &Enu,
     ) -> ResultFeuApplication<(usize, [u8; 32])> {
-        if !enu.authentique(session)? {
-            return Err(ErreurFeuApplication::ScribeEnuNonAuthentique);
-        }
         let Some(index) = session.braise_vers_index(enu.braise()) else {
             return Err(ErreurFeuApplication::ScribeBraiseInconnue);
         };
@@ -208,7 +209,7 @@ impl Scribe {
         Ok((index, *hash_donnee))
     }
 
-    /// Déchiffre le blob référencé par `enu` et écrit le clair dans
+    /// Déchiffre le blob référencé par `fiche` et écrit le clair dans
     /// `destination`.
     ///
     /// Le Scribe ne sait pas déchiffrer, c'est l'affaire du noyau : il ne fait
@@ -218,24 +219,27 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Propage les trois refus de
-    /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
+    /// Propage les refus du chargement de l'ENU (lecture, authentification) et
+    /// les deux de [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
     /// noyau : foyer fermé, blob introuvable, déchiffrement, donnée corrompue.
     pub(super) fn charge_blob(
         &self,
         noyau: &mut FeuNoyau,
         session: &SessionApplication,
-        enu: &Enu,
+        fiche: &Fiche,
         destination: impl Write,
     ) -> ResultFeuApplication<()> {
-        let (index, hash_donnees) = self.index_et_hash_blob(session, enu)?;
+        let (index, hash_donnees) = self.index_et_hash_blob(
+            session,
+            &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
+        )?;
 
         noyau.lecture_blob(index, &HEXLOWER.encode(&hash_donnees), destination)?;
 
         Ok(())
     }
 
-    /// Supprime le blob référencé par `enu`, sans toucher à l'ENU.
+    /// Supprime le blob référencé par `fiche`, sans toucher à l'ENU.
     ///
     /// Jumelle de [`charge_blob`](Self::charge_blob) : même résolution de
     /// cible, seul l'appel noyau qui suit diffère.
@@ -245,23 +249,26 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Propage les trois refus de
-    /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
+    /// Propage les refus du chargement de l'ENU (lecture, authentification) et
+    /// les deux de [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
     /// noyau : foyer fermé, blob introuvable, suppression disque.
     pub(super) fn supprime_blob(
         &self,
         noyau: &mut FeuNoyau,
         session: &SessionApplication,
-        enu: &Enu,
+        fiche: &Fiche,
     ) -> ResultFeuApplication<()> {
-        let (index, hash_donnees) = self.index_et_hash_blob(session, enu)?;
+        let (index, hash_donnees) = self.index_et_hash_blob(
+            session,
+            &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
+        )?;
 
         noyau.suppression_blob(index, &HEXLOWER.encode(&hash_donnees))?;
 
         Ok(())
     }
 
-    /// Indique si le blob référencé par `enu` est présent dans son foyer.
+    /// Indique si le blob référencé par `fiche` est présent dans son foyer.
     ///
     /// Même résolution de cible que [`charge_blob`](Self::charge_blob), sans
     /// rien ouvrir : la question porte sur la présence du `.dat`, pas sur son
@@ -271,38 +278,44 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Propage les trois refus de
-    /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
+    /// Propage les refus du chargement de l'ENU (lecture, authentification) et
+    /// les deux de [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
     /// noyau : foyer fermé. Un blob absent est un `Ok(false)`.
     pub(super) fn existence_blob(
         &self,
         noyau: &FeuNoyau,
         session: &SessionApplication,
-        enu: &Enu,
+        fiche: &Fiche,
     ) -> ResultFeuApplication<bool> {
-        let (index, hash_donnees) = self.index_et_hash_blob(session, enu)?;
+        let (index, hash_donnees) = self.index_et_hash_blob(
+            session,
+            &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
+        )?;
 
         Ok(noyau.existence_blob(index, &HEXLOWER.encode(&hash_donnees))?)
     }
 
-    /// Retourne les métadonnées système du blob référencé par `enu` — taille,
+    /// Retourne les métadonnées système du blob référencé par `fiche` — taille,
     /// dates.
     ///
     /// Renseigne sur le fichier, jamais sur son contenu : rien n'est déchiffré.
     ///
     /// # Erreurs
     ///
-    /// Propage les trois refus de
-    /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
+    /// Propage les refus du chargement de l'ENU (lecture, authentification) et
+    /// les deux de [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
     /// noyau : foyer fermé, blob introuvable — ici une erreur, contrairement à
     /// [`existence_blob`](Self::existence_blob).
     pub(super) fn informations_blob(
         &self,
         noyau: &FeuNoyau,
         session: &SessionApplication,
-        enu: &Enu,
+        fiche: &Fiche,
     ) -> ResultFeuApplication<DonneesBlob> {
-        let (index, hash_donnees) = self.index_et_hash_blob(session, enu)?;
+        let (index, hash_donnees) = self.index_et_hash_blob(
+            session,
+            &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
+        )?;
 
         Ok(noyau.informations_blob(index, &HEXLOWER.encode(&hash_donnees))?)
     }
@@ -492,8 +505,11 @@ impl Scribe {
         noyau: &mut FeuNoyau,
         session: &mut SessionApplication,
         index_comptoir: usize,
-        enu_racine_depot: &Enu,
+        fiche_racine_depot: &Fiche,
     ) -> ResultFeuApplication<()> {
+        let enu_racine_depot =
+            Enu::charger(&self.chemin_enu, session, &fiche_racine_depot.hash_carte())?;
+
         let Some(comptoir) = self.comptoirs_depot.get(&index_comptoir) else {
             return Err(ErreurFeuApplication::ScribeIndexComptoirInconnu(
                 index_comptoir,
@@ -607,7 +623,7 @@ impl Scribe {
             }
         }
 
-        self.greffe_enfants(noyau, session, enu_racine_depot, &nouveaux_enfants)?;
+        self.greffe_enfants(noyau, session, &enu_racine_depot, &nouveaux_enfants)?;
 
         comptoir.supprimer()?;
 
@@ -769,8 +785,8 @@ impl Scribe {
     /// texte dépasse `MAX_TAILLE_TEXTE`, ou
     /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] si `nom` est refusé
     /// comme composant de chemin — les deux via [`Carte::new_texte`] —, ou
-    /// [`ErreurFeuApplication::ScribeEnuRAttendue`] si `enu_racine_depot` n'est
-    /// pas un répertoire (via `ajout_hash_enu`), ou
+    /// [`ErreurFeuApplication::ScribeEnuRAttendue`] si `fiche_racine_depot` ne
+    /// désigne pas un répertoire (via `ajout_hash_enu`), ou
     /// [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] si `index_foyer` sort
     /// des bornes. Propage toute erreur d'E/S, d'authentification ou de
     /// signature — notamment si un foyer du chemin reconstruit est fermé.
@@ -778,7 +794,7 @@ impl Scribe {
         &self,
         noyau: &FeuNoyau,
         session: &SessionApplication,
-        enu_racine_depot: &Enu,
+        fiche_racine_depot: &Fiche,
         index_foyer: usize,
         nom: &str,
         contenu: &str,
@@ -787,9 +803,12 @@ impl Scribe {
             return Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(index_foyer));
         };
 
+        let enu_racine_depot =
+            Enu::charger(&self.chemin_enu, session, &fiche_racine_depot.hash_carte())?;
+
         let enu_texte = Enu::new(Carte::new_texte(nom, contenu)?, noyau, session, braise)?;
 
-        self.depot_enu(noyau, session, enu_racine_depot, &enu_texte)?;
+        self.depot_enu(noyau, session, &enu_racine_depot, &enu_texte)?;
 
         Ok(())
     }
@@ -802,16 +821,15 @@ impl Scribe {
     /// déchiffré via le noyau), chaque [`Carte::Texte`] un fichier portant son
     /// contenu embarqué, chaque [`Carte::Repertoire`] un sous-dossier. Chaque
     /// enfant est chargé **et authentifié** ([`Enu::charger`]) avant d'être
-    /// écrit, et `enu_r` elle-même passe par [`Enu::authentique`] en tête : elle
-    /// vient de l'appelant, qui a pu la tirer d'un parcours. Le retrait engage —
-    /// il écrit sur le disque — il n'a donc rien à gagner au chargement rapide.
+    /// écrit, `fiche_r` comme les autres : le retrait engage — il écrit sur le
+    /// disque — il n'a donc rien à gagner au chargement rapide.
     ///
     /// **Lecture seule, sans reprise.** Contrairement au comptoir de dépôt,
     /// aucun état n'est retenu et aucune « fermeture » ne relira le dossier :
     /// Feu écrit puis s'en désintéresse — d'où une simple méthode, sans type
     /// comptoir dédié. Le dossier appartient ensuite à l'utilisateur.
     ///
-    /// `enu_r` est traitée comme le dossier de sortie lui-même : son éventuel
+    /// L'ENU de `fiche_r` est traitée comme le dossier de sortie lui-même : son éventuel
     /// nom est ignoré, seuls ses enfants sont matérialisés — la récursion ne
     /// voit jamais la racine, qui peut donc être le sommet du nœud (sans méta
     /// `"nom"`).
@@ -822,11 +840,11 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurFeuApplication::ScribeEnuNonAuthentique`] si `enu_r` ne
-    /// passe pas la barrière, [`ErreurFeuApplication::ScribeDossierDejaExistant`]
-    /// si `chemin_retrait` est un dossier existant, ou
-    /// [`ErreurFeuApplication::ScribeEnuRAttendue`] si `enu_r` n'est pas un
-    /// répertoire. Propage les erreurs de la descente : authentification d'un
+    /// Retourne [`ErreurFeuApplication::ScribeEnuNonAuthentique`] si le
+    /// chargement de `fiche_r` ne passe pas la barrière,
+    /// [`ErreurFeuApplication::ScribeDossierDejaExistant`] si `chemin_retrait`
+    /// est un dossier existant, ou [`ErreurFeuApplication::ScribeEnuRAttendue`]
+    /// si ce n'est pas un répertoire. Propage les erreurs de la descente : authentification d'un
     /// enfant, nom absent ou invalide, E/S et lecture de blob (foyer fermé,
     /// blob introuvable).
     pub(super) fn retrait_lecture_seule(
@@ -834,11 +852,10 @@ impl Scribe {
         noyau: &mut FeuNoyau,
         session: &SessionApplication,
         chemin_retrait: &Path,
-        enu_r: &Enu,
+        fiche_r: &Fiche,
     ) -> ResultFeuApplication<()> {
-        if !enu_r.authentique(session)? {
-            return Err(ErreurFeuApplication::ScribeEnuNonAuthentique);
-        }
+        let enu_r = Enu::charger(&self.chemin_enu, session, &fiche_r.hash_carte())?;
+
         if chemin_retrait.is_dir() {
             return Err(ErreurFeuApplication::ScribeDossierDejaExistant(
                 chemin_retrait.to_path_buf(),
@@ -868,7 +885,7 @@ impl Scribe {
         Ok(())
     }
 
-    /// Fabrique un parcours descendant à partir de `enu`.
+    /// Fabrique un parcours descendant à partir de `hash_carte`.
     ///
     /// Le Scribe est seul à connaître `chemin_enu` et ne le laisse pas sortir :
     /// il fournit l'itérateur déjà armé plutôt qu'un accesseur au chemin, comme
@@ -879,29 +896,22 @@ impl Scribe {
     /// `next`. Aucune session non plus : le descendant ne vérifie pas la
     /// signature du point de départ, ce qui lui permet de parcourir un arbre dont
     /// le foyer est fermé.
-    ///
-    /// # Erreurs
-    ///
-    /// Propage le seul refus de [`Descendants::new`] : ENU de départ non intègre.
-    pub(super) fn donne_descendants<'a>(
-        &'a self,
-        enu: &Enu,
-    ) -> ResultFeuApplication<Descendants<'a>> {
-        Descendants::new(&self.chemin_enu, enu)
+    pub(super) fn donne_descendants<'a>(&'a self, hash_carte: &[u8; 32]) -> Descendants<'a> {
+        Descendants::new(&self.chemin_enu, hash_carte)
     }
 
-    /// Fabrique un parcours remontant à partir de `enu`.
+    /// Fabrique un parcours remontant à partir de `hash_carte`.
     ///
     /// Même raison d'être que [`Self::donne_descendants`] : le Scribe arme
-    /// l'itérateur plutôt que de laisser sortir `chemin_enu`. Infaillible, en
-    /// revanche — [`RacinesAnterieures`] ne vérifie rien à la construction,
-    /// chaque racine étant authentifiée au moment où elle est chargée.
+    /// l'itérateur plutôt que de laisser sortir `chemin_enu`. Infaillible comme
+    /// lui — [`RacinesAnterieures`] ne vérifie rien à la construction, chaque
+    /// racine étant authentifiée au moment où elle est chargée.
     pub(super) fn donne_racines_anterieures<'a>(
         &'a self,
         session: &'a SessionApplication,
-        enu: &Enu,
+        hash_carte: &[u8; 32],
     ) -> RacinesAnterieures<'a> {
-        RacinesAnterieures::new(&self.chemin_enu, session, enu)
+        RacinesAnterieures::new(&self.chemin_enu, session, hash_carte)
     }
 
     /// Cœur récursif de [`Self::retrait_lecture_seule`] : matérialise **une**

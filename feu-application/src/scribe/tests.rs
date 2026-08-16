@@ -247,16 +247,8 @@ fn cycle_racine() {
     assert!(chemin_derniere_racine.is_symlink());
 
     let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session).unwrap();
-    let octets_carte = enu_racine.carte().vers_octets();
 
-    assert!(
-        FeuNoyau::verification_signature(
-            session.cle_publique_sig_noeud(),
-            enu_racine.signature_carte(),
-            &octets_carte
-        )
-        .unwrap()
-    );
+    assert!(enu_racine.authentique(&session).unwrap());
 
     assert_eq!(
         enu_racine.carte().metas().get_key_value("_racine"),

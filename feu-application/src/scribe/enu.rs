@@ -306,11 +306,6 @@ impl Enu {
         self.hash_carte
     }
 
-    /// Retourne la signature ML-DSA-87 de la carte (4627 octets).
-    pub fn signature_carte(&self) -> [u8; 4627] {
-        self.signature_carte
-    }
-
     /// Retourne le timestamp Unix de mise sous enveloppe.
     ///
     /// Non couvert par la signature ni le hash — métadonnée indicative.

@@ -219,9 +219,8 @@ impl SessionApplication {
     /// Retourne la clé publique de signature ML-DSA-87 du foyer à la position
     /// `index_foyer` — `None` si l'index dépasse [`MAX_FOYERS`].
     ///
-    /// Interrogée par [`Enu::charger`](crate::scribe::enu::Enu) après résolution
-    /// de la braise : c'est la clé contre laquelle une ENU de contenu est
-    /// authentifiée.
+    /// Interrogée par `Enu::charger` après résolution de la braise : c'est la
+    /// clé contre laquelle une ENU de contenu est authentifiée.
     pub fn cle_publique_sig_foyer(&self, index_foyer: usize) -> Option<[u8; 2592]> {
         if index_foyer >= MAX_FOYERS {
             return None;

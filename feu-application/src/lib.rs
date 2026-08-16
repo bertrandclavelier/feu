@@ -51,18 +51,19 @@ use secrecy::SecretString;
 pub use erreur::{ErreurFeuApplication, ResultFeuApplication};
 use feu_noyau::{Braise, FeuNoyau, InterfaceFeuNoyau};
 use scribe::Scribe;
-/// Types ENU exposés en lecture seule à toutes les crates du workspace.
+/// Ce que la couche ENU laisse voir au dehors : la carte, jamais l'enveloppe.
 ///
-/// [`Enu`] tient ses champs privés derrière des accesseurs : son enveloppe
-/// (braise, signature, date) ne se forge que dans `scribe::enu`, dont les
-/// constructeurs restent `pub(super)`.
+/// `Enu` reste privée au crate. Les crates consommatrices reçoivent des
+/// [`Fiche`](fiche::Fiche) — mêmes champs sans la signature — et les redonnent
+/// telles quelles ; c'est ici, et ici seulement, qu'une ENU est rechargée depuis
+/// le disque et authentifiée avant d'agir.
 ///
-/// [`Carte`] est l'inverse — un `enum` public dont les variantes exposent leurs
-/// champs. C'est délibéré : c'est ce qui permet à un consommateur de descendre
-/// l'arborescence en lisant les `hashs_enu` d'une [`Carte::Repertoire`]. La
-/// confiance ne vient pas de l'encapsulation mais de la vérification de la
-/// signature à chaque chargement.
-pub use scribe::enu::{Carte, Enu};
+/// [`Carte`] est en revanche un `enum` public dont les variantes exposent leurs
+/// champs, ce qui permet de descendre l'arborescence en lisant les `hashs_enu`
+/// d'une [`Carte::Repertoire`]. La confiance ne vient pas de l'encapsulation
+/// mais de la vérification de la signature à chaque chargement.
+pub use scribe::enu::Carte;
+pub use scribe::fiche;
 /// Parcours d'arborescence exposés à la couche de présentation.
 ///
 /// Les deux types sont publics parce qu'ils apparaissent dans la signature des

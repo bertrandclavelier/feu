@@ -27,7 +27,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::{JoinHandle, spawn};
 
-use feu_application::{Enu, FeuApplication, InterfaceFeuApplication, SessionApplication};
+use feu_application::fiche::Fiche;
+use feu_application::{FeuApplication, InterfaceFeuApplication, SessionApplication};
 use secrecy::SecretString;
 
 /// Emplacement du dossier de retrait, en dur le temps de brancher la TUI.
@@ -81,7 +82,7 @@ pub(crate) enum MessageCoeurTui {
     /// relation parent → enfant n'y est pas portée, elle se relit dans les
     /// `hashs_enu` de chaque carte. C'est le flux brut du Scribe, que la TUI
     /// remettra en forme pour l'affichage.
-    EnvoiArborescenceEnu(Vec<Enu>),
+    EnvoiArborescenceEnu(Vec<Fiche>),
 
     /// La seed vient d'être générée — la TUI doit basculer sur l'écran d'affichage.
     ///
@@ -127,7 +128,7 @@ pub(crate) enum MessageTuiCoeur {
     /// [`FeuApplication::commande_derniere_enu_racine`] puis
     /// [`FeuApplication::commande_descendants`], et c'est donc le cœur qui
     /// décide d'où partir. Rien ne remonte de la TUI, ce qui évite au canal de
-    /// transporter une [`Enu`] et sa signature de 4 627 octets.
+    /// transporter une ENU entière et sa signature de 4 627 octets.
     ///
     /// La réponse est [`MessageCoeurTui::EnvoiArborescenceEnu`] ; l'erreur, en
     /// [`MessageCoeurTui::AffichageErreur`].
@@ -326,7 +327,7 @@ impl ConnecteurVersTui {
                                         self.envoyer_message_coeur_tui(
                                             MessageCoeurTui::EnvoiArborescenceEnu(
                                                 descendants
-                                                    .collect::<Result<Vec<Enu>, _>>()
+                                                    .collect::<Result<Vec<Fiche>, _>>()
                                                     .unwrap(),
                                             ),
                                         );
@@ -382,11 +383,11 @@ impl ConnecteurVersTui {
                         if let Err(e) =
                             feu_application
                                 .commande_derniere_enu_racine()
-                                .and_then(|enu| {
+                                .and_then(|fiche| {
                                     feu_application.commande_fermeture_comptoir_depot(
                                         &self,
                                         index_comptoir,
-                                        &enu,
+                                        &fiche,
                                     )
                                 })
                         {

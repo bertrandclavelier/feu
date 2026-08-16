@@ -36,10 +36,11 @@
 //! est une navigation, pas un accès au contenu — les blobs, eux, restent
 //! illisibles.
 //!
-//! **Une ENU rendue par le descendant n'engage rien sur les blobs.** Tout ce qui
-//! agit sur l'un d'eux — lecture, suppression, description, retrait sur le
-//! disque — la repasse par [`Enu::authentique`](super::enu::Enu). Il n'existe pas
-//! de type distinct pour la marquer : la confiance vient de la vérification, pas
+//! **Les deux itérateurs rendent des [`Fiche`]** : l'ENU du pas courant est
+//! projetée puis relâchée, sa signature ne quitte pas le crate. Rien de ce qui
+//! sort n'engage un blob — lecture, suppression, description, retrait rechargent
+//! l'ENU et la repassent par [`Enu::authentique`](super::enu::Enu). La fiche est
+//! une vue, pas une marque de confiance : celle-ci vient de la vérification, pas
 //! de l'encapsulation. La `braise` reste hors garantie, couverte ni par le hash
 //! ni par la signature.
 //!
@@ -50,7 +51,7 @@
 //! nombreuses. Rien ne lui coûte donc ce que le descendant a écarté.
 //!
 //! Le parcours est **paresseux** : rien n'est lu avant l'appel à `next`, et
-//! l'itérateur ne conserve aucune des ENU qu'il a rendues. Qui veut la
+//! l'itérateur ne conserve aucune des fiches qu'il a rendues. Qui veut la
 //! collection appelle `collect`, qui cherche une entrée s'arrête en chemin sans
 //! avoir payé le reste de l'arbre. Aucun cache ici : sa cohérence serait à tenir
 //! sans rien savoir de l'usage.
@@ -60,7 +61,8 @@ use std::{collections::VecDeque, path::Path};
 use data_encoding::HEXLOWER;
 use feu_noyau::BRAISE_VIDE;
 
-use crate::{Enu, ErreurFeuApplication, ResultFeuApplication, SessionApplication};
+use crate::scribe::enu::Enu;
+use crate::{ErreurFeuApplication, ResultFeuApplication, SessionApplication, fiche::Fiche};
 
 /// Descend une arborescence ENU depuis une racine donnée, en largeur d'abord.
 ///
@@ -95,12 +97,12 @@ impl<'a> Iterator for Descendants<'a> {
     /// L'erreur est celle de l'API publique : `Descendants` traverse la
     /// frontière du crate, et [`ErreurFeuApplication`](crate::ErreurFeuApplication)
     /// est le seul type d'erreur qu'il expose.
-    type Item = ResultFeuApplication<Enu>;
+    type Item = ResultFeuApplication<Fiche>;
 
-    /// Charge l'ENU suivante et empile ses enfants s'il y en a.
+    /// Charge l'ENU suivante, empile ses enfants s'il y en a, et rend sa fiche.
     ///
     /// Le hash tiré de la file vient de la carte du parent, déjà vérifiée : c'est
-    /// lui que [`Enu::charger_sans_verification_signature`](super::enu::Enu)
+    /// lui que `Enu::charger_sans_verification_signature`
     /// compare à l'empreinte recalculée, et le maillon de plus dans la chaîne
     /// d'intégrité. Aucune signature n'est vérifiée ici.
     ///
@@ -128,7 +130,7 @@ impl<'a> Iterator for Descendants<'a> {
                     self.a_visiter.extend(hashs_enu);
                 }
 
-                Some(Ok(enu))
+                Some(Ok(Fiche::new(&enu)))
             }
         }
     }
@@ -139,11 +141,13 @@ impl<'a> Descendants<'a> {
     ///
     /// **Le point de départ n'est pas authentifié**, par choix : c'est ce qui
     /// permet de descendre un arbre dont le foyer est fermé, l'usage visé. Une
-    /// ENU n'engage rien sur les blobs — pour en manipuler un, elle est
-    /// authentifiée.
+    /// fiche n'engage rien sur les blobs — pour en manipuler un, l'ENU est
+    /// rechargée et authentifiée.
     ///
-    /// Son intégrité, elle, est vérifiée : c'est le hash de l'enveloppe qui
-    /// amorce la file, il ne peut pas mentir sur la carte qu'il accompagne.
+    /// Son intégrité n'est pas davantage contrôlée : le chargement du premier pas
+    /// compare l'empreinte recalculée à `hash_carte`, et le vérifier d'avance
+    /// n'avancerait l'erreur que d'un tour, au prix d'un `Result` sur une
+    /// construction qui pose deux champs.
     ///
     /// **L'ENU de départ fait partie du parcours** : son hash est le premier de
     /// la file, elle sera donc relue avant d'être rendue. Le coût est un
@@ -155,20 +159,11 @@ impl<'a> Descendants<'a> {
     /// [`Scribe`](super::Scribe), qu'aucun appelant extérieur ne peut fournir —
     /// l'emplacement du dépôt sur le disque n'a pas à sortir du crate. Le point
     /// d'entrée public est une commande de [`FeuApplication`](crate::FeuApplication).
-    ///
-    /// # Erreurs
-    ///
-    /// Retourne [`ErreurFeuApplication::ScribeEnuNonIntegre`] si l'enveloppe ne
-    /// s'accorde pas avec sa carte. C'est le seul refus possible.
-    pub(crate) fn new(chemin_enu: &'a Path, enu: &Enu) -> ResultFeuApplication<Self> {
-        if !enu.integre(&enu.hash_carte()) {
-            return Err(ErreurFeuApplication::ScribeEnuNonIntegre);
-        }
-
-        Ok(Self {
+    pub(crate) fn new(chemin_enu: &'a Path, hash_carte: &[u8; 32]) -> Self {
+        Self {
             chemin_enu,
-            a_visiter: VecDeque::from([enu.hash_carte()]),
-        })
+            a_visiter: VecDeque::from([*hash_carte]),
+        }
     }
 }
 
@@ -184,7 +179,7 @@ impl<'a> Descendants<'a> {
 /// garantie que le premier item soit antérieur à quoi que ce soit.
 ///
 /// Le parcours s'arrête sur la genèse, que rien ne précède : sa méta `_racine`
-/// est **vide, pas absente** ([`Enu::new_racine`](super::enu::Enu), cas `None`).
+/// est **vide, pas absente** (`Enu::new_racine`, cas `None`).
 ///
 /// La durée de vie `'a` couvre les deux emprunts : un `RacinesAnterieures` ne
 /// survit ni au Scribe dont il tient le chemin, ni à la session dont il tire la
@@ -202,7 +197,7 @@ pub struct RacinesAnterieures<'a> {
 
 impl<'a> Iterator for RacinesAnterieures<'a> {
     /// L'erreur est celle de l'API publique, comme pour [`Descendants`].
-    type Item = ResultFeuApplication<Enu>;
+    type Item = ResultFeuApplication<Fiche>;
 
     /// Rend la racine suivante, ou l'échec rencontré en la chargeant.
     ///
@@ -221,23 +216,23 @@ impl<'a> Iterator for RacinesAnterieures<'a> {
 impl<'a> RacinesAnterieures<'a> {
     /// Prépare le parcours sans rien lire ni rien vérifier.
     ///
-    /// **Infaillible, à la différence de [`Descendants::new`]** : il n'y a pas de
-    /// point de départ à authentifier, puisque `charge_et_avance` recharge `enu`
-    /// par [`Enu::charger`](super::enu::Enu) au premier `next` et lui applique
-    /// les mêmes contrôles qu'à toutes les suivantes. Les répéter ici
-    /// n'avancerait l'erreur que d'un tour, au prix d'un `Result` sur une
-    /// construction qui ne fait que poser trois champs.
-    ///
-    /// Le hash de `enu` n'est pas davantage contrôlé : s'il ne correspond pas à
-    /// sa carte, le chargement qui suit le dira.
+    /// **Infaillible, comme [`Descendants::new`]** : il n'y a pas de point de
+    /// départ à authentifier, `charge_et_avance` chargeant la racine de
+    /// `hash_carte` par [`Enu::charger`](super::enu::Enu) au premier `next`, avec
+    /// les mêmes contrôles qu'aux suivantes. Le hash n'est pas davantage
+    /// contrôlé : s'il ne correspond pas à sa carte, le chargement le dira.
     ///
     /// `pub(crate)` pour la même raison que [`Descendants::new`] — `chemin_enu`
     /// est un champ privé du [`Scribe`](super::Scribe).
-    pub(crate) fn new(chemin_enu: &'a Path, session: &'a SessionApplication, enu: &Enu) -> Self {
+    pub(crate) fn new(
+        chemin_enu: &'a Path,
+        session: &'a SessionApplication,
+        hash_carte: &[u8; 32],
+    ) -> Self {
         Self {
             chemin_enu,
             session,
-            hash_suivant: Some(enu.hash_carte()),
+            hash_suivant: Some(*hash_carte),
         }
     }
 
@@ -263,7 +258,7 @@ impl<'a> RacinesAnterieures<'a> {
     /// n'en est pas une ou si sa méta `_racine` n'est pas un hash de 32 octets,
     /// [`ErreurFeuApplication::DecodeError`] si elle n'est pas de l'hexadécimal,
     /// et propage les refus de [`Enu::charger`](super::enu::Enu).
-    fn charge_et_avance(&mut self, hash: &[u8; 32]) -> ResultFeuApplication<Enu> {
+    fn charge_et_avance(&mut self, hash: &[u8; 32]) -> ResultFeuApplication<Fiche> {
         let enu = Enu::charger(self.chemin_enu, self.session, hash)?;
 
         if enu.braise() != BRAISE_VIDE {
@@ -281,6 +276,6 @@ impl<'a> RacinesAnterieures<'a> {
             )
         }
 
-        Ok(enu)
+        Ok(Fiche::new(&enu))
     }
 }

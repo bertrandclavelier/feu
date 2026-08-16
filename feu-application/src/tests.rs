@@ -47,6 +47,8 @@ use rand::{Rng, distributions::Alphanumeric};
 use tempfile::TempDir;
 use walkdir::WalkDir;
 
+use crate::fiche::Fiche;
+
 use super::*;
 
 /// Implémentation d'[`InterfaceFeuApplication`] pour les tests.
@@ -932,7 +934,7 @@ fn descendants() -> ResultFeuApplication<()> {
 
     let enu_racine = app.commande_derniere_enu_racine()?;
 
-    let descendants: Vec<ResultFeuApplication<Enu>> =
+    let descendants: Vec<ResultFeuApplication<Fiche>> =
         app.commande_descendants(&enu_racine)?.collect();
     assert_eq!(descendants.len(), 1);
 
@@ -960,7 +962,7 @@ fn descendants() -> ResultFeuApplication<()> {
     app.commande_allumage_noeud(&interface_test, None)?;
     let deuxieme_enu_racine = app.commande_derniere_enu_racine()?;
 
-    let descendants: Vec<Enu> = app
+    let descendants: Vec<Fiche> = app
         .commande_descendants(&deuxieme_enu_racine)?
         .flatten()
         .collect();
@@ -1021,7 +1023,7 @@ fn racines_anterieures() -> ResultFeuApplication<()> {
 
     let enu_racine = app.commande_derniere_enu_racine()?;
 
-    let racines: Vec<ResultFeuApplication<Enu>> =
+    let racines: Vec<ResultFeuApplication<Fiche>> =
         app.commande_racines_anterieures(&enu_racine)?.collect();
     assert_eq!(racines.len(), 1);
 
@@ -1039,7 +1041,7 @@ fn racines_anterieures() -> ResultFeuApplication<()> {
     app.commande_fermeture_foyer(&interface_test, 1)?;
 
     let enu_racine = app.commande_derniere_enu_racine()?;
-    let racines: Vec<Enu> = app
+    let racines: Vec<Fiche> = app
         .commande_racines_anterieures(&enu_racine)?
         .flatten()
         .collect();

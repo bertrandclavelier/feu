@@ -22,7 +22,7 @@
 //! Les transitions `vers_*` du pilotage n'ont pas d'équivalent ici : `Tab`
 //! suffit à entrer, et `passer_ecran_suivant` tient le cycle.
 
-use feu_application::Enu;
+use feu_application::fiche::Fiche;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout},
@@ -50,7 +50,7 @@ pub(super) struct EtatArborescenceEnu {
     /// `None` ne veut pas dire « arbre vide » mais **jamais demandé** — c'est
     /// lui qui distingue l'écran au premier abord d'un nœud sans contenu, et
     /// qui décidera lequel des deux messages afficher.
-    pub(super) arborescence_enus: Option<Vec<Enu>>,
+    pub(super) arborescence_enus: Option<Vec<Fiche>>,
 }
 
 impl EtatArborescenceEnu {
