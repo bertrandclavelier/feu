@@ -8,10 +8,15 @@
 
 //! Écran d'arborescence des ENU.
 //!
-//! Le circuit est complet — `Tab` y mène depuis le pilotage, `R` demande
-//! l'arbre au cœur, qui le renvoie et qu'on garde —, mais **rien n'est encore
-//! dessiné** : l'écran affiche un carré vide. Le raccordement d'abord, le
-//! contenu ensuite.
+//! `Tab` y mène depuis le pilotage, `R` demande l'arbre au cœur, qui le renvoie
+//! prêt à dessiner : une entrée par ligne, décalée de sa profondeur. Ni curseur,
+//! ni dépliage, ni défilement — un arbre plus haut que le carré est **coupé en
+//! bas sans le dire**.
+//!
+//! **La forme retenue est l'arbre repliable**, non une liste par niveau : c'est
+//! le repli, pas la mise en page, qui rend un dépôt réel lisible — un dossier de
+//! build tient alors sur une ligne au lieu de remplir l'écran. Il vient donc
+//! avant le reste.
 //!
 //! **Le chargement est explicite, jamais automatique.** Arriver sur l'écran ne
 //! déclenche rien : le parcours lit un fichier par ENU de l'arbre, et ce coût
@@ -25,11 +30,16 @@
 use feu_application::fiche::Fiche;
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout},
-    widgets::Block,
+    layout::{Constraint, Layout, Margin},
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Paragraph},
 };
 
-use crate::tui::{EtatTui, rendu::Dimensions};
+use crate::tui::{
+    EtatTui,
+    rendu::{COULEUR_ACCENT, Dimensions},
+};
 
 /// Dimensions du carré de l'écran, identiques à celles du pilotage.
 ///
@@ -63,12 +73,21 @@ impl EtatArborescenceEnu {
     }
 }
 
-/// Dessine le cadre de l'écran, vide.
+/// Dessine le cadre, son titre, l'arbre et les messages éphémères.
 ///
-/// L'état est reçu mais pas encore lu — l'arbre est chargé, rien ne l'affiche
-/// : c'est le seul morceau qui manque. La signature est celle qu'attend
-/// [`super::rendu::dessiner`] et ne changera pas.
-pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, _etat_tui: &EtatTui) {
+/// Le carré est découpé comme celui du pilotage — bordure rendue d'abord, puis
+/// `inner` pour ne pas l'écraser. L'arbre prend le `Fill`, ce qui reste est
+/// fixe : le titre en haut, les deux messages en bas.
+///
+/// L'arbre arrive dans l'ordre de l'affichage, chaque entrée précédée de sa
+/// profondeur : le rendu n'a plus qu'à répéter le motif d'indentation autant de
+/// fois, ligne par ligne. Le `Paragraph` les empile depuis le haut et coupe ce
+/// qui dépasse, faute de défilement.
+///
+/// L'`Option` distingue **jamais demandé** — l'invite à taper `R` — de l'arbre
+/// reçu. Le troisième cas, un arbre réduit à sa seule racine, n'est pas encore
+/// séparé du second.
+pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &EtatTui) {
     let lignes = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(DIMENSIONS_ECRAN_ENU.hauteur),
@@ -84,4 +103,104 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, _etat_tui: &Eta
     .split(lignes[1]);
 
     frame.render_widget(Block::bordered(), colonnes[1]);
+
+    // Découpage à l'intérieur de la bordure pour ne pas l'écraser.
+    let carre = colonnes[1].inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+
+    let carre_lignes = Layout::vertical([
+        Constraint::Length(1), // Titre
+        Constraint::Fill(1),   // Arbre
+        Constraint::Length(1), // Séparation
+        Constraint::Length(1), // message d'erreur
+        Constraint::Length(1), // message d'aide
+    ])
+    .split(carre);
+
+    let ligne_titre = Line::from(vec![Span::styled(
+        "Arborescence des ENU",
+        Style::default()
+            .fg(COULEUR_ACCENT)
+            .add_modifier(Modifier::BOLD),
+    )])
+    .centered();
+
+    frame.render_widget(ligne_titre, carre_lignes[0]);
+
+    if let Some(message) = etat_tui.message_erreur() {
+        let affichage_erreur = Line::from(vec![Span::styled(
+            message,
+            Style::default().fg(COULEUR_ACCENT),
+        )])
+        .centered();
+
+        frame.render_widget(affichage_erreur, carre_lignes[3]);
+    }
+    if let Some(message) = etat_tui.message_aide() {
+        let affichage_commande = Line::from(vec![
+            Span::styled(" <", Style::default().fg(COULEUR_ACCENT)),
+            Span::raw(message),
+            Span::styled(">", Style::default().fg(COULEUR_ACCENT)),
+        ]);
+
+        frame.render_widget(affichage_commande, carre_lignes[4]);
+    }
+
+    match &etat_tui.etat_arborescence_enu.arborescence_enus {
+        None => {
+            let zone_message = Layout::vertical([
+                Constraint::Fill(1),
+                Constraint::Length(1),
+                Constraint::Fill(1),
+            ])
+            .split(carre_lignes[1]);
+
+            let texte = Line::from(vec![Span::raw("'R' pour charger l'arborescence")]).centered();
+            frame.render_widget(texte, zone_message[1]);
+        }
+        Some(arborescence_enu) => {
+            let lignes = arborescence_enu
+                .iter()
+                .map(|(profondeur, fiche)| {
+                    Line::from(format!("{}{}", "| ".repeat(*profondeur), libelle(fiche)))
+                })
+                .collect::<Vec<Line>>();
+
+            frame.render_widget(Paragraph::new(lignes), carre_lignes[1]);
+        }
+    }
+}
+
+/// Ce qui s'affiche à droite de l'indentation, pour une entrée de l'arbre.
+///
+/// **Point de passage unique du nom vers l'écran, et donc là où il est
+/// assaini.** Un nom de fichier Unix accepte tout sauf `/` et l'octet nul :
+/// `nom_fichier_valide` ne refuse que le vide, le séparateur et les composants
+/// spéciaux, un retour à la ligne ou une séquence d'échappement peut donc
+/// arriver jusqu'ici et casser le carré. Les caractères de contrôle sont
+/// remplacés plutôt que supprimés — deux noms distincts ne doivent pas devenir
+/// identiques à l'écran, et le `?` montre l'anomalie au lieu de la masquer.
+///
+/// **Une racine se reconnaît à sa méta `_racine`**, non à sa position : elle est
+/// la seule entrée sans méta `nom`, mais la reconnaître par ce qu'elle porte
+/// tient même si le parcours part un jour d'ailleurs que du sommet.
+///
+/// Le hash a été écarté comme repli : le dépôt pose toujours `nom`, une entrée
+/// qui en manque relève de l'anomalie, et huit caractères d'hexadécimal ne
+/// l'expliqueraient à personne.
+fn libelle(fiche: &Fiche) -> String {
+    match fiche.carte().metas().get("nom") {
+        Some(nom) => nom
+            .chars()
+            .map(|c| if c.is_control() { '?' } else { c })
+            .collect::<String>(),
+        None => {
+            if fiche.carte().metas().get("_racine").is_some() {
+                return String::from("(racine)");
+            }
+            String::from("(sans nom)")
+        }
+    }
 }
