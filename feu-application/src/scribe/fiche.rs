@@ -29,8 +29,12 @@ use crate::scribe::enu::{Carte, Enu};
 /// gardée pour situer l'entrée dans son foyer — non couverte par le hash ni par
 /// la signature, elle vaut pour l'affichage, pas pour décider.
 ///
-/// `Debug` et `PartialEq` ne servent qu'aux assertions des tests.
-#[derive(Debug, PartialEq)]
+/// `Debug` et `PartialEq` ne servent qu'aux assertions des tests. `Clone`, lui,
+/// sert au consommateur : une interface qui retient une fiche hors du parcours
+/// dont elle vient — pour la donner ensuite à une commande — ne peut pas en
+/// garder une référence. Le clone reste sans la signature, qui n'entre jamais
+/// dans une fiche.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Fiche {
     /// Adresse `.braise` du signataire, telle que l'ENU la portait.
     braise: Braise,

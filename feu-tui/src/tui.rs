@@ -50,8 +50,10 @@
 //! l'arborescence sur le disque, `Backspace` remonte d'un niveau, `f` ferme le
 //! foyer où l'on est, `e` éteint quand tous les foyers sont fermés, `q` quitte
 //! quand le nœud est éteint, `!` affiche l'à-propos. Sur l'écran
-//! d'arborescence, `R` charge ou rafraîchit l'arbre. `Tab` et `?` sont les
-//! seules à valoir partout — changer d'écran, et lister ce qui y est actif.
+//! d'arborescence, `R` charge ou rafraîchit l'arbre, `j` et `k` déplacent le
+//! curseur, `Entrée` plie ou déplie un répertoire, `m` retient l'ENU sous le
+//! curseur. `Tab` et `?` sont les seules à valoir partout — changer d'écran,
+//! et lister ce qui y est actif.
 
 mod commandes;
 mod ecran_arborescence_enu;
@@ -65,7 +67,7 @@ use std::{
 };
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use feu_application::SessionApplication;
+use feu_application::{SessionApplication, fiche::Fiche};
 use ratatui::DefaultTerminal;
 use secrecy::SecretString;
 
@@ -109,10 +111,8 @@ enum Ecran {
     /// [`ecran_pilotage`].
     Pilotage,
 
-    /// L'arborescence des ENU du nœud — cf. [`ecran_arborescence_enu`].
-    ///
-    /// Branché mais vide : seul le chemin qui y mène est établi, son contenu
-    /// viendra ensuite.
+    /// L'arborescence des ENU du nœud, où l'on navigue, plie et marque — cf.
+    /// [`ecran_arborescence_enu`].
     ArborescenceEnu,
 }
 
@@ -207,10 +207,31 @@ struct EtatTui {
     /// courante. Opaque d'ici : seul son module en lit le contenu.
     etat_pilotage: EtatPilotage,
 
-    /// Ce que l'écran d'arborescence retient — rien encore, l'écran ayant été
-    /// branché avant d'avoir un contenu. Clippy le signale comme jamais lu tant
-    /// qu'il reste vide.
+    /// Ce que l'écran d'arborescence retient — l'arbre chargé, les nœuds
+    /// dépliés et le curseur. Opaque d'ici, comme [`Self::etat_pilotage`] :
+    /// seul son module en lit le contenu.
     etat_arborescence_enu: EtatArborescenceEnu,
+
+    /// L'ENU que l'utilisateur a retenue, `None` tant qu'il n'en a marqué
+    /// aucune.
+    ///
+    /// **Transversal, et c'est tout son intérêt** : la marque se pose sur
+    /// l'écran d'arborescence et se lit sur celui du pilotage, qui l'affiche en
+    /// permanence et dont les commandes la consommeront — déposer, retirer.
+    /// Elle n'appartient donc à aucun des deux, et un champ chemin la
+    /// rejoindra ici quand l'arborescence du disque existera : à eux deux, ils
+    /// résolvent toute action sans qu'aucune commande n'ait à nommer sa cible.
+    ///
+    /// Une [`Fiche`] entière plutôt que son seul `hash_carte` : le pilotage
+    /// affiche le nom, et c'est la fiche que les commandes de
+    /// `feu-application` réclament. Le clone est celui d'une ligne de l'arbre,
+    /// signature exclue.
+    ///
+    /// Rien ne l'efface : la marque est un choix qui dure, remplacé par le
+    /// suivant. Un rechargement de l'arbre la laisse en place, quitte à ce
+    /// qu'elle désigne une ENU absente du nouveau parcours — elle reste
+    /// chargeable, le stockage étant adressé par contenu.
+    enu_selectionnee: Option<Fiche>,
 
     /// Table de dispatch touche → commande, filtrée par le contexte courant.
     ///
@@ -274,6 +295,7 @@ impl EtatTui {
             mode_saisie: ModeSaisie::Normal,
             etat_pilotage: EtatPilotage::new(),
             etat_arborescence_enu: EtatArborescenceEnu::new(),
+            enu_selectionnee: None,
             commandes_actives: CommandesActives::vide(),
             validation_buffer_saisie: ValidationBufferSaisie::Rien,
             message_erreur: (None, 0),
@@ -413,7 +435,7 @@ impl Tui {
     pub(crate) fn lancer(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         let mut horloge = Instant::now();
         loop {
-            terminal.draw(|frame| rendu::dessiner(frame, &self.etat_tui))?;
+            terminal.draw(|frame| rendu::dessiner(frame, &mut self.etat_tui))?;
 
             if horloge.elapsed() >= Duration::from_secs(1) {
                 self.etat_tui.decremente_temps();
@@ -446,8 +468,9 @@ impl Tui {
                         self.etat_tui.vers_saisie_mdp();
                     }
                     MessageCoeurTui::EnvoiArborescenceEnu(arborescence_enus) => {
-                        self.etat_tui.etat_arborescence_enu.arborescence_enus =
-                            Some(arborescence_enus);
+                        self.etat_tui
+                            .etat_arborescence_enu
+                            .recevoir_arborescence_enus(arborescence_enus);
                     }
                     MessageCoeurTui::EnvoiSeed(seed) => {
                         self.etat_tui.vers_affichage_seed(seed);
@@ -517,9 +540,22 @@ impl Tui {
                 Commande::EcranSuivant => {
                     self.etat_tui.passer_ecran_suivant();
                 }
+                Commande::EnuBasculerPli => {
+                    self.etat_tui.etat_arborescence_enu.basculer_pli();
+                }
                 Commande::EnuChargerArborescence => {
                     self.connecteur_vers_coeur
                         .envoyer_message_tui_coeur(MessageTuiCoeur::ChargementArborescenceEnu);
+                }
+                Commande::EnuDescendreCurseur => {
+                    self.etat_tui.etat_arborescence_enu.descendre_curseur();
+                }
+                Commande::EnuMarquer => {
+                    self.etat_tui.enu_selectionnee =
+                        self.etat_tui.etat_arborescence_enu.donne_enu_a_marquer();
+                }
+                Commande::EnuMonterCurseur => {
+                    self.etat_tui.etat_arborescence_enu.monter_curseur();
                 }
                 Commande::ListeCommandesActives => {
                     self.etat_tui.ajouter_message_aide(

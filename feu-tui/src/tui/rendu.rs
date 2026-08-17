@@ -68,6 +68,14 @@ pub(crate) const SYMBOLE_REPERTOIRE_VIDE: &str = "▻";
 pub(crate) const SYMBOLE_DONNEE: &str = "•";
 pub(crate) const SYMBOLE_TEXTE: &str = "≡";
 
+/// Marque de l'entrée retenue, dans sa colonne en tête de ligne.
+///
+/// L'astérisque est le geste des explorateurs de fichiers en terminal, où il
+/// signale l'entrée marquée. ASCII, donc hors de toute question de police, et
+/// distinct des symboles d'arborescence : il désigne un choix de
+/// l'utilisateur, pas une nature d'entrée.
+pub(crate) const MARQUE_SELECTION: &str = "*";
+
 pub(crate) const PASTILLE_ALLUMEE: &str = "●";
 pub(crate) const PASTILLE_ETEINTE: &str = "○";
 
@@ -94,7 +102,13 @@ pub(crate) struct Dimensions {
 /// L'état lui est transmis entier : un écran lit ses propres données mais
 /// aussi du transversal — messages éphémères, buffer de saisie —, et c'est
 /// ici qu'il est disponible d'un bloc.
-pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &EtatTui) {
+///
+/// **En `&mut`**, ce qui surprend d'un rendu. Un `StatefulWidget` de Ratatui
+/// écrit dans son état au moment d'être dessiné : lui seul connaît alors la
+/// hauteur de sa zone et le nombre d'items, donc lui seul peut borner une
+/// sélection et poser un défilement. L'écran d'arborescence en dépend ; celui
+/// du pilotage garde un `&EtatTui`, le reborrow étant automatique.
+pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &mut EtatTui) {
     match &etat_tui.ecran {
         Ecran::Pilotage => dessiner_ecran_pilotage(frame, etat_tui),
         Ecran::ArborescenceEnu => dessiner_ecran_arborescence_enu(frame, etat_tui),

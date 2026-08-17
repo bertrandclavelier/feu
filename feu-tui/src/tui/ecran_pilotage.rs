@@ -33,9 +33,10 @@ use secrecy::{ExposeSecret, SecretString};
 
 use crate::tui::{
     Ecran, EtatTui, ModeSaisie, ValidationBufferSaisie,
+    ecran_arborescence_enu::libelle,
     rendu::{
         CHEVRON_INVITE, COULEUR_ACCENT, CURSEUR, Dimensions, MASQUE_MOT_DE_PASSE, PASTILLE_ALLUMEE,
-        PASTILLE_ETEINTE, SEPARATEUR,
+        PASTILLE_ETEINTE, SEPARATEUR, SYMBOLE_RACINE,
     },
 };
 
@@ -294,6 +295,12 @@ pub(super) fn dessiner_ecran_pilotage(frame: &mut Frame, etat_tui: &EtatTui) {
 ///
 /// Les pastilles lisent l'état réel du nœud et des foyers dans la session ;
 /// les messages éphémères ne s'affichent que tant qu'ils sont posés.
+///
+/// Une ligne échappe à cette règle des éphémères : celle de l'ENU retenue, qui
+/// reste tant qu'une autre marque ne la remplace pas. Sa hauteur est réservée
+/// dans le layout même quand rien n'est marqué — c'est ce qui empêche le reste
+/// du carré de sauter d'une ligne à la première marque. Un pendant l'y
+/// rejoindra pour le chemin, quand l'écran d'arborescence du disque existera.
 fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
     let lignes = Layout::vertical([
         Constraint::Fill(1),
@@ -325,6 +332,7 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
         Constraint::Length(1), // invite
         Constraint::Length(2), // espace vide
         Constraint::Fill(1),
+        Constraint::Length(1), // ligne enu sélectionnée
         Constraint::Length(1), // ligne affichage commande
         Constraint::Length(1), // pied
     ])
@@ -377,6 +385,7 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
         );
     }
 
+    // Message erreur
     if let Some(message) = etat_tui.message_erreur() {
         let affichage_erreur = Line::from(vec![Span::styled(
             message,
@@ -387,6 +396,7 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
         frame.render_widget(affichage_erreur, carre_lignes[2]);
     }
 
+    // Ligne de commande
     let mut spans_invite = vec![Span::raw("feu")];
     if let Some(index) = etat_tui.etat_pilotage.position_courante.foyer {
         spans_invite.push(Span::raw(format!("/foy.{index}")));
@@ -416,6 +426,28 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
         }),
     );
 
+    // Ligne de l'ENU retenue. Sa place est réservée en permanence par le
+    // layout : marquer une ENU ne décale donc rien de ce qui l'entoure.
+    if let Some(fiche) = &etat_tui.enu_selectionnee {
+        let nom = match libelle(fiche) {
+            // La racine n'a pas de nom : son symbole en tient lieu.
+            nom if nom.is_empty() => String::from(SYMBOLE_RACINE),
+            nom => nom,
+        };
+
+        frame.render_widget(
+            Line::from(vec![
+                Span::styled(
+                    format!("ENU {CHEVRON_INVITE} "),
+                    Style::default().fg(COULEUR_ACCENT),
+                ),
+                Span::raw(nom),
+            ]),
+            carre_lignes[7],
+        );
+    }
+
+    // Message aide commande
     if let Some(message) = etat_tui.message_aide() {
         let affichage_commande = Line::from(vec![
             Span::styled(" <", Style::default().fg(COULEUR_ACCENT)),
@@ -423,7 +455,7 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
             Span::styled(">", Style::default().fg(COULEUR_ACCENT)),
         ]);
 
-        frame.render_widget(affichage_commande, carre_lignes[7]);
+        frame.render_widget(affichage_commande, carre_lignes[8]);
     }
 }
 

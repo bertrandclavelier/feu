@@ -28,8 +28,9 @@
 //!
 //! Deux touches sont actives partout, quel que soit l'écran : `Tab` passe à
 //! l'écran suivant, `?` liste ce qui est actif. Le reste dépend de l'écran —
-//! sur celui de l'arborescence, `R` charge ou rafraîchit l'arbre, et c'est
-//! tout ; les cas ci-dessous sont ceux du pilotage.
+//! sur celui de l'arborescence, `R` charge ou rafraîchit l'arbre, `j` et `k`
+//! déplacent le curseur, `Entrée` plie ou déplie un répertoire et `m` retient
+//! l'ENU sous le curseur ; les cas ci-dessous sont ceux du pilotage.
 //!
 //! Deux autres y sont omises pour ne pas alourdir la liste : `!` affiche
 //! l'à-propos en toute circonstance, `r` dès que le nœud est allumé.
@@ -123,6 +124,19 @@ pub(super) enum Commande {
     /// *quand* on peut changer d'écran, jamais *vers lequel*.
     EcranSuivant,
 
+    /// Replie ou déplie le répertoire sous le curseur — `Entrée`, sur l'écran
+    /// d'arborescence.
+    ///
+    /// Pure navigation TUI, comme les trois `Enu*` qui suivent : rien n'est
+    /// demandé au cœur, l'arbre en mémoire ne bouge pas, seul change ce qui en
+    /// est montré.
+    ///
+    /// La bascule est refusée hors d'un répertoire peuplé — une feuille n'a
+    /// rien à cacher, et un répertoire vide ne révélerait rien. Le tri se fait
+    /// dans `basculer_pli` plutôt qu'ici : la table ignore la carte de la ligne
+    /// courante, qu'il faudrait rouvrir à chaque frappe pour le savoir.
+    EnuBasculerPli,
+
     /// Charge l'arborescence des ENU du nœud — `R`, sur son écran.
     ///
     /// Le chargement est explicite, jamais déclenché par l'arrivée sur l'écran :
@@ -133,6 +147,28 @@ pub(super) enum Commande {
     /// Émet [`crate::connecteurs::MessageTuiCoeur::ChargementArborescenceEnu`],
     /// qui ne porte rien : le cœur tient la racine de départ.
     EnuChargerArborescence,
+
+    /// Descend le curseur d'une ligne visible — `j`, sur l'écran d'arborescence.
+    ///
+    /// `j` et `k` plutôt que les flèches : l'écran est un explorateur de
+    /// fichiers, et c'en est le geste. Les lignes masquées par un pli sont
+    /// sautées d'elles-mêmes, le curseur ne connaissant que la liste affichée.
+    EnuDescendreCurseur,
+
+    /// Retient l'ENU sous le curseur — `m`, sur l'écran d'arborescence.
+    ///
+    /// `m` pour *mark*, le poseur de marque de vim. Sans argument : il n'y a
+    /// qu'un emplacement, [`crate::tui::EtatTui::enu_selectionnee`], et un
+    /// registre nommé ne se justifierait qu'à partir de plusieurs.
+    ///
+    /// La marque **remplace** la précédente, et rien ne l'efface : c'est le
+    /// choix que les commandes du pilotage consommeront, pas une sélection
+    /// éphémère.
+    EnuMarquer,
+
+    /// Remonte le curseur d'une ligne visible — `k`, pendant de
+    /// [`Commande::EnuDescendreCurseur`].
+    EnuMonterCurseur,
 
     /// Affiche l'aide contextuelle listant les touches actuellement actives.
     ///
@@ -487,20 +523,46 @@ impl CommandesActives {
 
     /// Ajoute à la table les touches propres à l'écran d'arborescence.
     ///
-    /// Une seule pour l'instant, `R`, et aucune condition : le chargement est
-    /// toujours proposé, qu'un arbre soit déjà en mémoire ou non — c'est aussi
-    /// le geste de rafraîchissement.
+    /// Cinq, et aucune condition : `R` charge ou rafraîchit, `j` et `k`
+    /// déplacent le curseur, `Entrée` plie ou déplie, `m` retient l'ENU sous le
+    /// curseur.
+    ///
+    /// **Ces quatre dernières échappent au filtrage strict** décrit dans
+    /// [`Self::new`] : elles sont présentes même sans arbre chargé, où elles ne
+    /// font rien. C'est un écart assumé — leur poser une condition demanderait
+    /// de recalculer les lignes visibles à chaque frappe, et de couvrir par des
+    /// tests un cas que l'utilisateur ne peut pas distinguer d'une touche
+    /// inactive. Elles ne peuvent pas échouer, seulement rester sans effet ; la
+    /// méthode appelée sort alors sur un `None`.
     ///
     /// Ne reçoit pas l'état, contrairement à
     /// [`Self::new_ecran_pilotage`](CommandesActives::new_ecran_pilotage) :
-    /// rien ici ne dépend encore de la session ni de ce qui est affiché.
+    /// c'est la conséquence directe de ce qui précède.
     ///
     /// `R` est une majuscule, donc `KeyModifiers::SHIFT` — le lookup étant une
-    /// égalité exacte sur le tuple, l'oublier rendrait la touche muette.
+    /// égalité exacte sur le tuple, l'oublier rendrait la touche muette. Les
+    /// minuscules `j`, `k` et `m` prennent `NONE`, et s'en tenir à
+    /// `KeyModifiers::SHIFT` par symétrie les rendrait muettes de la même façon.
     fn new_ecran_enu(commandes_actives: &mut HashMap<(KeyCode, KeyModifiers), Commande>) {
         commandes_actives.insert(
             (KeyCode::Char('R'), KeyModifiers::SHIFT),
             Commande::EnuChargerArborescence,
+        );
+        commandes_actives.insert(
+            (KeyCode::Char('j'), KeyModifiers::NONE),
+            Commande::EnuDescendreCurseur,
+        );
+        commandes_actives.insert(
+            (KeyCode::Char('k'), KeyModifiers::NONE),
+            Commande::EnuMonterCurseur,
+        );
+        commandes_actives.insert(
+            (KeyCode::Char('m'), KeyModifiers::NONE),
+            Commande::EnuMarquer,
+        );
+        commandes_actives.insert(
+            (KeyCode::Enter, KeyModifiers::NONE),
+            Commande::EnuBasculerPli,
         );
     }
 
