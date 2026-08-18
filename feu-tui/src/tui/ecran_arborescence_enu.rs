@@ -8,11 +8,11 @@
 
 //! Écran d'arborescence des ENU : on y navigue, on y plie, on y choisit.
 //!
-//! `Tab` y mène depuis le pilotage, `R` demande l'arbre au cœur, qui le renvoie
+//! `h` y mène depuis le pilotage, `R` demande l'arbre au cœur, qui le renvoie
 //! prêt à dessiner : une entrée par ligne, décalée de sa profondeur. `j` et `k`
 //! déplacent le curseur, `Entrée` replie ou déplie un répertoire, `m` retient
 //! l'ENU sous le curseur dans [`crate::tui::EtatTui::enu_selectionnee`] — d'où
-//! le pilotage la lira.
+//! le pilotage la lira — et `x` l'y efface.
 //!
 //! Chaque ligne porte la colonne de marque, un guide par niveau, le symbole de
 //! la carte, puis le nom. Le guide est le même à tous les niveaux : le cœur
@@ -45,12 +45,12 @@
 //!
 //! **Le chargement est explicite, jamais automatique.** Arriver sur l'écran ne
 //! déclenche rien : le parcours lit un fichier par ENU de l'arbre, et ce coût
-//! se décide. En contrepartie l'arbre survit aux allers-retours par `Tab`, et
+//! se décide. En contrepartie l'arbre survit aux allers-retours entre écrans, et
 //! peut donc être périmé — un dépôt crée une nouvelle racine que l'écran ne
 //! voit pas tant que `R` n'est pas rappuyé.
 //!
-//! Les transitions `vers_*` du pilotage n'ont pas d'équivalent ici : `Tab`
-//! suffit à entrer, et `passer_ecran_suivant` tient le cycle.
+//! Les transitions `vers_*` du pilotage n'ont pas d'équivalent ici : `h` suffit
+//! à entrer, et `passer_ecran_precedent` tient l'ordre des écrans.
 
 use std::collections::HashSet;
 
@@ -74,8 +74,8 @@ use crate::tui::{
 
 /// Dimensions du carré de l'écran, identiques à celles du pilotage.
 ///
-/// Le cadre ne bouge pas d'un écran de travail à l'autre : `Tab` change ce qui
-/// est dedans, pas la fenêtre.
+/// Le cadre ne bouge pas d'un écran de travail à l'autre : `h` et `l` changent
+/// ce qui est dedans, pas la fenêtre.
 const DIMENSIONS_ECRAN_ENU: Dimensions = Dimensions {
     largeur: 70,
     hauteur: 35,
@@ -331,16 +331,16 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
     });
 
     let carre_lignes = Layout::vertical([
-        Constraint::Length(1), // titre
-        Constraint::Length(1), // respiration
-        Constraint::Fill(1),   // arbre
-        Constraint::Length(2), // respiration
-        Constraint::Length(1), // message d'erreur
-        Constraint::Length(1), // message d'aide
+        Constraint::Length(1), // [0] titre
+        Constraint::Length(1), // [1] respiration
+        Constraint::Fill(1),   // [2] arborescence
+        Constraint::Length(2), // [3] respiration
+        Constraint::Length(1), // [4] message d'erreur
+        Constraint::Length(1), // [5] message d'aide
     ])
     .split(carre);
 
-    // Titre
+    // [0] Titre
     let ligne_titre = Line::from(vec![Span::styled(
         "Arborescence des ENU",
         Style::default()
@@ -349,31 +349,11 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
     )])
     .centered();
 
-    frame.render_widget(ligne_titre, carre_lignes[0]);
+    frame.render_widget(ligne_titre, carre_lignes[0]); // [0]
 
-    // Message d'erreur
-    if let Some(message) = etat_tui.message_erreur() {
-        let affichage_erreur = Line::from(vec![Span::styled(
-            message,
-            Style::default().fg(COULEUR_ACCENT),
-        )])
-        .centered();
+    // [1] respiration
 
-        frame.render_widget(affichage_erreur, carre_lignes[4]);
-    }
-
-    // Message d'aide
-    if let Some(message) = etat_tui.message_aide() {
-        let affichage_commande = Line::from(vec![
-            Span::styled(" <", Style::default().fg(COULEUR_ACCENT)),
-            Span::raw(message),
-            Span::styled(">", Style::default().fg(COULEUR_ACCENT)),
-        ]);
-
-        frame.render_widget(affichage_commande, carre_lignes[5]);
-    }
-
-    // Arborescence
+    // [2] arborescence
     match &etat_tui.etat_arborescence_enu.arborescence_enus {
         None => {
             let zone_message = Layout::vertical([
@@ -417,19 +397,9 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
                             format!("{GUIDE_TUYAU} ").repeat(*profondeur),
                             Style::default().add_modifier(Modifier::DIM),
                         ),
-                        Span::raw(match libelle(fiche) {
-                            // La racine n'a pas de nom : son symbole tient seul
-                            // la ligne, sans espace à traîner derrière lui.
-                            libelle if libelle.is_empty() => {
-                                symbole(fiche, etat_tui.etat_arborescence_enu.deplies.contains(i))
-                                    .to_string()
-                            }
-                            libelle => format!(
-                                "{} {}",
-                                symbole(fiche, etat_tui.etat_arborescence_enu.deplies.contains(i)),
-                                libelle
-                            ),
-                        }),
+                        symbole(fiche, etat_tui.etat_arborescence_enu.deplies.contains(i)),
+                        Span::raw(" "),
+                        Span::raw(libelle(fiche)),
                     ])
                 })
                 .collect::<Vec<Line>>();
@@ -442,6 +412,30 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
                 carre_lignes[2],
                 &mut etat_tui.etat_arborescence_enu.curseur,
             );
+
+            // [3] respiration
+
+            // [4] message d'erreur
+            if let Some(message) = etat_tui.message_erreur() {
+                let affichage_erreur = Line::from(vec![Span::styled(
+                    message,
+                    Style::default().fg(COULEUR_ACCENT),
+                )])
+                .centered();
+
+                frame.render_widget(affichage_erreur, carre_lignes[4]); // [4]
+            }
+
+            // [5] message d'aide
+            if let Some(message) = etat_tui.message_aide() {
+                let affichage_commande = Line::from(vec![
+                    Span::styled(" <", Style::default().fg(COULEUR_ACCENT)),
+                    Span::raw(message),
+                    Span::styled(">", Style::default().fg(COULEUR_ACCENT)),
+                ]);
+
+                frame.render_widget(affichage_commande, carre_lignes[5]); // [5]
+            }
         }
     }
 }
@@ -502,11 +496,22 @@ pub(super) fn libelle(fiche: &Fiche) -> String {
     }
 }
 
-/// Le symbole qui précède le libellé, d'après la variante de [`Carte`].
+/// Le symbole qui précède le libellé, d'après la variante de [`Carte`], prêt à
+/// poser dans la ligne.
 ///
-/// La racine passe avant le `match` : c'est une [`Carte::Repertoire`] comme une
-/// autre, seule sa méta `_racine` la distingue, et elle mérite sa marque parce
-/// qu'elle seule n'a pas de nom à afficher.
+/// **Un [`Span`] et non un `&str`** : la forme et la couleur du symbole
+/// relèvent de la même décision, et les rendre ensemble évite que l'appelant
+/// rejoue le `match` pour savoir quoi styler.
+///
+/// **Seuls les deux triangles pliables portent [`COULEUR_ACCENT`]** : ce sont
+/// eux qui disent qu'il y a quelque chose à ouvrir ou à fermer. Le répertoire
+/// vide reste au premier plan neutre — il ne répond à aucun pli —, comme la
+/// racine et les feuilles.
+///
+/// La racine est une [`Carte::Repertoire`] comme une autre, seule sa méta
+/// `_racine` la distingue, et elle est testée avant le pli parce que son
+/// symbole dit *ce qu'elle est*, ce qu'aucun triangle ne dirait — elle seule
+/// n'a pas de nom à afficher.
 ///
 /// Un répertoire vide reçoit le sien : le déplier ne montrerait rien, et lui
 /// laisser la marque des répertoires peuplés promettrait un contenu.
@@ -515,19 +520,16 @@ pub(super) fn libelle(fiche: &Fiche) -> String {
 /// argument : la carte seule ne peut pas le savoir, il vit dans
 /// [`EtatArborescenceEnu::deplies`]. Un répertoire vide l'ignore — il n'a pas
 /// d'état de pli, seulement rien à montrer.
-///
-/// La racine passe avant tout : elle est repliable comme les autres, mais son
-/// symbole dit *ce qu'elle est*, ce qu'aucun triangle ne dirait.
-fn symbole(fiche: &Fiche, deplie: bool) -> &'static str {
-    if fiche.carte().metas().get("_racine").is_some() {
-        return SYMBOLE_RACINE;
-    }
-
-    match fiche.carte() {
+fn symbole(fiche: &Fiche, deplie: bool) -> Span<'static> {
+    let symbole = match fiche.carte() {
         Carte::Donnee { .. } => SYMBOLE_DONNEE,
         Carte::Texte { .. } => SYMBOLE_TEXTE,
-        Carte::Repertoire { hashs_enu, .. } => {
-            if hashs_enu.is_empty() {
+        Carte::Repertoire {
+            metas, hashs_enu, ..
+        } => {
+            if metas.get("_racine").is_some() {
+                SYMBOLE_RACINE
+            } else if hashs_enu.is_empty() {
                 SYMBOLE_REPERTOIRE_VIDE
             } else if deplie {
                 SYMBOLE_REPERTOIRE_DEPLIE
@@ -535,5 +537,10 @@ fn symbole(fiche: &Fiche, deplie: bool) -> &'static str {
                 SYMBOLE_REPERTOIRE_REPLIE
             }
         }
+    };
+    if symbole == SYMBOLE_REPERTOIRE_DEPLIE || symbole == SYMBOLE_REPERTOIRE_REPLIE {
+        Span::styled(symbole, Style::default().fg(COULEUR_ACCENT))
+    } else {
+        Span::raw(symbole)
     }
 }

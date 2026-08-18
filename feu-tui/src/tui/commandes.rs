@@ -26,11 +26,12 @@
 //!
 //! # Cartographie clavier
 //!
-//! Deux touches sont actives partout, quel que soit l'écran : `Tab` passe à
-//! l'écran suivant, `?` liste ce qui est actif. Le reste dépend de l'écran —
-//! sur celui de l'arborescence, `R` charge ou rafraîchit l'arbre, `j` et `k`
-//! déplacent le curseur, `Entrée` plie ou déplie un répertoire et `m` retient
-//! l'ENU sous le curseur ; les cas ci-dessous sont ceux du pilotage.
+//! Trois touches sont actives partout, quel que soit l'écran : `h` et `l`
+//! passent d'un écran à l'autre, `?` liste ce qui est actif. Le reste dépend de
+//! l'écran — sur celui de l'arborescence, `R` charge ou rafraîchit l'arbre, `j`
+//! et `k` déplacent le curseur, `Entrée` plie ou déplie un répertoire, `m`
+//! retient l'ENU sous le curseur et `x` lève la marque ; les cas ci-dessous
+//! sont ceux du pilotage.
 //!
 //! Deux autres y sont omises pour ne pas alourdir la liste : `!` affiche
 //! l'à-propos en toute circonstance, `r` dès que le nœud est allumé.
@@ -114,15 +115,36 @@ use crate::tui::{Ecran, EtatTui};
 /// dictée par les conditions énumérées ci-dessous — voir [`CommandesActives::new`]
 /// pour l'implémentation des règles.
 pub(super) enum Commande {
-    /// Passe à l'écran de travail suivant, en cycle — `Tab`.
+    /// Passe à l'écran de travail suivant — `l`.
+    ///
+    /// `h` et `l` plutôt que `Tab` : le déplacement latéral de vim, dans le
+    /// même registre que `j` et `k` sur l'arborescence, et les écrans se
+    /// parcourent désormais dans les deux sens.
     ///
     /// Toujours active, quel que soit l'écran et l'état du nœud : c'est le seul
     /// chemin entre les écrans, et rien ne justifierait de l'y enfermer. Aucun
     /// message au cœur, aucun effet métier.
     ///
-    /// Le cycle lui-même est tenu par `passer_ecran_suivant` : la table dit
-    /// *quand* on peut changer d'écran, jamais *vers lequel*.
+    /// L'ordre est tenu par `passer_ecran_suivant` : la table dit *quand* on
+    /// peut changer d'écran, jamais *vers lequel*. Les écrans étant rangés en
+    /// ligne et non en cycle, la commande reste liée sur le dernier d'entre
+    /// eux, où elle ne déplace rien.
     EcranSuivant,
+
+    /// Revient à l'écran de travail précédent — `h`.
+    ///
+    /// Pendant de [`Commande::EcranSuivant`] : mêmes conditions, même partage
+    /// des rôles avec `passer_ecran_precedent`, et pas de bouclage non plus —
+    /// sur le premier écran, elle ne déplace rien.
+    EcranPrecedent,
+
+    /// Lève la marque posée sur une ENU — `x`, sur l'écran d'arborescence.
+    ///
+    /// Pure navigation TUI, comme les `Enu*` : la marque ne vit que dans
+    /// [`crate::tui::EtatTui::enu_selectionnee`], la lever ne demande rien au
+    /// cœur. Sans elle, [`Commande::EnuMarquer`] ne pourrait que déplacer la
+    /// marque d'une ENU à l'autre, jamais rendre le choix vide.
+    SupprimerSelection,
 
     /// Replie ou déplie le répertoire sous le curseur — `Entrée`, sur l'écran
     /// d'arborescence.
@@ -141,8 +163,8 @@ pub(super) enum Commande {
     ///
     /// Le chargement est explicite, jamais déclenché par l'arrivée sur l'écran :
     /// il lit un fichier par ENU de l'arbre, un coût que l'utilisateur doit
-    /// décider de payer. Ce qui a déjà été chargé survit aux allers-retours par
-    /// `Tab` — la même touche rafraîchit.
+    /// décider de payer. Ce qui a déjà été chargé survit aux allers-retours
+    /// entre écrans — la même touche rafraîchit.
     ///
     /// Émet [`crate::connecteurs::MessageTuiCoeur::ChargementArborescenceEnu`],
     /// qui ne porte rien : le cœur tient la racine de départ.
@@ -161,9 +183,9 @@ pub(super) enum Commande {
     /// qu'un emplacement, [`crate::tui::EtatTui::enu_selectionnee`], et un
     /// registre nommé ne se justifierait qu'à partir de plusieurs.
     ///
-    /// La marque **remplace** la précédente, et rien ne l'efface : c'est le
-    /// choix que les commandes du pilotage consommeront, pas une sélection
-    /// éphémère.
+    /// La marque **remplace** la précédente, et seule [`Commande::SupprimerSelection`]
+    /// la lève : c'est le choix que les commandes du pilotage consommeront, pas
+    /// une sélection éphémère.
     EnuMarquer,
 
     /// Remonte le curseur d'une ligne visible — `k`, pendant de
@@ -366,10 +388,10 @@ impl CommandesActives {
     /// l'état entier plutôt que les morceaux qu'elle lit laisse les règles
     /// s'ouvrir à d'autres dimensions sans changer sa signature ni ses appels.
     ///
-    /// Ne pose ici que les deux touches valables partout — `Tab` bascule
-    /// d'écran, `?` liste ce qui est actif —, puis délègue à l'écran courant :
-    /// tout le reste dépend de ce qui est affiché, et un écran n'a pas à
-    /// connaître les touches d'un autre.
+    /// Ne pose ici que les trois touches valables partout — `h` et `l`
+    /// basculent d'écran, `?` liste ce qui est actif —, puis délègue à l'écran
+    /// courant : tout le reste dépend de ce qui est affiché, et un écran n'a
+    /// pas à connaître les touches d'un autre.
     ///
     /// # Filtrage strict
     ///
@@ -379,8 +401,14 @@ impl CommandesActives {
     pub(crate) fn new(etat_tui: &EtatTui) -> Self {
         let mut commandes_actives: HashMap<(KeyCode, KeyModifiers), Commande> = HashMap::new();
 
-        commandes_actives.insert((KeyCode::Tab, KeyModifiers::NONE), Commande::EcranSuivant);
-
+        commandes_actives.insert(
+            (KeyCode::Char('l'), KeyModifiers::NONE),
+            Commande::EcranSuivant,
+        );
+        commandes_actives.insert(
+            (KeyCode::Char('h'), KeyModifiers::NONE),
+            Commande::EcranPrecedent,
+        );
         commandes_actives.insert(
             (KeyCode::Char('?'), KeyModifiers::NONE),
             Commande::ListeCommandesActives,
@@ -411,7 +439,7 @@ impl CommandesActives {
     ///   l'est, selon que la session en porte un ou non ;
     /// - `!` dans tous les cas.
     ///
-    /// `!` n'est pas remontée avec `Tab` et `?` : elle ouvre une modale du
+    /// `!` n'est pas remontée avec `h`, `l` et `?` : elle ouvre une modale du
     /// pilotage, qui se referme sur lui — l'activer ailleurs ferait changer
     /// d'écran sans retour.
     ///
@@ -561,6 +589,10 @@ impl CommandesActives {
             Commande::EnuMarquer,
         );
         commandes_actives.insert(
+            (KeyCode::Char('x'), KeyModifiers::NONE),
+            Commande::SupprimerSelection,
+        );
+        commandes_actives.insert(
             (KeyCode::Enter, KeyModifiers::NONE),
             Commande::EnuBasculerPli,
         );
@@ -577,9 +609,9 @@ impl CommandesActives {
     /// Retourne une chaîne énumérant les touches actives, séparées par des espaces.
     ///
     /// Chaque touche est rendue entre guillemets simples : le caractère lui-même
-    /// (`'a'`, `'1'`…), ou un glyphe pour les deux touches nommées de la table,
-    /// `'⌫'` et `'⇥'`. Tout autre `KeyCode` serait ignoré — aucune liaison n'en
-    /// utilise, et une touche muette dans l'aide vaut mieux qu'un nom illisible.
+    /// (`'a'`, `'1'`…), ou un glyphe pour la seule touche nommée de la table,
+    /// `'⌫'`. Tout autre `KeyCode` est ignoré, `Entrée` comprise : une touche
+    /// muette dans l'aide vaut mieux qu'un nom illisible.
     ///
     /// Alimente [`crate::tui::EtatTui::message_aide`] via
     /// [`Commande::ListeCommandesActives`].
@@ -595,7 +627,6 @@ impl CommandesActives {
             match key_code {
                 KeyCode::Char(c) => liste_commandes.push_str(&format!(" '{c}'")),
 
-                KeyCode::Tab => liste_commandes.push_str(" '⇥'"),
                 KeyCode::Backspace => liste_commandes.push_str(" '⌫'"),
                 _ => {}
             }

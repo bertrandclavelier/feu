@@ -55,8 +55,9 @@ use super::{Ecran, EtatTui};
 /// Couleur d'accent unique de l'interface — orange `#FF5A1F`.
 ///
 /// Chevron de l'invite, pastilles allumées, cadres des écrans pilotés par le
-/// cœur, messages d'erreur. Aucune autre couleur n'est introduite : la
-/// hiérarchie visuelle repose sur la casse et le gras.
+/// cœur, messages d'erreur, marque de sélection et triangles de pli de
+/// l'arborescence. Aucune autre couleur n'est introduite : la hiérarchie
+/// visuelle repose sur la casse et le gras.
 pub(crate) const COULEUR_ACCENT: Color = Color::Rgb(255, 90, 31);
 
 pub(crate) const GUIDE_TUYAU: &str = "│";

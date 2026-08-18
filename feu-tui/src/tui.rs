@@ -31,10 +31,10 @@
 //!
 //! [`Ecran`] désigne l'écran de travail affiché, et rien d'autre : ce qu'il
 //! contient, ses sous-écrans compris, appartient à son module — voir
-//! [`ecran_pilotage`] et [`ecran_arborescence_enu`]. `Tab` passe de l'un à
-//! l'autre, en cycle. [`ModeSaisie`] décide comment les touches sont
-//! interprétées : `Normal` (dispatch via la table de commandes), `Insertion`
-//! (accumulation dans un buffer, validation par Entrée), `Information`
+//! [`ecran_pilotage`] et [`ecran_arborescence_enu`]. `h` et `l` passent de l'un
+//! à l'autre, en ligne et non en cycle. [`ModeSaisie`] décide comment les
+//! touches sont interprétées : `Normal` (dispatch via la table de commandes),
+//! `Insertion` (accumulation dans un buffer, validation par Entrée), `Information`
 //! (avancement par Entrée uniquement). [`commandes::CommandesActives`] enfin
 //! liste les touches actives, reconstruite à chaque changement de session ou
 //! de position.
@@ -52,8 +52,9 @@
 //! quand le nœud est éteint, `!` affiche l'à-propos. Sur l'écran
 //! d'arborescence, `R` charge ou rafraîchit l'arbre, `j` et `k` déplacent le
 //! curseur, `Entrée` plie ou déplie un répertoire, `m` retient l'ENU sous le
-//! curseur. `Tab` et `?` sont les seules à valoir partout — changer d'écran,
-//! et lister ce qui y est actif.
+//! curseur et `x` lève la marque. `h`, `l` et `?` sont les seules à valoir
+//! partout — changer d'écran dans un sens ou dans l'autre, et lister ce qui y
+//! est actif.
 
 mod commandes;
 mod ecran_arborescence_enu;
@@ -369,23 +370,55 @@ impl EtatTui {
         }
     }
 
-    /// Passe à l'écran de travail suivant, en cycle.
+    /// Passe à l'écran de travail suivant, s'il y en a un.
     ///
     /// Le seul endroit qui connaisse l'ordre des écrans — la table des
     /// commandes dit quand basculer, pas vers quoi. Ici plutôt que dans un
     /// module d'écran : aucun d'eux ne sait ce qui le suit.
+    ///
+    /// **Les écrans sont rangés en ligne, pas en cycle** : le pilotage est le
+    /// dernier, et son bras vide est l'écriture de cette borne — depuis lui, la
+    /// commande est reçue et ne déplace rien.
     ///
     /// Rien à poser d'autre que [`EtatTui::ecran`] : chaque écran de travail
     /// s'entre en [`ModeSaisie::Normal`], mode dans lequel on est forcément
     /// déjà puisque la table n'y est consultée que là.
     fn passer_ecran_suivant(&mut self) {
         match self.ecran {
-            Ecran::Pilotage => {
-                self.ecran = Ecran::ArborescenceEnu;
-            }
+            Ecran::Pilotage => {}
             Ecran::ArborescenceEnu => {
                 self.ecran = Ecran::Pilotage;
             }
+        }
+    }
+
+    /// Revient à l'écran de travail précédent, s'il y en a un.
+    ///
+    /// Pendant de [`EtatTui::passer_ecran_suivant`], dont il partage la raison
+    /// de vivre ici : l'ordre des écrans n'est écrit qu'à cet endroit, et il
+    /// faut le lire dans les deux sens pour le connaître. L'arborescence est la
+    /// première, d'où son bras vide.
+    fn passer_ecran_precedent(&mut self) {
+        match self.ecran {
+            Ecran::Pilotage => {
+                self.ecran = Ecran::ArborescenceEnu;
+            }
+            Ecran::ArborescenceEnu => {}
+        }
+    }
+
+    /// Lève la marque posée sur une ENU, sans rien demander au cœur.
+    ///
+    /// Pendant de [`Commande::EnuMarquer`] : la marque ne vit que dans
+    /// [`EtatTui::enu_selectionnee`], état de la TUI seule que rien n'a envoyé
+    /// au nœud. La reposer à `None` est donc tout ce qu'il y a à faire.
+    ///
+    /// **La garde sur l'écran ne double pas la table** : la même touche lèvera
+    /// la sélection de l'arborescence disque à venir, et c'est ici que se
+    /// décidera laquelle des deux est visée.
+    fn supprimer_selection(&mut self) {
+        if matches!(self.ecran, Ecran::ArborescenceEnu) {
+            self.enu_selectionnee = None;
         }
     }
 }
@@ -539,6 +572,12 @@ impl Tui {
             match commande {
                 Commande::EcranSuivant => {
                     self.etat_tui.passer_ecran_suivant();
+                }
+                Commande::EcranPrecedent => {
+                    self.etat_tui.passer_ecran_precedent();
+                }
+                Commande::SupprimerSelection => {
+                    self.etat_tui.supprimer_selection();
                 }
                 Commande::EnuBasculerPli => {
                     self.etat_tui.etat_arborescence_enu.basculer_pli();
