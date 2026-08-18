@@ -11,7 +11,8 @@
 //! [`dessiner`] est le point d'entrée unique, appelé à chaque frame : il ne
 //! dessine rien lui-même et passe la main au module de l'écran actif. Le reste
 //! du module tient le vocabulaire visuel commun — la couleur d'accent, les
-//! caractères d'interface et le type [`Dimensions`].
+//! caractères d'interface, le type [`Dimensions`] — et [`carre_principal`], la
+//! fenêtre que les écrans de travail se partagent.
 //!
 //! # Les caractères
 //!
@@ -43,7 +44,12 @@
 //! ici, et d'autres — capture pour tests, inspection — peuvent s'y ajouter
 //! sans alourdir le module d'état.
 
-use ratatui::{Frame, style::Color};
+use ratatui::{
+    Frame,
+    layout::{Constraint, Layout, Rect},
+    style::{Color, Style},
+    widgets::{Block, Tabs},
+};
 
 use crate::tui::{
     ecran_arborescence_enu::dessiner_ecran_arborescence_enu,
@@ -51,6 +57,19 @@ use crate::tui::{
 };
 
 use super::{Ecran, EtatTui};
+
+/// Dimensions du carré commun aux écrans de travail.
+///
+/// Ratio 70 × 35 pour compenser la hauteur des cellules terminal et obtenir un
+/// rendu visuellement carré.
+///
+/// Une seule paire pour tous : la fenêtre ne bouge pas d'un écran à l'autre,
+/// `h` et `l` changent ce qui est dedans. Ici plutôt que dans un module
+/// d'écran, où deux constantes égales avaient fini par se répondre.
+const DIMENSIONS_ECRAN_PRINCIPAL: Dimensions = Dimensions {
+    largeur: 70,
+    hauteur: 35,
+};
 
 /// Couleur d'accent unique de l'interface — orange `#FF5A1F`.
 ///
@@ -61,6 +80,12 @@ use super::{Ecran, EtatTui};
 pub(crate) const COULEUR_ACCENT: Color = Color::Rgb(255, 90, 31);
 
 pub(crate) const GUIDE_TUYAU: &str = "│";
+
+/// Découpe d'un onglet dans la bordure haute, et trait qui les relie.
+///
+/// Les trois connecteurs du même jeu que [`GUIDE_TUYAU`] : posés sur le trait,
+/// ils le referment de part et d'autre du titre au lieu d'y laisser un trou.
+const ONGLET_LIAISON: &str = "─";
 
 pub(crate) const SYMBOLE_RACINE: &str = "⌂";
 pub(crate) const SYMBOLE_REPERTOIRE_DEPLIE: &str = "▾";
@@ -114,4 +139,65 @@ pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &mut EtatTui) {
         Ecran::Pilotage => dessiner_ecran_pilotage(frame, etat_tui),
         Ecran::ArborescenceEnu => dessiner_ecran_arborescence_enu(frame, etat_tui),
     }
+}
+
+/// Centre la fenêtre des écrans de travail, la dessine, et rend sa zone.
+///
+/// Le cadre est le même pour tous les écrans de travail, et le rester est une
+/// exigence de rendu : il n'a aucune raison de sauter ou de changer de taille
+/// quand `h` et `l` passent de l'un à l'autre. L'écrire une fois est ce qui le
+/// garantit, plutôt qu'une consigne à retenir dans chaque module.
+///
+/// **Rend le rectangle du cadre, bordure comprise, et non l'intérieur** : la
+/// marge de découpe appartient à l'écran, qui l'applique lui-même — le
+/// pilotage et l'arborescence n'ont pas la même respiration verticale.
+///
+/// **Les onglets sont posés sur le trait bas**, à gauche, où ils écrasent la
+/// bordure aux colonnes qu'ils occupent : ils appartiennent au cadre, pas au
+/// contenu, et ne coûtent donc aucune ligne intérieure. En bas à gauche comme
+/// la liste des fenêtres de tmux — le coin où un terminal dit où l'on est.
+///
+/// L'onglet marqué est celui de `ecran`, et leur ordre est celui que
+/// parcourent `passer_ecran_suivant` et son pendant — un onglet qui ne serait
+/// pas dans l'ordre des touches mentirait sur le sens de `h` et `l`.
+///
+/// Les cadres des modales du pilotage — mot de passe, seed, information — ne
+/// passent pas par ici : ils ont leurs propres dimensions, et n'ont pas
+/// d'onglets à porter puisqu'on ne change pas d'écran depuis eux.
+pub(crate) fn carre_principal(frame: &mut Frame, ecran: &Ecran) -> Rect {
+    let lignes = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(DIMENSIONS_ECRAN_PRINCIPAL.hauteur),
+        Constraint::Fill(1),
+    ])
+    .split(frame.area());
+
+    let colonnes = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(DIMENSIONS_ECRAN_PRINCIPAL.largeur),
+        Constraint::Fill(1),
+    ])
+    .split(lignes[1]);
+
+    frame.render_widget(Block::bordered(), colonnes[1]);
+
+    let zone = Rect {
+        x: colonnes[1].x + 3,
+        y: colonnes[1].bottom() - 1,
+        width: colonnes[1].width.saturating_sub(6),
+        height: 1,
+    };
+
+    frame.render_widget(
+        Tabs::new([" ENU ", " Pilotage "])
+            .select(match ecran {
+                Ecran::ArborescenceEnu => 0,
+                Ecran::Pilotage => 1,
+            })
+            .divider(ONGLET_LIAISON.repeat(2))
+            .padding("", "")
+            .highlight_style(Style::default().fg(COULEUR_ACCENT)),
+        zone,
+    );
+    colonnes[1]
 }

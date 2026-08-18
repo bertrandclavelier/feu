@@ -36,17 +36,8 @@ use crate::tui::{
     ecran_arborescence_enu::libelle,
     rendu::{
         CHEVRON_INVITE, COULEUR_ACCENT, CURSEUR, Dimensions, MASQUE_MOT_DE_PASSE, PASTILLE_ALLUMEE,
-        PASTILLE_ETEINTE, SEPARATEUR, SYMBOLE_RACINE,
+        PASTILLE_ETEINTE, SEPARATEUR, SYMBOLE_RACINE, carre_principal,
     },
-};
-
-/// Dimensions du carré de l'écran principal.
-///
-/// Ratio 70 × 35 pour compenser la hauteur des cellules terminal et obtenir un
-/// rendu visuellement carré.
-const DIMENSIONS_ECRAN_PRINCIPAL: Dimensions = Dimensions {
-    largeur: 70,
-    hauteur: 35,
 };
 
 /// Dimensions du cadre de saisie du mot de passe.
@@ -285,7 +276,9 @@ pub(super) fn dessiner_ecran_pilotage(frame: &mut Frame, etat_tui: &EtatTui) {
     }
 }
 
-/// Cadre à angles droits, pastilles, invite et messages éphémères.
+/// Pastilles, invite et messages éphémères, dans le carré commun aux écrans de
+/// travail — que [`super::rendu::carre_principal`] a dessiné et dont il rend
+/// ici la zone.
 ///
 /// L'invite est reconstruite à chaque frame :
 /// `feu[/foy.N][/cla.M] › [prompt] [buffer]▌` — les segments entre crochets
@@ -310,24 +303,7 @@ pub(super) fn dessiner_ecran_pilotage(frame: &mut Frame, etat_tui: &EtatTui) {
 /// `carre_lignes` : le layout est long, et une ligne dessinée loin de sa
 /// déclaration se retrouve autrement à l'œil.
 fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
-    let lignes = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(DIMENSIONS_ECRAN_PRINCIPAL.hauteur),
-        Constraint::Fill(1),
-    ])
-    .split(frame.area());
-
-    let colonnes = Layout::horizontal([
-        Constraint::Fill(1),
-        Constraint::Length(DIMENSIONS_ECRAN_PRINCIPAL.largeur),
-        Constraint::Fill(1),
-    ])
-    .split(lignes[1]);
-
-    frame.render_widget(Block::bordered(), colonnes[1]);
-
-    // Découpage à l'intérieur de la bordure pour ne pas l'écraser.
-    let carre = colonnes[1].inner(Margin {
+    let carre = carre_principal(frame, &etat_tui.ecran).inner(Margin {
         horizontal: 4,
         vertical: 1,
     });

@@ -60,25 +60,16 @@ use ratatui::{
     layout::{Constraint, Layout, Margin},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, List, ListState},
+    widgets::{List, ListState},
 };
 
 use crate::tui::{
     EtatTui,
     rendu::{
-        COULEUR_ACCENT, Dimensions, GUIDE_TUYAU, MARQUE_SELECTION, SYMBOLE_DONNEE, SYMBOLE_RACINE,
+        COULEUR_ACCENT, GUIDE_TUYAU, MARQUE_SELECTION, SYMBOLE_DONNEE, SYMBOLE_RACINE,
         SYMBOLE_REPERTOIRE_DEPLIE, SYMBOLE_REPERTOIRE_REPLIE, SYMBOLE_REPERTOIRE_VIDE,
-        SYMBOLE_TEXTE,
+        SYMBOLE_TEXTE, carre_principal,
     },
-};
-
-/// Dimensions du carré de l'écran, identiques à celles du pilotage.
-///
-/// Le cadre ne bouge pas d'un écran de travail à l'autre : `h` et `l` changent
-/// ce qui est dedans, pas la fenêtre.
-const DIMENSIONS_ECRAN_ENU: Dimensions = Dimensions {
-    largeur: 70,
-    hauteur: 35,
 };
 
 /// Longueur maximale d'un libellé affiché, ellipse comprise.
@@ -281,11 +272,12 @@ impl EtatArborescenceEnu {
     }
 }
 
-/// Dessine le cadre, son titre, l'arbre et les messages éphémères.
+/// Dessine le titre, l'arbre et les messages éphémères.
 ///
-/// Le carré est découpé comme celui du pilotage — bordure rendue d'abord, puis
-/// `inner` pour ne pas l'écraser. L'arbre prend le `Fill`, ce qui reste est
-/// fixe : le titre en haut, les deux messages en bas.
+/// Le carré est celui du pilotage, dessiné par
+/// [`super::rendu::carre_principal`] ; ne reste ici que la marge de découpe,
+/// plus haute que la sienne. L'arbre prend le `Fill`, ce qui reste est fixe :
+/// le titre en haut, les deux messages en bas.
 ///
 /// L'arbre arrive dans l'ordre de l'affichage, chaque entrée précédée de sa
 /// profondeur : le rendu n'a plus qu'à répéter le motif d'indentation autant de
@@ -308,52 +300,23 @@ impl EtatArborescenceEnu {
 /// reçu. Le troisième cas, un arbre réduit à sa seule racine, n'est pas encore
 /// séparé du second.
 pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut EtatTui) {
-    let lignes = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(DIMENSIONS_ECRAN_ENU.hauteur),
-        Constraint::Fill(1),
-    ])
-    .split(frame.area());
-
-    let colonnes = Layout::horizontal([
-        Constraint::Fill(1),
-        Constraint::Length(DIMENSIONS_ECRAN_ENU.largeur),
-        Constraint::Fill(1),
-    ])
-    .split(lignes[1]);
-
-    frame.render_widget(Block::bordered(), colonnes[1]);
-
-    // Découpage à l'intérieur de la bordure pour ne pas l'écraser.
-    let carre = colonnes[1].inner(Margin {
+    let carre = carre_principal(frame, &etat_tui.ecran).inner(Margin {
         horizontal: 4,
         vertical: 2,
     });
 
     let carre_lignes = Layout::vertical([
-        Constraint::Length(1), // [0] titre
-        Constraint::Length(1), // [1] respiration
-        Constraint::Fill(1),   // [2] arborescence
-        Constraint::Length(2), // [3] respiration
-        Constraint::Length(1), // [4] message d'erreur
-        Constraint::Length(1), // [5] message d'aide
+        Constraint::Length(1), // [0] respiration
+        Constraint::Fill(1),   // [1] arborescence
+        Constraint::Length(2), // [2] respiration
+        Constraint::Length(1), // [3] message d'erreur
+        Constraint::Length(1), // [4] message d'aide
     ])
     .split(carre);
 
-    // [0] Titre
-    let ligne_titre = Line::from(vec![Span::styled(
-        "Arborescence des ENU",
-        Style::default()
-            .fg(COULEUR_ACCENT)
-            .add_modifier(Modifier::BOLD),
-    )])
-    .centered();
+    // [0] respiration
 
-    frame.render_widget(ligne_titre, carre_lignes[0]); // [0]
-
-    // [1] respiration
-
-    // [2] arborescence
+    // [1] arborescence
     match &etat_tui.etat_arborescence_enu.arborescence_enus {
         None => {
             let zone_message = Layout::vertical([
@@ -361,7 +324,7 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
                 Constraint::Length(1),
                 Constraint::Fill(1),
             ])
-            .split(carre_lignes[2]);
+            .split(carre_lignes[1]);
 
             let texte = Line::from(vec![Span::raw("'R' pour charger l'arborescence")]).centered();
             frame.render_widget(texte, zone_message[1]);
@@ -409,13 +372,13 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
 
             frame.render_stateful_widget(
                 liste,
-                carre_lignes[2],
+                carre_lignes[1],
                 &mut etat_tui.etat_arborescence_enu.curseur,
             );
 
-            // [3] respiration
+            // [2] respiration
 
-            // [4] message d'erreur
+            // [3] message d'erreur
             if let Some(message) = etat_tui.message_erreur() {
                 let affichage_erreur = Line::from(vec![Span::styled(
                     message,
@@ -423,10 +386,10 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
                 )])
                 .centered();
 
-                frame.render_widget(affichage_erreur, carre_lignes[4]); // [4]
+                frame.render_widget(affichage_erreur, carre_lignes[3]); // [3]
             }
 
-            // [5] message d'aide
+            // [4] message d'aide
             if let Some(message) = etat_tui.message_aide() {
                 let affichage_commande = Line::from(vec![
                     Span::styled(" <", Style::default().fg(COULEUR_ACCENT)),
@@ -434,7 +397,7 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
                     Span::styled(">", Style::default().fg(COULEUR_ACCENT)),
                 ]);
 
-                frame.render_widget(affichage_commande, carre_lignes[5]); // [5]
+                frame.render_widget(affichage_commande, carre_lignes[4]); // [4]
             }
         }
     }
