@@ -417,6 +417,9 @@ impl CommandesActives {
         match etat_tui.ecran {
             Ecran::Pilotage => Self::new_ecran_pilotage(etat_tui, &mut commandes_actives),
             Ecran::ArborescenceEnu => Self::new_ecran_enu(&mut commandes_actives),
+            // L'écran du disque n'a pas encore de touche propre : seules les
+            // trois globales y valent.
+            Ecran::ArborescenceDisque => {}
         }
 
         Self(commandes_actives)

@@ -272,12 +272,16 @@ impl EtatArborescenceEnu {
     }
 }
 
-/// Dessine le titre, l'arbre et les messages éphémères.
+/// Dessine l'arbre et les messages éphémères.
 ///
 /// Le carré est celui du pilotage, dessiné par
 /// [`super::rendu::carre_principal`] ; ne reste ici que la marge de découpe,
 /// plus haute que la sienne. L'arbre prend le `Fill`, ce qui reste est fixe :
-/// le titre en haut, les deux messages en bas.
+/// une respiration en haut, deux en bas, puis les deux lignes de message.
+///
+/// Les messages sont rendus hors du `match` sur l'arbre : ils traversent la
+/// TUI et ne dépendent pas du chargement, si bien qu'une erreur reçue avant
+/// tout `R` reste lisible sur l'écran d'invite.
 ///
 /// L'arbre arrive dans l'ordre de l'affichage, chaque entrée précédée de sa
 /// profondeur : le rendu n'a plus qu'à répéter le motif d'indentation autant de
@@ -314,7 +318,27 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
     ])
     .split(carre);
 
-    // [0] respiration
+    // [3] message d'erreur
+    if let Some(message) = etat_tui.message_erreur() {
+        let affichage_erreur = Line::from(vec![Span::styled(
+            message,
+            Style::default().fg(COULEUR_ACCENT),
+        )])
+        .centered();
+
+        frame.render_widget(affichage_erreur, carre_lignes[3]); // [3]
+    }
+
+    // [4] message d'aide
+    if let Some(message) = etat_tui.message_aide() {
+        let affichage_commande = Line::from(vec![
+            Span::styled(" <", Style::default().fg(COULEUR_ACCENT)),
+            Span::raw(message),
+            Span::styled(">", Style::default().fg(COULEUR_ACCENT)),
+        ]);
+
+        frame.render_widget(affichage_commande, carre_lignes[4]); // [4]
+    }
 
     // [1] arborescence
     match &etat_tui.etat_arborescence_enu.arborescence_enus {
@@ -375,30 +399,6 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
                 carre_lignes[1],
                 &mut etat_tui.etat_arborescence_enu.curseur,
             );
-
-            // [2] respiration
-
-            // [3] message d'erreur
-            if let Some(message) = etat_tui.message_erreur() {
-                let affichage_erreur = Line::from(vec![Span::styled(
-                    message,
-                    Style::default().fg(COULEUR_ACCENT),
-                )])
-                .centered();
-
-                frame.render_widget(affichage_erreur, carre_lignes[3]); // [3]
-            }
-
-            // [4] message d'aide
-            if let Some(message) = etat_tui.message_aide() {
-                let affichage_commande = Line::from(vec![
-                    Span::styled(" <", Style::default().fg(COULEUR_ACCENT)),
-                    Span::raw(message),
-                    Span::styled(">", Style::default().fg(COULEUR_ACCENT)),
-                ]);
-
-                frame.render_widget(affichage_commande, carre_lignes[4]); // [4]
-            }
         }
     }
 }

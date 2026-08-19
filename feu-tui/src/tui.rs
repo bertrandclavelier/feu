@@ -31,9 +31,10 @@
 //!
 //! [`Ecran`] désigne l'écran de travail affiché, et rien d'autre : ce qu'il
 //! contient, ses sous-écrans compris, appartient à son module — voir
-//! [`ecran_pilotage`] et [`ecran_arborescence_enu`]. `h` et `l` passent de l'un
-//! à l'autre, en ligne et non en cycle. [`ModeSaisie`] décide comment les
-//! touches sont interprétées : `Normal` (dispatch via la table de commandes),
+//! [`ecran_pilotage`], [`ecran_arborescence_enu`] et
+//! [`ecran_arborescence_disque`]. `h` et `l` passent de l'un à l'autre, en
+//! ligne et non en cycle. [`ModeSaisie`] décide comment les touches sont
+//! interprétées : `Normal` (dispatch via la table de commandes),
 //! `Insertion` (accumulation dans un buffer, validation par Entrée), `Information`
 //! (avancement par Entrée uniquement). [`commandes::CommandesActives`] enfin
 //! liste les touches actives, reconstruite à chaque changement de session ou
@@ -57,6 +58,7 @@
 //! est actif.
 
 mod commandes;
+mod ecran_arborescence_disque;
 mod ecran_arborescence_enu;
 mod ecran_pilotage;
 mod rendu;
@@ -115,6 +117,10 @@ enum Ecran {
     /// L'arborescence des ENU du nœud, où l'on navigue, plie et marque — cf.
     /// [`ecran_arborescence_enu`].
     ArborescenceEnu,
+
+    /// L'arborescence du disque, vide tant qu'il n'y a pas de sélecteur de
+    /// fichiers — cf. [`ecran_arborescence_disque`].
+    ArborescenceDisque,
 }
 
 /// Axe d'interprétation des touches clavier — indépendant de l'écran affiché.
@@ -376,19 +382,23 @@ impl EtatTui {
     /// commandes dit quand basculer, pas vers quoi. Ici plutôt que dans un
     /// module d'écran : aucun d'eux ne sait ce qui le suit.
     ///
-    /// **Les écrans sont rangés en ligne, pas en cycle** : le pilotage est le
-    /// dernier, et son bras vide est l'écriture de cette borne — depuis lui, la
-    /// commande est reçue et ne déplace rien.
+    /// **Les écrans sont rangés en ligne, pas en cycle** : l'arborescence du
+    /// disque est la dernière, et son bras vide est l'écriture de cette borne —
+    /// depuis elle, la commande est reçue et ne déplace rien. L'ordre est celui
+    /// des onglets, ENU puis pilotage puis disque.
     ///
     /// Rien à poser d'autre que [`EtatTui::ecran`] : chaque écran de travail
     /// s'entre en [`ModeSaisie::Normal`], mode dans lequel on est forcément
     /// déjà puisque la table n'y est consultée que là.
     fn passer_ecran_suivant(&mut self) {
         match self.ecran {
-            Ecran::Pilotage => {}
+            Ecran::Pilotage => {
+                self.ecran = Ecran::ArborescenceDisque;
+            }
             Ecran::ArborescenceEnu => {
                 self.ecran = Ecran::Pilotage;
             }
+            Ecran::ArborescenceDisque => {}
         }
     }
 
@@ -396,14 +406,17 @@ impl EtatTui {
     ///
     /// Pendant de [`EtatTui::passer_ecran_suivant`], dont il partage la raison
     /// de vivre ici : l'ordre des écrans n'est écrit qu'à cet endroit, et il
-    /// faut le lire dans les deux sens pour le connaître. L'arborescence est la
-    /// première, d'où son bras vide.
+    /// faut le lire dans les deux sens pour le connaître. L'arborescence des
+    /// ENU est la première, d'où son bras vide.
     fn passer_ecran_precedent(&mut self) {
         match self.ecran {
             Ecran::Pilotage => {
                 self.ecran = Ecran::ArborescenceEnu;
             }
             Ecran::ArborescenceEnu => {}
+            Ecran::ArborescenceDisque => {
+                self.ecran = Ecran::Pilotage;
+            }
         }
     }
 
