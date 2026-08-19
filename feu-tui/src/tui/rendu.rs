@@ -111,6 +111,14 @@ pub(crate) const CURSEUR: &str = "▌";
 pub(crate) const MASQUE_MOT_DE_PASSE: &str = "•";
 pub(crate) const SEPARATEUR: &str = "·";
 
+/// Longueur maximale d'un libellé affiché, ellipse comprise.
+///
+/// Comptée en caractères, jamais en octets. Partagée par les deux
+/// arborescences, qui bornent chacune leurs noms dans leur `libelle` : un nom
+/// d'ENU et un nom de fichier tiennent dans le même carré, la borne n'a pas de
+/// raison d'y différer.
+pub(crate) const MAX_LONGUEUR_MOT: usize = 30;
+
 /// Paire largeur/hauteur en cellules terminal, pour dimensionner les zones
 /// rectangulaires centrées dans le frame.
 ///

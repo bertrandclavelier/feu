@@ -50,12 +50,13 @@
 //! classeurs, `d` y ouvre un comptoir de dépôt et `c` le ferme, `r` retire
 //! l'arborescence sur le disque, `Backspace` remonte d'un niveau, `f` ferme le
 //! foyer où l'on est, `e` éteint quand tous les foyers sont fermés, `q` quitte
-//! quand le nœud est éteint, `!` affiche l'à-propos. Sur l'écran
-//! d'arborescence, `R` charge ou rafraîchit l'arbre, `j` et `k` déplacent le
-//! curseur, `Entrée` plie ou déplie un répertoire, `m` retient l'ENU sous le
-//! curseur et `x` lève la marque. `h`, `l` et `?` sont les seules à valoir
-//! partout — changer d'écran dans un sens ou dans l'autre, et lister ce qui y
-//! est actif.
+//! quand le nœud est éteint, `!` affiche l'à-propos. Sur les deux écrans
+//! d'arborescence, les mêmes touches font les mêmes gestes : `R` charge ou
+//! rafraîchit, `j` et `k` déplacent le curseur, `Entrée` plie ou déplie un
+//! répertoire, `m` retient ce qui est sous le curseur — une ENU d'un côté, un
+//! chemin de l'autre — et `x` lève la marque. `h`, `l` et `?` sont les seules à
+//! valoir partout — changer d'écran dans un sens ou dans l'autre, et lister ce
+//! qui y est actif.
 
 mod commandes;
 mod ecran_arborescence_disque;
@@ -64,7 +65,7 @@ mod ecran_pilotage;
 mod rendu;
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::mpsc::TryRecvError,
     time::{Duration, Instant},
 };
@@ -76,7 +77,10 @@ use secrecy::SecretString;
 
 use crate::{
     connecteurs::{ConnecteurVersCoeur, MessageCoeurTui, MessageTuiCoeur},
-    tui::{ecran_arborescence_enu::EtatArborescenceEnu, ecran_pilotage::EtatPilotage},
+    tui::{
+        ecran_arborescence_disque::EtatArborescenceDisque,
+        ecran_arborescence_enu::EtatArborescenceEnu, ecran_pilotage::EtatPilotage,
+    },
 };
 use commandes::{Commande, CommandesActives};
 
@@ -118,8 +122,8 @@ enum Ecran {
     /// [`ecran_arborescence_enu`].
     ArborescenceEnu,
 
-    /// L'arborescence du disque, vide tant qu'il n'y a pas de sélecteur de
-    /// fichiers — cf. [`ecran_arborescence_disque`].
+    /// L'arborescence du disque depuis le dossier personnel, où l'on navigue,
+    /// plie et marque un chemin — cf. [`ecran_arborescence_disque`].
     ArborescenceDisque,
 }
 
@@ -219,6 +223,10 @@ struct EtatTui {
     /// seul son module en lit le contenu.
     etat_arborescence_enu: EtatArborescenceEnu,
 
+    /// Ce que l'écran d'arborescence du disque retient — l'arbre construit
+    /// jusqu'ici et le curseur. Opaque d'ici, comme ses deux voisins.
+    etat_arborescence_disque: EtatArborescenceDisque,
+
     /// L'ENU que l'utilisateur a retenue, `None` tant qu'il n'en a marqué
     /// aucune.
     ///
@@ -239,6 +247,18 @@ struct EtatTui {
     /// qu'elle désigne une ENU absente du nouveau parcours — elle reste
     /// chargeable, le stockage étant adressé par contenu.
     enu_selectionnee: Option<Fiche>,
+
+    /// Le chemin que l'utilisateur a retenu sur l'écran du disque, `None` tant
+    /// qu'il n'en a marqué aucun.
+    ///
+    /// Transversal pour la même raison que [`Self::enu_selectionnee`] : la
+    /// marque se pose sur l'écran du disque et se lit sur celui du pilotage,
+    /// qui l'affiche.
+    ///
+    /// Un chemin, et non le contenu du fichier : il désigne, il ne charge rien.
+    /// Il peut donc désigner ce qui n'existe plus — rien ne surveille le
+    /// disque —, ce que verra la commande qui le consommera.
+    chemin_selectionne: Option<PathBuf>,
 
     /// Table de dispatch touche → commande, filtrée par le contexte courant.
     ///
@@ -295,14 +315,19 @@ impl EtatTui {
     /// La table des commandes se construit en deux temps — vide d'abord,
     /// puisqu'elle est une fonction de l'état qui n'existe pas encore, remplie
     /// aussitôt après (cf. [`CommandesActives::vide`]).
-    fn new() -> Self {
+    ///
+    /// `chemin_home` ne fait que traverser, vers l'écran du disque qui en fait
+    /// la racine de son arbre.
+    fn new(chemin_home: &Path) -> Self {
         let mut etat_tui = Self {
             session_application: None,
             ecran: Ecran::Pilotage,
             mode_saisie: ModeSaisie::Normal,
             etat_pilotage: EtatPilotage::new(),
             etat_arborescence_enu: EtatArborescenceEnu::new(),
+            etat_arborescence_disque: EtatArborescenceDisque::new(chemin_home),
             enu_selectionnee: None,
+            chemin_selectionne: None,
             commandes_actives: CommandesActives::vide(),
             validation_buffer_saisie: ValidationBufferSaisie::Rien,
             message_erreur: (None, 0),
@@ -420,18 +445,22 @@ impl EtatTui {
         }
     }
 
-    /// Lève la marque posée sur une ENU, sans rien demander au cœur.
+    /// Lève la marque de l'écran courant, sans rien demander au cœur.
     ///
-    /// Pendant de [`Commande::EnuMarquer`] : la marque ne vit que dans
-    /// [`EtatTui::enu_selectionnee`], état de la TUI seule que rien n'a envoyé
-    /// au nœud. La reposer à `None` est donc tout ce qu'il y a à faire.
+    /// Ni [`EtatTui::enu_selectionnee`] ni [`EtatTui::chemin_selectionne`] n'ont
+    /// jamais été envoyées au nœud : les reposer à `None` est tout ce qu'il y a
+    /// à faire.
     ///
-    /// **La garde sur l'écran ne double pas la table** : la même touche lèvera
-    /// la sélection de l'arborescence disque à venir, et c'est ici que se
-    /// décidera laquelle des deux est visée.
+    /// **La garde sur l'écran ne double pas la table** : `x` est une seule
+    /// commande, active sur les deux arborescences, et c'est ici que se décide
+    /// laquelle des deux marques elle vise. Depuis un troisième écran, elle ne
+    /// lèverait rien.
     fn supprimer_selection(&mut self) {
         if matches!(self.ecran, Ecran::ArborescenceEnu) {
             self.enu_selectionnee = None;
+        }
+        if matches!(self.ecran, Ecran::ArborescenceDisque) {
+            self.chemin_selectionne = None;
         }
     }
 }
@@ -452,9 +481,13 @@ pub(crate) struct Tui {
 
 impl Tui {
     /// Crée une instance de [`Tui`] avec l'état initial.
-    pub(crate) fn new(connecteur_vers_coeur: ConnecteurVersCoeur) -> Self {
+    ///
+    /// `chemin_home` ne sert qu'à l'écran du disque, qui en fait la racine de
+    /// son arbre. Il est traversé plutôt que lu sur place : `main` est le seul
+    /// point de lecture de l'environnement dans tout Feu.
+    pub(crate) fn new(connecteur_vers_coeur: ConnecteurVersCoeur, chemin_home: &Path) -> Self {
         Self {
-            etat_tui: EtatTui::new(),
+            etat_tui: EtatTui::new(chemin_home),
             connecteur_vers_coeur,
         }
     }
@@ -583,6 +616,24 @@ impl Tui {
             && let Some(commande) = self.etat_tui.commandes_actives.get(&touche)
         {
             match commande {
+                Commande::DisqueBasculerPli => {
+                    self.etat_tui.etat_arborescence_disque.basculer_pli();
+                }
+                Commande::DisqueRechargerRepertoire => {
+                    self.etat_tui.etat_arborescence_disque.recharger();
+                }
+                Commande::DisqueDescendreCurseur => {
+                    self.etat_tui.etat_arborescence_disque.descendre_curseur();
+                }
+                Commande::DisqueMarquer => {
+                    self.etat_tui.chemin_selectionne = self
+                        .etat_tui
+                        .etat_arborescence_disque
+                        .donne_chemin_a_marquer();
+                }
+                Commande::DisqueMonterCurseur => {
+                    self.etat_tui.etat_arborescence_disque.monter_curseur();
+                }
                 Commande::EcranSuivant => {
                     self.etat_tui.passer_ecran_suivant();
                 }

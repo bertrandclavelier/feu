@@ -37,11 +37,14 @@ use crate::connecteurs::{
 use crate::tui::Tui;
 
 fn main() -> Result<(), Error> {
-    // Unique point de lecture de l'environnement dans tout Feu : le chemin racine
-    // du nœud est résolu ici, au bord du programme, puis injecté vers le bas
-    // (application, noyau, scribe). Aucune couche en aval ne touche à `$HOME` —
-    // ce qui les rend testables en les enracinant dans un dossier temporaire.
-    let chemin_feu = PathBuf::from(env::var("HOME").expect("HOME absente")).join(".feu/");
+    // Unique point de lecture de l'environnement dans tout Feu : les deux
+    // chemins sont résolus ici, au bord du programme, puis injectés — le nœud
+    // vers le bas (application, noyau, scribe), le dossier personnel vers la
+    // TUI, où il est la racine de l'écran du disque. Aucune couche en aval ne
+    // touche à `$HOME`, ce qui les rend testables en les enracinant dans un
+    // dossier temporaire.
+    let chemin_home = PathBuf::from(env::var("HOME").expect("HOME absente"));
+    let chemin_feu = chemin_home.join(".feu/");
 
     // Canal Tui -> Coeur
     let (emetteur_tui_coeur, recepteur_tui_coeur) = channel::<MessageTuiCoeur>();
@@ -55,7 +58,7 @@ fn main() -> Result<(), Error> {
 
     let poignee_thread_coeur = connecteur_vers_tui.lancer_thread_coeur(&chemin_feu);
 
-    let mut tui = Tui::new(connecteur_vers_coeur);
+    let mut tui = Tui::new(connecteur_vers_coeur, &chemin_home);
     ratatui::run(|terminal| tui.lancer(terminal))?;
 
     // join() retourne Err si le thread cœur a paniqué.

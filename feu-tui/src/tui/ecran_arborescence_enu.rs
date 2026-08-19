@@ -66,17 +66,11 @@ use ratatui::{
 use crate::tui::{
     EtatTui,
     rendu::{
-        COULEUR_ACCENT, GUIDE_TUYAU, MARQUE_SELECTION, SYMBOLE_DONNEE, SYMBOLE_RACINE,
-        SYMBOLE_REPERTOIRE_DEPLIE, SYMBOLE_REPERTOIRE_REPLIE, SYMBOLE_REPERTOIRE_VIDE,
-        SYMBOLE_TEXTE, carre_principal,
+        COULEUR_ACCENT, GUIDE_TUYAU, MARQUE_SELECTION, MAX_LONGUEUR_MOT, SYMBOLE_DONNEE,
+        SYMBOLE_RACINE, SYMBOLE_REPERTOIRE_DEPLIE, SYMBOLE_REPERTOIRE_REPLIE,
+        SYMBOLE_REPERTOIRE_VIDE, SYMBOLE_TEXTE, carre_principal,
     },
 };
-
-/// Longueur maximale d'un libellé affiché, ellipse comprise.
-///
-/// Comptée en caractères, jamais en octets. Le pourquoi de la borne est dans
-/// [`libelle`], seul endroit qui l'applique.
-const MAX_LONGUEUR_MOT: usize = 30;
 
 /// Ce que l'écran d'arborescence retient d'une frame à l'autre.
 ///

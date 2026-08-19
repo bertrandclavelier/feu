@@ -115,6 +115,42 @@ use crate::tui::{Ecran, EtatTui};
 /// dictée par les conditions énumérées ci-dessous — voir [`CommandesActives::new`]
 /// pour l'implémentation des règles.
 pub(super) enum Commande {
+    /// Ouvre ou ferme le répertoire sous le curseur — `Entrée`, sur l'écran du
+    /// disque.
+    ///
+    /// Seule des `Disque*` à toucher au disque : ouvrir lit un niveau. Le refus
+    /// hors d'un répertoire est laissé à `basculer_pli`, la table ne sachant
+    /// pas ce que désigne la ligne courante.
+    DisqueBasculerPli,
+
+    /// Descend le curseur d'une ligne — `j`, sur l'écran du disque.
+    ///
+    /// Pure navigation TUI, comme [`Commande::DisqueMonterCurseur`] : rien
+    /// n'est lu, ni du disque ni du cœur. Toutes les lignes de la liste sont
+    /// visibles, le curseur n'a donc rien à sauter.
+    DisqueDescendreCurseur,
+
+    /// Retient le chemin sous le curseur — `m`, sur l'écran du disque.
+    ///
+    /// Pendant de [`Commande::EnuMarquer`], dont elle partage le geste et
+    /// l'emplacement unique : [`crate::tui::EtatTui::chemin_selectionne`], levé
+    /// par [`Commande::SupprimerSelection`]. Fichier comme répertoire — ce qui
+    /// consommera le chemin dira s'il lui convient.
+    DisqueMarquer,
+
+    /// Relit le répertoire ouvert sous le curseur — `R`, sur l'écran du disque.
+    ///
+    /// `R` comme sur l'écran des ENU, où elle charge et rafraîchit l'arbre. La
+    /// portée diffère : ici une seule branche, celle sous le curseur —
+    /// recharger plus haut jetterait les plis ouverts des répertoires frères.
+    ///
+    /// L'arbre du disque ne se met jamais à jour seul : sans cette touche, un
+    /// fichier déposé depuis un autre programme resterait invisible.
+    DisqueRechargerRepertoire,
+
+    /// Remonte le curseur d'une ligne — `k`, sur l'écran du disque.
+    DisqueMonterCurseur,
+
     /// Passe à l'écran de travail suivant — `l`.
     ///
     /// `h` et `l` plutôt que `Tab` : le déplacement latéral de vim, dans le
@@ -138,12 +174,18 @@ pub(super) enum Commande {
     /// sur le premier écran, elle ne déplace rien.
     EcranPrecedent,
 
-    /// Lève la marque posée sur une ENU — `x`, sur l'écran d'arborescence.
+    /// Lève la marque de l'écran courant — `x`, sur les deux arborescences.
     ///
-    /// Pure navigation TUI, comme les `Enu*` : la marque ne vit que dans
-    /// [`crate::tui::EtatTui::enu_selectionnee`], la lever ne demande rien au
-    /// cœur. Sans elle, [`Commande::EnuMarquer`] ne pourrait que déplacer la
-    /// marque d'une ENU à l'autre, jamais rendre le choix vide.
+    /// **Une seule commande pour deux marques** : l'ENU et le chemin ne peuvent
+    /// pas être visés en même temps, l'écran affiché disant lequel des deux.
+    /// C'est `supprimer_selection` qui le lit, pas la table — deux variantes
+    /// distinctes n'apporteraient qu'un doublon.
+    ///
+    /// Pure navigation TUI, comme les `Enu*` et les `Disque*` : les deux
+    /// marques ne vivent que dans [`crate::tui::EtatTui`], les lever ne demande
+    /// rien au cœur. Sans elle, [`Commande::EnuMarquer`] et
+    /// [`Commande::DisqueMarquer`] ne pourraient que déplacer leur marque,
+    /// jamais rendre le choix vide.
     SupprimerSelection,
 
     /// Replie ou déplie le répertoire sous le curseur — `Entrée`, sur l'écran
@@ -419,7 +461,7 @@ impl CommandesActives {
             Ecran::ArborescenceEnu => Self::new_ecran_enu(&mut commandes_actives),
             // L'écran du disque n'a pas encore de touche propre : seules les
             // trois globales y valent.
-            Ecran::ArborescenceDisque => {}
+            Ecran::ArborescenceDisque => Self::new_ecran_disque(&mut commandes_actives),
         }
 
         Self(commandes_actives)
@@ -598,6 +640,44 @@ impl CommandesActives {
         commandes_actives.insert(
             (KeyCode::Enter, KeyModifiers::NONE),
             Commande::EnuBasculerPli,
+        );
+    }
+
+    /// Ajoute à la table les touches propres à l'écran du disque.
+    ///
+    /// **Aucune condition, contrairement au pilotage** : toutes sont actives en
+    /// permanence, y compris nœud éteint. Naviguer sur le disque ne demande
+    /// rien au cœur, et le chemin retenu doit pouvoir l'être avant d'allumer.
+    /// D'où l'absence d'`etat_tui` en paramètre, que prend `new_ecran_pilotage`.
+    ///
+    /// Les mêmes touches que sur l'écran des ENU, pour les mêmes gestes — un
+    /// seul jeu à retenir. `x` y est même la commande commune,
+    /// [`Commande::SupprimerSelection`], qui lève l'une ou l'autre marque selon
+    /// l'écran courant.
+    fn new_ecran_disque(commandes_actives: &mut HashMap<(KeyCode, KeyModifiers), Commande>) {
+        commandes_actives.insert(
+            (KeyCode::Char('R'), KeyModifiers::SHIFT),
+            Commande::DisqueRechargerRepertoire,
+        );
+        commandes_actives.insert(
+            (KeyCode::Char('j'), KeyModifiers::NONE),
+            Commande::DisqueDescendreCurseur,
+        );
+        commandes_actives.insert(
+            (KeyCode::Char('k'), KeyModifiers::NONE),
+            Commande::DisqueMonterCurseur,
+        );
+        commandes_actives.insert(
+            (KeyCode::Char('m'), KeyModifiers::NONE),
+            Commande::DisqueMarquer,
+        );
+        commandes_actives.insert(
+            (KeyCode::Char('x'), KeyModifiers::NONE),
+            Commande::SupprimerSelection,
+        );
+        commandes_actives.insert(
+            (KeyCode::Enter, KeyModifiers::NONE),
+            Commande::DisqueBasculerPli,
         );
     }
 

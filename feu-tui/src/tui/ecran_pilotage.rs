@@ -291,8 +291,8 @@ pub(super) fn dessiner_ecran_pilotage(frame: &mut Frame, etat_tui: &EtatTui) {
 ///
 /// Trois lignes échappent à cette règle des éphémères : le dépôt ouvert, l'ENU
 /// retenue et le chemin retenu, qui restent tant qu'une autre marque ne les
-/// remplace pas. Seule celle de l'ENU est écrite aujourd'hui ; les deux autres
-/// attendent le comptoir de dépôt et l'écran d'arborescence du disque.
+/// remplace pas. Les deux marques sont écrites ; celle du dépôt attend le
+/// comptoir.
 ///
 /// **Leurs trois hauteurs sont réservées dès maintenant**, marquées ou non :
 /// c'est ce qui empêche le reste du carré de sauter d'une ligne à la première
@@ -429,6 +429,18 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
             Span::raw(nom),
         ]);
         frame.render_widget(ligne, carre_lignes[7]);
+    }
+
+    // [8] chemin sélectionné
+    if let Some(chemin) = &etat_tui.chemin_selectionne {
+        let ligne = Line::from(vec![
+            Span::styled(
+                format!("Chemin {CHEVRON_INVITE} "),
+                Style::default().fg(COULEUR_ACCENT),
+            ),
+            Span::raw(chemin.to_string_lossy()),
+        ]);
+        frame.render_widget(ligne, carre_lignes[8]);
     }
 
     // [10] affichage commandes
