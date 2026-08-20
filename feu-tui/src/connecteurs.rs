@@ -33,16 +33,15 @@ use secrecy::SecretString;
 
 /// Emplacement du dossier de retrait, en dur le temps de brancher la TUI.
 ///
-/// Pendant de `CHEMIN_COMPTOIR_DEPOT` (module `tui`), dont elle partage la
-/// raison d'être — l'utilisateur n'a encore aucun moyen de désigner un dossier —
-/// et la mécanique : `env!` est résolu **à la compilation**, la valeur est une
-/// chaîne littérale figée dans le binaire, jamais une lecture de l'environnement
-/// à l'exécution. C'est ce qui garde tout chemin personnel hors des sources,
-/// `workspace/` étant public.
+/// L'utilisateur n'a encore aucun moyen de désigner où retirer, contrairement au
+/// dépôt qui part du chemin marqué sur l'écran d'arborescence disque. `env!` est
+/// résolu **à la compilation** : la valeur est une chaîne littérale figée dans
+/// le binaire, jamais une lecture de l'environnement à l'exécution. C'est ce qui
+/// garde tout chemin personnel hors des sources, `workspace/` étant public.
 ///
-/// Elle vit ici et non dans la table des commandes, contrairement au chemin de
-/// dépôt : le retrait n'a pas d'index à capturer dans la position courante, la
-/// TUI n'a donc rien à transmettre et le cœur lit le chemin lui-même.
+/// Elle vit ici et non dans la table des commandes : le retrait n'a pas d'index
+/// à capturer dans la position courante, la TUI n'a donc rien à transmettre et
+/// le cœur lit le chemin lui-même.
 ///
 /// Le nom étant fixe, un second retrait échoue tant que le dossier précédent
 /// n'est pas supprimé à la main — l'erreur remonte en
@@ -142,43 +141,43 @@ pub(crate) enum MessageTuiCoeur {
 
     /// Demande la fermeture du comptoir de dépôt dont l'identifiant est porté.
     ///
-    /// Émis par [`crate::tui::Tui`] sur dispatch de la commande
-    /// `PilotageFermerComptoirDepot` — l'identifiant est lu dans
-    /// [`SessionApplication::comptoirs_depot_ouverts`], pas saisi. Le bras de la
-    /// boucle enchaîne [`FeuApplication::commande_derniere_enu_racine`] puis
-    /// [`FeuApplication::commande_fermeture_comptoir_depot`], qui réclame cette
-    /// racine ; l'erreur de l'une comme de l'autre est propagée via
-    /// [`MessageCoeurTui::AffichageErreur`].
-    FermetureComptoirDepot(usize),
+    /// La variante porte l'identifiant du comptoir, saisi par l'utilisateur et
+    /// validé contre [`SessionApplication::comptoirs_depot_ouverts`], et l'ENU
+    /// sous laquelle greffer ce qu'il contient — celle que la TUI tient pour
+    /// sélectionnée. C'est le seul message où le choix de la racine de dépôt
+    /// remonte de l'utilisateur plutôt que du cœur.
+    ///
+    /// Émis par [`crate::tui::Tui`] à la validation du buffer de saisie ;
+    /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
+    /// [`FeuApplication::commande_fermeture_comptoir_depot`].
+    FermetureComptoirDepot(usize, Fiche),
 
-    /// Demande la fermeture du foyer à l'index donné (base 1, tel que désigné par
-    /// la position courante de l'utilisateur).
+    /// Demande la fermeture du foyer à l'index donné.
     ///
     /// Émis par [`crate::tui::Tui`] sur dispatch de `PilotageFermerFoyer` —
-    /// l'index est capturé depuis la position courante au moment de la
-    /// reconstruction de la table des commandes actives, sans saisie.
-    /// Consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
+    /// l'index est capturé depuis la position courante, sans saisie ;
+    /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
     /// [`feu_application::FeuApplication::commande_fermeture_foyer`].
     FermetureFoyer(usize),
 
-    /// Demande l'ouverture du foyer à l'index donné (base 1, tel que saisi par l'utilisateur).
+    /// Demande l'ouverture du foyer à l'index donné.
     ///
-    /// Émis par [`crate::tui::Tui`] à la validation d'un buffer destiné à
-    /// l'ouverture d'un foyer ;
+    /// Émis par [`crate::tui::Tui`] à la validation du buffer de saisie ;
     /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
     /// [`feu_application::FeuApplication::commande_ouverture_foyer`].
     OuvertureFoyer(usize),
 
     /// Demande l'ouverture d'un comptoir de dépôt au chemin porté, vers le foyer
-    /// et le classeur portés (base 1, dans cet ordre).
+    /// puis le classeur portés.
     ///
-    /// Émis par [`crate::tui::Tui`] sur dispatch de `PilotageOuvrirComptoirDepot` — les
-    /// deux index sont capturés depuis la position courante à la construction
-    /// de la table, sans saisie.
-    /// Consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
-    /// [`FeuApplication::commande_ouverture_comptoir_depot`]. Aucune réponse
-    /// dédiée : la commande inscrit l'identifiant dans la session, dont l'envoi
-    /// suit son cours ordinaire.
+    /// Le chemin est celui du dossier **à créer**, sous-dossier de la marque
+    /// posée par l'utilisateur — le cœur refuse un chemin déjà pris.
+    ///
+    /// Émis par [`crate::tui::Tui`] sur dispatch de `PilotageOuvrirComptoirDepot`
+    /// — les deux index sont capturés depuis la position courante, sans saisie ;
+    /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
+    /// [`FeuApplication::commande_ouverture_comptoir_depot`]. L'identifiant rendu
+    /// est ignoré : la commande l'inscrit déjà dans la session.
     ///
     /// Le chemin traverse le canal plutôt que d'être connu du cœur : la TUI est
     /// seule à décider où le dossier apparaît, le cœur ne fait que l'y créer.
@@ -266,27 +265,15 @@ impl ConnecteurVersTui {
     /// ici. Le compilateur devient le filet de sécurité contre les commandes
     /// silencieusement ignorées.
     ///
-    /// [`MessageTuiCoeur::AllumageNoeud`], [`MessageTuiCoeur::ExtinctionNoeud`],
-    /// [`MessageTuiCoeur::FermetureFoyer`], [`MessageTuiCoeur::OuvertureFoyer`]
-    /// et [`MessageTuiCoeur::FermetureComptoirDepot`]
-    /// déclenchent la commande correspondante de [`FeuApplication`] et propagent
-    /// l'erreur éventuelle via [`MessageCoeurTui::AffichageErreur`]. Les index
-    /// de foyer arrivent en base 1 (valeur saisie par l'utilisateur, déjà filtrée
-    /// pour exclure 0) ; la conversion en base 0 est effectuée ici
-    /// (`index_foyer - 1`) avant l'appel à [`FeuApplication`]. Il en va de même
-    /// des index de classeur, arrivés eux aussi en base 1.
+    /// Chaque bras déclenche la commande correspondante de [`FeuApplication`] et
+    /// propage l'erreur éventuelle via [`MessageCoeurTui::AffichageErreur`]. Les
+    /// index de foyer et de classeur traversent le canal tels quels : la TUI
+    /// numérote comme le noyau, à partir de zéro, aucune conversion ici.
     ///
     /// [`MessageTuiCoeur::OuvertureComptoir`] est le seul bras dont la commande
     /// rend autre chose que `()`, et pourtant il s'écrit comme les autres, en
-    /// `if let Err` : l'identifiant qu'elle rend est ignoré ici parce qu'il est
-    /// déjà inscrit dans la session, que la même commande envoie. Le retour
-    /// direct sert un appelant qui enchaîne ; ce bras, lui, n'enchaîne rien —
-    /// il repasse la main à la TUI, qui lit la session.
-    ///
-    /// [`MessageTuiCoeur::FermetureComptoirDepot`] est le seul bras à enchaîner
-    /// deux commandes, la fermeture réclamant la dernière ENU racine. L'`and_then`
-    /// garde la forme des autres : une seule erreur à afficher, quelle que soit
-    /// celle des deux qui a échoué.
+    /// `if let Err` : l'identifiant rendu est déjà inscrit dans la session, que
+    /// la même commande envoie.
     ///
     /// [`MessageTuiCoeur::EnvoieMdp`], [`MessageTuiCoeur::SeedBienRecue`] et
     /// [`MessageTuiCoeur::Annulation`] ont un corps vide : hors-protocole dans
@@ -345,8 +332,7 @@ impl ConnecteurVersTui {
                     Ok(MessageTuiCoeur::Quitter) => break,
                     Ok(MessageTuiCoeur::EnvoieMdp(_)) => {}
                     Ok(MessageTuiCoeur::FermetureFoyer(index_foyer)) => {
-                        if let Err(e) =
-                            feu_application.commande_fermeture_foyer(&self, index_foyer - 1)
+                        if let Err(e) = feu_application.commande_fermeture_foyer(&self, index_foyer)
                         {
                             self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
                                 e.to_string(),
@@ -354,8 +340,7 @@ impl ConnecteurVersTui {
                         }
                     }
                     Ok(MessageTuiCoeur::OuvertureFoyer(index_foyer)) => {
-                        if let Err(e) =
-                            feu_application.commande_ouverture_foyer(&self, index_foyer - 1)
+                        if let Err(e) = feu_application.commande_ouverture_foyer(&self, index_foyer)
                         {
                             self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
                                 e.to_string(),
@@ -370,26 +355,20 @@ impl ConnecteurVersTui {
                         if let Err(e) = feu_application.commande_ouverture_comptoir_depot(
                             &self,
                             &chemin_comptoir_depot,
-                            index_foyer - 1,
-                            index_classeur - 1,
+                            index_foyer,
+                            index_classeur,
                         ) {
                             self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
                                 e.to_string(),
                             ));
                         }
                     }
-                    Ok(MessageTuiCoeur::FermetureComptoirDepot(index_comptoir)) => {
-                        if let Err(e) =
-                            feu_application
-                                .commande_derniere_enu_racine()
-                                .and_then(|fiche| {
-                                    feu_application.commande_fermeture_comptoir_depot(
-                                        &self,
-                                        index_comptoir,
-                                        &fiche,
-                                    )
-                                })
-                        {
+                    Ok(MessageTuiCoeur::FermetureComptoirDepot(index_comptoir, fiche)) => {
+                        if let Err(e) = feu_application.commande_fermeture_comptoir_depot(
+                            &self,
+                            index_comptoir,
+                            &fiche,
+                        ) {
                             self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
                                 e.to_string(),
                             ));

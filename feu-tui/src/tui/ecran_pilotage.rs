@@ -139,16 +139,16 @@ enum EcranPilotage {
 /// l'extinction du nœud, qui exige tous les foyers fermés, trouve toujours la
 /// position déjà à la racine.
 pub(super) struct PositionCourante {
-    /// Index 1-based du foyer, `None` à la racine.
+    /// Index du foyer, `None` à la racine.
     ///
     /// Posé depuis la racine — la table n'expose la touche que pour les foyers
     /// effectivement ouverts. Effacé par `Backspace` ou par la fermeture du
     /// foyer.
     pub(super) foyer: Option<usize>,
 
-    /// Index 1-based du classeur, `None` si l'on n'y est pas descendu.
+    /// Index du classeur, `None` si l'on n'y est pas descendu.
     ///
-    /// La table expose `1`-`9` dans la limite de `nombre_classeurs` : un
+    /// La table expose `0`-`9` dans la limite de `nombre_classeurs` : un
     /// classeur ne s'ouvre pas, tous les indices valides sont accessibles.
     /// Effacé par `Backspace` ou par la fermeture du foyer.
     pub(super) classeur: Option<usize>,
@@ -289,10 +289,11 @@ pub(super) fn dessiner_ecran_pilotage(frame: &mut Frame, etat_tui: &EtatTui) {
 /// Les pastilles lisent l'état réel du nœud et des foyers dans la session ;
 /// les messages éphémères ne s'affichent que tant qu'ils sont posés.
 ///
-/// Trois lignes échappent à cette règle des éphémères : le dépôt ouvert, l'ENU
-/// retenue et le chemin retenu, qui restent tant qu'une autre marque ne les
-/// remplace pas. Les deux marques sont écrites ; celle du dépôt attend le
-/// comptoir.
+/// Trois lignes échappent à cette règle des éphémères : les comptoirs de dépôt
+/// ouverts, l'ENU retenue et le chemin retenu, qui restent tant qu'une autre
+/// marque ne les remplace pas. La ligne des dépôts s'arrête à cinq comptoirs,
+/// les premiers ouverts, et signale le reste par un `…` : au-delà elle
+/// déborderait du carré.
 ///
 /// **Leurs trois hauteurs sont réservées dès maintenant**, marquées ou non :
 /// c'est ce qui empêche le reste du carré de sauter d'une ligne à la première
@@ -412,6 +413,33 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
             vertical: 0,
         }),
     );
+
+    // [6] comptoir dépôt
+    if let Some(session) = &etat_tui.session_application
+        && !session.comptoirs_depot_ouverts().is_empty()
+    {
+        let mut ligne = Line::from(vec![Span::styled(
+            format!("Dépôts {CHEVRON_INVITE} "),
+            Style::default().fg(COULEUR_ACCENT),
+        )]);
+
+        for (rang, (index, (index_foyer, index_classeur))) in
+            session.comptoirs_depot_ouverts().iter().take(5).enumerate()
+        {
+            if rang > 0 {
+                ligne.push_span(Span::raw(format!(" {SEPARATEUR} ")));
+            }
+            ligne.push_span(Span::raw(format!(
+                "{index}.{{f{index_foyer}.c{index_classeur}}}",
+            )));
+        }
+        if session.comptoirs_depot_ouverts().len() > 5 {
+            ligne.push_span(Span::raw(format!(" {SEPARATEUR} ")));
+            ligne.push_span(Span::raw("…"));
+        }
+
+        frame.render_widget(ligne, carre_lignes[6]);
+    }
 
     // [7] enu sélectionnée
     if let Some(fiche) = &etat_tui.enu_selectionnee {

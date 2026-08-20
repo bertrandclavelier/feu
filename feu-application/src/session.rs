@@ -49,7 +49,7 @@
 //! La session ne peut donc pas faire remonter d'erreur applicative dans une
 //! couche qui la consomme, ni celle-ci la lui renvoyer aplatie de ses préfixes.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use feu_noyau::{BRAISE_VIDE, Braise};
 use feu_noyau::{
@@ -90,15 +90,19 @@ pub struct SessionApplication {
     cle_publique_sig_foyers: [[u8; 2592]; MAX_FOYERS],
     /// Clés publiques de chiffrement ML-KEM-1024 des foyers — reçues à l'ouverture.
     cle_publique_chif_foyers: [[u8; 1568]; MAX_FOYERS],
-    /// Identifiants des comptoirs de dépôt ouverts — miroir lisible de ceux que
-    /// le Scribe détient.
+    /// Comptoirs de dépôt ouverts — miroir lisible de ceux que le Scribe
+    /// détient : identifiant, puis foyer et classeur de destination.
     ///
-    /// Un [`BTreeSet`] plutôt qu'un `Vec` : l'unicité est portée par le type
-    /// plutôt que prouvée à chaque insertion, et l'ordre trié suffit à rendre
-    /// l'itération déterministe. Comme les identifiants sont distribués par un
-    /// compteur croissant, cet ordre est celui des ouvertures, sans avoir à le
-    /// maintenir.
-    comptoirs_depot_ouverts: BTreeSet<usize>,
+    /// Une [`BTreeMap`] plutôt qu'un `Vec` de triplets : l'unicité de
+    /// l'identifiant est portée par le type plutôt que prouvée à chaque
+    /// insertion, et l'ordre trié suffit à rendre l'itération déterministe.
+    /// Comme les identifiants sont distribués par un compteur croissant, cet
+    /// ordre est celui des ouvertures, sans avoir à le maintenir.
+    ///
+    /// La destination est stockée là parce que le Scribe seul la connaît, et
+    /// que la couche de présentation en a besoin pour dire vers où un comptoir
+    /// dépose — sans quoi un identifiant nu ne lui apprendrait rien.
+    comptoirs_depot_ouverts: BTreeMap<usize, (usize, usize)>,
 }
 
 impl SessionApplication {
@@ -125,7 +129,7 @@ impl SessionApplication {
             cle_publique_sig_noeud: [0u8; 2592],
             cle_publique_sig_foyers: [[0u8; 2592]; MAX_FOYERS],
             cle_publique_chif_foyers: [[0u8; 1568]; MAX_FOYERS],
-            comptoirs_depot_ouverts: BTreeSet::new(),
+            comptoirs_depot_ouverts: BTreeMap::new(),
         }
     }
 
@@ -251,29 +255,29 @@ impl SessionApplication {
         self.cle_publique_chif_foyers[index_foyer] = cle;
     }
 
-    /// Retourne les identifiants des comptoirs de dépôt ouverts.
+    /// Retourne les comptoirs de dépôt ouverts, indexés par identifiant.
     ///
     /// Par référence, sans clone : la couche de présentation reçoit déjà une
     /// [`SessionApplication`] clonée entière après chaque commande mutante, elle
-    /// possède donc son propre ensemble. Rendre une copie de plus n'ajouterait
+    /// possède donc sa propre table. Rendre une copie de plus n'ajouterait
     /// rien ; qui a besoin d'une valeur possédée la clone chez lui.
     ///
-    /// Aucune [`Option`] ici, contrairement aux accesseurs indexés : l'ensemble
+    /// Aucune [`Option`] ici, contrairement aux accesseurs indexés : la table
     /// existe toujours, vide quand aucun comptoir n'est ouvert.
-    pub fn comptoirs_depot_ouverts(&self) -> &BTreeSet<usize> {
+    pub fn comptoirs_depot_ouverts(&self) -> &BTreeMap<usize, (usize, usize)> {
         &self.comptoirs_depot_ouverts
     }
 
-    /// Retourne l'ensemble des comptoirs ouverts en écriture.
+    /// Retourne la table des comptoirs ouverts en écriture.
     ///
     /// Un accès mutable en bloc plutôt que trois setters — `insert`, `remove` et
-    /// `clear` sont ceux du [`BTreeSet`], les redéclarer ici n'ajouterait qu'un
-    /// niveau de délégation.
+    /// `clear` sont ceux de la [`BTreeMap`], les redéclarer ici n'ajouterait
+    /// qu'un niveau de délégation.
     ///
     /// Appelé par le Scribe seul, aux deux lignes où il ajoute et retire un
     /// comptoir de sa propre table. C'est ce voisinage qui tient le miroir :
     /// aucun chemin d'erreur ne passe entre les deux écritures.
-    pub(crate) fn mut_comptoirs_depot_ouverts(&mut self) -> &mut BTreeSet<usize> {
+    pub(crate) fn mut_comptoirs_depot_ouverts(&mut self) -> &mut BTreeMap<usize, (usize, usize)> {
         &mut self.comptoirs_depot_ouverts
     }
 }

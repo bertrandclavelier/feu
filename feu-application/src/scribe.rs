@@ -389,9 +389,11 @@ impl Scribe {
     /// douter.
     ///
     /// `session` est prise en mutable pour y inscrire le même identifiant, à la
-    /// ligne qui suit l'enregistrement. Le Scribe tient les comptoirs, la
-    /// session les rend lisibles hors de la crate : les deux se remplissent
-    /// donc ici, où l'identifiant vient d'être formé.
+    /// ligne qui suit l'enregistrement, avec les deux index de destination : le
+    /// comptoir lui-même ne sort pas de la crate, seul ce couple dit hors d'ici
+    /// vers où il dépose. Le Scribe tient les comptoirs, la session les rend
+    /// lisibles : les deux se remplissent donc ici, où l'identifiant vient
+    /// d'être formé.
     ///
     /// # Erreurs
     ///
@@ -425,7 +427,7 @@ impl Scribe {
 
         session
             .mut_comptoirs_depot_ouverts()
-            .insert(self.prochain_id - 1);
+            .insert(self.prochain_id - 1, (index_foyer, index_classeur));
 
         Ok(self.prochain_id - 1)
     }
@@ -481,10 +483,13 @@ impl Scribe {
     ///
     /// # Erreurs
     ///
-    /// Trois refus, dont un seul laisse une seconde chance :
-    /// [`ErreurFeuApplication::ScribeFoyerFerme`], foyer de destination fermé
-    /// depuis l'ouverture — le comptoir est encore enregistré, la fermeture se
-    /// retente une fois le foyer rouvert.
+    /// Quatre refus, dont deux laissent une seconde chance :
+    /// [`ErreurFeuApplication::ScribeEnuRAttendue`], racine de dépôt qui n'est
+    /// pas un répertoire — greffer des enfants sous une donnée n'a pas de sens,
+    /// et le refus tombe avant tout dépôt de blob, donc l'utilisateur en désigne
+    /// une autre et retente. [`ErreurFeuApplication::ScribeFoyerFerme`], foyer
+    /// de destination fermé depuis l'ouverture — le comptoir est encore
+    /// enregistré, la fermeture se retente une fois le foyer rouvert.
     /// [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] sort au même endroit,
     /// mais ne couvre ici que le `None` de
     /// [`SessionApplication::braise_foyer`], que la validation d'index à
@@ -509,6 +514,10 @@ impl Scribe {
     ) -> ResultFeuApplication<()> {
         let enu_racine_depot =
             Enu::charger(&self.chemin_enu, session, &fiche_racine_depot.hash_carte())?;
+
+        if !matches!(enu_racine_depot.carte(), Carte::Repertoire { .. }) {
+            return Err(ErreurFeuApplication::ScribeEnuRAttendue);
+        }
 
         let Some(comptoir) = self.comptoirs_depot.get(&index_comptoir) else {
             return Err(ErreurFeuApplication::ScribeIndexComptoirInconnu(

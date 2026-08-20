@@ -46,7 +46,7 @@
 //!
 //! Le geste typique au clavier : `a` allume le nœud, mot de passe, seed
 //! validée par deux pressions d'Entrée ; `o` ouvre un foyer (saisie du
-//! numéro), `1`-`9` entrent dans un foyer ouvert puis dans un de ses
+//! numéro), `0`-`9` entrent dans un foyer ouvert puis dans un de ses
 //! classeurs, `d` y ouvre un comptoir de dépôt et `c` le ferme, `r` retire
 //! l'arborescence sur le disque, `Backspace` remonte d'un niveau, `f` ferme le
 //! foyer où l'on est, `e` éteint quand tous les foyers sont fermés, `q` quitte
@@ -83,25 +83,6 @@ use crate::{
     },
 };
 use commandes::{Commande, CommandesActives};
-
-/// Emplacement du dossier de dépôt, en dur le temps de brancher la TUI.
-///
-/// Le comptoir n'a pas encore d'où tirer un chemin : ni sélecteur de fichiers,
-/// ni saisie, ni navigation dans l'arborescence du disque. Cette constante tient
-/// la place de ce que l'utilisateur désignera. À retirer dès qu'un chemin peut
-/// venir de lui.
-///
-/// `env!` est résolu **à la compilation** : la valeur est une chaîne littérale
-/// figée dans le binaire, pas une lecture de l'environnement à l'exécution. Le
-/// `$HOME` retenu est donc celui de la machine qui compile — sans portée sur du
-/// provisoire, et c'est ce qui garde tout chemin personnel hors des sources,
-/// `workspace/` étant public.
-///
-/// Elle est lue au dispatch de [`Commande::PilotageOuvrirComptoirDepot`], qui ne porte
-/// que les deux index : le chemin ne traverse pas la table des commandes.
-/// Son pendant pour le retrait est `CHEMIN_COMPTOIR_RETRAIT` (module
-/// `connecteurs`), posé là où le cœur le lit.
-const CHEMIN_COMPTOIR_DEPOT: &str = concat!(env!("HOME"), "/Desktop/depot");
 
 /// Axe de rendu : quel écran de travail est dessiné à chaque frame.
 ///
@@ -169,14 +150,23 @@ enum ValidationBufferSaisie {
     /// Le buffer est transmis comme [`crate::connecteurs::MessageTuiCoeur::EnvoieMdp`] au thread cœur.
     EnvoiMdp,
 
-    /// Le buffer est interprété comme un numéro de foyer (base 1) et envoyé via
+    /// Le buffer est interprété comme un identifiant de comptoir et envoyé via
+    /// [`crate::connecteurs::MessageTuiCoeur::FermetureComptoirDepot`], avec
+    /// l'ENU sélectionnée.
+    ///
+    /// Posé par [`Tui::saisie_mode_normal`] sur dispatch de
+    /// [`Commande::PilotageFermerComptoirDepot`]. À la validation, l'identifiant
+    /// doit figurer parmi les comptoirs ouverts de la session ; sinon un message
+    /// d'erreur est affiché et rien n'est envoyé au cœur.
+    FermetureComptoirDepot,
+
+    /// Le buffer est interprété comme un numéro de foyer et envoyé via
     /// [`crate::connecteurs::MessageTuiCoeur::OuvertureFoyer`].
     ///
     /// Posé par [`Tui::saisie_mode_normal`] sur dispatch de
-    /// [`Commande::PilotageOuvrirFoyer`]. À la validation, le buffer est parsé en
-    /// `usize` et l'index doit être strictement positif ; sinon un message
-    /// d'erreur est affiché et aucun message n'est envoyé au cœur. La
-    /// conversion en index base 0 reste à la charge du connecteur cœur.
+    /// [`Commande::PilotageOuvrirFoyer`]. À la validation, l'index doit être
+    /// inférieur au nombre de foyers ; sinon un message d'erreur est affiché et
+    /// rien n'est envoyé au cœur.
     OuvertureFoyer,
 }
 
@@ -232,10 +222,11 @@ struct EtatTui {
     ///
     /// **Transversal, et c'est tout son intérêt** : la marque se pose sur
     /// l'écran d'arborescence et se lit sur celui du pilotage, qui l'affiche en
-    /// permanence et dont les commandes la consommeront — déposer, retirer.
-    /// Elle n'appartient donc à aucun des deux, et un champ chemin la
-    /// rejoindra ici quand l'arborescence du disque existera : à eux deux, ils
-    /// résolvent toute action sans qu'aucune commande n'ait à nommer sa cible.
+    /// permanence et dont les commandes la consomment — la fermeture d'un
+    /// comptoir la prend pour racine de greffe. Elle n'appartient donc à aucun
+    /// des deux, pas plus que [`Self::chemin_selectionne`] à côté d'elle : à eux
+    /// deux, ils résolvent toute action sans qu'aucune commande n'ait à nommer
+    /// sa cible.
     ///
     /// Une [`Fiche`] entière plutôt que son seul `hash_carte` : le pilotage
     /// affiche le nom, et c'est la fiche que les commandes de
@@ -690,15 +681,10 @@ impl Tui {
                         .envoyer_message_tui_coeur(MessageTuiCoeur::ExtinctionNoeud);
                 }
                 Commande::PilotageFermerComptoirDepot => {
-                    if let Some(session) = &self.etat_tui.session_application {
-                        let index_comptoir = session
-                            .comptoirs_depot_ouverts()
-                            .first()
-                            .expect("commande active quand au moins un élément");
-                        self.connecteur_vers_coeur.envoyer_message_tui_coeur(
-                            MessageTuiCoeur::FermetureComptoirDepot(*index_comptoir),
-                        );
-                    }
+                    self.etat_tui.prompt = String::from("ferme comptoir dépôt");
+                    self.etat_tui.mode_saisie = ModeSaisie::Insertion;
+                    self.etat_tui.validation_buffer_saisie =
+                        ValidationBufferSaisie::FermetureComptoirDepot;
                 }
                 Commande::PilotageFermerFoyer(index) => {
                     self.connecteur_vers_coeur
@@ -707,9 +693,10 @@ impl Tui {
                     self.etat_tui.etat_pilotage.position_courante.classeur = None;
                 }
                 Commande::PilotageOuvrirComptoirDepot(index_foyer, index_classeur) => {
+                    let chemin = self.etat_tui.chemin_selectionne.as_ref().unwrap();
                     self.connecteur_vers_coeur.envoyer_message_tui_coeur(
                         MessageTuiCoeur::OuvertureComptoir(
-                            PathBuf::from(CHEMIN_COMPTOIR_DEPOT),
+                            chemin.join(format!("f{index_foyer}.c{index_classeur}_depot_feu")),
                             *index_foyer,
                             *index_classeur,
                         ),
@@ -743,13 +730,9 @@ impl Tui {
     /// un `Ctrl+Entrée` n'est pas une validation, un `Ctrl+C` n'est pas un caractère.
     ///
     /// À la validation (Entrée), consulte [`EtatTui::validation_buffer_saisie`] pour
-    /// décider quel message envoyer au cœur :
-    /// - [`ValidationBufferSaisie::EnvoiMdp`] → transmission directe en
-    ///   [`SecretString`] ;
-    /// - [`ValidationBufferSaisie::OuvertureFoyer`] → parsing du buffer en
-    ///   `usize` et garde `index > 0` avant émission ; en cas d'échec, un message
-    ///   d'erreur est affiché et aucun message n'est envoyé au cœur ;
-    /// - [`ValidationBufferSaisie::Rien`] → no-op (état hors-saisie indue).
+    /// décider quel message envoyer au cœur — chaque variante y documente sa
+    /// garde. Un buffer refusé affiche un message d'erreur et n'envoie rien ;
+    /// [`ValidationBufferSaisie::Rien`] est un no-op, l'état d'une saisie indue.
     ///
     /// Quel que soit le bras pris, l'écran revient à son état de repos, la
     /// destination du buffer à [`ValidationBufferSaisie::Rien`], et `prompt`
@@ -778,11 +761,35 @@ impl Tui {
                             )),
                         );
                     }
+                    ValidationBufferSaisie::FermetureComptoirDepot => {
+                        let enu = self.etat_tui.enu_selectionnee.as_ref().unwrap();
+                        let session = self.etat_tui.session_application.as_ref().unwrap();
+
+                        let index_result: Result<usize, _> =
+                            self.etat_tui.buffer_saisie.trim().parse();
+                        if let Ok(index) = index_result
+                            && session.comptoirs_depot_ouverts().contains_key(&index)
+                        {
+                            self.connecteur_vers_coeur.envoyer_message_tui_coeur(
+                                MessageTuiCoeur::FermetureComptoirDepot(index, enu.clone()),
+                            );
+                        } else {
+                            self.etat_tui.ajouter_message_erreur(String::from(
+                                "Numéro de comptoir invalide",
+                            ));
+                        }
+                    }
                     ValidationBufferSaisie::OuvertureFoyer => {
                         let index_result: Result<usize, _> =
                             self.etat_tui.buffer_saisie.trim().parse();
                         if let Ok(index) = index_result
-                            && index > 0
+                            && index
+                                < self
+                                    .etat_tui
+                                    .session_application
+                                    .as_ref()
+                                    .unwrap()
+                                    .nombre_foyers
                         {
                             self.connecteur_vers_coeur
                                 .envoyer_message_tui_coeur(MessageTuiCoeur::OuvertureFoyer(index));

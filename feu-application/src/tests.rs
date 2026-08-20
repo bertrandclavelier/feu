@@ -581,7 +581,7 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
     assert!(
         app.session
             .comptoirs_depot_ouverts()
-            .contains(&index_comptoir)
+            .contains_key(&index_comptoir)
     );
 
     app.commande_fermeture_foyer(&interface_test, 0)?;
@@ -595,7 +595,7 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
     assert!(
         app.session
             .comptoirs_depot_ouverts()
-            .contains(&index_comptoir)
+            .contains_key(&index_comptoir)
     );
 
     app.commande_ouverture_foyer(&interface_test, 0)?;

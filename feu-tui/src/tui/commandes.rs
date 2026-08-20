@@ -28,10 +28,10 @@
 //!
 //! Trois touches sont actives partout, quel que soit l'écran : `h` et `l`
 //! passent d'un écran à l'autre, `?` liste ce qui est actif. Le reste dépend de
-//! l'écran — sur celui de l'arborescence, `R` charge ou rafraîchit l'arbre, `j`
+//! l'écran — sur les deux arborescences, `R` charge ou rafraîchit l'arbre, `j`
 //! et `k` déplacent le curseur, `Entrée` plie ou déplie un répertoire, `m`
-//! retient l'ENU sous le curseur et `x` lève la marque ; les cas ci-dessous
-//! sont ceux du pilotage.
+//! retient ce qui est sous le curseur (une ENU, ou un chemin du disque) et `x`
+//! lève la marque ; les cas ci-dessous sont ceux du pilotage.
 //!
 //! Deux autres y sont omises pour ne pas alourdir la liste : `!` affiche
 //! l'à-propos en toute circonstance, `r` dès que le nœud est allumé.
@@ -40,27 +40,31 @@
 //! - **Nœud allumé, racine, aucun foyer ouvert** : `e` éteint le nœud, `o`
 //!   ouvre un foyer (saisie du numéro à suivre).
 //! - **Nœud allumé, racine, au moins un foyer ouvert** : `o` ouvre un foyer
-//!   (si la capacité maximale n'est pas atteinte) ; `1`-`9` entrent dans le
+//!   (si la capacité maximale n'est pas atteinte) ; `0`-`9` entrent dans le
 //!   foyer correspondant *s'il est ouvert*. Pas de `e` tant qu'un foyer est
 //!   ouvert.
-//! - **Nœud allumé, dans un foyer** : `f` ferme le foyer courant ; `1`-`9`
+//! - **Nœud allumé, au moins un foyer ouvert, où que l'on soit** : `c` ferme un
+//!   comptoir de dépôt dès qu'il en existe un et qu'une ENU répertoire est
+//!   marquée.
+//! - **Nœud allumé, dans un foyer** : `f` ferme le foyer courant ; `0`-`9`
 //!   entrent dans le classeur correspondant (dans la limite de
 //!   `nombre_classeurs`) ; `Backspace` remonte à la racine ; `o` ouvre un
 //!   foyer si la capacité libre le permet.
 //! - **Nœud allumé, dans un classeur** : `f` ferme le foyer parent ;
 //!   `Backspace` remonte au foyer ; `o` ouvre un foyer si la capacité libre
-//!   le permet ; `d` ouvre un comptoir de dépôt vers ce classeur tant qu'aucun
-//!   autre n'est ouvert, `c` ferme celui qui l'est. Les autres commandes
-//!   propres aux classeurs s'ajouteront ici.
+//!   le permet ; `d` ouvre un comptoir de dépôt vers ce classeur, au chemin
+//!   marqué sur l'écran du disque. Les autres commandes propres aux classeurs
+//!   s'ajouteront ici.
 //!
 //! Touches *ignorées* dans tous les autres cas — pas d'erreur, pas d'effet,
 //! pas de feedback. Une touche absente de la table n'a aucune existence du
 //! point de vue de la TUI.
 //!
-//! La borne `1`-`9` (et non `1`-max) reflète le fait que les positions sont
-//! mappées sur les caractères ASCII `'1'` à `'9'` : au-delà de la dixième
-//! position le mapping deviendrait incohérent. Aujourd'hui les capacités du
-//! noyau (`MAX_FOYERS = 3`, `MAX_CLASSEURS = 5`) restent largement en deçà.
+//! Les index sont ceux du noyau, à partir de zéro : la touche *est* l'index,
+//! mappé en `KeyCode::Char((b'0' + index) as char)`. D'où la borne `0`-`9`, qui
+//! n'est pas une capacité métier — au-delà de la dixième position le mapping
+//! n'aurait plus de caractère. Le noyau (`MAX_FOYERS = 3`, `MAX_CLASSEURS = 5`)
+//! reste largement en deçà.
 //!
 //! # Asymétrie ouverture / fermeture
 //!
@@ -69,7 +73,7 @@
 //! Fermer un foyer ne demande pas de saisie ([`Commande::PilotageFermerFoyer`]) :
 //! l'index est capturé depuis la position courante au moment où la table est
 //! construite, donc on ferme toujours *le foyer où l'on est positionné*. Le
-//! geste est *naviguer puis fermer* : `3` puis `f` ferme le foyer 3. Cette
+//! geste est *naviguer puis fermer* : `2` puis `f` ferme le foyer 2. Cette
 //! asymétrie reflète la nature des actions : création (index explicite
 //! obligatoire) vs suppression (cible contextuelle suffit).
 //!
@@ -95,12 +99,13 @@
 //! quelque chose.
 //!
 //! Cette homogénéité tient à ce que l'état entier est en entrée : la table sait
-//! quel écran est affiché, sur quel foyer pointe le `f`, ou si la touche `1`
+//! quel écran est affiché, sur quel foyer pointe le `f`, ou si la touche `0`
 //! doit entrer dans un foyer ouvert ou dans un classeur valide.
 
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyModifiers};
+use feu_application::Carte;
 
 use crate::tui::{Ecran, EtatTui};
 
@@ -277,7 +282,7 @@ pub(super) enum Commande {
     ///
     /// Active uniquement quand l'utilisateur est positionné dans un foyer ou
     /// dans un classeur :
-    /// - dans un foyer (`classeur = None`), liée aux touches `1`-`9` dans la
+    /// - dans un foyer (`classeur = None`), liée aux touches `0`-`9` dans la
     ///   limite de `nombre_classeurs` — descente ;
     /// - dans un classeur (`classeur = Some(_)`), liée à `Backspace` —
     ///   remontée.
@@ -291,7 +296,7 @@ pub(super) enum Commande {
     /// vers la racine).
     ///
     /// Active selon la position courante :
-    /// - à la racine (`foyer = None`), liée à `1`-`9` *uniquement pour les
+    /// - à la racine (`foyer = None`), liée à `0`-`9` *uniquement pour les
     ///   foyers effectivement ouverts* (la table consulte
     ///   [`feu_application::SessionApplication::etat_foyers`] pour ne pas
     ///   exposer les positions fermées) — descente ;
@@ -311,22 +316,25 @@ pub(super) enum Commande {
     /// Ferme le comptoir de dépôt ouvert — émet
     /// [`crate::connecteurs::MessageTuiCoeur::FermetureComptoirDepot`].
     ///
-    /// Active dans un classeur dès qu'un comptoir est ouvert, quel que soit ce
-    /// classeur : la commande ne porte pas d'index, le bras d'exécution dans
-    /// [`crate::tui::Tui::saisie_mode_normal`] prend le premier identifiant de
-    /// [`feu_application::SessionApplication::comptoirs_depot_ouverts`]. C'est
-    /// suffisant tant qu'un seul comptoir peut être ouvert à la fois — la
-    /// condition posée par [`Commande::PilotageOuvrirComptoirDepot`], dont elle prend
-    /// la place dans la table, jamais les deux ensemble.
+    /// Active dès qu'un comptoir est ouvert et qu'une ENU répertoire est
+    /// marquée — les deux que la fermeture réclame —, quelle que soit la
+    /// position courante : ce qu'on ferme ne dépend pas d'où l'on est. La marque
+    /// doit être un répertoire parce que la greffe y ajoute des enfants ; le
+    /// Scribe le revérifie, la table ne fait que ne pas proposer l'impossible.
+    ///
+    /// La commande ne porte pas d'identifiant : plusieurs comptoirs pouvant être
+    /// ouverts, le bras d'exécution bascule en saisie pour le collecter, et le
+    /// valide contre
+    /// [`feu_application::SessionApplication::comptoirs_depot_ouverts`].
     PilotageFermerComptoirDepot,
 
-    /// Ferme le foyer dont l'index (base 1) est porté par la variante — émet
+    /// Ferme le foyer dont l'index est porté par la variante — émet
     /// [`crate::connecteurs::MessageTuiCoeur::FermetureFoyer`].
     ///
     /// Active uniquement lorsque l'utilisateur est positionné dans un foyer ou
     /// dans un classeur. L'index est *capturé* depuis la position courante au
     /// moment où la table est construite ; aucune saisie, donc. Le geste
-    /// typique est *naviguer dans le foyer (`1`-`9`) puis le fermer (`f`)*.
+    /// typique est *naviguer dans le foyer (`0`-`9`) puis le fermer (`f`)*.
     ///
     /// L'asymétrie avec [`Commande::PilotageOuvrirFoyer`], qui passe par une saisie,
     /// est délibérée : on ne peut pas naviguer vers un foyer qui n'existe pas
@@ -340,7 +348,7 @@ pub(super) enum Commande {
     PilotageFermerFoyer(usize),
 
     /// Ouvre un comptoir de dépôt à destination du foyer et du classeur portés
-    /// (base 1) — émet
+    /// — émet
     /// [`crate::connecteurs::MessageTuiCoeur::OuvertureComptoir`].
     ///
     /// Active uniquement quand l'utilisateur est positionné dans un classeur :
@@ -349,20 +357,19 @@ pub(super) enum Commande {
     /// où la table est construite. Aucune saisie, donc — même geste que
     /// [`Commande::PilotageFermerFoyer`].
     ///
-    /// La variante ne porte que les deux index : le chemin est posé au dispatch
-    /// dans [`crate::tui::Tui::saisie_mode_normal`], depuis
-    /// [`super::CHEMIN_COMPTOIR_DEPOT`]. La table n'a donc rien à dire sur *où*
-    /// déposer, seulement sur *quand* c'est possible.
+    /// La variante ne porte que les deux index : le chemin est formé au dispatch
+    /// dans [`crate::tui::Tui::saisie_mode_normal`], en joignant à
+    /// [`crate::tui::EtatTui::chemin_selectionne`] — marqué par `m` sur l'écran
+    /// d'arborescence disque — un sous-dossier `{fN.cM}depot_feu`. C'est ce
+    /// sous-dossier qui est le comptoir, jamais le dossier marqué : le cœur crée
+    /// le premier et le supprime à la fermeture, quand le second appartient à
+    /// l'utilisateur. Son nom porte la destination, ce qui le rend unique par
+    /// couple foyer-classeur — deux comptoirs identiques depuis la même marque
+    /// se heurteraient.
     ///
-    /// Elle quitte la table dès qu'un comptoir est ouvert, la condition étant
-    /// lue dans la session. Un seul comptoir à la fois, donc — non par
-    /// contrainte du Scribe, qui en tient autant qu'on veut, mais parce que le
-    /// chemin de dépôt est une constante : deux comptoirs viseraient le même
-    /// dossier, et le second échouerait à la création. La limite tombera avec
-    /// [`super::CHEMIN_COMPTOIR_DEPOT`].
-    ///
-    /// Elle revient dans la table quand [`Commande::PilotageFermerComptoirDepot`] a
-    /// retiré l'identifiant de la session.
+    /// D'où la condition d'entrée dans la table : une marque de chemin posée. La
+    /// table n'a donc rien à dire sur *où* déposer, seulement sur *quand* c'est
+    /// possible.
     PilotageOuvrirComptoirDepot(usize, usize),
 
     /// Prépare l'ouverture d'un foyer — bascule l'invite en mode saisie pour collecter le numéro.
@@ -459,8 +466,6 @@ impl CommandesActives {
         match etat_tui.ecran {
             Ecran::Pilotage => Self::new_ecran_pilotage(etat_tui, &mut commandes_actives),
             Ecran::ArborescenceEnu => Self::new_ecran_enu(&mut commandes_actives),
-            // L'écran du disque n'a pas encore de touche propre : seules les
-            // trois globales y valent.
             Ecran::ArborescenceDisque => Self::new_ecran_disque(&mut commandes_actives),
         }
 
@@ -477,21 +482,22 @@ impl CommandesActives {
     ///   `PilotageEteindreNoeud` si aucun foyer n'est ouvert,
     ///   `PilotageOuvrirFoyer` s'il reste une place ;
     /// - au moins un foyer ouvert, la navigation suit la position courante :
-    ///   à la racine, `1`-`9` entrent dans les foyers ouverts ; dans un foyer,
-    ///   `f` le ferme, `Backspace` remonte, `1`-`9` descendent dans les
+    ///   à la racine, `0`-`9` entrent dans les foyers ouverts ; dans un foyer,
+    ///   `f` le ferme, `Backspace` remonte, `0`-`9` descendent dans les
     ///   classeurs ; dans un classeur, `f` ferme le foyer parent, `Backspace`
-    ///   remonte, et `d` ouvre un comptoir de dépôt ou `c` ferme celui qui
-    ///   l'est, selon que la session en porte un ou non ;
+    ///   remonte et `d` ouvre un comptoir de dépôt. `c` en ferme un depuis
+    ///   n'importe quelle position, si la session en porte et qu'une ENU
+    ///   répertoire est marquée ;
     /// - `!` dans tous les cas.
     ///
     /// `!` n'est pas remontée avec `h`, `l` et `?` : elle ouvre une modale du
     /// pilotage, qui se referme sur lui — l'activer ailleurs ferait changer
     /// d'écran sans retour.
     ///
-    /// La borne `1`-`9` n'est pas une capacité métier : elle reflète le mapping
-    /// `KeyCode::Char((b'0' + n) as char)`, qui ne tient pas au-delà de la
-    /// dixième position. Le noyau (`MAX_FOYERS = 3`, `MAX_CLASSEURS = 5`) reste
-    /// largement en deçà.
+    /// La borne `0`-`9` n'est pas une capacité métier : la touche est l'index
+    /// lui-même, mappé en `KeyCode::Char((b'0' + index) as char)`, ce qui ne
+    /// tient pas au-delà de la dixième position. Le noyau (`MAX_FOYERS = 3`,
+    /// `MAX_CLASSEURS = 5`) reste largement en deçà.
     fn new_ecran_pilotage(
         etat_tui: &EtatTui,
         commandes_actives: &mut HashMap<(KeyCode, KeyModifiers), Commande>,
@@ -515,19 +521,25 @@ impl CommandesActives {
                 );
             }
             if session.nombre_foyers_ouverts() > 0 {
+                if !session.comptoirs_depot_ouverts().is_empty()
+                    && let Some(enu) = &etat_tui.enu_selectionnee
+                    && matches!(enu.carte(), Carte::Repertoire { .. })
+                {
+                    commandes_actives.insert(
+                        (KeyCode::Char('c'), KeyModifiers::NONE),
+                        Commande::PilotageFermerComptoirDepot,
+                    );
+                }
                 match (
                     etat_tui.etat_pilotage.position_courante.foyer,
                     etat_tui.etat_pilotage.position_courante.classeur,
                 ) {
                     (None, _) => {
                         for (i, etat) in session.etat_foyers().iter().enumerate() {
-                            if *etat && i < 9 {
+                            if *etat && i < 10 {
                                 commandes_actives.insert(
-                                    (
-                                        KeyCode::Char((b'0' + (i + 1) as u8) as char),
-                                        KeyModifiers::NONE,
-                                    ),
-                                    Commande::PilotageChangerPositionFoyer(Some(i + 1)),
+                                    (KeyCode::Char((b'0' + i as u8) as char), KeyModifiers::NONE),
+                                    Commande::PilotageChangerPositionFoyer(Some(i)),
                                 );
                             }
                         }
@@ -543,13 +555,10 @@ impl CommandesActives {
                         );
 
                         for i in 0..session.nombre_classeurs {
-                            if i < 9 {
+                            if i < 10 {
                                 commandes_actives.insert(
-                                    (
-                                        KeyCode::Char((b'0' + (i + 1) as u8) as char),
-                                        KeyModifiers::NONE,
-                                    ),
-                                    Commande::PilotageChangerPositionClasseur(Some(i + 1)),
+                                    (KeyCode::Char((b'0' + i as u8) as char), KeyModifiers::NONE),
+                                    Commande::PilotageChangerPositionClasseur(Some(i)),
                                 );
                             }
                         }
@@ -563,15 +572,10 @@ impl CommandesActives {
                             (KeyCode::Backspace, KeyModifiers::NONE),
                             Commande::PilotageChangerPositionClasseur(None),
                         );
-                        if session.comptoirs_depot_ouverts().is_empty() {
+                        if etat_tui.chemin_selectionne.is_some() {
                             commandes_actives.insert(
                                 (KeyCode::Char('d'), KeyModifiers::NONE),
                                 Commande::PilotageOuvrirComptoirDepot(index_foyer, index_classeur),
-                            );
-                        } else {
-                            commandes_actives.insert(
-                                (KeyCode::Char('c'), KeyModifiers::NONE),
-                                Commande::PilotageFermerComptoirDepot,
                             );
                         }
                     }

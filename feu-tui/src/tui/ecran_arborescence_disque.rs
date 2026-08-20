@@ -15,10 +15,6 @@
 //! `x` l'y efface. Mêmes touches que sur l'écran des ENU, pour les mêmes
 //! gestes.
 //!
-//! Le manque qu'il vient combler est écrit ailleurs : `CHEMIN_COMPTOIR_DEPOT`,
-//! dans [`crate::tui`], tient en dur la place d'un chemin que l'utilisateur ne
-//! peut désigner nulle part.
-//!
 //! # Un arbre qui se construit, là où celui des ENU se masque
 //!
 //! [`EtatArborescenceDisque::lignes`] contient **exactement ce qui est
