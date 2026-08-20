@@ -16,17 +16,17 @@
 //! - la création de l'arborescence interne (`registre/`, `classeur0/` à `classeur4/`)
 //! - la création des tiroirs vides et l'écriture des blobs chiffrés dans les classeurs
 //!
-//! # Invariant de sécurité
+//! # Invariants de sécurité
 //!
 //! L'Archiviste ne détient jamais de clés et ne voit jamais d'octets en clair.
 //! Il ne connaît pas le Cryptographe. Il manipule uniquement des blobs chiffrés
 //! et des hashs — la sécurité est l'affaire exclusive du Cryptographe.
 //!
-//! # Erreurs
+//! # Errors
 //!
 //! Tout échec du système de fichiers remonte tel quel en
 //! [`ErreurFeuNoyau::IoError`] par `?` — c'est ce que désignent les sections
-//! `# Erreurs` qui parlent d'une opération disque. Les variantes `Archiviste*`
+//! `# Errors` qui parlent d'une opération disque. Les variantes `Archiviste*`
 //! et [`ErreurFeuNoyau::CheminInexistant`] sont réservées aux anomalies que
 //! l'Archiviste constate lui-même, avant de toucher au disque.
 //!
@@ -90,7 +90,7 @@ impl Archiviste {
     /// `MAX_CLASSEURS` dossiers `classeur0/` à `classeur4/` avec les
     /// permissions `rwx------` (0o700).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si une opération disque échoue.
     pub(super) fn new(racine: PathBuf) -> ResultFeuNoyau<Self> {
@@ -124,7 +124,7 @@ impl Archiviste {
     /// Ouvre `classeurN/<hash>.dat`, lit son contenu dans le tiroir et enregistre
     /// le hash. Le blob contenu est chiffré — c'est le Cryptographe qui le déchiffre.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si aucun fichier ne correspond au `hash` dans le classeur,
     /// ou si la lecture échoue.
@@ -153,13 +153,13 @@ impl Archiviste {
     /// Le fichier est créé avec `create_new` — l'opération échoue si un blob
     /// portant ce hash existe déjà. Les permissions sont `rw-------` (0o600).
     ///
-    /// # Invariant de sécurité
+    /// # Invariants de sécurité
     ///
     /// Le tiroir doit contenir un blob **chiffré** à ce stade. L'Archiviste ne
     /// vérifie pas cet invariant — c'est la responsabilité de l'orchestrateur
     /// [`FeuNoyau`](crate::FeuNoyau).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::ArchivisteTiroirSansHash`] si le tiroir n'a pas
     /// encore été empreinté, ou propage l'échec de l'écriture — le fichier déjà
@@ -182,7 +182,7 @@ impl Archiviste {
     ///
     /// Vérifie l'existence de `classeurN/<hash>.dat` avant suppression.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::CheminInexistant`] si le blob est absent du
     /// classeur, ou propage l'échec de la suppression.
@@ -208,7 +208,7 @@ impl Archiviste {
     ///
     /// L'ordre des entrées n'est pas garanti — il dépend du système de fichiers.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la lecture du dossier échoue.
     pub(super) fn donne_liste_blobs(&self, index_classeur: usize) -> ResultFeuNoyau<Vec<String>> {
@@ -226,7 +226,7 @@ impl Archiviste {
     /// Interroge l'OS via [`std::fs::metadata`] — aucun déchiffrement n'est effectué.
     /// `date_creation` est `None` si le système de fichiers ne la supporte pas.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le fichier n'existe pas ou si la lecture des métadonnées échoue.
     pub(super) fn donne_informations_blob(
@@ -303,7 +303,7 @@ impl Archiviste {
     ///
     /// Crée les dossiers intermédiaires si nécessaire (`recursive`).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la création échoue.
     fn cree_dossier(path: &Path) -> ResultFeuNoyau<()> {

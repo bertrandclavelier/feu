@@ -90,18 +90,13 @@ pub(super) struct EtatArborescenceEnu {
     /// Les index de [`Self::arborescence_enus`] dont le sous-arbre est montré.
     ///
     /// **Les dépliés, non les repliés** : le défaut est fermé, un dépôt réel ne
-    /// tiendrait pas à l'écran autrement. L'ensemble part donc avec le seul
-    /// index `0`, la racine, sans quoi l'arbre s'afficherait sur une ligne.
+    /// tiendrait pas à l'écran. L'ensemble part avec le seul index `0`.
     ///
-    /// **L'identité d'un nœud est sa position dans le `Vec`, pas son
-    /// `hash_carte`.** L'arborescence est un DAG et le parcours conserve les
-    /// doublons : deux répertoires peuvent partager un sous-arbre identique,
-    /// donc le même hash, et les replier ensemble alors que l'utilisateur n'en
-    /// a désigné qu'un. La position, elle, désigne une occurrence et une seule.
+    /// **L'identité d'un nœud est sa position, pas son `hash_carte`** :
+    /// l'arborescence étant un DAG, deux répertoires partageant un sous-arbre
+    /// portent le même hash et se replieraient ensemble.
     ///
-    /// Le prix de ce choix est qu'un rechargement rend l'ensemble caduc — les
-    /// index de l'ancien arbre ne veulent rien dire dans le nouveau. Cf.
-    /// [`Self::recevoir_arborescence_enus`].
+    /// Prix de ce choix : un rechargement rend l'ensemble caduc.
     deplies: HashSet<usize>,
 
     /// Ligne sélectionnée et défilement, tenus par Ratatui.
@@ -150,25 +145,15 @@ impl EtatArborescenceEnu {
 
     /// Les index de l'arbre à dessiner, dans l'ordre, plis appliqués.
     ///
-    /// Recalculée à chaque appel plutôt que tenue à jour : elle est une
-    /// fonction de l'arbre et de [`Self::deplies`], et un cache serait un
-    /// troisième état à garder cohérent avec les deux autres. Le rendu comme le
-    /// clavier l'appellent, et doivent voir la même chose.
+    /// **Recalculée à chaque appel** : elle est fonction de l'arbre et de
+    /// [`Self::deplies`], un cache serait un troisième état à tenir cohérent.
     ///
-    /// Le parcours du cœur est en profondeur d'abord : les descendants d'un
-    /// nœud le suivent immédiatement et sont exactement les lignes plus
-    /// profondes que lui, jusqu'à la première qui ne l'est plus. Replier revient
-    /// donc à sauter d'un bloc, sans jamais remonter aux parents ni consulter le
-    /// moindre hash.
+    /// Le parcours étant en profondeur d'abord, les descendants d'un nœud sont
+    /// exactement les lignes plus profondes qui le suivent : replier revient à
+    /// sauter un bloc, sans remonter aux parents ni lire un hash. D'où la boucle
+    /// `while`, dont le pas dépend des données.
     ///
-    /// Boucle `while` et index tenu à la main : le pas dépend des données —
-    /// sauter un sous-arbre de taille inconnue —, ce qu'un `for` ne sait pas
-    /// faire. Les plis imbriqués tombent sans cas particulier, un nœud déplié
-    /// à l'intérieur d'un replié n'étant jamais atteint.
-    ///
-    /// Arbre jamais chargé : liste vide, et non une erreur. L'écran a déjà son
-    /// message d'invite, et les touches qui l'appellent n'ont alors rien à
-    /// faire.
+    /// Arbre jamais chargé : liste vide, pas une erreur.
     pub(super) fn lignes_visibles(&self) -> Vec<usize> {
         let Some(arbre) = &self.arborescence_enus else {
             return Vec::new();
@@ -209,19 +194,15 @@ impl EtatArborescenceEnu {
 
     /// Replie ou déplie le répertoire sous le curseur.
     ///
-    /// Trois sorties silencieuses avant d'agir : pas d'arbre, pas de
-    /// sélection, ou une sélection hors de la liste visible — cette dernière
-    /// couvre le débordement d'une frappe décrit sur [`Self::curseur`].
+    /// Trois sorties silencieuses avant d'agir : pas d'arbre, pas de sélection,
+    /// sélection hors de la liste visible.
     ///
-    /// **Seuls les répertoires peuplés basculent.** Un `matches!` avec garde
-    /// écarte les feuilles et les répertoires vides : les laisser entrer ne
-    /// changerait rien à l'affichage, mais [`Self::deplies`] se remplirait
-    /// d'index sans effet. Le court-circuit du `&&` fait que `remove` n'est
-    /// même pas tenté sur eux.
+    /// **Seuls les répertoires peuplés basculent** : laisser entrer les feuilles
+    /// ne changerait rien à l'affichage mais remplirait [`Self::deplies`] d'index
+    /// sans effet.
     ///
     /// « Si on ne peut pas le retirer, on l'ajoute » : `HashSet::remove` rend
-    /// `false` quand l'index était absent, ce qui est exactement la condition
-    /// d'insertion. Une bascule en une expression, sans lecture préalable.
+    /// `false` quand l'index était absent, exactement la condition d'insertion.
     pub(super) fn basculer_pli(&mut self) {
         let Some(arborescence_enus) = &self.arborescence_enus else {
             return;
@@ -243,18 +224,14 @@ impl EtatArborescenceEnu {
     /// La fiche sous le curseur, à ranger dans
     /// [`crate::tui::EtatTui::enu_selectionnee`].
     ///
-    /// `None` dans les mêmes trois cas que [`Self::basculer_pli`], d'où les
-    /// trois `?` — la forme condensée du même filtre, permise ici par le type
-    /// de retour.
+    /// `None` dans les mêmes trois cas que [`Self::basculer_pli`], d'où les trois
+    /// `?`.
     ///
-    /// Rend un clone, et pas une référence : la marque survit à l'arbre dont
-    /// elle est tirée, qu'un `R` remplacera. Le clone est celui d'une [`Fiche`],
-    /// donc sans la signature de 4 627 octets, qui ne quitte jamais
-    /// `feu-application`.
+    /// Rend un **clone** : la marque survit à l'arbre dont elle est tirée, qu'un
+    /// `R` remplacera.
     ///
-    /// Aucune vérification sur ce qui est retenu : toute entrée peut l'être,
-    /// répertoire, donnée ou racine. C'est la commande qui la consommera qui
-    /// dira si elle lui convient.
+    /// Aucune vérification sur ce qui est retenu — c'est la commande qui la
+    /// consommera qui dira si elle lui convient.
     pub(super) fn donne_enu_a_marquer(&self) -> Option<Fiche> {
         let arborescence_enus = self.arborescence_enus.as_ref()?;
         let index = self
@@ -268,35 +245,18 @@ impl EtatArborescenceEnu {
 
 /// Dessine l'arbre et les messages éphémères.
 ///
-/// Le carré est celui du pilotage, dessiné par
-/// [`super::rendu::carre_principal`] ; ne reste ici que la marge de découpe,
-/// plus haute que la sienne. L'arbre prend le `Fill`, ce qui reste est fixe :
-/// une respiration en haut, deux en bas, puis les deux lignes de message.
-///
-/// Les messages sont rendus hors du `match` sur l'arbre : ils traversent la
-/// TUI et ne dépendent pas du chargement, si bien qu'une erreur reçue avant
-/// tout `R` reste lisible sur l'écran d'invite.
+/// Le carré vient de [`super::rendu::carre_principal`] ; ne reste ici que la
+/// marge de découpe. Les messages sont rendus **hors du `match` sur l'arbre** :
+/// une erreur reçue avant tout `R` reste lisible sur l'écran d'invite.
 ///
 /// L'arbre arrive dans l'ordre de l'affichage, chaque entrée précédée de sa
-/// profondeur : le rendu n'a plus qu'à répéter le motif d'indentation autant de
-/// fois, ligne par ligne. Il ne dessine que ce que
-/// [`EtatArborescenceEnu::lignes_visibles`] lui désigne.
+/// profondeur : le rendu répète le motif d'indentation, sans rien reconstruire.
 ///
-/// **Une [`List`], et non un `Paragraph`** : le défilement et la borne de la
-/// sélection viennent avec, et la barre du curseur traverse toute la largeur
-/// au lieu de s'arrêter à la fin du nom. C'est ce qui impose le `&mut EtatTui`
-/// — un `StatefulWidget` écrit dans son état au moment du rendu, seul instant
-/// où la hauteur du carré et le nombre d'items sont connus.
+/// **Une [`List`], et non un `Paragraph`** : défilement et borne de sélection
+/// viennent avec. D'où le `&mut EtatTui`, écrit au moment du rendu.
 ///
-/// La colonne de marque ouvre chaque ligne, large de deux cellules qu'une ENU
-/// soit retenue ou non : l'arbre reste immobile quand la marque se pose. La
-/// comparaison porte sur le `hash_carte`, si bien qu'une ENU présente à deux
-/// endroits d'un DAG est marquée aux deux — c'est la même, la montrer une seule
-/// fois mentirait.
-///
-/// L'`Option` distingue **jamais demandé** — l'invite à taper `R` — de l'arbre
-/// reçu. Le troisième cas, un arbre réduit à sa seule racine, n'est pas encore
-/// séparé du second.
+/// La colonne de marque est large de deux cellules qu'une ENU soit retenue ou
+/// non : l'arbre reste immobile quand la marque se pose.
 pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut EtatTui) {
     let carre = carre_principal(frame, &etat_tui.ecran).inner(Margin {
         horizontal: 4,
@@ -400,33 +360,16 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
 /// Le nom affiché d'une entrée, à droite de son symbole.
 ///
 /// **Point de passage unique du nom vers l'écran, et donc là où il est
-/// assaini.** Un nom de fichier Unix accepte tout sauf `/` et l'octet nul :
-/// `nom_fichier_valide` ne refuse que le vide, le séparateur et les composants
-/// spéciaux, un retour à la ligne ou une séquence d'échappement peut donc
-/// arriver jusqu'ici et casser le carré. Les caractères de contrôle sont
-/// remplacés plutôt que supprimés — deux noms distincts ne doivent pas devenir
-/// identiques à l'écran, et le `?` montre l'anomalie au lieu de la masquer.
+/// assaini.** Un nom Unix n'interdit que `/` et l'octet nul : un retour à la
+/// ligne peut arriver jusqu'ici et casser le carré. Les caractères de contrôle
+/// sont **remplacés, pas supprimés** — deux noms distincts ne doivent pas
+/// devenir identiques à l'écran.
 ///
-/// **Le nom est borné à [`MAX_LONGUEUR_MOT`]**, le dernier caractère portant
-/// l'ellipse. Le `Paragraph` couperait de toute façon à droite : la limite est
-/// là pour que la coupe se voie, et pour qu'un nom à rallonge ne masque pas les
-/// lignes voisines. Comptée en caractères et non en octets — un accent en pèse
-/// deux, et trancher un `&str` au milieu de l'un d'eux paniquerait.
+/// **Borné à [`MAX_LONGUEUR_MOT`]**, ellipse comprise, compté en caractères et
+/// non en octets : trancher un `&str` au milieu d'un accent paniquerait.
 ///
-/// **Une racine se reconnaît à sa méta `_racine`**, non à sa position : elle est
-/// la seule entrée sans méta `nom`, mais la reconnaître par ce qu'elle porte
-/// tient même si le parcours part un jour d'ailleurs que du sommet. Elle rend
-/// une chaîne vide — son symbole la désigne déjà, un mot n'apprendrait rien.
-///
-/// Le hash a été écarté comme repli : le dépôt pose toujours `nom`, une entrée
-/// qui en manque relève de l'anomalie, et huit caractères d'hexadécimal ne
-/// l'expliqueraient à personne.
-///
-/// `pub(super)` parce que l'écran de pilotage l'appelle pour afficher l'ENU
-/// retenue : le même nom, assaini et borné de la même façon, sur les deux
-/// écrans. Un écran qui en importe un autre reste une entorse — sa place est
-/// `rendu.rs`, avec le reste du vocabulaire commun, et le déménagement est noté
-/// dans `a_faire.md`.
+/// **Une racine se reconnaît à sa méta `_racine`**, non à sa position, et rend
+/// une chaîne vide — son symbole la désigne déjà.
 pub(super) fn libelle(fiche: &Fiche) -> String {
     match fiche.carte().metas().get("nom") {
         Some(nom) => {
@@ -456,27 +399,16 @@ pub(super) fn libelle(fiche: &Fiche) -> String {
 /// Le symbole qui précède le libellé, d'après la variante de [`Carte`], prêt à
 /// poser dans la ligne.
 ///
-/// **Un [`Span`] et non un `&str`** : la forme et la couleur du symbole
-/// relèvent de la même décision, et les rendre ensemble évite que l'appelant
-/// rejoue le `match` pour savoir quoi styler.
+/// **Un [`Span`] et non un `&str`** : forme et couleur relèvent de la même
+/// décision, l'appelant n'a pas à rejouer le `match` pour styler.
 ///
-/// **Seuls les deux triangles pliables portent [`COULEUR_ACCENT`]** : ce sont
-/// eux qui disent qu'il y a quelque chose à ouvrir ou à fermer. Le répertoire
-/// vide reste au premier plan neutre — il ne répond à aucun pli —, comme la
-/// racine et les feuilles.
+/// **Seuls les deux triangles pliables portent [`COULEUR_ACCENT`]** : eux seuls
+/// disent qu'il y a quelque chose à ouvrir. Le répertoire vide reçoit un symbole
+/// propre — lui laisser celui des peuplés promettrait un contenu.
 ///
-/// La racine est une [`Carte::Repertoire`] comme une autre, seule sa méta
-/// `_racine` la distingue, et elle est testée avant le pli parce que son
-/// symbole dit *ce qu'elle est*, ce qu'aucun triangle ne dirait — elle seule
-/// n'a pas de nom à afficher.
-///
-/// Un répertoire vide reçoit le sien : le déplier ne montrerait rien, et lui
-/// laisser la marque des répertoires peuplés promettrait un contenu.
-///
-/// L'orientation du triangle dit l'état du pli, d'où le `deplie` en second
-/// argument : la carte seule ne peut pas le savoir, il vit dans
-/// [`EtatArborescenceEnu::deplies`]. Un répertoire vide l'ignore — il n'a pas
-/// d'état de pli, seulement rien à montrer.
+/// La racine est testée avant le pli : son symbole dit *ce qu'elle est*, ce
+/// qu'aucun triangle ne dirait. L'orientation du triangle, elle, dit l'état du
+/// pli, d'où le `deplie` en second argument.
 fn symbole(fiche: &Fiche, deplie: bool) -> Span<'static> {
     let symbole = match fiche.carte() {
         Carte::Donnee { .. } => SYMBOLE_DONNEE,

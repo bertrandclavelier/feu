@@ -32,7 +32,7 @@
 //! Rien n'est écrit sur le disque depuis ce module — c'est le rôle du
 //! gardien.
 //!
-//! # Invariant de sécurité
+//! # Invariants de sécurité
 //!
 //! Aucun autre composant de FeuNoyau n'accède directement aux clés ou aux
 //! données en clair. Cette centralisation est un invariant fondamental
@@ -85,18 +85,15 @@ impl Cryptographe {
 
     /// Génère une nouvelle seed BIP39 et initialise le trousseau pour un nouveau nœud.
     ///
-    /// Enchaîne les opérations suivantes :
-    ///
-    /// 1. Génère la seed mnémonique (24 mots, français) et la transmet à `interface`.
-    /// 2. Demande confirmation que la seed a bien été notée — interrompt si refus.
-    /// 3. Collecte et vérifie un nouveau mot de passe (deux saisies concordantes).
-    /// 4. Dérive et enregistre dans le trousseau de manière déterministe les clés du nœud,
-    ///    des foyers et le sel Argon2id via [`genere_trousseau_a_partir_seed`](Self::genere_trousseau_a_partir_seed).
+    /// La seed de 24 mots est transmise à `interface`, dont la confirmation
+    /// conditionne la suite : un refus interrompt tout. Vient ensuite le nouveau
+    /// mot de passe, en deux saisies concordantes, puis la dérivation du
+    /// trousseau et du sel.
     ///
     /// La seed est zéroïsée avant le retour. Rien n'est écrit sur le disque —
     /// c'est le rôle du gardien.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la génération du mnémonique BIP39 échoue, si la
     /// confirmation de la seed est refusée, si la saisie du mot de passe échoue,
@@ -140,16 +137,14 @@ impl Cryptographe {
     /// Variante de [`initialise_noeud_a_partir_nouvelle_seed`](Self::initialise_noeud_a_partir_nouvelle_seed)
     /// pour le cas où la seed est déjà connue de l'appelant (restauration depuis seed existante).
     ///
-    /// Enchaîne deux opérations séquentielles :
+    /// Nouveau mot de passe en deux saisies concordantes, puis dérivation du
+    /// trousseau et du sel par
+    /// [`genere_trousseau_a_partir_seed`](Self::genere_trousseau_a_partir_seed).
     ///
-    /// 1. Collecte et vérifie le nouveau mot de passe (deux saisies concordantes).
-    /// 2. Dérive et enregistre dans le trousseau les clés du nœud, des foyers et le sel Argon2id via
-    ///    [`genere_trousseau_a_partir_seed`](Self::genere_trousseau_a_partir_seed).
+    /// `phrase_seed` est consommée et zéroïsée au retour. Rien n'est écrit sur le
+    /// disque — c'est le rôle du gardien.
     ///
-    /// `phrase_seed` est consommée par la fonction — elle est zéroïsée à son retour.
-    /// Rien n'est écrit sur le disque — c'est le rôle du gardien.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la saisie du mot de passe échoue, si le parsing de
     /// la phrase BIP39 échoue, si la dérivation des clés d'un foyer échoue, ou si
@@ -168,23 +163,15 @@ impl Cryptographe {
 
     /// Dérive et enregistre dans le trousseau toutes les clés du nœud et des foyers.
     ///
-    /// À partir de `phrase_seed`, parse la phrase mnémotechnique BIP39, puis dérive
-    /// de manière déterministe par HKDF-SHA3-256 et enregistre dans le trousseau :
-    /// - la paire de clés de signature du nœud (label `feu/noeud/signature`)
-    /// - les clés de signature, de chiffrement, symétriques et de classeurs de chaque
-    ///   foyer (labels `feu/foyer/*` suffixés de l'index du foyer)
+    /// Tout est dérivé de `phrase_seed` par HKDF-SHA3-256, chaque élément sous son
+    /// propre label : clés du nœud, clés de chaque foyer, et le sel Argon2id.
     ///
-    /// Si aucun mot de passe n'est présent dans le trousseau, en collecte un via
-    /// `interface` (saisie unique, sans confirmation) — c'est le cas de
-    /// [`demarrage_secours`](super::FeuNoyau::demarrage_secours). Si un mot de passe est déjà
-    /// présent (positionné au préalable par l'appelant), la saisie est ignorée.
+    /// Le mot de passe n'est collecté que si le trousseau n'en porte pas déjà un —
+    /// l'appelant peut donc l'avoir posé d'avance.
     ///
-    /// Génère également le sel Argon2id de manière déterministe depuis la seed
-    /// par HKDF-SHA3-256 (label `feu/noeud/sel`).
+    /// `phrase_seed` est consommée, et zéroïsée au retour.
     ///
-    /// `phrase_seed` est consommée par la fonction — elle est zéroïsée à son retour.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la collecte du mot de passe échoue, si le parsing de
     /// la phrase BIP39 échoue, si la dérivation des clés d'un foyer échoue, ou si
@@ -218,18 +205,15 @@ impl Cryptographe {
 
     /// Déverrouille le trousseau à partir d'un [`TrousseauPublicNoeud`] existant.
     ///
-    /// Enchaîne quatre opérations séquentielles :
+    /// Le mot de passe collecté et le sel du [`TrousseauPublicNoeud`] dérivent la
+    /// clé éphémère Argon2id, qui déchiffre la clé privée de signature du nœud.
     ///
-    /// 1. Collecte le mot de passe Feu via l'interface.
-    /// 2. Charge le sel depuis le [`TrousseauPublicNoeud`] fourni.
-    /// 3. Dérive la clé éphémère AES-256-GCM via Argon2id(mot de passe, sel).
-    /// 4. Tente de déchiffrer la clé privée de signature du nœud — un mot de passe
-    ///    incorrect provoque un échec AES-GCM (auth tag invalide) qui est propagé
-    ///    comme erreur. C'est le mécanisme de vérification du mot de passe.
+    /// **C'est là que le mot de passe est vérifié** : un mot de passe incorrect
+    /// fait échouer l'auth tag AES-GCM, et cet échec est propagé.
     ///
     /// Le mot de passe et la clé éphémère sont effacés avant le retour.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la dérivation Argon2id échoue, si le mot de passe
     /// est incorrect, ou si la reconstruction de la clé de signature échoue.
@@ -262,7 +246,7 @@ impl Cryptographe {
     ///
     /// La clé éphémère doit être présente dans le trousseau.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la clé éphémère est absente ou si le déchiffrement
     /// d'une clé échoue.
@@ -285,12 +269,10 @@ impl Cryptographe {
     /// pour le mode secours : collecte le mot de passe et dérive la clé éphémère
     /// avant le déchiffrement, car aucun allumage de foyer n'a eu lieu.
     ///
-    /// Enchaîne trois opérations séquentielles :
+    /// Collecte le mot de passe, dérive la clé éphémère Argon2id, puis délègue le
+    /// déchiffrement des clés du foyer à `recoit_trousseau_public_foyer`.
     ///
-    /// 1. Collecte le mot de passe et dérive la clé éphémère Argon2id.
-    /// 2. Déchiffre les clés du foyer via `recoit_trousseau_public_foyer`.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la dérivation de la clé éphémère échoue ou si
     /// le déchiffrement d'une clé échoue (mot de passe incorrect).
@@ -310,11 +292,8 @@ impl Cryptographe {
 
     /// Produit le trousseau public chiffré à partir des clés du trousseau en mémoire.
     ///
-    /// Enchaîne trois opérations séquentielles :
-    ///
-    /// 1. Dérive la clé éphémère AES-256-GCM depuis le mot de passe et le sel.
-    /// 2. Chiffre toutes les clés du trousseau via [`Trousseau::genere_trousseau_public`].
-    /// 3. Efface le mot de passe et la clé éphémère du trousseau.
+    /// La clé éphémère dérivée du mot de passe et du sel chiffre toutes les clés
+    /// du trousseau, puis mot de passe et clé éphémère sont effacés.
     ///
     /// # Prérequis
     ///
@@ -323,7 +302,7 @@ impl Cryptographe {
     /// [`initialise_noeud_a_partir_seed_existante`](Self::initialise_noeud_a_partir_seed_existante),
     /// ou [`genere_trousseau_a_partir_seed`](Self::genere_trousseau_a_partir_seed).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la dérivation de la clé éphémère ou le chiffrement
     /// d'une clé échoue.
@@ -348,7 +327,7 @@ impl Cryptographe {
     /// 3. Rechiffre toutes les clés (nœud + foyers) et produit un nouveau trousseau public.
     /// 4. Efface le mot de passe et la clé éphémère de la mémoire.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la dérivation ou le chiffrement échoue.
     pub(super) fn changement_mdp(
@@ -376,7 +355,7 @@ impl Cryptographe {
     /// Le foyer à l'`index` donné doit être ouvert — ses clés doivent être
     /// présentes dans le trousseau.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si aucun foyer n'est chargé à cet index,
     /// ou si le chiffrement AES-GCM-stream échoue.
@@ -393,19 +372,15 @@ impl Cryptographe {
 
     /// Déchiffre un flux de données d'un foyer fermé.
     ///
-    /// Enchaîne trois opérations séquentielles :
+    /// La clé éphémère dérivée du mot de passe déchiffre `cle_chiffree` — la clé
+    /// symétrique du foyer, 60 octets lus sur disque —, qui ouvre à son tour le
+    /// flux AES-256-GCM-stream.
     ///
-    /// 1. Collecte le mot de passe Feu via `interface`.
-    /// 2. Dérive la clé éphémère Argon2id.
-    /// 3. Déchiffre `cle_chiffree` (clé symétrique du foyer, 60 octets lus sur disque)
-    ///    avec la clé éphémère, puis déchiffre le flux AES-256-GCM-stream.
+    /// La clé éphémère **n'est pas effacée** ici : elle reste disponible pour
+    /// [`recoit_trousseau_public_foyer`](Self::recoit_trousseau_public_foyer), qui
+    /// l'effacera.
     ///
-    /// La clé éphémère **n'est pas effacée** à l'issue de cette méthode —
-    /// elle reste disponible pour le chargement des clés du foyer via
-    /// [`recoit_trousseau_public_foyer`](Self::recoit_trousseau_public_foyer),
-    /// qui l'effacera en fin d'opération.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la dérivation Argon2id échoue, si le déchiffrement
     /// de `cle_chiffree` échoue (auth tag invalide — mot de passe incorrect),
@@ -432,7 +407,7 @@ impl Cryptographe {
     /// Retourne un tuple `(blob_chiffré, hash)`. Le blob chiffré est structuré
     /// comme suit : `nonce (12 octets) || ciphertext || auth tag (16 octets)`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le foyer ou le classeur à l'index donné est absent
     /// du trousseau, ou si le chiffrement AES-256-GCM échoue.
@@ -456,21 +431,15 @@ impl Cryptographe {
     /// recalcule le hash SHA3-256 du résultat. Si le hash recalculé ne correspond
     /// pas à `hash`, la donnée est considérée corrompue et une erreur est retournée.
     ///
-    /// Cette comparaison n'est pas redondante avec l'auth tag AES-GCM, contrairement
-    /// à ce qu'elle peut laisser croire. L'auth tag atteste que le contenu n'a pas
-    /// été modifié, pas qu'il s'agit du contenu demandé : le chiffrement se fait
-    /// sans données associées, donc rien ne lie un blob au hash sous lequel il est
-    /// rangé. Deux blobs d'un même classeur, chiffrés avec la même clé, sont
-    /// interchangeables aux yeux d'AES-GCM. Le hash est ce qui les distingue —
-    /// c'est aussi lui qui fonde l'adressage par contenu du classeur.
+    /// La comparaison n'est pas redondante avec l'auth tag : celui-ci atteste que
+    /// le contenu n'a pas été modifié, pas qu'il s'agit du contenu demandé. Le
+    /// chiffrement se faisant sans données associées, rien ne lie un blob au hash
+    /// sous lequel il est rangé.
     ///
-    /// Aucun test ne couvre cette branche : la comparaison se réduit à un `!=`
-    /// entre deux tableaux de 32 octets, sans logique à prendre en défaut, et le
-    /// seul scénario qui l'atteint sans buter d'abord sur l'auth tag est la
-    /// permutation de deux blobs du même classeur du même foyer. Ailleurs, les
-    /// clés diffèrent et le déchiffrement échoue avant.
+    /// Aucun test ne couvre cette branche, faute de scénario déterministe qui
+    /// l'atteigne sans buter d'abord sur l'auth tag.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le foyer ou le classeur est absent du trousseau,
     /// si le déchiffrement AES-256-GCM échoue, ou si le hash du clair ne
@@ -516,7 +485,7 @@ impl Cryptographe {
     /// [1580..]     ciphertext + auth tag (16 octets)
     /// ```
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la clé publique est invalide, si la dérivation HKDF
     /// ou le chiffrement AES-256-GCM échoue.
@@ -569,7 +538,7 @@ impl Cryptographe {
     /// [1580..]     ciphertext + auth tag (16 octets)
     /// ```
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le ciphertext KEM est invalide,
     /// si le foyer est absent du trousseau, si la dérivation HKDF échoue,
@@ -611,7 +580,7 @@ impl Cryptographe {
     ///
     /// Délègue directement à [`Trousseau::signe_avec_cle_noeud`].
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la clé de signature du nœud est absente du trousseau.
     pub(super) fn signature_noeud(&self, octets_a_signer: &[u8]) -> ResultFeuNoyau<[u8; 4627]> {
@@ -622,7 +591,7 @@ impl Cryptographe {
     ///
     /// Délègue directement à [`Trousseau::signe_avec_cle_foyer`].
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le foyer est absent du trousseau.
     pub(super) fn signature_foyer(
@@ -643,7 +612,7 @@ impl Cryptographe {
     /// formé est en revanche rejeté par une erreur (voir ci-dessous). La clé publique,
     /// de taille fixe, se décode sans faillir.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si `signature` n'est pas un encodage ML-DSA-87 valide.
     pub(super) fn verification_signature(
@@ -710,7 +679,7 @@ impl Cryptographe {
     /// effacée via [`efface_mdp_et_cle_ephemere`](Self::efface_mdp_et_cle_ephemere)
     /// dès qu'elle n'est plus nécessaire.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le mot de passe ou le sel est absent, ou si la
     /// dérivation Argon2id échoue.
@@ -754,22 +723,15 @@ mod tests {
 
     /// Monte un cryptographe utilisable et rend son [`TrousseauPublicComplet`].
     ///
-    /// Le mot de passe et le sel n'ont ici aucun rôle propre : ils ne servent
-    /// qu'à rendre possible `donne_trousseau_public_complet`, qui dérive une
-    /// clé éphémère Argon2id. Or c'est l'unique chemin d'accès aux clés
-    /// publiques depuis ce module — les accesseurs de [`Trousseau`] sont privés
-    /// au sien. Posés directement plutôt que collectés, ils dispensent les
-    /// tests d'une [`InterfaceFeuNoyau`] factice.
+    /// Mot de passe et sel sont posés directement, sans interface factice : ils ne
+    /// servent qu'à ouvrir `donne_trousseau_public_complet`, unique accès aux clés
+    /// publiques depuis ce module.
     ///
     /// Deux foyers sont dérivés, pas un : chaque test a besoin d'une seconde
-    /// identité pour son cas négatif — clé de vérification étrangère pour la
-    /// signature, index de déchiffrement étranger pour le chiffrement
-    /// asymétrique. Retirer le foyer 1 les ferait passer sans plus rien
-    /// prouver.
+    /// identité pour son cas négatif.
     ///
-    /// Appelable une seule fois par cryptographe : `donne_trousseau_public_complet`
-    /// efface le mot de passe avant de rendre la main. Les clés privées, elles,
-    /// restent en place — signature et déchiffrement fonctionnent après.
+    /// Appelable une seule fois par cryptographe — le mot de passe est effacé au
+    /// retour. Les clés privées, elles, restent utilisables.
     fn monte_cryptographe_de_test(
         cryptographe: &mut Cryptographe,
     ) -> ResultFeuNoyau<TrousseauPublicComplet> {
@@ -788,23 +750,13 @@ mod tests {
     /// Vérifie le cycle signature/vérification ML-DSA-87, pour le nœud et pour
     /// un foyer.
     ///
-    /// Rien ne prouvait jusqu'ici que la primitive de signature était
-    /// correctement câblée — or tout le protocole ENU repose dessus : c'est
-    /// elle qui atteste l'origine d'un message. Une vérification qui rendrait
-    /// systématiquement `true` passerait aujourd'hui inaperçue.
+    /// Deux cas négatifs, deux propriétés distinctes : clé publique étrangère — la
+    /// signature est liée à la clé —, et message altéré — elle est liée au
+    /// contenu.
     ///
-    /// Les deux cas négatifs portent chacun une propriété distincte, aucun
-    /// n'est le doublon de l'autre :
-    /// - clé publique étrangère (foyer 1 pour une signature du foyer 0) — la
-    ///   signature est liée à la clé, les foyers ne se couvrent pas entre eux ;
-    /// - message altéré — la signature est liée au contenu, on ne peut pas
-    ///   signer une chose et en transmettre une autre.
-    ///
-    /// La branche [`ErreurFeuNoyau::CryptographeSignatureMlDsaMalFormee`]
-    /// reste volontairement non couverte : altérer les octets d'une signature
-    /// donne tantôt `Ok(false)`, tantôt `Err`, selon l'octet touché et l'étape
-    /// du décodage ML-DSA qu'il fait échouer. Un test non déterministe coûte
-    /// plus qu'il ne prouve — d'où l'altération portée sur le message.
+    /// [`ErreurFeuNoyau::CryptographeSignatureMlDsaMalFormee`] reste non
+    /// couverte : altérer une signature donne tantôt `Ok(false)`, tantôt `Err`,
+    /// selon l'octet touché.
     #[test]
     fn cycle_signature_verification() -> ResultFeuNoyau<()> {
         let mut cryptographe = Cryptographe::new();
@@ -863,24 +815,12 @@ mod tests {
 
     /// Vérifie le cycle chiffrement/déchiffrement asymétrique ML-KEM-1024.
     ///
-    /// La chaîne encapsulation ML-KEM → dérivation HKDF-SHA3-256 → AES-256-GCM
-    /// est assemblée à la main dans `chiffrement_asymetrique`, puis refaite en
-    /// miroir dans `dechiffrement_asymetrique`. Rien ne garantissait que les
-    /// deux moitiés s'accordaient — même label HKDF, même découpe du format de
-    /// sortie. C'est le round-trip qui l'établit.
+    /// Le round-trip établit que les deux moitiés assemblées à la main —
+    /// encapsulation ML-KEM, HKDF-SHA3-256, AES-256-GCM — s'accordent bien.
     ///
-    /// Le cas négatif rend une **erreur**, non un `false`, et elle ne vient pas
-    /// d'où on l'attendrait : ML-KEM ne rejette jamais un ciphertext (rejet
-    /// implicite). Décapsuler avec la mauvaise clé privée réussit et rend un
-    /// secret partagé pseudo-aléatoire, sans broncher. C'est l'auth tag
-    /// AES-GCM, un cran plus loin, qui refuse.
-    ///
-    /// `is_err()` suffit, sans inspection de la variante : `dechiffrement_asymetrique`
-    /// n'a que deux causes d'échec, et le foyer 1 étant présent dans le
-    /// trousseau monté, celle du foyer absent est exclue par construction. Le
-    /// round-trip qui précède sert de témoin — il attribue l'échec au
-    /// changement d'index plutôt qu'à un chiffrement raté. C'est cette
-    /// combinaison, pas la seule assertion, qui rend le test concluant.
+    /// Le cas négatif rend une **erreur**, non un `false`, et pas d'où on
+    /// l'attendrait : ML-KEM ne rejette jamais un ciphertext, c'est l'auth tag
+    /// AES-GCM qui refuse un cran plus loin.
     #[test]
     fn cycle_chiffrement_dechiffrement_asymetrique() -> ResultFeuNoyau<()> {
         let mut cryptographe = Cryptographe::new();

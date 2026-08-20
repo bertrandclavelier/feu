@@ -159,18 +159,13 @@ pub(super) enum Commande {
 
     /// Passe à l'écran de travail suivant — `l`.
     ///
-    /// `h` et `l` plutôt que `Tab` : le déplacement latéral de vim, dans le
-    /// même registre que `j` et `k` sur l'arborescence, et les écrans se
-    /// parcourent désormais dans les deux sens.
+    /// `h` et `l` plutôt que `Tab` : le déplacement latéral de vim, même registre
+    /// que `j` et `k` sur l'arborescence.
     ///
-    /// Toujours active, quel que soit l'écran et l'état du nœud : c'est le seul
-    /// chemin entre les écrans, et rien ne justifierait de l'y enfermer. Aucun
-    /// message au cœur, aucun effet métier.
-    ///
-    /// L'ordre est tenu par `passer_ecran_suivant` : la table dit *quand* on
-    /// peut changer d'écran, jamais *vers lequel*. Les écrans étant rangés en
-    /// ligne et non en cycle, la commande reste liée sur le dernier d'entre
-    /// eux, où elle ne déplace rien.
+    /// Toujours active — c'est le seul chemin entre les écrans. La table dit
+    /// *quand* on peut changer d'écran, jamais *vers lequel* : les écrans étant
+    /// rangés en ligne et non en cycle, elle reste liée sur le dernier, où elle
+    /// ne déplace rien.
     EcranSuivant,
 
     /// Revient à l'écran de travail précédent — `h`.
@@ -276,33 +271,20 @@ pub(super) enum Commande {
 
     /// Affecte directement la position courante, côté classeur.
     ///
-    /// Pure navigation TUI — aucun message vers le cœur, aucun effet métier.
-    /// `Some(index)` pose la position à `Some(index)` (descente d'un foyer vers
-    /// un de ses classeurs) ; `None` la repose à `None` (remontée du classeur
-    /// vers son foyer parent).
+    /// Pure navigation TUI, sans message au cœur. `Some(index)` descend d'un
+    /// foyer vers un de ses classeurs, `None` remonte au foyer parent.
     ///
-    /// Active uniquement quand l'utilisateur est positionné dans un foyer ou
-    /// dans un classeur :
-    /// - dans un foyer (`classeur = None`), liée aux touches `0`-`9` dans la
-    ///   limite de `nombre_classeurs` — descente ;
-    /// - dans un classeur (`classeur = Some(_)`), liée à `Backspace` —
-    ///   remontée.
+    /// Liée aux touches `0`-`9` dans un foyer, dans la limite de
+    /// `nombre_classeurs`, et à `Backspace` dans un classeur.
     PilotageChangerPositionClasseur(Option<usize>),
 
     /// Affecte directement la position courante, côté foyer.
     ///
-    /// Pure navigation TUI — aucun message vers le cœur, aucun effet métier.
-    /// `Some(index)` pose la position à `Some(index)` (descente de la racine
-    /// vers un foyer ouvert) ; `None` la repose à `None` (remontée du foyer
-    /// vers la racine).
+    /// Pure navigation TUI, sans message au cœur. `Some(index)` descend de la
+    /// racine vers un foyer ouvert, `None` y remonte.
     ///
-    /// Active selon la position courante :
-    /// - à la racine (`foyer = None`), liée à `0`-`9` *uniquement pour les
-    ///   foyers effectivement ouverts* (la table consulte
-    ///   [`feu_application::SessionApplication::etat_foyers`] pour ne pas
-    ///   exposer les positions fermées) — descente ;
-    /// - dans un foyer (`foyer = Some(_)`, `classeur = None`), liée à
-    ///   `Backspace` — remontée à la racine.
+    /// Liée à `0`-`9` à la racine, **uniquement pour les foyers effectivement
+    /// ouverts**, et à `Backspace` dans un foyer.
     PilotageChangerPositionFoyer(Option<usize>),
 
     /// Demande l'extinction du nœud — émet [`crate::connecteurs::MessageTuiCoeur::ExtinctionNoeud`].
@@ -317,66 +299,38 @@ pub(super) enum Commande {
     /// Ferme le comptoir de dépôt ouvert — émet
     /// [`crate::connecteurs::MessageTuiCoeur::FermetureComptoirDepot`].
     ///
-    /// Active dès qu'un comptoir est ouvert et qu'une ENU répertoire est
-    /// marquée — les deux que la fermeture réclame —, quelle que soit la
-    /// position courante : ce qu'on ferme ne dépend pas d'où l'on est. La marque
-    /// doit être un répertoire parce que la greffe y ajoute des enfants ; le
-    /// Scribe le revérifie, la table ne fait que ne pas proposer l'impossible.
+    /// Active dès qu'un comptoir est ouvert et qu'une ENU **répertoire** est
+    /// marquée, quelle que soit la position courante.
     ///
-    /// En revanche, **rien ici ne vérifie que les foyers en jeu sont ouverts**,
-    /// alors que le Scribe les exige : une touche qui s'évanouit sans rien dire
-    /// renseigne moins que l'erreur qu'il renvoie, laquelle nomme le foyer à
-    /// rouvrir. Le filtrage par contexte s'arrête donc à ce qui n'a aucun sens,
-    /// et laisse remonter ce qui a une explication.
-    ///
-    /// La commande ne porte pas d'identifiant : plusieurs comptoirs pouvant être
-    /// ouverts, le bras d'exécution bascule en saisie pour le collecter, et le
-    /// valide contre
-    /// [`feu_application::SessionApplication::comptoirs_depot_ouverts`].
+    /// **Rien ici ne vérifie que les foyers en jeu sont ouverts**, alors que le
+    /// Scribe les exige : une touche qui s'évanouit renseigne moins que l'erreur
+    /// qui nomme le foyer à rouvrir. La variante ne porte pas non plus
+    /// d'identifiant — le bras d'exécution bascule en saisie pour le collecter.
     PilotageFermerComptoirDepot,
 
     /// Ferme le foyer dont l'index est porté par la variante — émet
     /// [`crate::connecteurs::MessageTuiCoeur::FermetureFoyer`].
     ///
-    /// Active uniquement lorsque l'utilisateur est positionné dans un foyer ou
-    /// dans un classeur. L'index est *capturé* depuis la position courante au
-    /// moment où la table est construite ; aucune saisie, donc. Le geste
-    /// typique est *naviguer dans le foyer (`0`-`9`) puis le fermer (`f`)*.
+    /// L'index est **capturé depuis la position courante**, sans saisie : le geste
+    /// est *naviguer dans le foyer puis le fermer*. L'asymétrie avec
+    /// [`Commande::PilotageOuvrirFoyer`] est délibérée.
     ///
-    /// L'asymétrie avec [`Commande::PilotageOuvrirFoyer`], qui passe par une saisie,
-    /// est délibérée : on ne peut pas naviguer vers un foyer qui n'existe pas
-    /// encore, alors que la fermeture agit sur celui où l'on est.
-    ///
-    /// Le bras d'exécution dans [`crate::tui::Tui::saisie_mode_normal`] remet
-    /// la position à la racine après émission — on ne peut plus être *dans* un
-    /// foyer qu'on vient de fermer. Comme c'est l'unique chemin de fermeture,
-    /// l'invariant tient en cascade : à l'extinction du nœud, qui exige tous
-    /// les foyers fermés, la position y est nécessairement déjà.
+    /// Le dispatch remet ensuite la position à la racine, et comme c'est l'unique
+    /// chemin de fermeture, l'invariant tient jusqu'à l'extinction.
     PilotageFermerFoyer(usize),
 
     /// Ouvre un comptoir de dépôt à destination du foyer et du classeur portés
     /// — émet
     /// [`crate::connecteurs::MessageTuiCoeur::OuvertureComptoir`].
     ///
-    /// Active uniquement quand l'utilisateur est positionné dans un classeur :
-    /// c'est le seul contexte où les deux index que réclame la commande
-    /// applicative sont connus, capturés depuis la position courante au moment
-    /// où la table est construite. Aucune saisie, donc — même geste que
-    /// [`Commande::PilotageFermerFoyer`].
+    /// Active dans un classeur, marque de chemin posée : c'est le seul contexte
+    /// où les deux index sont connus, capturés depuis la position courante sans
+    /// saisie.
     ///
-    /// La variante ne porte que les deux index : le chemin est formé au dispatch
-    /// dans [`crate::tui::Tui::saisie_mode_normal`], en joignant à
-    /// [`crate::tui::EtatTui::chemin_selectionne`] — marqué par `m` sur l'écran
-    /// d'arborescence disque — un sous-dossier `{fN.cM}depot_feu`. C'est ce
-    /// sous-dossier qui est le comptoir, jamais le dossier marqué : le cœur crée
-    /// le premier et le supprime à la fermeture, quand le second appartient à
-    /// l'utilisateur. Son nom porte la destination, ce qui le rend unique par
-    /// couple foyer-classeur — deux comptoirs identiques depuis la même marque
-    /// se heurteraient.
-    ///
-    /// D'où la condition d'entrée dans la table : une marque de chemin posée. La
-    /// table n'a donc rien à dire sur *où* déposer, seulement sur *quand* c'est
-    /// possible.
+    /// Le chemin est formé au dispatch, sous-dossier `{fN.cM}depot_feu` de la
+    /// marque : **c'est lui le comptoir, jamais le dossier marqué**, que le cœur
+    /// crée puis supprime à la fermeture. Son nom porte la destination, ce qui le
+    /// rend unique par couple foyer-classeur.
     PilotageOuvrirComptoirDepot(usize, usize),
 
     /// Prépare l'ouverture d'un foyer — bascule l'invite en mode saisie pour collecter le numéro.
@@ -399,43 +353,28 @@ pub(super) enum Commande {
     /// Matérialise l'arborescence de l'ENU marquée dans un dossier de l'OS
     /// — émet [`crate::connecteurs::MessageTuiCoeur::RetraitLectureSeule`].
     ///
-    /// Active quand le nœud est allumé **et** que les deux marques sont posées :
-    /// l'ENU à retirer et le chemin où écrire. Elle est la seule à les consommer
-    /// ensemble — le dépôt ne lit que le chemin, la fermeture de comptoir que
-    /// l'ENU —, et c'est ce qui la rend indépendante de la position courante :
-    /// le retrait ne vise ni un foyer ni un classeur, mais un sous-arbre.
+    /// Active nœud allumé **et** les deux marques posées. Seule commande à les
+    /// consommer ensemble, et seule à ne pas dépendre de la position courante —
+    /// un retrait vise un sous-arbre.
     ///
-    /// La variante ne porte rien : le chemin est formé au dispatch dans
-    /// [`crate::tui::Tui::saisie_mode_normal`], en joignant à la marque un
-    /// sous-dossier `retrait_feu_{4 premiers octets du hash}`. C'est lui le
-    /// dossier de sortie, jamais le dossier marqué : le cœur refuse d'écrire
-    /// dans un dossier existant, et celui-là appartient à l'utilisateur. Son nom
-    /// porte sa cible comme celui du comptoir porte la sienne — deux ENU
-    /// retirées sous la même marque cohabitent, la même ENU retirée deux fois se
-    /// heurte, ce qui est alors l'information juste.
+    /// Le chemin est formé au dispatch, sous-dossier `retrait_feu_{hash court}`
+    /// de la marque : **c'est lui le dossier de sortie, jamais le dossier
+    /// marqué**, le cœur refusant d'écrire dans un dossier existant.
     ///
     /// **Les foyers fermés ne sont pas filtrés ici**, comme pour
-    /// [`Commande::PilotageFermerComptoirDepot`] et pour la même raison : le
-    /// Scribe les relève tous avant d'écrire quoi que ce soit et les nomme dans
-    /// son erreur, ce qu'une touche évanouie ne dirait pas. Les établir depuis
-    /// la table coûterait par ailleurs un parcours de l'arbre entier à chaque
-    /// frappe, la table étant reconstruite à chacune.
+    /// [`Commande::PilotageFermerComptoirDepot`].
     PilotageRetraitLectureSeule,
 }
 
 /// Table de dispatch des commandes actives dans le contexte courant.
 ///
-/// Encapsule un `HashMap<(KeyCode, KeyModifiers), Commande>` pour exposer une
-/// API restreinte : lookup par touche via [`get`](Self::get) et formatage de
-/// l'aide via [`liste_commandes_actives`](Self::liste_commandes_actives). Le
-/// conteneur interne reste invisible — toute évolution de structure ne
-/// traverse pas la frontière du module.
+/// Encapsule un `HashMap<(KeyCode, KeyModifiers), Commande>` derrière une API
+/// restreinte — lookup et formatage de l'aide : le conteneur interne peut
+/// changer sans traverser la frontière du module.
 ///
-/// La table est immuable une fois construite : elle est intégralement
-/// reconstruite par [`new`](Self::new) à chaque changement d'état pertinent,
-/// directement depuis [`crate::tui::Tui::lancer`] (réception d'une nouvelle
-/// session) et [`crate::tui::Tui::saisie_mode_normal`] (après chaque commande
-/// dispatchée).
+/// **Immuable une fois construite**, et intégralement reconstruite à chaque
+/// changement d'état pertinent : réception d'une session, et après chaque
+/// commande dispatchée.
 pub(super) struct CommandesActives(HashMap<(KeyCode, KeyModifiers), Commande>);
 
 impl CommandesActives {
@@ -491,30 +430,16 @@ impl CommandesActives {
 
     /// Ajoute à la table les touches propres à l'écran de pilotage.
     ///
-    /// Les règles, vues d'ensemble — chaque variante de [`Commande`] documente
-    /// les siennes en détail :
-    ///
-    /// - nœud éteint → `PilotageAllumerNoeud`, `PilotageQuitter` ;
-    /// - nœud allumé → `PilotageRetraitLectureSeule` si les deux marques sont
-    ///   posées, `PilotageEteindreNoeud` si aucun foyer n'est ouvert,
-    ///   `PilotageOuvrirFoyer` s'il reste une place ;
-    /// - au moins un foyer ouvert, la navigation suit la position courante :
-    ///   à la racine, `0`-`9` entrent dans les foyers ouverts ; dans un foyer,
-    ///   `f` le ferme, `Backspace` remonte, `0`-`9` descendent dans les
-    ///   classeurs ; dans un classeur, `f` ferme le foyer parent, `Backspace`
-    ///   remonte et `d` ouvre un comptoir de dépôt. `c` en ferme un depuis
-    ///   n'importe quelle position, si la session en porte et qu'une ENU
-    ///   répertoire est marquée ;
-    /// - `!` dans tous les cas.
+    /// Chaque variante de [`Commande`] documente ses propres conditions ; ne se
+    /// lit ici que ce qui les traverse.
     ///
     /// `!` n'est pas remontée avec `h`, `l` et `?` : elle ouvre une modale du
     /// pilotage, qui se referme sur lui — l'activer ailleurs ferait changer
     /// d'écran sans retour.
     ///
-    /// La borne `0`-`9` n'est pas une capacité métier : la touche est l'index
-    /// lui-même, mappé en `KeyCode::Char((b'0' + index) as char)`, ce qui ne
-    /// tient pas au-delà de la dixième position. Le noyau (`MAX_FOYERS = 3`,
-    /// `MAX_CLASSEURS = 5`) reste largement en deçà.
+    /// La borne `0`-`9` n'est pas une capacité métier : la touche **est** l'index,
+    /// ce qui ne tient pas au-delà de la dixième position. Le noyau reste
+    /// largement en deçà.
     fn new_ecran_pilotage(
         etat_tui: &EtatTui,
         commandes_actives: &mut HashMap<(KeyCode, KeyModifiers), Commande>,
@@ -619,26 +544,15 @@ impl CommandesActives {
 
     /// Ajoute à la table les touches propres à l'écran d'arborescence.
     ///
-    /// Cinq, et aucune condition : `R` charge ou rafraîchit, `j` et `k`
-    /// déplacent le curseur, `Entrée` plie ou déplie, `m` retient l'ENU sous le
-    /// curseur.
+    /// Aucune condition, d'où l'absence d'`etat_tui` en paramètre.
     ///
-    /// **Ces quatre dernières échappent au filtrage strict** décrit dans
-    /// [`Self::new`] : elles sont présentes même sans arbre chargé, où elles ne
-    /// font rien. C'est un écart assumé — leur poser une condition demanderait
-    /// de recalculer les lignes visibles à chaque frappe, et de couvrir par des
-    /// tests un cas que l'utilisateur ne peut pas distinguer d'une touche
-    /// inactive. Elles ne peuvent pas échouer, seulement rester sans effet ; la
-    /// méthode appelée sort alors sur un `None`.
+    /// **Ces touches échappent au filtrage strict** de [`Self::new`] : présentes
+    /// même sans arbre chargé, elles n'y font rien. Écart assumé — leur poser une
+    /// condition demanderait de recalculer les lignes visibles à chaque frappe,
+    /// pour un cas que l'utilisateur ne distingue pas d'une touche inactive.
     ///
-    /// Ne reçoit pas l'état, contrairement à
-    /// [`Self::new_ecran_pilotage`](CommandesActives::new_ecran_pilotage) :
-    /// c'est la conséquence directe de ce qui précède.
-    ///
-    /// `R` est une majuscule, donc `KeyModifiers::SHIFT` — le lookup étant une
-    /// égalité exacte sur le tuple, l'oublier rendrait la touche muette. Les
-    /// minuscules `j`, `k` et `m` prennent `NONE`, et s'en tenir à
-    /// `KeyModifiers::SHIFT` par symétrie les rendrait muettes de la même façon.
+    /// `R` est une majuscule, donc `KeyModifiers::SHIFT` : le lookup étant une
+    /// égalité exacte sur le tuple, s'en écarter rendrait la touche muette.
     fn new_ecran_enu(commandes_actives: &mut HashMap<(KeyCode, KeyModifiers), Commande>) {
         commandes_actives.insert(
             (KeyCode::Char('R'), KeyModifiers::SHIFT),
@@ -714,18 +628,13 @@ impl CommandesActives {
 
     /// Retourne une chaîne énumérant les touches actives, séparées par des espaces.
     ///
-    /// Chaque touche est rendue entre guillemets simples : le caractère lui-même
-    /// (`'a'`, `'1'`…), ou un glyphe pour la seule touche nommée de la table,
-    /// `'⌫'`. Tout autre `KeyCode` est ignoré, `Entrée` comprise : une touche
-    /// muette dans l'aide vaut mieux qu'un nom illisible.
+    /// Le caractère lui-même, ou `'⌫'` pour la seule touche nommée de la table.
+    /// Tout autre `KeyCode` est ignoré, `Entrée` comprise : une touche muette
+    /// dans l'aide vaut mieux qu'un nom illisible.
     ///
-    /// Alimente [`crate::tui::EtatTui::message_aide`] via
-    /// [`Commande::ListeCommandesActives`].
-    ///
-    /// L'ordre suit l'itération du `HashMap`, *non déterministe d'un appel à
-    /// l'autre*. Compromis assumé : l'aide sert à repérer ce qui est actif, pas
-    /// à être lue deux fois. L'ordre stable viendra avec l'enrichissement du
-    /// module — libellés par commande, regroupement par catégorie.
+    /// **L'ordre suit l'itération du `HashMap`**, non déterministe d'un appel à
+    /// l'autre. L'aide sert à repérer ce qui est actif, pas à être lue deux
+    /// fois.
     pub(super) fn liste_commandes_actives(&self) -> String {
         let mut liste_commandes = String::new();
 

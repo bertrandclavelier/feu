@@ -15,20 +15,12 @@
 //! intacte après extinction, et qu'elle reste hors de portée de qui n'a pas le
 //! mot de passe.
 //!
-//! Six tests, chacun repartant d'un nœud neuf. [`cycle_vie_noyau`] suit
-//! l'allumage, le dépôt, la relecture après rallumage et l'effacement ;
-//! [`cycle_mot_de_passe`] éprouve le rechiffrement du trousseau et le rejet de
-//! l'ancien mot de passe ; [`erreurs_usage`] rassemble les refus opposés à un
-//! appelant qui s'y prend mal ; [`drop_foyer_ouvert`] et [`fermeture_secours`]
-//! prennent le nœud là où une terminaison anormale l'a laissé ;
-//! [`cycle_demarrage_seed`] le reconstruit de rien, seed en main ; et
-//! [`diagnostic_noeud`] l'abîme pièce à pièce pour voir ce qu'il en dit.
+//! Sept tests, chacun repartant d'un nœud neuf.
 //!
 //! Les assertions portent sur ce que le noyau **rend observable**, jamais sur
-//! son état interne : les rappels à l'interface — [`InterfaceTest`] les
-//! enregistre pour les rendre lisibles depuis le test —, les valeurs et erreurs
-//! de retour, et les fichiers laissés sur le disque, dont les chemins se
-//! déduisent de la seule braise.
+//! son état interne : les rappels à l'interface, que [`InterfaceTest`]
+//! enregistre, les valeurs et erreurs de retour, et les fichiers laissés sur le
+//! disque, dont les chemins se déduisent de la seule braise.
 
 use std::{
     fs::{
@@ -161,26 +153,9 @@ fn verifie_permissions(racine: &Path) {
 /// le noyau a été détruit puis reconstruit, braises et clé publique de nœud
 /// retrouvées à partir du seul mot de passe, et s'efface ensuite sans trace.
 ///
-/// Établit au passage l'unicité d'un blob dans un foyer : redéposé dans un autre
-/// classeur, il n'est pas dupliqué et le dépôt rend celui qui le détient déjà.
-///
-/// Le blob dépasse [`TAILLE_CHUNK`] et ses lignes sont numérotées : la boucle de
-/// lecture de `Tiroir::remplir` fait donc plusieurs tours, dont un dernier
-/// partiel, et un chunk perdu ou interverti se verrait à la relecture — ce
-/// qu'un contenu uniforme laisserait passer.
-///
-/// Les permissions sont contrôlées aux trois états stables du nœud — tous foyers
-/// fermés, tous ouverts, puis refermés. Les deux premiers ne voient pas les
-/// mêmes fichiers : ceux d'un foyer n'existent qu'ouvert, son archive qu'une
-/// fois refermé. Le troisième porte sur les archives réécrites après la
-/// suppression des blobs.
-///
-/// La suppression clôt le cycle, une fois la donnée relue — donc une fois
-/// prouvé qu'il y avait bien quelque chose à effacer. Les deux vérifications qui
-/// la suivent ne se recouvrent pas :
-/// [`existence_blob`](FeuNoyau::existence_blob) interroge le classeur nommé,
-/// [`lecture_donnees`](FeuNoyau::lecture_donnees) balaie les cinq — seule la
-/// seconde écarte l'hypothèse d'un blob déplacé plutôt que détruit.
+/// Établit au passage l'unicité d'un blob dans un foyer, la relecture d'un
+/// contenu dépassant [`TAILLE_CHUNK`], et les permissions aux trois états
+/// stables du nœud.
 #[test]
 fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -297,16 +272,9 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
 /// Après un changement de mot de passe, l'ancien n'ouvre plus rien et le nouveau
 /// ouvre tout — aux deux points où le mot de passe est saisi.
 ///
-/// Le mot de passe est demandé deux fois dans la vie d'un foyer : à l'allumage
-/// du nœud, pour déverrouiller les clés, puis à chaque
-/// [`ouverture_foyer`](FeuNoyau::ouverture_foyer), pour déchiffrer l'archive.
-/// Les deux dérivent leur clé éphémère du même Argon2id, mais empruntent des
-/// chemins distincts : le test éprouve les deux plutôt que d'inférer l'un de
-/// l'autre.
-///
-/// Établit en outre qu'une ouverture refusée ne coûte rien : l'arborescence
-/// reste celle d'un foyer fermé, et le bon mot de passe rouvre ensuite
-/// normalement.
+/// Les deux points de saisie — allumage du nœud, ouverture d'un foyer — sont
+/// éprouvés séparément. Établit en outre qu'une ouverture refusée ne coûte
+/// rien.
 #[test]
 fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -559,27 +527,9 @@ fn drop_foyer_ouvert() {
 /// [`secours_fermeture_foyer`](FeuNoyau::secours_fermeture_foyer), et la donnée
 /// qu'il détenait se relit ensuite à l'identique.
 ///
-/// L'état est monté par `forget` : le noyau disparaît sans que son `Drop`
-/// s'exécute, laissant sur le disque exactement ce que laisse une terminaison
-/// brutale — dossier clair présent, archive `.feu` supprimée à l'ouverture et
-/// jamais reconstituée.
-///
-/// Le `Gardien(_)` qui précède atteste de cet état : une ouverture ordinaire
-/// échoue faute de `.feu` à déchiffrer, et c'est ce que le secours vient
-/// réparer. La relecture porte sur le contenu, non sur la présence du blob : le
-/// secours reconstruit le trousseau depuis le dossier clair, et une clé de
-/// classeur mal rechargée laisserait le fichier en place tout en le rendant
-/// indéchiffrable.
-///
-/// Le second volet éprouve le refus. Une clé du foyer est retirée du dossier
-/// clair, puis le secours redemandé : il doit renoncer plutôt que d'archiver ce
-/// qu'il trouve. La garde vaut cher — le secours efface le dossier clair une
-/// fois l'archive écrite, donc l'accepter amputé échangerait un foyer réparable
-/// contre une archive définitivement incomplète.
-///
-/// L'état de départ est repris du foyer rouvert juste avant, par un second
-/// `forget` : les clés d'un foyer n'existent sur le disque que pendant son
-/// ouverture.
+/// L'état est monté par `forget`, qui laisse sur le disque ce que laisse une
+/// terminaison brutale. Le second volet éprouve le refus : clé retirée du
+/// dossier clair, le secours doit renoncer plutôt qu'archiver un foyer amputé.
 #[test]
 fn fermeture_secours() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -647,21 +597,9 @@ fn fermeture_secours() -> ResultFeuNoyau<()> {
 /// renaît d'elle avec les mêmes clés, et une donnée déposée ensuite survit à un
 /// démarrage de secours.
 ///
-/// La preuve du déterminisme passe par une signature produite avant l'effacement
-/// et vérifiée après, plutôt que par la comparaison de deux clés publiques :
-/// seule la vérification engage la clé **privée**, la seule qui compte. Deux
-/// signatures du même message ne se comparent pas — ML-DSA-87 est libre de
-/// randomiser.
-///
-/// Les braises sont contrôlées à part : elles descendent d'une autre branche de
-/// dérivation que la clé de signature du nœud, qui ne dit donc rien d'elles.
-///
-/// La relecture finale du blob est le seul chemin qui traverse
-/// [`demarrage_secours`](FeuNoyau::demarrage_secours) avec une donnée réelle.
-/// Elle porte sur les clés de classeur, que le secours réécrit dans l'archive :
-/// mal redérivées, elles laisseraient le foyer s'ouvrir sans encombre — celui-ci
-/// ne dépend que de la clé du foyer — et ne rendraient les blobs illisibles
-/// qu'ensuite, sans que rien ne l'ait signalé.
+/// Le déterminisme est prouvé par une signature produite avant l'effacement et
+/// vérifiée après — seule la vérification engage la clé privée. Les braises sont
+/// contrôlées à part, descendant d'une autre branche de dérivation.
 #[test]
 fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -751,19 +689,9 @@ fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
 /// Chaque dégât infligé à l'arborescence remonte l'anomalie qui le nomme, et
 /// désigne le fichier en cause.
 ///
-/// Les états sont fabriqués sur le disque plutôt qu'atteints par le noyau : un
-/// `.tar` résiduel ou un foyer présent sous ses deux formes ne s'obtiennent
-/// qu'en interrompant une opération au bon moment, ce qui demanderait une panne
-/// disque. Le contenu des fichiers créés est indifférent — le diagnostic ne fait
-/// que des tests de présence.
-///
-/// Un seul représentant est pris pour la famille [`Anomalie::ElementAbsent`] :
-/// les autres fichiers attendus sont contrôlés par le même `.exists()` recopié,
-/// sans rien qu'un test puisse prendre en défaut.
-///
-/// Le nœud n'est pas ouvert : [`FeuNoyau::new`] laisse déjà les trois foyers
-/// archivés, et le diagnostic ne descend pas dans leur arborescence interne —
-/// c'est [`diagnostic_foyer`](FeuNoyau::diagnostic_foyer) qui s'en charge.
+/// Les états sont fabriqués sur le disque, faute de pouvoir les atteindre par le
+/// noyau sans panne matérielle. Un seul représentant est pris pour la famille
+/// [`Anomalie::ElementAbsent`].
 #[test]
 fn diagnostic_noeud() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();

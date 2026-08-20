@@ -146,19 +146,15 @@ impl EtatArborescenceDisque {
 
     /// Relit du disque le répertoire ouvert sous le curseur.
     ///
-    /// Le seul moyen de voir un fichier déposé depuis un autre programme :
-    /// l'arbre ne se rafraîchit jamais seul. Replier puis déplier suffit — le
-    /// premier jette la tranche, le second la relit —, sans une ligne de code
-    /// propre au rafraîchissement.
+    /// Le seul moyen de voir un fichier déposé depuis un autre programme, l'arbre
+    /// ne se rafraîchissant jamais seul. Replier puis déplier suffit, sans une
+    /// ligne propre au rafraîchissement.
     ///
-    /// **La branche sous le curseur, et non l'arbre entier ni le parent** :
-    /// recharger plus haut jetterait les plis ouverts des répertoires frères,
-    /// que rien ne rétablirait. Ce qui disparaît ici est ce qu'on a demandé à
-    /// relire.
+    /// **La branche sous le curseur, ni l'arbre entier ni le parent** : recharger
+    /// plus haut jetterait les plis ouverts des répertoires frères.
     ///
-    /// Le test sur `est_repertoire` est redondant — `deplie` ne peut être vrai
-    /// que sur un répertoire — et le reste : l'invariant est écrit plutôt que
-    /// supposé.
+    /// Le test sur `est_repertoire` est redondant et le reste : l'invariant est
+    /// écrit plutôt que supposé.
     pub(super) fn recharger(&mut self) {
         let Some(curseur) = self.curseur.selected() else {
             return;
@@ -203,35 +199,17 @@ impl EtatArborescenceDisque {
 
     /// Lit un niveau du disque et insère ses entrées sous la ligne `index`.
     ///
-    /// **Un seul niveau par appel** : c'est ce qui borne le coût d'une frappe
-    /// et rend l'arbre paresseux. Un parcours récursif depuis `~` lirait le
-    /// disque entier.
+    /// **Un seul niveau par appel** : ce qui borne le coût d'une frappe et rend
+    /// l'arbre paresseux, là où un parcours récursif depuis `~` lirait le disque
+    /// entier.
     ///
-    /// Trois précautions dans la lecture. Le chemin est cloné et la profondeur
-    /// copiée avant tout : la suite mute `lignes`, et l'emprunt sur la ligne
-    /// source ne peut pas courir jusque-là. Les entrées en erreur sont
-    /// écartées par `flatten` — une entrée peut disparaître entre l'ouverture
-    /// du répertoire et sa lecture, ce n'est pas une raison de perdre les
-    /// autres. Un `read_dir` en échec, lui, laisse la ligne fermée : un
-    /// répertoire illisible se comporte comme un répertoire vide, faute d'un
-    /// type d'erreur propre à `feu-tui` par où le signaler.
+    /// Chemin cloné et profondeur copiée d'avance, la suite mutant `lignes`. Un
+    /// `read_dir` en échec laisse la ligne fermée : un répertoire illisible se
+    /// comporte comme un vide, faute d'un type d'erreur propre à `feu-tui`.
     ///
-    /// **Les entrées cachées sont écartées**, `~` en étant rempli — `.config`,
-    /// `.cargo`, `.local` noieraient ce que l'utilisateur cherche. Les montrer
-    /// un jour demandera de relire les répertoires déjà ouverts, donc une
-    /// bascule et non un simple filtre au rendu.
-    ///
-    /// Le tri se fait en deux passes plutôt qu'en une comparaison composée :
-    /// par chemin d'abord, puis les répertoires en tête (`!est_repertoire`,
-    /// puisque `false` précède `true`). Le tri de Rust étant stable, la
-    /// première passe survit à la seconde à l'intérieur de chaque groupe. Trier
-    /// sur le chemin entier revient à trier sur le nom, tous partageant le même
-    /// parent. C'est l'ordre des octets, donc majuscules et accents ne se
-    /// rangent pas comme dans un dictionnaire — suffisant pour s'y retrouver.
-    ///
-    /// L'insertion est un `splice` sur une plage vide, et non une boucle
-    /// d'`insert` : chacun décalerait le précédent, et les enfants sortiraient
-    /// en ordre inverse.
+    /// **Les entrées cachées sont écartées** — `~` en est rempli ; les montrer
+    /// demandera une bascule, pas un filtre au rendu. Tri en deux passes, stable ;
+    /// insertion par `splice`, une boucle d'`insert` inversant les enfants.
     fn deplier(&mut self, index: usize) {
         let LigneDisque {
             chemin,
@@ -273,20 +251,15 @@ impl EtatArborescenceDisque {
 
     /// Retire de la liste tout le sous-arbre de la ligne `index`.
     ///
-    /// Ses descendants sont exactement les lignes qui la suivent tant qu'elles
-    /// sont plus profondes qu'elle : la première qui ne l'est plus borne le
-    /// bloc. Aucun chemin n'est comparé, aucun parent n'est remonté.
+    /// Ses descendants sont exactement les lignes plus profondes qui la suivent :
+    /// la première qui ne l'est plus borne le bloc, sans comparer de chemin ni
+    /// remonter aux parents.
     ///
-    /// Boucle `while` et index tenu à la main, comme dans
-    /// [`super::ecran_arborescence_enu::EtatArborescenceEnu::lignes_visibles`] :
-    /// le pas dépend des données, ce qu'un `for` ne sait pas faire.
+    /// **`fin` se calcule entièrement avant de muter** — supprimer au fil du
+    /// parcours fausserait les index restants.
     ///
-    /// **`fin` se calcule entièrement avant de muter.** Supprimer au fil du
-    /// parcours décalerait ce qui suit et fausserait les index restants.
-    ///
-    /// Les plis imbriqués tombent sans cas particulier : un sous-répertoire
-    /// ouvert est dans la tranche, il part avec elle. Rouvrir la ligne le
-    /// retrouvera fermé, l'arbre ne gardant en mémoire que ce qu'il affiche.
+    /// Les plis imbriqués partent avec la tranche. Rouvrir la ligne les
+    /// retrouvera fermés, l'arbre ne gardant que ce qu'il affiche.
     fn replier(&mut self, index: usize) {
         let profondeur = self.lignes[index].profondeur;
 
@@ -321,25 +294,18 @@ impl EtatArborescenceDisque {
 
 /// Dessine l'arborescence du disque et les messages éphémères.
 ///
-/// Le carré est celui des autres écrans de travail, dessiné par
-/// [`super::rendu::carre_principal`] ; ne reste ici que la marge de découpe.
-/// L'arbre prend le `Fill`, ce qui reste est fixe : les respirations et les
-/// deux lignes de message, à la même hauteur que sur l'écran des ENU.
+/// Le carré est celui des autres écrans de travail ; ne reste ici que la marge
+/// de découpe, à la même hauteur que sur l'écran des ENU.
 ///
-/// Le `Vec` de lignes est déjà ce qu'il faut dessiner — un pli ne masque rien,
-/// il retire —, donc le rendu le parcourt tel quel : la profondeur de chaque
-/// ligne donne son indentation, son état donne son symbole.
+/// **Un pli ne masque rien, il retire** : le `Vec` de lignes est déjà ce qu'il
+/// faut dessiner, la profondeur donnant l'indentation et l'état le symbole.
 ///
 /// **En `&mut EtatTui`** : le [`ListState`] est écrit au moment du rendu, seul
-/// instant où la hauteur du carré et le nombre d'items sont connus. C'est lui
-/// qui borne la sélection et pose le défilement.
+/// instant où la hauteur du carré et le nombre d'items sont connus.
 ///
-/// La colonne de marque ouvre chaque ligne, large de deux cellules qu'un chemin
-/// soit retenu ou non : l'arbre reste immobile quand la marque se pose. La
-/// comparaison porte sur le chemin entier, qui est l'identité d'une entrée —
-/// une seule ligne peut donc être marquée.
-///
-/// Rien n'est prévu pour une liste vide : la racine est toujours là.
+/// La comparaison de marque porte sur le chemin entier, identité d'une entrée —
+/// une seule ligne peut donc être marquée. Rien n'est prévu pour une liste
+/// vide : la racine est toujours là.
 pub(super) fn dessiner_ecran_arborescence_disque(frame: &mut Frame, etat_tui: &mut EtatTui) {
     let carre = carre_principal(frame, &etat_tui.ecran).inner(Margin {
         horizontal: 4,
@@ -418,23 +384,15 @@ pub(super) fn dessiner_ecran_arborescence_disque(frame: &mut Frame, etat_tui: &m
 
 /// Le nom affiché d'une ligne, à droite de son symbole.
 ///
-/// **Point de passage unique du nom du disque vers l'écran, et donc là où il
-/// est assaini.** Un nom de fichier Unix n'interdit que `/` et l'octet nul :
-/// un retour à la ligne ou une séquence d'échappement peut arriver jusqu'ici et
-/// casser le carré. Les caractères de contrôle sont remplacés plutôt que
-/// supprimés — deux noms distincts ne doivent pas devenir identiques à l'écran.
+/// **Point de passage unique du nom du disque vers l'écran, et donc là où il est
+/// assaini** : les caractères de contrôle sont remplacés, pas supprimés, deux
+/// noms distincts ne devant pas devenir identiques à l'écran.
 ///
-/// La longueur est bornée à [`MAX_LONGUEUR_MOT`], ellipse comprise, et comptée
-/// en caractères et non en octets. Un nom long est le cas courant, pas le cas
-/// tordu : un export daté ou un PDF téléchargé déborde vite d'un carré de
-/// 70 colonnes.
+/// Borné à [`MAX_LONGUEUR_MOT`], en caractères et non en octets. Un nom long est
+/// le cas courant : un export daté déborde vite d'un carré de 70 colonnes.
 ///
-/// `to_string_lossy` traite les noms non UTF-8, que le disque accepte : les
-/// octets invalides deviennent `U+FFFD`. L'entrée reste désignable, son chemin
-/// n'étant jamais reconstruit depuis ce texte.
-///
-/// L'`unwrap` sur `file_name` ne tombe que sur la racine `/`, qui n'entre dans
-/// l'arbre que si `HOME` la vaut.
+/// `to_string_lossy` traite les noms non UTF-8 que le disque accepte — l'entrée
+/// reste désignable, son chemin n'étant jamais reconstruit depuis ce texte.
 fn libelle(ligne: &LigneDisque) -> String {
     let nom = ligne.chemin.file_name().unwrap().to_string_lossy();
 

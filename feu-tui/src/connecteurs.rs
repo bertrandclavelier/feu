@@ -156,30 +156,23 @@ pub(crate) enum MessageTuiCoeur {
     /// Le chemin est celui du dossier **à créer**, sous-dossier de la marque
     /// posée par l'utilisateur — le cœur refuse un chemin déjà pris.
     ///
-    /// Émis par [`crate::tui::Tui`] sur dispatch de `PilotageOuvrirComptoirDepot`
-    /// — les deux index sont capturés depuis la position courante, sans saisie ;
-    /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
-    /// [`FeuApplication::commande_ouverture_comptoir_depot`]. L'identifiant rendu
-    /// est ignoré : la commande l'inscrit déjà dans la session.
+    /// Émis sur dispatch de `PilotageOuvrirComptoirDepot`, consommé par un appel
+    /// à [`FeuApplication::commande_ouverture_comptoir_depot`] dont l'identifiant
+    /// rendu est ignoré — la commande l'inscrit déjà dans la session.
     ///
-    /// Le chemin traverse le canal plutôt que d'être connu du cœur : la TUI est
-    /// seule à décider où le dossier apparaît, le cœur ne fait que l'y créer.
+    /// Le chemin traverse le canal plutôt que d'être connu du cœur : la TUI seule
+    /// décide où le dossier apparaît.
     OuvertureComptoir(PathBuf, usize, usize),
 
     /// Demande la matérialisation d'une ENU dans un dossier de l'OS.
     ///
-    /// La variante porte le dossier **à créer** — sous-dossier de la marque
-    /// posée sur l'écran du disque, comme pour le dépôt — et l'ENU marquée sur
-    /// l'écran des ENU. Le cœur ne décide donc plus rien du retrait : ni d'où il
-    /// part, ni où il écrit — à la différence du chargement d'arborescence, qui
-    /// va chercher la dernière racine lui-même.
+    /// Porte le dossier **à créer** — sous-dossier de la marque disque, comme
+    /// pour le dépôt — et l'ENU marquée. Le cœur ne décide donc plus rien du
+    /// retrait, ni d'où il part ni où il écrit, à la différence du chargement
+    /// d'arborescence.
     ///
-    /// Émis par [`crate::tui::Tui`] sur dispatch de la commande
-    /// `PilotageRetraitLectureSeule` ; consommé par
-    /// [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
-    /// [`FeuApplication::commande_retrait_lecture_seule`]. L'erreur est propagée
-    /// via [`MessageCoeurTui::AffichageErreur`] — notamment la liste des foyers
-    /// à rouvrir, que le Scribe dresse avant d'écrire quoi que ce soit.
+    /// L'erreur remonte en [`MessageCoeurTui::AffichageErreur`], notamment la
+    /// liste des foyers à ouvrir que le Scribe dresse avant d'écrire.
     RetraitLectureSeule(PathBuf, Fiche),
 
     /// L'utilisateur a confirmé l'enregistrement de la seed — débloque le thread cœur en attente.
@@ -243,38 +236,16 @@ impl ConnecteurVersTui {
 
     /// Spawne le thread cœur et retourne sa poignée.
     ///
-    /// Crée [`FeuApplication`], consomme le connecteur (`self`) et transfère
-    /// la propriété de l'ensemble au thread.
+    /// Crée [`FeuApplication`], consomme le connecteur et transfère la propriété
+    /// de l'ensemble au thread.
     ///
-    /// La boucle de dispatch liste **exhaustivement** chaque variante de
-    /// [`MessageTuiCoeur`] — aucun `_ => {}`. Ce choix est structurel : toute
-    /// variante ajoutée à l'enum à l'avenir (requête de signature, écriture de
-    /// blob…) provoque une erreur de compilation tant qu'elle n'est pas traitée
-    /// ici. Le compilateur devient le filet de sécurité contre les commandes
-    /// silencieusement ignorées.
+    /// La boucle liste **exhaustivement** chaque variante de [`MessageTuiCoeur`],
+    /// sans `_ => {}` : toute variante ajoutée casse la compilation tant qu'elle
+    /// n'est pas traitée. Trois bras ont un corps vide, hors-protocole ici, et
+    /// sont ignorés explicitement.
     ///
-    /// Chaque bras déclenche la commande correspondante de [`FeuApplication`] et
-    /// propage l'erreur éventuelle via [`MessageCoeurTui::AffichageErreur`]. Les
-    /// index de foyer et de classeur traversent le canal tels quels : la TUI
-    /// numérote comme le noyau, à partir de zéro, aucune conversion ici.
-    ///
-    /// [`MessageTuiCoeur::OuvertureComptoir`] est le seul bras dont la commande
-    /// rend autre chose que `()`, et pourtant il s'écrit comme les autres, en
-    /// `if let Err` : l'identifiant rendu est déjà inscrit dans la session, que
-    /// la même commande envoie.
-    ///
-    /// [`MessageTuiCoeur::EnvoieMdp`], [`MessageTuiCoeur::SeedBienRecue`] et
-    /// [`MessageTuiCoeur::Annulation`] ont un corps vide : hors-protocole dans
-    /// le contexte de la boucle principale (ils ne peuvent arriver ici que si
-    /// une attente bloquante a été contournée), ils sont ignorés — mais
-    /// explicitement, pas par défaut.
-    ///
-    /// La boucle se termine sur [`MessageTuiCoeur::Quitter`] ou fermeture du
-    /// canal (`Err`). La poignée retournée permet à `main` d'attendre la fin
-    /// propre du thread via `.join()` — aucun thread orphelin.
-    ///
-    /// `chemin_feu` est le chemin racine du nœud, calculé par `main` (seul point
-    /// de lecture de l'environnement) et transmis à [`FeuApplication::new`].
+    /// La boucle se termine sur `Quitter` ou fermeture du canal ; la poignée
+    /// rendue permet à `main` de l'attendre, sans thread orphelin.
     pub(crate) fn lancer_thread_coeur(self, chemin_feu: &Path) -> JoinHandle<()> {
         let mut feu_application = FeuApplication::new(chemin_feu);
         spawn(move || {

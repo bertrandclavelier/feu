@@ -36,23 +36,17 @@ pub type ResultFeuNoyau<T> = Result<T, ErreurFeuNoyau>;
 
 /// Type d'erreur unique exposé par `feu-noyau`.
 ///
-/// Les variantes **internes** viennent d'abord, par ordre alphabétique — c'est le
-/// seul ordre qui dise sans ambiguïté où insérer la suivante. Elles couvrent les
-/// préconditions non satisfaites, les index hors bornes et les états incohérents.
-/// Leur préfixe de nom désigne le composant qui les lève lorsque le cas lui est
-/// propre ; les cas partagés par plusieurs composants n'en portent pas.
+/// Les variantes **internes** viennent d'abord, par ordre alphabétique — le seul
+/// ordre qui dise sans ambiguïté où insérer la suivante. Leur préfixe nomme le
+/// composant qui les lève quand le cas lui est propre.
 ///
-/// Les variantes **externes** ferment la liste : elles portent l'erreur d'une
-/// crate tierce au lieu de la traduire. Celles dont le type source implémente
-/// `std::error::Error` le conservent via `#[from]` ; les autres n'ont d'autre
-/// choix que la `String`, chacune expliquant pourquoi.
+/// Les variantes **externes** ferment la liste et portent l'erreur d'une crate
+/// tierce plutôt que de la traduire, par `#[from]` quand le type source le
+/// permet. Le préfixe `NOY >` des messages marque la couche une fois l'erreur
+/// encapsulée par `feu-application`.
 ///
-/// Le préfixe `NOY >` des messages sert de marqueur de couche lorsqu'ils sont
-/// encapsulés par la couche applicative (`feu-application`).
-///
-/// Aucune charge utile n'est sensible : ce qu'une variante porte doit pouvoir
-/// s'afficher. Les valeurs qui n'y ont pas leur place — braise, chemin absolu —
-/// sont portées pour inspection mais absentes du message.
+/// **Aucune charge utile n'est sensible** : une braise ou un chemin absolu est
+/// porté pour inspection, jamais affiché.
 #[derive(Error, Debug)]
 pub enum ErreurFeuNoyau {
     /// Foyer marqué ouvert dans la session alors que son emplacement

@@ -93,7 +93,7 @@ impl TrousseauPublicFoyer {
 
     /// Retourne la clé de chiffrement AES-256-GCM du classeur à l'`index` donné — chiffrée, 60 octets.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si aucune clé n'est présente à cet index.
     pub(crate) fn donne_cle_chiffrement_classeur(
@@ -114,7 +114,7 @@ impl TrousseauPublicFoyer {
 
     /// Insère la clé de chiffrement d'un classeur à l'`index` donné — chiffrée, 60 octets.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si `index >= MAX_CLASSEURS`.
     pub(crate) fn ajoute_cle_chiffrement_classeur(
@@ -195,7 +195,7 @@ impl TrousseauPublicComplet {
 
     /// Retourne une référence au [`TrousseauPublicFoyer`] à l'`index` donné.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si aucun foyer n'est présent à cet index.
     pub(crate) fn donne_trousseau_public_foyer(
@@ -213,7 +213,7 @@ impl TrousseauPublicComplet {
 
     /// Insère un [`TrousseauPublicFoyer`] à l'`index` donné.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si `index >= MAX_FOYERS`.
     pub(crate) fn ajoute_trousseau_foyer_public(

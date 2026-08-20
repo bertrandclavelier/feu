@@ -67,7 +67,7 @@ impl ComptoirDepot {
 
     /// Crée le dossier physique avec les permissions `rwx------` (0o700).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeDossierDejaExistant`] si le
     /// chemin est déjà pris — un comptoir n'écrase pas un dossier existant.
@@ -93,7 +93,7 @@ impl ComptoirDepot {
     /// et déposés. Récursive ([`remove_dir_all`]) : le dossier disparaît avec ce
     /// qu'il reste dedans.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage [`ErreurFeuApplication::IoError`] si le dossier est absent ou si
     /// la suppression échoue.

@@ -172,21 +172,16 @@ enum ValidationBufferSaisie {
 
 /// État courant de l'interface entre deux frames.
 ///
-/// Deux natures s'y côtoient. **Le transversal**, à plat ici : la session, les
-/// deux axes ([`Ecran`], [`ModeSaisie`]), la table des commandes, la mécanique
-/// de saisie (`prompt`, `buffer_saisie`, [`ValidationBufferSaisie`]) et les
-/// messages éphémères. Il survit aux changements d'écran, et c'est la raison
-/// d'être de sa place : une erreur née pendant la saisie du mot de passe doit
-/// rester lisible sur l'écran qui suit. **Le propre à un écran**, dans un
-/// champ par écran — aujourd'hui `etat_pilotage` — dont le module de cet écran
-/// est seul à connaître le contenu.
+/// Deux natures s'y côtoient. **Le transversal**, à plat ici, survit aux
+/// changements d'écran — une erreur née pendant la saisie du mot de passe doit
+/// rester lisible sur l'écran qui suit. **Le propre à un écran** vit dans un
+/// champ par écran, dont son module est seul à connaître le contenu.
 ///
-/// Aucun état applicatif n'est retenu hors de `session_application` : ce que le
-/// nœud sait, la TUI le lit dans le clone qu'elle reçoit, elle n'en garde pas
-/// de copie à resynchroniser.
+/// Aucun état applicatif n'est retenu hors de `session_application` : la TUI lit
+/// le clone qu'elle reçoit et n'en garde pas de copie à resynchroniser.
 ///
-/// Les méthodes de ce type ne sont pas toutes ici : chaque module d'écran
-/// ajoute en `impl EtatTui` les transitions qui mènent au sien.
+/// Les méthodes ne sont pas toutes ici : chaque module d'écran ajoute en
+/// `impl EtatTui` les transitions qui mènent au sien.
 struct EtatTui {
     /// Session applicative courante — `None` quand le nœud est éteint.
     ///
@@ -220,23 +215,14 @@ struct EtatTui {
     /// L'ENU que l'utilisateur a retenue, `None` tant qu'il n'en a marqué
     /// aucune.
     ///
-    /// **Transversal, et c'est tout son intérêt** : la marque se pose sur
-    /// l'écran d'arborescence et se lit sur celui du pilotage, qui l'affiche en
-    /// permanence et dont les commandes la consomment — la fermeture d'un
-    /// comptoir la prend pour racine de greffe. Elle n'appartient donc à aucun
-    /// des deux, pas plus que [`Self::chemin_selectionne`] à côté d'elle : à eux
-    /// deux, ils résolvent toute action sans qu'aucune commande n'ait à nommer
-    /// sa cible.
+    /// **Transversal, et c'est tout son intérêt** : la marque se pose sur l'écran
+    /// d'arborescence et se consomme sur celui du pilotage. Avec
+    /// [`Self::chemin_selectionne`], elle résout toute action sans qu'aucune
+    /// commande n'ait à nommer sa cible.
     ///
-    /// Une [`Fiche`] entière plutôt que son seul `hash_carte` : le pilotage
-    /// affiche le nom, et c'est la fiche que les commandes de
-    /// `feu-application` réclament. Le clone est celui d'une ligne de l'arbre,
-    /// signature exclue.
-    ///
-    /// Rien ne l'efface : la marque est un choix qui dure, remplacé par le
-    /// suivant. Un rechargement de l'arbre la laisse en place, quitte à ce
-    /// qu'elle désigne une ENU absente du nouveau parcours — elle reste
-    /// chargeable, le stockage étant adressé par contenu.
+    /// Une [`Fiche`] entière plutôt que son `hash_carte`, que réclament les
+    /// commandes. **Rien ne l'efface** : un rechargement la laisse en place,
+    /// quitte à désigner une ENU absente du nouveau parcours.
     enu_selectionnee: Option<Fiche>,
 
     /// Le chemin que l'utilisateur a retenu sur l'écran du disque, `None` tant
@@ -394,18 +380,12 @@ impl EtatTui {
 
     /// Passe à l'écran de travail suivant, s'il y en a un.
     ///
-    /// Le seul endroit qui connaisse l'ordre des écrans — la table des
-    /// commandes dit quand basculer, pas vers quoi. Ici plutôt que dans un
-    /// module d'écran : aucun d'eux ne sait ce qui le suit.
+    /// Seul endroit qui connaisse l'ordre des écrans — la table dit quand
+    /// basculer, pas vers quoi. Ici plutôt que dans un module d'écran : aucun
+    /// d'eux ne sait ce qui le suit.
     ///
-    /// **Les écrans sont rangés en ligne, pas en cycle** : l'arborescence du
-    /// disque est la dernière, et son bras vide est l'écriture de cette borne —
-    /// depuis elle, la commande est reçue et ne déplace rien. L'ordre est celui
-    /// des onglets, ENU puis pilotage puis disque.
-    ///
-    /// Rien à poser d'autre que [`EtatTui::ecran`] : chaque écran de travail
-    /// s'entre en [`ModeSaisie::Normal`], mode dans lequel on est forcément
-    /// déjà puisque la table n'y est consultée que là.
+    /// **Rangés en ligne, pas en cycle** : le disque est le dernier, et son bras
+    /// vide est l'écriture de cette borne. L'ordre est celui des onglets.
     fn passer_ecran_suivant(&mut self) {
         match self.ecran {
             Ecran::Pilotage => {
@@ -485,23 +465,16 @@ impl Tui {
 
     /// Boucle principale : dessine, traite les événements clavier, lit le canal cœur.
     ///
-    /// Chaque itération :
-    /// 1. Dessin du frame courant.
-    /// 2. Avance d'une seconde les comptes à rebours via [`EtatTui::decremente_temps`]
-    ///    si `horloge` indique qu'une seconde s'est écoulée depuis la dernière impulsion.
-    ///    `horloge` est le seul `Instant` de la boucle — [`EtatTui`] ne manipule que
-    ///    des entiers, pas du temps.
-    /// 3. `poll(50ms)` — si un événement clavier est disponible, dispatch selon
-    ///    [`EtatTui::mode_saisie`] : mode normal (lookup dans
-    ///    [`EtatTui::commandes_actives`] et exécution de la commande retournée),
-    ///    insertion (accumulation dans le buffer, Entrée → validation,
-    ///    Échap → annulation), ou information (Entrée → avancement de l'écran courant).
-    /// 4. `try_recv` non bloquant sur le canal cœur→TUI : pose le message
-    ///    d'erreur, appelle la transition qui correspond au message reçu
-    ///    (`AttenteMdp`, `EnvoiSeed`), ou remplace la session et reconstruit
-    ///    [`EtatTui::commandes_actives`] — le payload à `None` (extinction)
-    ///    suffisant à tout éteindre d'un coup. La déconnexion du thread cœur
-    ///    est signalée comme une erreur ordinaire.
+    /// Dessin, puis décompte des messages éphémères, puis `poll(50 ms)` sur le
+    /// clavier avec dispatch selon [`EtatTui::mode_saisie`], puis `try_recv` non
+    /// bloquant sur le canal cœur.
+    ///
+    /// `horloge` est le seul `Instant` de la boucle : [`EtatTui`] ne manipule que
+    /// des entiers, jamais du temps.
+    ///
+    /// Une session reçue à `None` — extinction — suffit à tout éteindre d'un
+    /// coup. La déconnexion du thread cœur est signalée comme une erreur
+    /// ordinaire.
     pub(crate) fn lancer(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         let mut horloge = Instant::now();
         loop {
@@ -582,26 +555,16 @@ impl Tui {
 
     /// Traite une touche en mode [`ModeSaisie::Normal`] : dispatch via [`CommandesActives`].
     ///
-    /// La logique se déroule en trois filtres successifs : [`Self::lire_touche`]
-    /// écarte les événements non clavier ; le lookup dans
-    /// [`EtatTui::commandes_actives`] écarte les touches non liées dans le
-    /// contexte courant ; le `match` final mappe chaque [`Commande`] à son
-    /// effet — envoi de message au cœur, bascule en [`ModeSaisie::Insertion`]
-    /// pour les commandes qui collectent un argument, ou affichage de l'aide.
+    /// Trois filtres successifs : les événements non clavier, les touches non
+    /// liées dans le contexte courant, puis le `match` qui mappe chaque
+    /// [`Commande`] à son effet.
     ///
-    /// Aucun raccourci n'est hardcodé ici : ajouter une commande consiste à
-    /// étendre l'enum [`Commande`], à enrichir les règles de
-    /// [`CommandesActives::new`] pour qu'elle insère la liaison dans les
-    /// contextes voulus, et à ajouter un bras au `match`. La logique de
-    /// filtrage par contexte reste entièrement dans [`commandes`].
+    /// **Aucun raccourci n'est hardcodé ici** : ajouter une commande, c'est
+    /// étendre l'enum, enrichir les règles de [`CommandesActives::new`] et
+    /// ajouter un bras. Le filtrage par contexte reste dans [`commandes`].
     ///
-    /// Une fois la commande dispatchée, [`EtatTui::commandes_actives`] est
-    /// reconstruite via [`CommandesActives::new`] : la position courante ou
-    /// l'écran ont pu changer, et la table doit refléter le nouveau contexte
-    /// avant la prochaine frappe.
-    ///
-    /// Retourne `false` pour signaler à la boucle principale de s'arrêter
-    /// (déclenché par [`Commande::PilotageQuitter`]).
+    /// La table est reconstruite après chaque dispatch : la position ou l'écran
+    /// ont pu changer. Rend `false` pour arrêter la boucle principale.
     fn saisie_mode_normal(&mut self) -> std::io::Result<bool> {
         if let Some(touche) = Self::lire_touche()?
             && let Some(commande) = self.etat_tui.commandes_actives.get(&touche)
@@ -739,20 +702,15 @@ impl Tui {
     /// Seules les frappes sans modificateur (`KeyModifiers::NONE`) sont traitées —
     /// un `Ctrl+Entrée` n'est pas une validation, un `Ctrl+C` n'est pas un caractère.
     ///
-    /// À la validation (Entrée), consulte [`EtatTui::validation_buffer_saisie`] pour
-    /// décider quel message envoyer au cœur — chaque variante y documente sa
-    /// garde. Un buffer refusé affiche un message d'erreur et n'envoie rien ;
-    /// [`ValidationBufferSaisie::Rien`] est un no-op, l'état d'une saisie indue.
+    /// À la validation, [`EtatTui::validation_buffer_saisie`] décide quel message
+    /// envoyer — chaque variante y documente sa garde. Un buffer refusé affiche
+    /// une erreur et n'envoie rien.
     ///
-    /// Quel que soit le bras pris, l'écran revient à son état de repos, la
-    /// destination du buffer à [`ValidationBufferSaisie::Rien`], et `prompt`
-    /// comme `buffer_saisie` sont vidés — sans jamais consulter l'écran
-    /// courant.
+    /// Quel que soit le bras pris, l'écran revient au repos et le buffer est vidé,
+    /// **sans jamais consulter l'écran courant**.
     ///
-    /// À l'annulation (Échap), vide buffer et prompt, restaure l'écran et le mode,
-    /// puis envoie [`MessageTuiCoeur::Annulation`] — utile aux attentes bloquantes
-    /// côté cœur (cf. l'implémentation de `demander_mdp` sur
-    /// [`crate::connecteurs::ConnecteurVersTui`]).
+    /// À l'annulation, [`MessageTuiCoeur::Annulation`] part vers le cœur, ce dont
+    /// dépendent ses attentes bloquantes.
     fn saisie_mode_insertion(&mut self) -> std::io::Result<()> {
         match Self::lire_touche()? {
             Some((KeyCode::Char(c), KeyModifiers::NONE)) => {

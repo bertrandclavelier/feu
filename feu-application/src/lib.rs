@@ -82,19 +82,14 @@ mod tests;
 
 /// Contrat entre [`FeuApplication`] et la couche de présentation.
 ///
-/// Regroupe les interactions bloquantes déléguées par le pont interne
-/// (`demander_mdp`, `recevoir_seed`, `confirmer_enregistrement_seed`) et la
-/// notification d'état émise après chaque commande mutante
-/// (`recevoir_session_application`). Les notifications d'état internes au noyau
-/// (clés publiques, adresses `.braise`) sont écrites directement dans
-/// [`SessionApplication`] sans passer par ce trait.
+/// Regroupe les interactions bloquantes déléguées par le pont interne et la
+/// notification d'état émise après chaque commande mutante. Ce que le noyau
+/// écrit lui-même dans [`SessionApplication`] — clés publiques, braises — ne
+/// passe pas par ici.
 ///
-/// Toutes les méthodes prennent `&self` : aucune n'exige l'exclusivité de
-/// l'implémenteur. Ce que le trait demande est de **transmettre**, pas de
-/// retenir — `feu-tui` pousse tout sur un canal, et `Sender::send` se contente
-/// d'un emprunt partagé. Un implémenteur qui veut stocker prend une mutabilité
-/// intérieure à sa charge, plutôt que de faire remonter la contrainte à tous
-/// les autres.
+/// Toutes les méthodes prennent `&self` : le trait demande de **transmettre**,
+/// pas de retenir. Qui veut stocker prend une mutabilité intérieure à sa charge
+/// plutôt que d'imposer l'exclusivité à tous.
 pub trait InterfaceFeuApplication {
     /// Collecte le mot de passe Feu en masquant la saisie.
     ///
@@ -115,20 +110,12 @@ pub trait InterfaceFeuApplication {
 
     /// Notifie la couche de présentation d'un changement d'état applicatif.
     ///
-    /// Appelée par [`FeuApplication`] à la fin de chaque commande qui mute
-    /// [`SessionApplication`], une fois la session dans un état cohérent.
-    /// Un seul appel par commande — jamais en cours de mutation, jamais depuis
-    /// les setters de session.
+    /// Appelée à la fin de chaque commande mutante, session déjà cohérente : un
+    /// seul appel par commande, jamais en cours de mutation ni depuis un setter.
     ///
-    /// Le payload distingue deux cas :
-    /// - `Some(session)` — clone cohérent de l'état applicatif après une commande
-    ///   mutante réussie (allumage, ouverture/fermeture de foyer ou de
-    ///   comptoir…).
-    /// - `None` — extinction du nœud : la couche de présentation doit traiter
-    ///   cela comme une remise à zéro et oublier toute donnée applicative.
-    ///
-    /// La couche de présentation est libre d'en faire ce qu'elle veut :
-    /// l'envoyer sur un canal, le stocker, l'ignorer.
+    /// `Some(session)` porte un clone de l'état applicatif ; `None` dit
+    /// l'extinction du nœud, que la présentation doit traiter comme une remise à
+    /// zéro. Elle en fait ensuite ce qu'elle veut.
     fn recevoir_session_application(&self, session_application: Option<SessionApplication>);
 }
 

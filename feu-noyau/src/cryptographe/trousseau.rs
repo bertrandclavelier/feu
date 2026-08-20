@@ -46,7 +46,7 @@
 //! `paire_signature_noeud` sont à `None`, `trousseaux_foyers` est un tableau fixe
 //! de `None`. Les champs sont peuplés au fil du cycle de vie de la session.
 //!
-//! # Invariant
+//! # Invariants
 //!
 //! Un [`TrousseauFoyer`] est toujours complet à l'insertion — toutes ses
 //! clés sont générées avant d'être ajoutées au trousseau.
@@ -193,7 +193,7 @@ impl TrousseauFoyer {
     /// (clés de 32 octets) ou [`Trousseau::chiffre_seed`] (seed ML-KEM-1024 de 64 octets).
     /// Les clés publiques sont copiées en clair.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le chiffrement d'une clé échoue — clé éphémère
     /// absente du trousseau ou échec AES-256-GCM.
@@ -314,19 +314,13 @@ impl Trousseau {
 
     /// Dérive et enregistre dans le trousseau l'ensemble du matériau d'un foyer.
     ///
-    /// À partir de `seed_bytes` et de `position`, dérive par HKDF-SHA3-256 le
-    /// matériau du foyer. Chaque élément est tiré d'un `info` distinct, combinant
-    /// un label dédié et l'index du foyer (`position + 1`) — ce qui sépare le
-    /// domaine de dérivation de chaque élément et de chaque foyer :
+    /// Braise, clé symétrique, paire ML-DSA-87, paire ML-KEM-1024 et cinq clés de
+    /// classeur sont dérivées de `seed_bytes` par HKDF-SHA3-256. Chaque élément
+    /// est tiré d'un `info` distinct — label dédié plus index du foyer —, ce qui
+    /// sépare les domaines de dérivation entre éléments comme entre foyers.
     ///
-    /// - la braise, identifiant public du foyer — pas une clé (`feu/foyer/braise`)
-    /// - une clé symétrique de chiffrement du foyer (`feu/foyer/symetrique`)
-    /// - une paire de clés ML-DSA-87 de signature (`feu/foyer/signature`)
-    /// - une paire de clés ML-KEM-1024 de chiffrement asymétrique (`feu/foyer/chiffrement`)
-    /// - cinq clés symétriques de classeur (`feu/classeur/symetrique`, suffixée de l'index du classeur)
-    ///
-    /// Toutes les clés brutes intermédiaires sont portées par des `SecretBox` et
-    /// zéroïsées dès qu'elles ne sont plus nécessaires.
+    /// Les clés brutes intermédiaires sont portées par des `SecretBox` et
+    /// zéroïsées dès qu'elles ne servent plus.
     pub(super) fn ajouter_trousseau_foyer(
         &mut self,
         seed_bytes: &SecretBox<[u8; 64]>,
@@ -501,7 +495,7 @@ impl Trousseau {
     /// Cette clé sert uniquement à chiffrer les clés privées via [`chiffre_cle`] —
     /// elle doit être effacée dès que le trousseau persistable est constitué.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le mot de passe ou le sel est absent du trousseau,
     /// ou si la dérivation Argon2id échoue.
@@ -537,7 +531,7 @@ impl Trousseau {
 
     /// Signe des octets avec la clé privée ML-DSA-87 du nœud.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la clé de signature du nœud est absente du trousseau.
     pub(super) fn signe_avec_cle_noeud(
@@ -552,7 +546,7 @@ impl Trousseau {
 
     /// Signe des octets avec la clé privée ML-DSA-87 du foyer à la position `index_foyer`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le foyer est absent du trousseau.
     pub(super) fn signe_avec_cle_foyer(
@@ -584,7 +578,7 @@ impl Trousseau {
     /// [12..60] ciphertext + auth tag (32 + 16 octets)
     /// ```
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la clé éphémère est absente du trousseau
     /// ou si le chiffrement AES-256-GCM échoue.
@@ -612,7 +606,7 @@ impl Trousseau {
     /// [12..92] ciphertext + auth tag (64 + 16 octets)
     /// ```
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la clé éphémère est absente du trousseau
     /// ou si le chiffrement AES-256-GCM échoue.
@@ -634,7 +628,7 @@ impl Trousseau {
     /// 32 octets en clair. Si le mot de passe est incorrect, la vérification
     /// de l'auth tag AES-GCM échoue — c'est le mécanisme de vérification du mot de passe.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la clé éphémère est absente, si l'auth tag est invalide
     /// (mot de passe incorrect), ou si la conversion du résultat en `[u8; 32]` échoue.
@@ -658,7 +652,7 @@ impl Trousseau {
     /// `auth tag` de 16 octets) et retourne les 64 octets en clair dans un
     /// [`SecretBox`]. Un auth tag invalide signale un mot de passe incorrect.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la clé éphémère est absente, si l'auth tag est invalide
     /// (mot de passe incorrect), ou si la conversion du résultat en `[u8; 64]` échoue.
@@ -686,7 +680,7 @@ impl Trousseau {
     /// [12..]    ciphertext + auth tag
     /// ```
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le foyer ou le classeur est absent du trousseau,
     /// ou si le chiffrement AES-256-GCM échoue.
@@ -709,7 +703,7 @@ impl Trousseau {
     /// depuis le trousseau, puis délègue à
     /// [`dechiffrement_generique_avec_cle`](Self::dechiffrement_generique_avec_cle).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le foyer ou le classeur est absent du trousseau,
     /// ou si le déchiffrement AES-256-GCM échoue.
@@ -736,7 +730,7 @@ impl Trousseau {
     /// Le foyer à l'`index` donné doit être présent dans le trousseau —
     /// c'est-à-dire que le foyer doit être ouvert.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si aucun foyer n'est chargé à cet index,
     /// ou si le chiffrement AES-GCM-stream échoue.
@@ -773,7 +767,7 @@ impl Trousseau {
     /// Cette méthode est conçue pour l'ouverture d'un foyer : le foyer
     /// n'a pas besoin d'être dans le trousseau.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la clé éphémère est absente, si le déchiffrement
     /// de `cle_chiffree` échoue (auth tag invalide — mot de passe incorrect),
@@ -807,7 +801,7 @@ impl Trousseau {
     /// [12..]   ciphertext + auth tag (16 octets)
     /// ```
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le chiffrement AES-256-GCM échoue.
     pub(super) fn chiffrement_generique_avec_cle(
@@ -840,7 +834,7 @@ impl Trousseau {
     /// Attendu au format `nonce (12 octets) || ciphertext || auth tag (16 octets)`.
     /// Réciproque de [`chiffrement_generique_avec_cle`](Self::chiffrement_generique_avec_cle).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la vérification de l'auth tag AES-GCM échoue
     /// (clé incorrecte ou données corrompues).
@@ -868,7 +862,7 @@ impl Trousseau {
     ///
     /// Utilisé dans le schéma de chiffrement asymétrique post-quantique.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le foyer à `index_foyer` est absent du trousseau.
     pub(super) fn recuperation_secret_partage(
@@ -897,7 +891,7 @@ impl Trousseau {
     /// [`derive_cle_ephemere`](Self::derive_cle_ephemere) et doit être effacée
     /// par l'appelant après usage.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le sel ou la paire de signature du nœud est absente,
     /// ou si le chiffrement d'une clé échoue.
@@ -944,7 +938,7 @@ impl Trousseau {
     /// chargés respectivement par [`definit_sel`](Self::definit_sel) et
     /// [`derive_cle_ephemere`](Self::derive_cle_ephemere).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le déchiffrement échoue.
     pub(super) fn trousseau_public_noeud_vers_trousseau(
@@ -975,7 +969,7 @@ impl Trousseau {
     /// La clé éphémère doit être présente dans le trousseau —
     /// dérivée préalablement via [`derive_cle_ephemere`](Self::derive_cle_ephemere).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la clé éphémère est absente ou si le déchiffrement d'une clé
     /// échoue. Les clés publiques de signature et de chiffrement sont re-dérivées depuis
@@ -1026,7 +1020,7 @@ impl Trousseau {
 
     /// Retourne la clé de chiffrement AES-256-GCM du classeur `index_classeur` du foyer `index_foyer`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le foyer ou le classeur est absent du trousseau.
     fn donne_cle_chiffrement_classeur(
@@ -1050,7 +1044,7 @@ impl Trousseau {
 
     /// Retourne la clé privée ML-KEM-1024 du foyer à la position `index_foyer`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le foyer est absent du trousseau.
     fn donne_cle_privee_chiffrement_foyer(
@@ -1068,7 +1062,7 @@ impl Trousseau {
 
     /// Retourne la clé privée ML-DSA-87 de signature du foyer à la position `index_foyer`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le foyer est absent du trousseau.
     fn donne_cle_privee_signature_foyer(
@@ -1086,7 +1080,7 @@ impl Trousseau {
 
     /// Retourne la clé privée ML-DSA-87 de signature du nœud.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la paire de signature du nœud est absente du trousseau.
     fn donne_cle_privee_signature_noeud(&self) -> ResultFeuNoyau<&SigningKey<MlDsa87>> {
@@ -1105,7 +1099,7 @@ impl Trousseau {
     /// de dérivation, sans collision possible entre clés. Le résultat est encapsulé
     /// dans un [`SecretBox`], zéroïsé à sa destruction.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si l'expansion HKDF échoue (taille `N` invalide).
     fn derive_depuis_seed<const N: usize>(
@@ -1156,7 +1150,7 @@ impl Trousseau {
     ///   pour ce chunk — ce qui dépend du comportement du lecteur sous-jacent.
     ///   Pour les fichiers réguliers sur disque, ce cas ne se produit pas en pratique.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si une opération d'entrée/sortie échoue ou si le
     /// chiffrement AES-GCM-stream échoue.
@@ -1213,7 +1207,7 @@ impl Trousseau {
     /// Mêmes dettes que [`chiffre_avec_cle`](Self::chiffre_avec_cle) —
     /// copie pile et short-read symétrique.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la lecture du nonce échoue, si une opération
     /// d'entrée/sortie échoue, ou si la vérification de l'auth tag AES-GCM échoue

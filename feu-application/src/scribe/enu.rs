@@ -140,7 +140,7 @@ impl Enu {
     /// `signature_foyer`). La taille de la carte sérialisée est limitée à
     /// [`MAX_TAILLE_SIGNATURE`](feu_noyau::MAX_TAILLE_SIGNATURE) (64 kio) par le noyau.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la braise
     /// n'identifie aucun foyer de la session. Propage toute erreur de signature
@@ -171,42 +171,19 @@ impl Enu {
 
     /// Forge une racine du nœud, la sauvegarde et repointe le sommet courant.
     ///
-    /// Une racine est signée par le **nœud** ([`FeuNoyau::signature_noeud`]),
-    /// non par un foyer — le sommet de l'arbre appartient au nœud. Sa braise
-    /// vaut [`BRAISE_VIDE`], qu'aucun foyer réel ne porte : c'est ce qui oriente
-    /// [`Enu::charger`] vers la clé publique de signature du nœud.
+    /// Signée par le **nœud**, non par un foyer : sa braise vaut [`BRAISE_VIDE`],
+    /// ce qui oriente [`Enu::charger`] vers la clé du nœud.
     ///
-    /// Le paramètre `carte` distingue les deux usages :
+    /// `carte` à `None` forge la **genèse**, dont la méta `_racine` vaut `""` :
+    /// fin de chaîne, et ce qui la distingue d'un répertoire vide ordinaire.
     ///
-    /// - `None` — **genèse** : un [`Carte::Repertoire`] vide portant `_racine`
-    ///   = `""`, la marque « pas de racine précédente » qui termine la chaîne.
-    ///   Le symlink n'existe pas encore à cet instant : il n'y a rien à lire, et
-    ///   c'est cet appel qui le pose. Le marqueur distingue aussi cette carte
-    ///   d'un répertoire de contenu vide, qui aurait sinon le même hash
-    ///   content-addressed.
-    /// - `Some(carte)` — le nouveau sommet reconstruit, fourni par l'appelant
-    ///   (typiquement [`Enu::remplacer`] ou une greffe directe sous la racine).
-    ///   La méta `_racine` est **posée ici**, avec le hash de la racine courante
-    ///   lue via `chemin_derniere_racine` — une valeur que l'appelant aurait
-    ///   placée est écrasée. Le chaînage des versions est ainsi tenu au seul
-    ///   endroit qui repointe le symlink, plutôt que confié à chaque appelant :
-    ///   une carte sans `_racine` produisait une racine que [`Enu::charger`]
-    ///   rejette, faute décelable seulement à la relecture suivante.
+    /// `Some(carte)` reçoit un sommet reconstruit, et **la méta `_racine` est
+    /// posée ici**, écrasant celle de l'appelant : le chaînage se tient au seul
+    /// endroit qui repointe le symlink.
     ///
-    /// `session` ne sert qu'à cette relecture (authentification de la racine
-    /// courante) : aucun foyer n'est sollicité.
+    /// Le symlink est repointé atomiquement, et l'ENU n'est **pas** rendue.
     ///
-    /// Après signature, l'ENU est sauvegardée, puis le symlink pointé par
-    /// `chemin_derniere_racine` (`.DERNIERE_RACINE`, fourni par le
-    /// [`Scribe`](crate::scribe::Scribe)) est repointé sur elle de façon atomique
-    /// (lien temporaire puis `rename`). L'ENU forgée n'est **pas** retournée :
-    /// elle vit désormais sur disque et c'est le symlink qui la désigne — un
-    /// appelant qui en a besoin la relit via [`Enu::charger_derniere_racine`].
-    ///
-    /// Le nœud doit être allumé (sa clé de signature disponible) ; aucun foyer
-    /// n'a besoin d'être ouvert pour signer une racine.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage toute erreur de signature du nœud, de sauvegarde de l'ENU, ou de
     /// pose du symlink.
@@ -343,7 +320,7 @@ impl Enu {
     /// blob, retrait sur le disque. Le parcours, lui, s'en passe et ne s'appuie
     /// que sur [`Self::integre`].
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la braise ne
     /// résout vers aucun foyer de la session,
@@ -392,7 +369,7 @@ impl Enu {
     /// l'appelant qui a besoin de le désigner ensuite, par exemple pour y faire
     /// pointer le symlink de la dernière racine.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage [`ErreurFeuApplication::IoError`] si le dossier `~/.feu/enu/`
     /// est absent ou sur tout autre échec d'écriture.
@@ -419,7 +396,7 @@ impl Enu {
     /// aujourd'hui, d'où le `#[allow(dead_code)]`. Elle servira au futur
     /// chantier de ménage (reset), qui élague les versions abandonnées.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage [`ErreurFeuApplication::IoError`] si le fichier est absent ou si
     /// la suppression échoue.
@@ -444,7 +421,7 @@ impl Enu {
     /// la mauvaise clé et faire **échouer** la vérification — jamais faire
     /// accepter une ENU.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeEnuNonAuthentique`] si la signature
     /// n'est pas validée, propage les refus de [`Self::authentique`] — braise
@@ -465,20 +442,16 @@ impl Enu {
 
     /// Charge une ENU en ne vérifiant que son intégrité — **jamais sa signature**.
     ///
-    /// L'ENU est localisée par content-addressing : `hash_carte` reconstruit son
-    /// nom de fichier `<hash>.enu` sous `chemin_enu` (via
-    /// [`Self::hash_carte_vers_chemin`]). Le désigner, c'est déjà affirmer quel
-    /// contenu on attend — et c'est exactement ce que [`Self::integre`] confirme
-    /// ou dément, sur l'empreinte recalculée de la carte lue. Le nom du fichier
-    /// ne vaut donc rien par lui-même : il localise, il ne prouve pas.
+    /// Le `hash_carte` localise le fichier **et** dit quel contenu on attend :
+    /// [`Self::integre`] le confirme sur l'empreinte recalculée. Le nom du
+    /// fichier, lui, ne prouve rien.
     ///
-    /// Réservé au **parcours** ([`Descendants`](super::iterateurs::Descendants)),
-    /// où le hash attendu vient de la carte du parent et où le chaînage de Merkle
-    /// porte l'intégrité de proche en proche. Ce qui en sort n'engage rien tant
-    /// que [`Self::authentique`] n'est pas repassée. Le nom est long à dessein :
-    /// aucun appelant ne doit pouvoir s'y tromper.
+    /// Réservé au **parcours**, où le hash attendu vient de la carte du parent et
+    /// où le chaînage de Merkle porte l'intégrité de proche en proche. Ce qui en
+    /// sort n'engage rien tant que [`Self::authentique`] n'est pas repassée — le
+    /// nom est long à dessein.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeEnuNonIntegre`] si la carte lue ne
     /// donne pas le hash attendu, et propage toute erreur d'E/S
@@ -501,28 +474,18 @@ impl Enu {
     /// Charge et authentifie la racine **courante** du nœud, atteinte par le
     /// symlink `.DERNIERE_RACINE` (`chemin_derniere_racine`).
     ///
-    /// Entrée distincte de [`Self::charger`] pour une raison structurelle :
-    /// cette dernière localise une ENU par son `hash_carte`, or le hash de la
-    /// racine courante est précisément ce qu'on ignore — seul le symlink la
-    /// désigne. Le lien est donc lu directement (il est suivi jusqu'au fichier
-    /// cible).
+    /// Entrée distincte de [`Self::charger`], qui localise par `hash_carte` : ici
+    /// ce hash est précisément ce qu'on ignore, seul le symlink désigne la cible.
     ///
-    /// Volontairement **plus stricte** que [`Self::charger`] : elle exige d'abord
-    /// une racine du nœud — braise [`BRAISE_VIDE`] et méta `_racine` — et rejette
-    /// tout le reste. Le sommet de l'arbre appartient toujours au nœud ; une
-    /// braise de foyer à cet endroit serait une anomalie, pas un contenu à
-    /// accepter. [`Self::authentique`] ne fait qu'utiliser ces deux marques comme
-    /// routage vers la clé du nœud, sans jamais les exiger : la contrainte est
-    /// donc posée ici, en propre.
+    /// Volontairement **plus stricte** : braise [`BRAISE_VIDE`] et méta `_racine`
+    /// sont exigées, quand [`Self::authentique`] s'en sert seulement pour router
+    /// vers la clé du nœud.
     ///
-    /// Faute de hash attendu — seul le symlink désigne la cible —
-    /// [`Self::integre`] est appelée sur le `hash_carte` de l'enveloppe. Le
-    /// contrôle n'établit rien à lui seul, mais la signature qui suit couvre la
-    /// carte : les deux ensemble prouvent que le hash annoncé désigne bien la
-    /// carte authentifiée. Il vaut d'être fait, ce hash étant ensuite ce par quoi
-    /// la racine est nommée et parcourue.
+    /// Faute de hash attendu, [`Self::integre`] porte sur celui de l'enveloppe :
+    /// seul il n'établit rien, mais la signature couvre la carte, et les deux
+    /// ensemble prouvent que le hash annoncé désigne la carte authentifiée.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeEnuRacineAttendue`] si la cible
     /// n'est pas une racine du nœud, [`ErreurFeuApplication::ScribeEnuNonIntegre`]
@@ -576,7 +539,7 @@ impl Enu {
     /// recalculé et la signature n'est pas vérifiée. Une ENU issue du disque
     /// reste donc non fiable tant que l'appelant n'a pas fait ces deux contrôles.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeCarteMalFormee`] si le buffer est
     /// trop court ou si le discriminant de carte est inconnu, et propage
@@ -609,38 +572,22 @@ impl Enu {
 
     /// Remplace une ENU de l'arbre du nœud et produit la version suivante.
     ///
-    /// Un « chercher-remplacer » par hash : cherche, dans l'arborescence
-    /// courante (le sommet pointé par `.DERNIERE_RACINE`), l'ENU dont le
-    /// `hash_carte` vaut `hash_a_remplacer`, et lui substitue `remplacement`.
-    ///
-    /// - `hash_a_remplacer` — la **cible**, une ENU déjà **présente dans
-    ///   l'arbre**. Si aucune ENU ne porte ce hash, l'arbre reste inchangé
-    ///   (seule une nouvelle génération à l'identique est produite).
-    /// - `remplacement` — la **nouvelle** ENU qui prend sa place ; elle doit
-    ///   déjà être sauvegardée sur disque (cette fonction ne l'écrit pas).
+    /// Un « chercher-remplacer » par hash dans l'arborescence courante.
+    /// `remplacement` doit déjà être sauvegardée. Une cible absente laisse l'arbre
+    /// inchangé, à une génération identique près.
     ///
     /// Le `hash_carte` d'un répertoire dépendant de ses enfants, la substitution
-    /// fait remonter de nouveaux hashs : chaque répertoire du chemin cible →
-    /// racine est reconstruit ([`Self::remplacer_recursif`]), puis un nouveau
-    /// sommet est forgé, signé par le nœud et posé sur `.DERNIERE_RACINE`
-    /// ([`Enu::new_racine`]).
+    /// fait remonter de nouveaux hashs jusqu'à un sommet signé par le nœud, dont
+    /// [`Enu::new_racine`] pose la méta `_racine` en relisant le symlink.
     ///
-    /// La méta `_racine` du nouveau sommet — maillon de la lignée des versions —
-    /// n'est pas posée ici : [`Enu::new_racine`] s'en charge, en relisant le
-    /// symlink. Rien dans la descente ne le repointe (`remplacer_recursif` ne
-    /// reçoit même pas son chemin), la valeur lue après reconstruction est donc
-    /// bien celle du sommet remplacé.
-    ///
-    /// L'ancien sommet et les anciens répertoires du chemin ne sont **pas**
-    /// supprimés : ce sont les versions précédentes, conservées pour
-    /// l'historique (chaîne des `_racine`).
+    /// Les anciennes versions **ne sont pas supprimées**.
     ///
     /// # Retour
     ///
     /// Rien : le nouveau sommet devient la cible de `.DERNIERE_RACINE`. Un
     /// appelant qui en a besoin le relit via [`Self::charger_derniere_racine`].
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si
     /// `remplacement` est identique (même hash de carte) à la racine courante.
@@ -687,31 +634,14 @@ impl Enu {
     /// le chemin jusqu'au sommet du sous-arbre, **sans** poser la lignée
     /// `_racine` (réservée au point d'entrée).
     ///
-    /// Mise à jour **immuable** et content-addressed : `racine` n'est jamais
-    /// modifiée en place. La fonction descend récursivement dans les
-    /// [`Carte::Repertoire`] à la recherche de l'ENU dont le `hash_carte` vaut
-    /// `hash_a_remplacer`. Lorsqu'elle la trouve, elle y substitue
-    /// `remplacement`, puis reconstruit chaque répertoire situé sur le chemin
-    /// entre la racine et le nœud remplacé (métadonnées et tags conservés),
-    /// avec un traitement selon le signataire :
+    /// Mise à jour **immuable** : `racine` n'est jamais modifiée en place, chaque
+    /// répertoire du chemin est reconstruit, métas et tags conservés.
     ///
-    /// - **Répertoire de contenu** (braise d'un foyer) — re-signé sous sa
-    ///   propre braise ([`Enu::braise`]) et sauvegardé dans `~/.feu/enu/`.
-    ///   Chaque répertoire reste ainsi signé par le foyer qui le possède —
-    ///   c'est ce qui autorise un arbre mêlant plusieurs foyers.
-    /// - **Sommet du nœud** (braise [`BRAISE_VIDE`]) — **ni re-signé, ni
-    ///   sauvegardé** ici : la signature est du ressort du nœud, pas d'un
-    ///   foyer, et c'est [`Self::remplacer`] qui la pose via
-    ///   [`Enu::new_racine`]. La récursion renvoie alors une ENU
-    ///   **temporaire** : clone du sommet dont seule la carte est à jour —
-    ///   son `hash_carte` et sa signature, périmés, ne doivent pas être lus.
-    ///
-    /// Comme le `hash_carte` d'un répertoire dépend du hash de ses enfants,
-    /// modifier une feuille fait remonter de nouveaux hashs jusqu'au sommet.
-    ///
-    /// Corollaire du modèle mixte : **tout foyer présent sur le chemin
-    /// reconstruit doit être ouvert**, sans quoi la re-signature de son
-    /// répertoire échoue.
+    /// Un **répertoire de foyer** est re-signé sous sa propre braise — ce qui
+    /// autorise un arbre mêlant plusieurs foyers — et **tout foyer du chemin doit
+    /// donc être ouvert**. Le **sommet du nœud**, lui, n'est ni re-signé ni
+    /// sauvegardé : la récursion rend une ENU **temporaire**, dont le
+    /// `hash_carte` et la signature, périmés, ne doivent pas être lus.
     ///
     /// # Retour
     ///
@@ -719,7 +649,7 @@ impl Enu {
     /// temporaire décrite ci-dessus si cette racine est le sommet du nœud ;
     /// un clone inchangé de `racine` si la cible est absente du sous-arbre.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage les erreurs de [`Enu::charger`] (E/S, authentification) sur
     /// chaque enfant visité, et les erreurs de signature de [`Enu::new`] —
@@ -878,18 +808,13 @@ impl Carte {
     /// Retourne les hashs des ENU enfants — `None` sur une carte qui n'est pas
     /// un répertoire.
     ///
-    /// Contrairement à [`Self::metas`] et [`Self::tags`], communs aux trois
-    /// variantes, les enfants n'existent que pour un répertoire. L'absence n'est
-    /// pas un incident — une feuille est le cas normal d'un parcours —, d'où
-    /// l'[`Option`] plutôt qu'un refus qu'un appelant devrait tester puis jeter.
-    /// Le `None` distingue par ailleurs la feuille du répertoire réellement vide,
-    /// que renvoyer un ensemble vide confondrait.
+    /// L'absence n'est pas un incident — une feuille est le cas normal d'un
+    /// parcours —, d'où l'[`Option`] plutôt qu'un refus. Elle distingue en outre
+    /// la feuille du répertoire réellement vide, qu'un ensemble vide
+    /// confondrait.
     ///
-    /// Rend une référence : le parcours descendant traverse tous les répertoires
-    /// de l'arbre, un clone par pas y serait payé pour rien.
-    ///
-    /// `pub(crate)` — ce qui sort de la crate sort par une `commande_*`, pas par
-    /// un accesseur.
+    /// Rend une référence : le parcours traverse tous les répertoires de l'arbre,
+    /// un clone par pas serait payé pour rien.
     pub(crate) fn hashs_enu(&self) -> Option<&BTreeSet<[u8; 32]>> {
         match self {
             Self::Donnee {
@@ -944,7 +869,7 @@ impl Carte {
     /// validation ([`Self::nom_fichier_valide`]) garantit un composant unique
     /// et inoffensif.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeMetaNomAbsente`] si la méta
     /// `"nom"` est absente, ou
@@ -986,7 +911,7 @@ impl Carte {
     /// donc validé dès la construction ([`Self::nom_fichier_valide`]), pour
     /// refuser d'emblée une carte qu'aucun retrait ne saurait matérialiser.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`] si
     /// `contenu` dépasse [`MAX_TAILLE_TEXTE`], ou
@@ -1093,7 +1018,7 @@ impl Carte {
     /// [`Carte::Repertoire`]. Un doublon est silencieusement ignoré ;
     /// l'ordre déterministe du set préserve la reproductibilité du hash.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si la carte n'est
     /// pas un répertoire : une [`Carte::Donnee`] ou une [`Carte::Texte`] n'a
@@ -1763,23 +1688,13 @@ mod tests {
     /// Validation du nom par `nom_fichier`, sur ses deux refus et son corpus
     /// accepté.
     ///
-    /// - `ScribeMetaNomAbsente` : méta `"nom"` absente — éprouvé en premier,
-    ///   sur une carte neuve, seul moment où elle l'est.
-    /// - `ScribeNomFichierInvalide` : vide, et toute forme de `/` (en tête, au
-    ///   milieu, en queue, multiple) — le nom vient d'une ENU lue sur disque, un
-    ///   `/` en tête remplacerait le chemin cible d'un `join` au lieu de s'y
-    ///   ajouter.
-    /// - `ScribeNomFichierInvalide` : `.` et `..` **exacts**, les deux
-    ///   composants spéciaux.
+    /// Les refus : méta absente, nom vide, toute forme de `/`, et `.` comme `..`
+    /// **exacts**.
     ///
-    /// Les cas acceptés portent tous des points sans être ces composants
-    /// (`.test`, `..test`, `test..`, `test..2`…) : ils distinguent l'égalité
-    /// stricte d'un `starts_with` ou d'un `contains`, qui rejetterait à tort des
-    /// noms légitimes — un fichier caché en particulier. On y vérifie le nom
-    /// rendu, pas seulement l'absence d'erreur : la garde ne doit rien réécrire.
-    ///
-    /// Une seule carte traverse le test, la méta `"nom"` étant écrasée à chaque
-    /// cas (`BTreeMap::insert`).
+    /// Les cas acceptés portent tous des points sans être ces composants —
+    /// `.test`, `..test`, `test..` — et distinguent l'égalité stricte d'un
+    /// `starts_with` qui rejetterait un fichier caché. Le nom rendu est vérifié,
+    /// pas seulement l'absence d'erreur : la garde ne doit rien réécrire.
     #[test]
     fn nom_fichier() -> ResultFeuApplication<()> {
         let hash_donnee = [0u8; 32];

@@ -55,7 +55,7 @@ impl TryFrom<&str> for Braise {
     /// La chaîne doit être la forme canonique complète : 55 caractères BASE32
     /// suivis du suffixe `.braise`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// [`ErreurFeuNoyau::BraiseErronnee`] si le suffixe manque, si la longueur
     /// n'est pas `LONGUEUR_BRAISE`, ou si un caractère sort de l'alphabet BASE32.

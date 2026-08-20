@@ -71,7 +71,7 @@ impl Configuration {
     /// Attend exactement `2 + MAX_FOYERS` lignes : version, prochain_index,
     /// puis une adresse `.braise` par foyer.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::GardienConfigManqueAuMoinsUnElement`] si le
     /// fichier compte moins de `2 + MAX_FOYERS` lignes,
@@ -146,7 +146,7 @@ impl Gardien {
     /// `~/.feu` existe, lit `config.feu` sur le disque et reconstruit la
     /// [`Configuration`] en mémoire.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::GardienArborescenceNoeudManquante`] si
     /// `~/.feu` est introuvable, puis propage l'absence ou l'illisibilité de
@@ -194,7 +194,7 @@ impl Gardien {
     /// complète et l'écriture de toutes les clés chiffrées. Cette opération
     /// n'est valide que pour un nœud vierge — elle échoue si `~/.feu` existe déjà.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::GardienArborescenceNoeudDejaExistante`] si le
     /// nœud est déjà là, ou propage l'échec d'une opération disque.
@@ -217,7 +217,7 @@ impl Gardien {
     /// Contrôle l'existence de `<braise>.feu` avant toute suppression —
     /// garantit qu'on ne supprime pas un dossier non archivé.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::GardienArchiveChiffreeInexistante`] si
     /// `<braise>.feu` est absente, ou propage l'échec de la suppression
@@ -239,7 +239,7 @@ impl Gardien {
     /// Exporte la configuration en mémoire via [`Configuration::exporte_en_texte`]
     /// puis délègue l'écriture à [`Carnet::enregistre_configuration`].
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si l'écriture échoue.
     pub(super) fn enregistrement_configuration(&self) -> ResultFeuNoyau<()> {
@@ -274,7 +274,7 @@ impl Gardien {
     /// existants sont écrasés atomiquement — utilisé lors du changement de
     /// mot de passe.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si une opération disque échoue.
     pub(super) fn ecriture_trousseau_public_complet(
@@ -291,7 +291,7 @@ impl Gardien {
     /// Lit le sel, la clé privée et la clé publique de signature du nœud.
     /// Les foyers sont gérés séparément dans [`TrousseauPublicComplet`].
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si un fichier est absent, illisible ou de taille incorrecte.
     pub(super) fn lecture_pour_creation_trousseau_public_noeud(
@@ -309,7 +309,7 @@ impl Gardien {
     /// Délègue la lecture au carnet. Les clés lues sont toujours chiffrées —
     /// elles seront déchiffrées par le cryptographe.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si un fichier de clé est absent, illisible ou de taille incorrecte.
     pub(super) fn creation_trousseau_foyer_public(
@@ -323,17 +323,13 @@ impl Gardien {
 
     /// Prépare les deux flux nécessaires à l'archivage chiffré d'un foyer.
     ///
-    /// Enchaîne trois opérations :
+    /// Le dossier `<braise>` est empaqueté en `<braise>.tar`, ouvert en lecture,
+    /// et `<braise>.feu` créé en écriture exclusive. Le couple rendu part tel quel
+    /// vers [`Cryptographe::donne_flux_chiffrement_foyer`].
     ///
-    /// 1. Crée l'archive tar intermédiaire `<braise>.tar` depuis le dossier `<braise>`.
-    /// 2. Ouvre `<braise>.tar` en lecture — source du chiffrement.
-    /// 3. Crée `<braise>.feu` en écriture exclusive — destination du chiffrement.
-    ///
-    /// Le tuple retourné `(source, destination)` est passé directement au cryptographe
-    /// via [`Cryptographe::donne_flux_chiffrement_foyer`].
     /// `<braise>.tar` doit être supprimé après chiffrement.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la création du tar échoue, si `<braise>.feu` existe déjà,
     /// ou si une opération disque échoue.
@@ -361,7 +357,7 @@ impl Gardien {
     /// Après déchiffrement, appeler [`desarchivage_chiffre_foyer`](Self::desarchivage_chiffre_foyer)
     /// pour extraire le tar et nettoyer les fichiers intermédiaires.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si un fichier de clé est absent ou de taille incorrecte,
     /// si `<braise>.feu` est absent, ou si la création de `<braise>.tar` échoue.
@@ -378,15 +374,12 @@ impl Gardien {
 
     /// Extrait l'archive tar déchiffrée et supprime les fichiers intermédiaires.
     ///
-    /// Enchaîne trois opérations séquentielles :
+    /// Extrait `<braise>.tar` vers `~/.feu/<braise>/`, puis supprime les deux
+    /// fichiers intermédiaires — le `.tar` et le `.feu`.
     ///
-    /// 1. Extrait `<braise>.tar` vers `~/.feu/<braise>/`.
-    /// 2. Supprime `<braise>.tar`.
-    /// 3. Supprime `<braise>.feu`.
+    /// Doit suivre immédiatement [`Cryptographe::donne_flux_dechiffrement_foyer`].
     ///
-    /// Doit être appelé immédiatement après [`Cryptographe::donne_flux_dechiffrement_foyer`].
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si l'extraction échoue ou si la suppression d'un
     /// fichier intermédiaire échoue.
@@ -405,7 +398,7 @@ impl Gardien {
     /// ni sur un chemin d'erreur. Ouvert en création exclusive, un `.tar`
     /// résiduel bloque aussi bien l'ouverture que la fermeture du foyer.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
     pub(super) fn suppression_archive_foyer_tar(&self, braise: Braise) -> ResultFeuNoyau<()> {
@@ -422,7 +415,7 @@ impl Gardien {
     /// dossier clair reste la source de vérité du foyer. Passé ce point, le
     /// supprimer détruirait les données.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
     pub(super) fn suppression_archive_foyer_chiffree(&self, braise: Braise) -> ResultFeuNoyau<()> {
@@ -435,21 +428,13 @@ impl Gardien {
 
     /// Orchestre le diagnostic complet du nœud.
     ///
-    /// Délègue la vérification de l'arborescence au carnet, puis tente de lire
-    /// et parser `config.feu` pour vérifier les fichiers de chaque foyer connu.
-    /// Si la config est illisible, les foyers ne peuvent pas être vérifiés —
-    /// `ConfigurationIllisible` est ajoutée et la boucle foyers est ignorée.
+    /// `config.feu` illisible interrompt la vérification des foyers : leurs
+    /// braises en viennent. Quatre contrôles par foyer couvrent les huit états du
+    /// trio dossier clair / `.feu` / `.tar`.
     ///
-    /// Quatre contrôles par foyer, qui couvrent à eux seuls les huit états
-    /// possibles du trio dossier clair / `.feu` / `.tar` : les deux premiers
-    /// constatent une absence, les deux suivants une présence de trop.
-    ///
-    /// Un `.feu` manquant est signalé même quand le foyer est simplement ouvert.
-    /// Ce n'est pas un défaut : un foyer ouvert et un foyer abandonné avant
-    /// toute fermeture laissent le **même** disque, et seule l'existence d'un
-    /// processus détenant les clés les sépare — que ce diagnostic, appelé sans
-    /// noyau, ne peut pas observer. Une fermeture seulement *entamée*, elle,
-    /// laisse un `.tar` ou une archive derrière elle, et se distingue.
+    /// Un `.feu` manquant est signalé **même si le foyer est simplement ouvert** :
+    /// ouvert ou abandonné, le disque est le même, et seul un processus détenant
+    /// les clés les sépare — ce qu'un diagnostic sans noyau ne voit pas.
     pub(super) fn diagnostic_noeud(&self) -> Vec<Anomalie> {
         let mut resultat = self.carnet.verifier_arborescence_noeud();
 

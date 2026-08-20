@@ -123,21 +123,15 @@ enum EcranPilotage {
 
 /// Position de navigation dans la pseudo-arborescence foyer → classeur.
 ///
-/// Curseur de présentation : il ne déclenche aucune action métier, mais entre
-/// dans [`super::commandes::CommandesActives::new`], qui en tire les touches
-/// actives et y capture l'index que porte
-/// [`super::commandes::Commande::PilotageFermerFoyer`].
+/// Curseur de présentation : aucune action métier, mais il entre dans
+/// [`super::commandes::CommandesActives::new`], qui en tire les touches actives.
 ///
-/// Trois niveaux, encodés par la combinaison des deux `Option` : racine (deux
-/// `None`), dans un foyer (`foyer` seul), dans un classeur (les deux). Le type
-/// n'interdit pas la quatrième combinaison — l'invariant *« un classeur
-/// implique un foyer »* est tenu par les transitions de
-/// [`super::Tui::saisie_mode_normal`].
+/// Trois niveaux encodés par les deux `Option` — racine, foyer, classeur. **Le
+/// type n'interdit pas la quatrième combinaison** : l'invariant « un classeur
+/// implique un foyer » est tenu par les transitions.
 ///
-/// Fermer le foyer où l'on est positionné ramène aussitôt à la racine. Comme
-/// c'est l'unique chemin de fermeture, l'invariant tient en cascade :
-/// l'extinction du nœud, qui exige tous les foyers fermés, trouve toujours la
-/// position déjà à la racine.
+/// Fermer le foyer où l'on est ramène à la racine, et comme c'est l'unique
+/// chemin de fermeture, l'invariant tient en cascade jusqu'à l'extinction.
 pub(super) struct PositionCourante {
     /// Index du foyer, `None` à la racine.
     ///
@@ -280,29 +274,15 @@ pub(super) fn dessiner_ecran_pilotage(frame: &mut Frame, etat_tui: &EtatTui) {
 /// travail — que [`super::rendu::carre_principal`] a dessiné et dont il rend
 /// ici la zone.
 ///
-/// L'invite est reconstruite à chaque frame :
-/// `feu[/foy.N][/cla.M] › [prompt] [buffer]▌` — les segments entre crochets
-/// suivent [`PositionCourante`], le curseur n'apparaît qu'en
-/// [`ModeSaisie::Insertion`]. Ce préfixe est le fil d'Ariane de la
-/// pseudo-arborescence.
+/// L'invite `feu[/foy.N][/cla.M] › [prompt] [buffer]▌`, fil d'Ariane de la
+/// pseudo-arborescence, est reconstruite à chaque frame.
 ///
-/// Les pastilles lisent l'état réel du nœud et des foyers dans la session ;
-/// les messages éphémères ne s'affichent que tant qu'ils sont posés.
-///
-/// Trois lignes échappent à cette règle des éphémères : les comptoirs de dépôt
-/// ouverts, l'ENU retenue et le chemin retenu, qui restent tant qu'une autre
-/// marque ne les remplace pas. La ligne des dépôts s'arrête à cinq comptoirs,
-/// les premiers ouverts, et signale le reste par un `…` : au-delà elle
-/// déborderait du carré.
-///
-/// **Leurs trois hauteurs sont réservées dès maintenant**, marquées ou non :
-/// c'est ce qui empêche le reste du carré de sauter d'une ligne à la première
-/// marque, et ce qui fixe la place de chacune — l'ordre des trois ne dépendra
-/// jamais de ce qui est rempli.
+/// Trois lignes échappent à la règle des éphémères — comptoirs, ENU et chemin
+/// retenus — et **leurs hauteurs sont réservées, marquées ou non** : sans quoi
+/// le carré sauterait d'une ligne à la première marque.
 ///
 /// Les commentaires `[n]` du corps renvoient à l'index de la ligne dans
-/// `carre_lignes` : le layout est long, et une ligne dessinée loin de sa
-/// déclaration se retrouve autrement à l'œil.
+/// `carre_lignes`, le layout étant trop long pour s'y retrouver à l'œil.
 fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
     let carre = carre_principal(frame, &etat_tui.ecran).inner(Margin {
         horizontal: 4,

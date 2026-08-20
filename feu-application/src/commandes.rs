@@ -17,17 +17,13 @@
 //! `commande_verification_signature` et `commande_diagnostic_noeud`, toute
 //! commande retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint.
 //!
-//! Les commandes qui ont besoin de la couche de présentation reçoivent
-//! `interface_feu_application : impl InterfaceFeuApplication` en paramètre —
-//! l'interface n'est pas stockée dans [`FeuApplication`], elle est fournie à
-//! l'appel, comme [`InterfaceFeuNoyau`] l'est dans `feu-noyau`. Deux besoins
-//! s'y mêlent : l'interaction utilisateur (saisie du mot de passe, affichage de
-//! la seed) et la notification de session après mutation. Une commande peut
-//! n'avoir que le second, comme celles du comptoir de dépôt.
+//! L'interface n'est pas stockée dans [`FeuApplication`] mais fournie à l'appel,
+//! comme [`InterfaceFeuNoyau`] dans `feu-noyau`. Elle sert à deux choses :
+//! l'interaction utilisateur et la notification de session après mutation — une
+//! commande peut n'avoir que la seconde.
 //!
-//! Les commandes qui ne modifient pas l'état du noyau (`existence_blob`,
-//! `informations_blob`, signatures, diagnostic…) prennent `&self` ;
-//! les autres prennent `&mut self`.
+//! Les commandes qui ne modifient pas l'état du noyau prennent `&self`, les
+//! autres `&mut self`.
 //!
 //! # Les cinq parties
 //!
@@ -49,25 +45,17 @@
 //!
 //! # Désigner une donnée
 //!
-//! Un nœud ne contient que deux sortes de fichiers : les **ENU**, qui portent
-//! la structure et les métadonnées, et les **blobs**, qui portent les contenus
-//! chiffrés dans les classeurs. « Blob » est le terme officiel du projet pour
-//! ces derniers.
+//! Un nœud ne contient que des **ENU**, qui portent structure et métadonnées, et
+//! des **blobs**, contenus chiffrés rangés dans les classeurs.
 //!
-//! **Au dépôt**, l'appelant donne le foyer et le classeur : rien n'existe
-//! encore, il n'y a pas d'autre façon de dire où ranger.
+//! **Au dépôt**, l'appelant donne foyer et classeur : rien n'existe encore, il
+//! n'y a pas d'autre façon de dire où ranger.
 //!
 //! **Ensuite, tout passe par l'ENU, sans exception.** Charger, supprimer,
-//! interroger un blob se fait en fournissant sa [`Fiche`](fiche::Fiche), jamais
-//! un couple foyer/hash — la carte porte les deux (braise et `hash_donnee`), et
-//! les tenir ensemble interdit d'en former une paire incohérente. Pas d'ENU, pas
-//! de donnée.
-//!
-//! Rien ici n'accepte donc un hash de blob, ni n'en énumère : de l'extérieur,
-//! les seuls hashs qui ouvrent quelque chose sont ceux des ENU
-//! ([`commande_chargement_enu`](FeuApplication::commande_chargement_enu)). Celui d'un
-//! blob reste lisible dans une [`Carte::Donnee`], mais il n'identifie que le
-//! fichier — il ne le désigne pas.
+//! interroger un blob se fait par sa [`Fiche`](fiche::Fiche), jamais par un
+//! couple foyer/hash : la carte porte les deux, et les tenir ensemble interdit
+//! d'en former une paire incohérente. Le hash d'un blob identifie un fichier, il
+//! ne le désigne pas.
 
 use std::io::Write;
 
@@ -102,7 +90,7 @@ impl FeuApplication {
     /// `Some(phrase)` restaure un nœud depuis une phrase existante. Sans effet à l'allumage —
     /// retourne une erreur si fournie alors que l'arborescence existe déjà.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si les fichiers de clés sont absents ou corrompus, si
     /// le mot de passe est incorrect, ou si `phrase_seed` est fournie alors que le
@@ -132,25 +120,17 @@ impl FeuApplication {
 
     /// Éteint le nœud : libère [`FeuNoyau`] et réinitialise [`SessionApplication`].
     ///
-    /// Symétrique de [`commande_allumage_noeud`](Self::commande_allumage_noeud).
-    /// Effectue dans l'ordre :
-    /// 1. Vérifie qu'aucun foyer n'est ouvert.
-    /// 2. Libère le noyau (`feu_noyau = None`) — efface les clés privées en mémoire.
-    /// 3. Réinitialise la session pour qu'aucune donnée applicative ne survive
-    ///    à l'extinction (clés publiques, adresses `.braise`, états, comptoirs
-    ///    de dépôt ouverts).
-    /// 4. Notifie la couche de présentation avec `recevoir_session_application(None)`.
-    /// 5. Désactive le Scribe, qui oublie les comptoirs qu'il détenait.
+    /// Symétrique de [`commande_allumage_noeud`](Self::commande_allumage_noeud) :
+    /// libère le noyau — donc les clés privées en mémoire —, remet la session à
+    /// neuf et désactive le Scribe.
     ///
-    /// La session neuve de l'étape 3 vide déjà la liste des comptoirs ouverts :
-    /// c'est la même remise à zéro que pour le reste de l'état, et elle a lieu
-    /// avant que le Scribe n'oublie les siens. Les deux moitiés du miroir
-    /// tombent donc ensemble, dans la même commande.
+    /// Les deux moitiés du miroir des comptoirs tombent dans la même commande :
+    /// la session neuve vide la liste avant que le Scribe n'oublie la sienne.
     ///
-    /// L'extinction n'écrit rien sur disque : les archives chiffrées des foyers
-    /// ont déjà été produites par les fermetures préalables.
+    /// N'écrit rien sur disque : les archives chiffrées ont déjà été produites
+    /// par les fermetures préalables.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::AuMoinsUnFoyerOuvert`] si au moins un foyer
     /// est encore ouvert ; [`ErreurFeuApplication::NoeudEteint`] si le nœud n'a
@@ -182,7 +162,7 @@ impl FeuApplication {
     /// `interface_feu_application` est utilisée pour collecter l'ancien et le
     /// nouveau mot de passe.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si un foyer est fermé, si la saisie échoue,
     /// ou si l'écriture du trousseau public échoue.
@@ -208,7 +188,7 @@ impl FeuApplication {
     ///
     /// `interface_feu_application` est utilisée pour collecter le mot de passe.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si l'index est invalide, si le foyer est déjà ouvert,
     /// si le mot de passe est incorrect, ou si une opération disque échoue.
@@ -238,7 +218,7 @@ impl FeuApplication {
     ///
     /// `interface_feu_application` est utilisée pour collecter le mot de passe.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si l'index est invalide, si le foyer n'est pas ouvert,
     /// ou si une opération disque échoue.
@@ -269,7 +249,7 @@ impl FeuApplication {
     ///
     /// `interface_feu_application` est utilisée pour collecter le mot de passe.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si l'index est invalide, si le diagnostic du foyer
     /// détecte une anomalie, si le mot de passe est incorrect, ou si une
@@ -306,7 +286,7 @@ impl FeuApplication {
     /// Retourne la liste des anomalies détectées pour le foyer désigné ;
     /// vide si tout est en ordre.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si l'index est invalide ou si le diagnostic échoue.
     pub fn commande_diagnostic_foyer(
@@ -334,7 +314,7 @@ impl FeuApplication {
     /// n'intervient pas — seule la clé publique du destinataire est nécessaire.
     /// La taille des données est limitée à `MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la taille dépasse la limite ou si le chiffrement échoue.
     pub fn commande_chiffrement_asymetrique(
@@ -355,7 +335,7 @@ impl FeuApplication {
     /// Réciproque de [`commande_chiffrement_asymetrique`](Self::commande_chiffrement_asymetrique) —
     /// utilise la clé privée ML-KEM-1024 du foyer, qui doit être ouverte.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si l'index est invalide, si le foyer n'est pas ouvert,
     /// si la taille dépasse la limite, ou si le déchiffrement échoue.
@@ -377,7 +357,7 @@ impl FeuApplication {
     /// La clé de signature du nœud est l'identité cryptographique racine —
     /// elle signe les IdNU et tout acte engageant le nœud dans sa globalité.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la clé privée du nœud n'est pas disponible.
     pub fn commande_signature_noeud(
@@ -397,7 +377,7 @@ impl FeuApplication {
     /// Le foyer doit être ouvert — sa clé privée de signature doit être présente
     /// dans le trousseau.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si l'index est invalide, si le foyer n'est pas ouvert,
     /// ou si la clé privée est absente.
@@ -419,7 +399,7 @@ impl FeuApplication {
     /// Retourne `true` si `signature` est une signature valide de `octets_signes`
     /// produite par la clé privée correspondant à `cle_publique`, `false` sinon.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur uniquement si le noyau signale une anomalie interne —
     /// un échec de vérification cryptographique retourne `false`, pas une erreur.
@@ -464,7 +444,7 @@ impl FeuApplication {
     /// un clone : le retour direct sert l'appelant qui enchaîne, la session celui
     /// qui affiche.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : index de foyer
@@ -511,7 +491,7 @@ impl FeuApplication {
     /// Rien : le nouveau sommet du nœud devient la cible de `.DERNIERE_RACINE`,
     /// la racine courante restant inchangée si le comptoir était vide.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : comptoir inconnu
@@ -558,20 +538,18 @@ impl FeuApplication {
     /// Matérialise l'arborescence d'une `EnuR` dans un dossier OS, en lecture
     /// seule — opération inverse du dépôt par comptoir.
     ///
-    /// Crée le dossier `chemin_retrait` (qui ne doit pas exister) et y
-    /// reconstruit ce que décrit `fiche_r` : fichiers depuis les blobs déchiffrés
-    /// et les textes embarqués, sous-dossiers depuis les répertoires. Chaque ENU
-    /// est authentifiée avant d'être écrite. Le détail est porté par le Scribe.
+    /// Crée le dossier `chemin_retrait`, qui ne doit pas exister, et y reconstruit
+    /// ce que décrit `fiche_r` : fichiers depuis les blobs et les textes
+    /// embarqués, sous-dossiers depuis les répertoires, chaque ENU authentifiée
+    /// avant écriture.
     ///
-    /// Sans reprise : Feu écrit le dossier puis s'en désintéresse — aucune
-    /// fermeture, rien n'est réinjecté dans le nœud.
+    /// Sans reprise : Feu écrit puis s'en désintéresse, rien n'est réinjecté.
     ///
-    /// **Tout foyer du sous-arbre doit être ouvert** : signature à vérifier pour
-    /// les ENU, déchiffrement pour les blobs. Le Scribe en dresse la liste avant
-    /// d'écrire quoi que ce soit et refuse d'un bloc s'il en manque, plutôt que
-    /// d'abandonner un dossier à moitié rempli au premier foyer fermé venu.
+    /// **Tout foyer du sous-arbre doit être ouvert** — signature des ENU,
+    /// déchiffrement des blobs. Le Scribe en dresse la liste avant d'écrire et
+    /// refuse d'un bloc s'il en manque.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : foyers requis fermés
@@ -606,18 +584,14 @@ impl FeuApplication {
     /// Lit et déchiffre le blob désigné par `fiche`, et écrit le clair dans
     /// `destination`.
     ///
-    /// Dernier maillon de la descente ouverte par
-    /// [`commande_derniere_enu_racine`](Self::commande_derniere_enu_racine) :
-    /// une [`Carte::Donnee`] ne porte que l'empreinte du blob, jamais ses
-    /// octets. L'ENU suffit à la retrouver — sa braise donne le foyer, sa carte
-    /// donne le hash. Rien n'est demandé à l'appelant qu'il aurait à extraire
-    /// lui-même, et aucun couple foyer/hash incohérent ne peut être formé.
+    /// Une [`Carte::Donnee`] ne porte que l'empreinte du blob : la fiche suffit à
+    /// le retrouver, sa braise donnant le foyer et sa carte le hash — aucun couple
+    /// foyer/hash incohérent ne peut être formé.
     ///
-    /// Le classeur, lui, reste découvert par le noyau (balayage sur le hash,
-    /// content-addressed). L'intégrité est doublement vérifiée : par le tag
-    /// d'authentification AES-GCM, puis par recalcul du hash SHA3-256 du clair.
+    /// Le classeur reste découvert par le noyau. L'intégrité est doublement
+    /// vérifiée : tag AES-GCM, puis recalcul du hash SHA3-256 du clair.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
@@ -653,7 +627,7 @@ impl FeuApplication {
     /// Ne touche pas à l'ENU elle-même, qui continue de référencer un blob
     /// désormais absent.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
@@ -680,7 +654,7 @@ impl FeuApplication {
     ///
     /// L'absence est un `Ok(false)` — la question admet « non » pour réponse.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
@@ -702,7 +676,7 @@ impl FeuApplication {
     /// Voir [`DonneesBlob`] pour le détail des champs. Renseigne sur le fichier,
     /// jamais sur son contenu : rien n'est déchiffré.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
@@ -739,7 +713,7 @@ impl FeuApplication {
     /// Ne demande rien au noyau : la racine se lit sur le disque. Sa garde porte
     /// donc sur l'activation du Scribe, pas sur la présence du noyau.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : lien `.DERNIERE_RACINE` absent, lecture,
@@ -755,18 +729,14 @@ impl FeuApplication {
     /// Charge l'ENU désignée par `hash`, authentifiée — `None` si aucune ne
     /// porte ce hash.
     ///
-    /// Assure la descente de l'arborescence : une [`Carte::Repertoire`] ne
-    /// référence ses enfants que par leur hash, à recharger un à un depuis le
-    /// sommet obtenu par
-    /// [`commande_derniere_enu_racine`](Self::commande_derniere_enu_racine).
+    /// Assure la descente : une [`Carte::Repertoire`] ne référence ses enfants que
+    /// par leur hash.
     ///
-    /// L'absence est un `None` et non une erreur : le hash vient de l'appelant,
-    /// ne pas le trouver est une réponse. Les erreurs restent réservées à ce qui
-    /// a mal tourné — lecture ou authentification. C'est ce qui rend la garde
-    /// nécessaire : sans elle, un hash inconnu sur un nœud éteint répondrait
-    /// `Ok(None)`, réponse normale d'un nœud qui n'est pas allumé.
+    /// L'absence est un `None`, pas une erreur — le hash vient de l'appelant, ne
+    /// pas le trouver est une réponse. D'où la garde : sans elle, un hash inconnu
+    /// sur un nœud éteint rendrait `Ok(None)`, réponse d'un nœud allumé.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : lecture, authentification.
@@ -782,21 +752,19 @@ impl FeuApplication {
     /// `Carte::Texte`), l'accroche sous `fiche_racine_depot`, puis propage la
     /// nouvelle racine jusqu'à la racine du nœud.
     ///
-    /// Le texte est embarqué dans la carte (aucun blob, aucun classeur) et borné
-    /// en taille. `nom` nommera le fichier lors d'un retrait sur disque — il est
-    /// validé comme composant de chemin dès la construction. Le détail du
-    /// rangement est porté par le Scribe.
+    /// Le texte est embarqué dans la carte — aucun blob, aucun classeur — et borné
+    /// en taille ; `nom` nommera le fichier au retrait, validé comme composant de
+    /// chemin dès la construction.
     ///
-    /// `index_foyer` désigne le foyer sous la braise duquel le texte est signé ;
-    /// `fiche_racine_depot` peut désigner un répertoire de foyer ou la racine du nœud.
-    /// Tout foyer concerné — celui du texte, celui du répertoire d'accueil s'il
-    /// en a un, ceux du chemin remonté — doit être ouvert.
+    /// `index_foyer` est le foyer signataire, `fiche_racine_depot` un répertoire
+    /// de foyer ou la racine du nœud. Tout foyer concerné, y compris ceux du
+    /// chemin remonté, doit être ouvert.
     ///
     /// # Retour
     ///
     /// Rien : le nouveau sommet du nœud devient la cible de `.DERNIERE_RACINE`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : texte trop long
@@ -832,24 +800,17 @@ impl FeuApplication {
     /// Rend un itérateur sur tout le sous-arbre situé sous `fiche`, celle-ci
     /// comprise.
     ///
-    /// Chaque item est la [`Fiche`] d'une ENU **intègre mais non authentifiée**
-    /// et sa profondeur dans l'arbre, ou l'erreur rencontrée en tentant de la
-    /// charger — un échec ne met pas fin au parcours. Aucune signature n'est vérifiée, pas même celle du point de
-    /// départ : la descendance tient par le chaînage de Merkle, ce qui rend le
-    /// parcours praticable sur un arbre entier. Une fiche n'engage rien : toute
-    /// commande qui agit sur un blob recharge l'ENU et la vérifie. Voir
-    /// [`Descendants`] pour l'ordre, le sort des doublons et le détail des
-    /// erreurs.
+    /// Chaque item est la [`Fiche`] d'une ENU **intègre mais non authentifiée**,
+    /// avec sa profondeur, ou l'erreur rencontrée en la chargeant — un échec ne
+    /// met pas fin au parcours. La descendance tient par le chaînage de Merkle,
+    /// ce qui rend praticable un arbre entier ; voir [`Descendants`] pour l'ordre
+    /// et les doublons.
     ///
-    /// **Aucun foyer n'a besoin d'être ouvert**, même pour partir d'une ENU
-    /// signée par lui. C'est l'intérêt du parcours : afficher une arborescence
-    /// est une navigation, et rien de ce qu'elle rend ne donne accès aux blobs.
+    /// **Aucun foyer n'a besoin d'être ouvert** : afficher une arborescence est
+    /// une navigation, et rien de ce qui en sort ne donne accès aux blobs.
+    /// L'emprunt de `&self` court tant que vit l'itérateur.
     ///
-    /// L'emprunt de `&self` court aussi longtemps que l'itérateur : le Scribe lui
-    /// prête son `chemin_enu`, rien ne peut donc éteindre le nœud tant que le
-    /// parcours n'est pas terminé ou abandonné.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud n'est pas
     /// allumé — seul refus possible. Une enveloppe qui ne s'accorde pas avec sa
@@ -869,18 +830,17 @@ impl FeuApplication {
     /// celle-ci comprise.
     ///
     /// Répond à « qu'y avait-il avant ? » : chaque item est la [`Fiche`] d'une
-    /// racine **authentifiée**, l'état de l'arbre à une version antérieure. Composé avec
-    /// [`commande_descendants`](Self::commande_descendants), lancé sur chacune
-    /// d'elles, il dit ce que l'arbre contenait à ce moment-là.
+    /// racine **authentifiée**. Composé avec
+    /// [`commande_descendants`](Self::commande_descendants), il dit ce que l'arbre
+    /// contenait à cette version-là.
     ///
-    /// Un échec met fin au parcours : la lignée est une chaîne, la racine
-    /// précédente n'est connue que par celle qu'on vient de lire. Voir
-    /// [`RacinesAnterieures`] pour le détail.
+    /// Un échec met fin au parcours : la lignée est une chaîne, et la racine
+    /// précédente n'est connue que par celle qu'on vient de lire.
     ///
     /// Aucun foyer n'a besoin d'être ouvert : les racines sont signées par le
     /// nœud, dont la session tient la clé publique dès l'allumage.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud n'est pas
     /// allumé — sans la clé publique du nœud, chaque racine échouerait en

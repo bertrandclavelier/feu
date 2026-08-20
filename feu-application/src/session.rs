@@ -64,7 +64,7 @@ use feu_noyau::{
 /// publiques, comptoirs de dépôt ouverts). Peuplé à l'allumage, puis mis à jour
 /// à chaque ouverture ou fermeture de foyer et de comptoir.
 ///
-/// # Invariant
+/// # Invariants
 ///
 /// Les champs `nombre_foyers`, `nombre_classeurs` et `max_taille_*` sont des
 /// constantes dérivées de `MAX_*` du noyau. Ils ne changent pas en cours de session.

@@ -16,20 +16,16 @@
 //! direct — `greffe_enfants`, `Enu::charger`, `Enu::remplacer`…
 //!
 //! **Ce fichier prend ce qui y tombe sans montage supplémentaire** : un test
-//! écrit ici prouve le comportement **et** son câblage, le même écrit en bas ne
-//! prouve que le premier. Mais atteignable ne suffit pas — une garde interne
-//! dont les portes publiques sont déjà connues câblées reste en bas plutôt que
-//! de se faire bâtir un décor exprès.
+//! écrit ici prouve le comportement **et** son câblage.
 //!
-//! Les constats, eux, lisent les champs privés de [`FeuApplication`] : le noyau
-//! libéré, la session remise à zéro, le Scribe désactivé n'ont pas d'accesseur
-//! public, et n'ont pas à en avoir — un consommateur n'a rien à faire de ces
-//! états. D'où un `mod` interne plutôt qu'un crate de test dans `tests/` : on
-//! agit par l'API publique, on constate par l'intérieur.
+//! Les constats, eux, lisent les champs privés — noyau libéré, session remise à
+//! zéro, Scribe désactivé n'ont pas d'accesseur public et n'ont pas à en avoir.
+//! D'où un `mod` interne : on agit par l'API publique, on constate par
+//! l'intérieur.
 //!
 //! # Non testé, délibérément
 //!
-//! `SCR-003`, branche d'un `else` immédiat. Les `From`, `Display`
+//! `ScribeCarteMalFormee`, branche d'un `else` immédiat. Les `From`, `Display`
 //! et accesseurs de champ, passe-plats. Le pont `RecepteurNoyau`, exercé de
 //! biais — rien ne se signerait sans lui. Le contrat de notification, prouvé par
 //! chaque assertion portant sur la session reçue. Neuf des vingt-trois commandes
@@ -214,37 +210,11 @@ fn lire_arborescence(chemin: &Path) -> ResultFeuApplication<HashSet<(PathBuf, St
 /// Cycle de vie complet du nœud par les commandes — du refus avant allumage
 /// au teardown après extinction.
 ///
-/// **Notification.** L'état est constaté sur la session reçue par
-/// [`InterfaceTest`], jamais sur celle de [`FeuApplication`] : une assertion qui
-/// passe prouve alors deux choses d'un coup — la commande a notifié, et le
-/// payload portait l'état d'après. La braise non vide après l'allumage est
-/// choisie pour ça : « foyers fermés » serait tout aussi vrai d'une session
-/// neuve, et laisserait passer une notification vide.
+/// L'état est constaté sur la session **reçue par [`InterfaceTest`]**, jamais
+/// sur celle de [`FeuApplication`] : une assertion qui passe prouve alors que la
+/// commande a notifié, et que le payload portait l'état d'après.
 ///
-/// **Gardes.** [`commande_extinction_noeud`](FeuApplication::commande_extinction_noeud)
-/// refuse tant qu'un foyer est ouvert, accepte une fois refermé — les deux
-/// moitiés comptent, un refus systématique passerait la première.
-///
-/// [`ErreurFeuApplication::NoeudEteint`] n'est éprouvée que sur les trois
-/// commandes qui gardent sur l'activation du Scribe : leur refus est une ligne
-/// ajoutée exprès, que rien d'autre ne retient. Ailleurs il tombe du `ok_or` sur
-/// `feu_noyau`, sans quoi la commande ne compilerait pas. La plus importante est
-/// [`commande_chargement_enu`](FeuApplication::commande_chargement_enu) : sans
-/// elle, un hash inconnu sur un nœud éteint répondrait `Ok(None)` — le refus se
-/// déguiserait en résultat.
-///
-/// **Teardown.** La session notifiée vaut `None` après extinction : les derniers
-/// constats passent par les champs. La commande promet qu'aucune donnée
-/// applicative ne survit, braise et clés publiques sont donc vérifiées une à
-/// une. Le Scribe ferme la liste — `desactivation` est appelée en dernier, rien
-/// n'en dépend, sans cette assertion la supprimer ne casserait rien. Le refus
-/// qui la précède le constate de l'extérieur, sur une seule des trois gardes :
-/// elles lisent un unique drapeau `est_actif`.
-///
-/// Le comptoir est ouvert puis **laissé ouvert** : l'extinction passe malgré
-/// lui et l'annule, comme le documente
-/// [`commande_ouverture_comptoir_depot`](FeuApplication::commande_ouverture_comptoir_depot).
-/// Les fichiers déposés ne sont pas touchés pour autant, jamais ingérés.
+/// Un comptoir est laissé ouvert à l'extinction, qui passe outre et l'annule.
 #[test]
 fn cycle_feu_application() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -325,21 +295,9 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
 /// Un fichier déposé par comptoir se relit à l'identique après extinction et
 /// rallumage du nœud — nom et contenu.
 ///
-/// Seul test qui **rallume**. Tout le reste de la suite vit dans un unique
-/// allumage et ne prouve donc rien du disque : ce qu'il observe pourrait tenir
-/// à un état gardé en mémoire. Ici l'instance est détruite entre les deux
-/// moitiés, et la seconde ne repart que de `chemin_feu`.
-///
-/// **Racine.** L'assertion tient en deux temps. `assert_ne!` établit que ce que
-/// `.DERNIERE_RACINE` désigne après rallumage est la racine d'*après* dépôt, et
-/// non l'origine — sans quoi le test pourrait survivre à une greffe jamais
-/// écrite sur disque. Le compte d'enfants à un ajoute que l'ancienne racine ne
-/// s'y trouve pas : elle se chaîne par la méta `_racine`, pas comme enfant.
-///
-/// **Dépôt à la racine**, sans imbrication : la descente tient alors en un seul
-/// [`commande_chargement_enu`](FeuApplication::commande_chargement_enu) jusqu'à
-/// la [`Carte::Donnee`], et le test reste centré sur la survie de la donnée. Le
-/// cas imbriqué relève de [`cycle_depot_retrait_simple`].
+/// **Seul test qui rallume.** Tout le reste de la suite vit dans un unique
+/// allumage et ne prouve donc rien du disque. Ici l'instance est détruite entre
+/// les deux moitiés, et la seconde ne repart que de `chemin_feu`.
 #[test]
 fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -422,35 +380,12 @@ fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
 /// Cycle de vie d'un blob désigné par sa seule ENU — présence, informations,
 /// suppression — et ce qu'il advient de l'ENU quand le blob n'est plus là.
 ///
-/// **Le sujet est la fin.** `existence_blob` faux et `chargement_enu` encore
-/// `Some` sur le même hash : le blob est parti, l'arborescence est intacte.
-/// [`commande_suppression_blob`](FeuApplication::commande_suppression_blob)
-/// retire le `.dat` sans rien retirer de l'arbre — comportement documenté sur
-/// les deux commandes, jamais éprouvé jusqu'ici. Pris isolément, aucun des deux
-/// constats ne dit rien : le premier prouve une suppression réussie, le second
-/// une ENU lisible. C'est leur simultanéité qui est le décalage.
+/// **Le sujet est la fin** : `existence_blob` faux et `chargement_enu` encore
+/// `Some` sur le même hash — le blob est parti, l'arborescence est intacte.
+/// C'est leur simultanéité qui prouve le décalage.
 ///
-/// **Test à part**, et non greffé dans [`cycle_depot_extinction_rallumage`] qui
-/// monte pourtant le même décor : la suppression est destructrice, tout constat
-/// de persistance placé après elle serait faux. L'ordre des deux deviendrait un
-/// invariant tacite, et un échec ne dirait plus lequel a lâché.
-///
-/// **`SCR-004`** — la racine porte `BRAISE_VIDE`, absente des braises de la
-/// session. C'est la seule braise inconnue qu'un appelant puisse produire sans
-/// forger d'ENU : les trois braises de foyer restent résolvables tant que le
-/// nœud est allumé, fermer un foyer ne touche pas `braise_foyers`. Passée par
-/// [`commande_existence_blob`](FeuApplication::commande_existence_blob), la
-/// moins chère des quatre portes sur `index_et_hash_blob` — ni destination à
-/// fournir, ni emprunt mutable. Le code se lit dans le message, `From<ErreurScribe>`
-/// aplatissant la variante en `String` à la frontière.
-///
-/// **Taille** strictement supérieure au clair, jamais égale : le blob est
-/// chiffré, nonce et tag s'ajoutent à chaque chunk. Les dates de
-/// [`DonneesBlob`] sont écartées — `donne_date_creation` rend un `Option` que
-/// tous les systèmes de fichiers ne renseignent pas.
-///
-/// Le `Ok(None)` sur hash inconnu tient ici parce qu'il s'oppose au `Some`
-/// obtenu deux lignes plus haut. Seul, il ne prouverait rien.
+/// Éprouve au passage la braise inconnue, qu'une racine seule peut produire sans
+/// forger d'ENU, et la taille du chiffré, strictement supérieure au clair.
 #[test]
 fn cycle_vie_blob() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -521,19 +456,11 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
 
 /// Les gardes du comptoir de dépôt, dans l'ordre où elles se posent.
 ///
-/// À l'ouverture, les deux index sont validés contre leurs bornes de
-/// compilation — `SCR-006` et `SCR-009` — parce qu'un comptoir les fige :
-/// admis ici, ils condamneraient toutes ses fermetures.
+/// Les index sont validés à l'ouverture, qui les fige ; la fermeture oppose
+/// trois refus, dont le seul rattrapable — foyer refermé entre-temps.
 ///
-/// À la fermeture, trois refus. `SCR-001` d'abord : un identifiant que rien n'a
-/// distribué. Puis deux états que l'ouverture ne pouvait pas prévoir — foyer
-/// refermé entre-temps (`SCR-008`, seul refus rattrapable : le foyer rouvert, la
-/// même fermeture repart, ce que la suite du test exerce) et dossier disparu du
-/// disque (`SCR-007`, constaté après le retrait du comptoir, donc sans reprise).
-///
-/// Établit aussi que le miroir de session suit le Scribe sur chacun de ces
-/// chemins : présent tant que le comptoir l'est, parti dès qu'il l'a lâché. Ces
-/// quatre assertions sont ce qui interdit au miroir de se remettre à diverger.
+/// Établit aussi que le **miroir de session suit le Scribe** sur chacun de ces
+/// chemins : présent tant que le comptoir l'est, parti dès qu'il l'a lâché.
 #[test]
 fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -590,7 +517,7 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
         app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine),
         Err(ErreurFeuApplication::ScribeFoyerFerme(_))
     ));
-    // SCR-008 tombe avant le retrait : l'identifiant reste des deux côtés, sans
+    // le foyer fermé tombe avant le retrait : l'identifiant reste des deux côtés, sans
     // quoi la retentative qui suit n'aurait plus rien à désigner
     assert!(
         app.session
@@ -611,7 +538,7 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
         app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine),
         Err(ErreurFeuApplication::ScribeDossierDepotIntrouvable(_))
     ));
-    // SCR-007 est constaté après le retrait : le Scribe a lâché le comptoir, la
+    // le dossier disparu est constaté après le retrait : le Scribe a lâché le comptoir, la
     // session l'a lâché avec lui, sur un chemin qui rend pourtant une erreur
     assert!(app.session.comptoirs_depot_ouverts().is_empty());
 
@@ -627,41 +554,14 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
 /// Aller-retour complet dépôt par comptoir → retrait, sur une arborescence à
 /// plusieurs niveaux : ce qui ressort est exactement ce qui est entré.
 ///
-/// **Venu de `scribe/tests.rs`**, où il appelait `fermeture_comptoir_depot` et
-/// `retrait_lecture_seule` en direct. Il y était né par nécessité : aucune
-/// commande ne produisait alors d'[`Enu`], que les deux fonctions réclament.
-/// [`commande_derniere_enu_racine`](FeuApplication::commande_derniere_enu_racine)
-/// l'a levée, et les deux commandes n'étant que des passe-plats, rien ne restait
-/// hors d'atteinte d'en haut — le double n'a pas été gardé.
+/// Couvre dans l'ordre le comptoir vide, qui ne bouge pas la racine, le dépôt
+/// d'une arborescence à trois niveaux, le refus d'un retrait vers un dossier
+/// existant, le retrait nominal — comparé en ensembles, l'ordre de parcours
+/// n'étant pas garanti — et l'ENU répertoire passée à une commande blob.
 ///
-/// Dans l'ordre :
-///
-/// - **comptoir vide** : fermé sans greffe, la racine du nœud ne bouge pas ;
-/// - **dépôt réel** : arborescence à trois niveaux (voir [`remplir_dossier`]),
-///   déposée puis greffée sous la racine du nœud ; la nouvelle racine chaîne
-///   bien vers l'ancienne via la méta `"_racine"` ;
-/// - **`SCR-002`** : retrait visé sur un dossier déjà existant, refusé ;
-/// - **retrait nominal** : l'arborescence relue depuis le disque après retrait
-///   est identique (chemins relatifs + contenus, comparés en ensembles pour
-///   ignorer l'ordre de parcours) à celle déposée dans le comptoir — capturée
-///   *avant* la fermeture, qui supprime le dossier du comptoir ;
-/// - **`SCR-005`** : le répertoire de niveau 1 passé à une commande blob, qui
-///   n'y trouve aucun `hash_donnee`.
-///
-/// **`SCR-005` tient ici et nulle part ailleurs.** Il lui faut une [`Enu`] qui
-/// franchisse la première garde de `index_et_hash_blob` pour buter sur la
-/// seconde : une `Carte::Repertoire` signée sous une **braise de foyer**. La
-/// racine ne convient pas, elle porte `BRAISE_VIDE` et tombe sur `SCR-004`
-/// avant. Seul un dépôt imbriqué en produit une.
-///
-/// Le répertoire se retrouve parmi les deux enfants de la racine, l'autre étant
-/// le fichier de niveau 1. Les deux hashs se tirent d'**un seul** `BTreeSet`
-/// cloné en variable : le premier hash retiré, le second se lit au même endroit.
-/// Deux appels à `hashs_enu` rendraient chacun leur propre plus petit élément,
-/// donc deux fois la même ENU.
-/// Le `assert_eq!` sur son cardinal fixe l'hypothèse et cède franchement si
-/// [`remplir_dossier`] change de forme, là où la sélection se contenterait de
-/// choisir mal.
+/// **Ce dernier refus tient ici et nulle part ailleurs** : il lui faut une carte
+/// répertoire signée sous une **braise de foyer**, que seul un dépôt imbriqué
+/// produit — la racine, elle, tombe plus tôt sur sa braise inconnue.
 #[test]
 fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -778,45 +678,14 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
 /// Aller-retour de deux `EnuT` **homonymes** déposées à la racine du nœud —
 /// dépôt, relecture des cartes, puis matérialisation sur disque.
 ///
-/// Venu de `scribe/tests.rs`, où il n'éprouvait que le dépôt. L'`EnuT` que
-/// l'ancien test forgeait en double, faute que `depot_enu_texte` rende quoi que
-/// ce soit, n'a plus lieu d'être : les hashs se lisent dans la racine et
-/// [`commande_chargement_enu`](FeuApplication::commande_chargement_enu) rend
-/// l'[`Enu`] déjà authentifiée. Le retrait, lui, est nouveau.
+/// **Deux dépôts, trois racines** : le second part de la racine rendue *après*
+/// le premier, faute de quoi le premier texte finirait orphelin.
 ///
-/// **Deux dépôts, trois racines.** Le second part de la racine rendue *après* le
-/// premier : greffé sous une racine périmée, il reconstruirait un sommet issu de
-/// l'originale et le premier texte finirait orphelin, hors de l'arbre. Le
-/// `assert_eq!` sur le cardinal des enfants attrape cette erreur.
+/// **Foyer 1 sous une racine signée par le nœud** : les deux braises relevées
+/// distinguent le foyer du texte de celui du répertoire d'accueil.
 ///
-/// **Foyer 1**, alors que la racine est signée par le nœud : les deux braises
-/// relevées distinguent le foyer du texte de celui du répertoire d'accueil. Un
-/// `depot_enu_texte` qui signerait sous la braise de la destination passerait
-/// toutes les autres assertions.
-///
-/// **Contenus tous différents**, non par souci de lisibilité : deux textes
-/// identiques au même nom donneraient la même carte, donc le même `hash_carte`,
-/// donc **une seule** ENU dans le `BTreeSet` de la racine — plus d'homonymes à
-/// retirer. Le troisième, celui du refus `ENU-004`, répond à autre chose :
-/// l'`EnuT` est sauvegardée avant que la greffe n'échoue, et reprendre un texte
-/// déjà déposé écraserait son fichier.
-///
-/// Le test couvre, dans l'ordre :
-///
-/// - **dépôt nominal** : les deux `EnuT` sont sous le sommet, authentifiées,
-///   signées sous la braise du foyer demandé, nom et contenu intacts ;
-/// - **refus `ENU-004`** : une `Carte::Texte` passée comme racine de dépôt n'est
-///   pas un répertoire ;
-/// - **retrait, branche `Carte::Texte`** : jamais exécutée jusqu'ici, le
-///   comptoir ne produisant que `Donnee` et `Repertoire`. Le contenu embarqué
-///   est écrit sans passer par le noyau ;
-/// - **retrait, homonymes** : `chemin_libre` était éprouvé isolément, jamais
-///   branché dans la récursion. Les deux fichiers sortent en `test` et `test_1`.
-///
-/// Deux comparaisons contournent l'ordre des hashs, qui ne suit ni celui des
-/// dépôts ni celui des noms : un ensemble pour les contenus des cartes, un tri
-/// pour ceux relus sur disque. Les deux `read_to_string` suffisent par ailleurs
-/// à établir le suffixage — l'absence de `test_1` les ferait paniquer.
+/// Couvre les deux branches jamais atteintes jusqu'ici du retrait — la carte
+/// texte, et le suffixage des homonymes, qui sortent en `test` et `test_1`.
 #[test]
 fn cycle_enu_texte() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -897,36 +766,15 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
 /// Le parcours descendant rend tout le sous-arbre, sa forme et ses profondeurs,
 /// **foyer fermé**.
 ///
-/// L'arbre est déposé, puis le nœud éteint et rallumé avant le moindre parcours :
-/// la session est neuve, aucun foyer n'y a jamais été ouvert. Refermer le foyer
-/// n'aurait pas suffi à le prouver — sa clé publique de signature survit à la
-/// fermeture et n'est effacée qu'à l'extinction.
+/// Le nœud est éteint et rallumé avant le moindre parcours : refermer le foyer
+/// n'aurait pas suffi, sa clé publique survivant à la fermeture.
 ///
-/// **Sur une racine sans enfant**, le parcours rend un item : l'ENU de départ,
-/// à la profondeur 0. C'est le premier point de [`Descendants::new`] — la racine
-/// fait partie du parcours, et un itérateur qui ne rendrait que la descendance
-/// passerait inaperçu sur un arbre peuplé. La même vérification est reprise sur
-/// l'arbre peuplé : c'est bien la racine qui ouvre le parcours, et le compte des
-/// profondeurs part d'elle.
+/// La forme de l'arbre est établie en relançant un parcours sur chaque ENU
+/// rendue — la suite triée des tailles de sous-arbres vaut `[1, 1, 1, 2, 4, 6]`,
+/// une seule forme derrière. Les profondeurs triées valent `[0, 1, 1, 2, 2, 3]`.
 ///
-/// **Sur l'arbre de [`remplir_dossier`]**, la forme est établie en relançant un
-/// parcours sur chaque ENU rendue : la taille de son propre sous-arbre. Triée,
-/// la suite vaut `[1, 1, 1, 2, 4, 6]` — six nœuds, et une seule forme d'arbre
-/// derrière. Compter les items ne dirait que le nombre, pas la structure.
-///
-/// **Les profondeurs, triées, valent `[0, 1, 1, 2, 2, 3]`** : les six nœuds se
-/// répartissent sur quatre niveaux. Triées parce que l'ordre entre frères suit
-/// les hashs, pas les noms ; le multiensemble, lui, ne dépend d'aucun ordre.
-///
-/// **Ce test n'établit pas l'ordre du parcours.** L'arbre de [`remplir_dossier`]
-/// est une chaîne — un seul sous-dossier par niveau —, et un parcours en largeur
-/// peut y produire exactement la même séquence qu'un parcours en profondeur.
-/// Le distinguer demanderait deux dossiers frères peuplés, l'un devant être
-/// épuisé avant que l'autre ne commence.
-///
-/// [`flatten`](Iterator::flatten) écarte les `Err`. Sur un arbre sain il n'y en
-/// a aucune, et une erreur de chargement ferait tomber les comptes plutôt que
-/// de passer inaperçue.
+/// **N'établit pas l'ordre du parcours** : l'arbre est une chaîne, où un parcours
+/// en largeur produirait la même séquence.
 #[test]
 fn descendants() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -1007,21 +855,12 @@ fn descendants() -> ResultFeuApplication<()> {
 
 /// Le parcours remontant suit la chaîne des racines jusqu'à la genèse.
 ///
-/// **Sur un nœud neuf**, un seul item : la racine de départ est la genèse, et le
-/// parcours s'arrête sur elle. C'est la moitié qui prouve la terminaison.
+/// Sur un nœud neuf, un seul item — la genèse, qui prouve la terminaison. Après
+/// dix dépôts, onze racines, chaînées paire à paire par leur méta `_racine` :
+/// c'est ce chaînage qui distingue le parcours d'une lecture du dossier `enu/`.
 ///
-/// **Après dix dépôts**, onze racines — les dix plus la genèse. Chacune porte
-/// dans sa méta `_racine` le hash de la suivante, et celui de la genèse est
-/// vide : c'est ce chaînage, vérifié paire à paire, qui distingue le parcours
-/// d'une simple lecture du dossier `enu/`.
-///
-/// **Le nombre d'enfants décroît de dix à zéro.** Chaque item est donc bien
-/// l'état de l'arbre à une version antérieure, et dans le bon sens — la plus
-/// récente d'abord. Relancer un descendant sur chaque racine le dirait aussi,
-/// pour bien plus cher.
-///
-/// Le foyer est refermé avant de remonter : les racines sont signées par le
-/// nœud, dont la clé publique vient de l'allumage.
+/// **Le nombre d'enfants décroît de dix à zéro**, ce qui établit le sens de la
+/// remontée pour bien moins cher qu'un descendant par racine.
 #[test]
 fn racines_anterieures() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();

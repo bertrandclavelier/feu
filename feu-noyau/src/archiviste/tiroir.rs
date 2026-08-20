@@ -69,7 +69,7 @@ impl Tiroir {
     /// Lit par chunks de [`TAILLE_CHUNK`] octets. Retourne une erreur immédiate
     /// si le total dépasse [`MAX_TAILLE_BLOB`] — aucun octet supplémentaire n'est lu.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::ArchivisteTiroirBlobNonvide`] si le tiroir
     /// détient déjà un blob, [`ErreurFeuNoyau::TailleMaxDepasseeBlob`] si le
@@ -100,7 +100,7 @@ impl Tiroir {
 
     /// Écrit le contenu du tiroir dans `destination` et zéroïse le blob.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si l'écriture dans `destination` échoue.
     pub(crate) fn vider(&mut self, mut destination: impl Write) -> ResultFeuNoyau<()> {
@@ -134,7 +134,7 @@ impl Tiroir {
 
     /// Retourne le hash SHA3-256 du blob en clair.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si [`definit_hash`](Self::definit_hash) n'a pas encore été appelé.
     pub(crate) fn lire_hash(&self) -> ResultFeuNoyau<String> {

@@ -154,27 +154,17 @@ pub(crate) fn dessiner(frame: &mut Frame, etat_tui: &mut EtatTui) {
 
 /// Centre la fenêtre des écrans de travail, la dessine, et rend sa zone.
 ///
-/// Le cadre est le même pour tous les écrans de travail, et le rester est une
-/// exigence de rendu : il n'a aucune raison de sauter ou de changer de taille
-/// quand `h` et `l` passent de l'un à l'autre. L'écrire une fois est ce qui le
-/// garantit, plutôt qu'une consigne à retenir dans chaque module.
+/// Le cadre est le même pour tous les écrans de travail : l'écrire une fois est
+/// ce qui garantit qu'il ne saute pas quand `h` et `l` passent de l'un à
+/// l'autre.
 ///
-/// **Rend le rectangle du cadre, bordure comprise, et non l'intérieur** : la
-/// marge de découpe appartient à l'écran, qui l'applique lui-même — le
-/// pilotage et l'arborescence n'ont pas la même respiration verticale.
+/// **Rend le rectangle bordure comprise, et non l'intérieur** : la marge de
+/// découpe appartient à l'écran.
 ///
-/// **Les onglets sont posés sur le trait bas**, à gauche, où ils écrasent la
-/// bordure aux colonnes qu'ils occupent : ils appartiennent au cadre, pas au
-/// contenu, et ne coûtent donc aucune ligne intérieure. En bas à gauche comme
-/// la liste des fenêtres de tmux — le coin où un terminal dit où l'on est.
-///
-/// L'onglet marqué est celui de `ecran`, et leur ordre est celui que
-/// parcourent `passer_ecran_suivant` et son pendant — un onglet qui ne serait
-/// pas dans l'ordre des touches mentirait sur le sens de `h` et `l`.
-///
-/// Les cadres des modales du pilotage — mot de passe, seed, information — ne
-/// passent pas par ici : ils ont leurs propres dimensions, et n'ont pas
-/// d'onglets à porter puisqu'on ne change pas d'écran depuis eux.
+/// **Les onglets sont posés sur le trait bas**, où ils écrasent la bordure : ils
+/// appartiennent au cadre et ne coûtent aucune ligne intérieure. Leur ordre est
+/// celui des touches `h` et `l`, sans quoi ils mentiraient. Les modales du
+/// pilotage ne passent pas par ici.
 pub(crate) fn carre_principal(frame: &mut Frame, ecran: &Ecran) -> Rect {
     let lignes = Layout::vertical([
         Constraint::Fill(1),

@@ -8,54 +8,21 @@
 
 //! Parcours d'une arborescence ENU.
 //!
-//! Deux axes, deux itérateurs : [`Descendants`] descend l'espace en suivant les
-//! `hashs_enu` d'une arborescence, [`RacinesAnterieures`] remonte le temps de
-//! racine en racine par la méta `_racine`. Ils se composent — le descendant
-//! lancé sur chaque racine rendue par le remontant dit ce que contenait l'arbre
-//! à cette version-là.
+//! Deux axes : [`Descendants`] descend l'espace par les `hashs_enu`,
+//! [`RacinesAnterieures`] remonte le temps par la méta `_racine`. Ils se
+//! composent, et **naviguent sans jamais construire** — ni signature, ni
+//! écriture.
 //!
-//! Ces itérateurs **naviguent, ils ne construisent jamais**. Ils ne signent
-//! rien, n'écrivent rien, ne remontent aucune modification : les fonctions qui
-//! bâtissent l'arborescence ([`remplacer`](super::enu::Enu) et la greffe
-//! d'enfants) ou la déposent sur le disque gardent leur récursion, parce
-//! qu'elles portent un état de construction qu'un parcours ne peut pas porter.
+//! **Le descendant ne vérifie aucune signature**, pas même au départ :
+//! l'arborescence étant un DAG de Merkle, recalculer le hash de la carte à
+//! chaque pas chaîne l'intégrité de toute la descendance. **C'est ce qui permet
+//! de parcourir un arbre foyer fermé** — les blobs, eux, restent illisibles.
 //!
-//! **Le descendant ne vérifie aucune signature**, pas même celle de son point de
-//! départ. Il ne recalcule à chaque pas que le hash de la carte
-//! ([`Enu::integre`](super::enu::Enu)) : l'arborescence est un DAG de Merkle,
-//! une carte de répertoire portant les `hashs_enu` de ses enfants. Vérifier le
-//! hash annoncé à chaque descente chaîne donc l'intégrité de toute la
-//! descendance à la carte de départ, sans une seule vérification ML-DSA-87 — ce
-//! qui rend praticable l'usage visé, ouvrir beaucoup d'ENU pour afficher une
-//! arborescence.
+//! **Le remontant authentifie chaque pas** : il ne traverse que des racines,
+//! signées par le nœud, dont la clé est connue dès l'allumage.
 //!
-//! **C'est ce qui permet de parcourir un arbre foyer fermé.** Une ENU de contenu
-//! est signée par son foyer, dont la session ne détient la clé publique qu'après
-//! une ouverture : exiger une authentification, ne serait-ce qu'au départ,
-//! interdirait de descendre quoi que ce soit sans ouvrir le foyer. Le parcours
-//! est une navigation, pas un accès au contenu — les blobs, eux, restent
-//! illisibles.
-//!
-//! **Les deux itérateurs rendent des [`Fiche`]**, le descendant accompagnées de
-//! la profondeur du pas : l'ENU courante est projetée puis relâchée, sa
-//! signature ne quitte pas le crate. Rien de ce qui
-//! sort n'engage un blob — lecture, suppression, description, retrait rechargent
-//! l'ENU et la repassent par [`Enu::authentique`](super::enu::Enu). La fiche est
-//! une vue, pas une marque de confiance : celle-ci vient de la vérification, pas
-//! de l'encapsulation. La `braise` reste hors garantie, couverte ni par le hash
-//! ni par la signature.
-//!
-//! **Le remontant, lui, authentifie chaque pas** ([`Enu::charger`](super::enu::Enu)).
-//! Ce qu'il traverse n'est pas de la même nature : des racines, toutes signées
-//! par le nœud, dont la session tient la clé publique dès l'allumage — là où le
-//! descendant croise des ENU de foyers, possiblement fermés, et bien plus
-//! nombreuses. Rien ne lui coûte donc ce que le descendant a écarté.
-//!
-//! Le parcours est **paresseux** : rien n'est lu avant l'appel à `next`, et
-//! l'itérateur ne conserve aucune des fiches qu'il a rendues. Qui veut la
-//! collection appelle `collect`, qui cherche une entrée s'arrête en chemin sans
-//! avoir payé le reste de l'arbre. Aucun cache ici : sa cohérence serait à tenir
-//! sans rien savoir de l'usage.
+//! Les deux rendent des [`Fiche`] — une vue, jamais une marque de confiance.
+//! Parcours **paresseux** et sans cache.
 
 use std::path::Path;
 
@@ -67,32 +34,17 @@ use crate::{ErreurFeuApplication, ResultFeuApplication, SessionApplication, fich
 
 /// Descend une arborescence ENU depuis une racine donnée, en profondeur d'abord.
 ///
-/// Suit les `hashs_enu` de chaque [`Carte::Repertoire`](crate::Carte) rencontrée.
-/// Les feuilles ([`Carte::Donnee`](crate::Carte), [`Carte::Texte`](crate::Carte))
-/// n'ouvrent rien : elles sont rendues et le parcours continue. Aucun cycle
-/// n'est possible, le hash d'une ENU dérivant de son contenu.
+/// Suit les `hashs_enu` de chaque [`Carte::Repertoire`](crate::Carte) ; les
+/// feuilles sont rendues sans rien ouvrir. Aucun cycle possible.
 ///
-/// **Profondeur d'abord** : `a_visiter` est une pile, le sous-arbre d'un enfant
-/// est rendu avant ses frères — l'ordre dans lequel une arborescence se lit, et
-/// ce qui permet à un affichage de la dessiner sans rien reconstruire. L'ordre
-/// est déterministe : les `hashs_enu` viennent d'un `BTreeSet`, donc triés, et
-/// ils sont empilés à l'envers pour ressortir dans cet ordre-là.
+/// **Profondeur d'abord**, par une pile, dans l'ordre trié du `BTreeSet` :
+/// l'ordre dans lequel une arborescence se lit.
 ///
-/// **Chaque item porte sa profondeur**, comptée à partir de 0 sur l'ENU de
-/// départ : connue gratuitement en descendant, elle coûterait cher à retrouver
-/// après coup. Elle ne peut pas vivre dans la [`Fiche`] — dans un DAG, la même
-/// ENU se rencontre à deux profondeurs sous deux parents. C'est une propriété du
-/// pas, pas de l'ENU.
+/// **Chaque item porte sa profondeur**, qui ne peut pas vivre dans la [`Fiche`] :
+/// dans un DAG, la même ENU se rencontre à deux profondeurs.
 ///
-/// **Les doublons sont conservés.** L'arborescence est un DAG : un sous-arbre
-/// identique peut être l'enfant de plusieurs répertoires, et il sera alors rendu
-/// une fois par parent. C'est le flux le plus général — l'appelant qui veut un
-/// inventaire déduplique avec un ensemble des hashs déjà vus, alors qu'un flux
-/// déjà dédupliqué aurait perdu pour de bon la structure réelle de l'arbre.
-///
-/// La durée de vie `'a` est celle du dossier emprunté : un `Descendants` ne peut
-/// pas survivre au Scribe dont il tient le chemin. Aucune session n'entre ici,
-/// ni à la construction ni pendant le parcours — rien n'y consulte de clé.
+/// **Les doublons sont conservés** — qui veut un inventaire déduplique chez lui,
+/// l'inverse perdrait la structure réelle. Aucune session n'entre ici.
 pub struct Descendants<'a> {
     /// Dossier `enu/` où sont lus les fichiers, propriété du
     /// [`Scribe`](super::Scribe).
@@ -111,24 +63,14 @@ impl<'a> Iterator for Descendants<'a> {
     /// Charge l'ENU suivante, empile ses enfants s'il y en a, et rend sa fiche
     /// avec sa profondeur.
     ///
-    /// Le hash tiré de la pile vient de la carte du parent, déjà vérifiée : c'est
-    /// lui que `Enu::charger_sans_verification_signature`
-    /// compare à l'empreinte recalculée, et le maillon de plus dans la chaîne
-    /// d'intégrité. Aucune signature n'est vérifiée ici.
+    /// Le hash tiré de la pile vient de la carte du parent, déjà vérifiée : le
+    /// comparer à l'empreinte recalculée ajoute un maillon à la chaîne
+    /// d'intégrité.
     ///
     /// **Un échec de chargement n'arrête pas le parcours** : l'erreur est rendue
-    /// comme un item ordinaire et la pile reste intacte pour le pas suivant.
-    /// C'est ce que permet la forme `Option<Result<…>>` — seul `None` termine,
-    /// le `Result` ne parle que de l'élément courant. L'appelant qui préfère
-    /// s'arrêter au premier échec l'obtient sans une ligne de code ici, avec
-    /// `collect::<Result<Vec<_>, _>>()`.
-    ///
-    /// Sur erreur, la branche est perdue : sans la carte, il n'y a pas d'enfants
-    /// à connaître. Le reste de l'arbre, lui, continue d'être parcouru.
-    ///
-    /// Une feuille rend `None` et n'ouvre rien : ce n'est pas un incident de
-    /// parcours, et `Carte::hashs_enu` le dit sans fabriquer d'erreur ni cloner
-    /// l'ensemble.
+    /// comme un item et la pile reste intacte. Seule la branche fautive est
+    /// perdue, faute de connaître ses enfants. L'appelant qui préfère s'arrêter
+    /// au premier échec écrit `collect::<Result<Vec<_>, _>>()`.
     fn next(&mut self) -> Option<Self::Item> {
         let (profondeur, hash) = self.a_visiter.pop()?;
 
@@ -150,26 +92,16 @@ impl<'a> Iterator for Descendants<'a> {
 impl<'a> Descendants<'a> {
     /// Prépare le parcours sans rien lire — seul `next` déclenche un chargement.
     ///
-    /// **Le point de départ n'est pas authentifié**, par choix : c'est ce qui
-    /// permet de descendre un arbre dont le foyer est fermé, l'usage visé. Une
-    /// fiche n'engage rien sur les blobs — pour en manipuler un, l'ENU est
-    /// rechargée et authentifiée.
+    /// **Le point de départ n'est ni authentifié ni contrôlé**, par choix : c'est
+    /// ce qui permet de descendre un arbre dont le foyer est fermé, et le premier
+    /// `next` dira de toute façon si l'empreinte ne retombe pas sur `hash_carte`.
     ///
-    /// Son intégrité n'est pas davantage contrôlée : le chargement du premier pas
-    /// compare l'empreinte recalculée à `hash_carte`, et le vérifier d'avance
-    /// n'avancerait l'erreur que d'un tour, au prix d'un `Result` sur une
-    /// construction qui pose deux champs.
+    /// **L'ENU de départ fait partie du parcours**, à la profondeur 0 : un
+    /// chargement de plus contre un sous-arbre couvert en entier, ce qu'exige
+    /// l'inventaire des foyers avant un retrait.
     ///
-    /// **L'ENU de départ fait partie du parcours** : son hash est le premier de
-    /// la pile, à la profondeur 0, et sera donc relu avant d'être rendu. Le coût
-    /// est un chargement de plus ; en échange le parcours couvre tout le
-    /// sous-arbre, racine comprise, ce dont a besoin qui veut inventorier les
-    /// foyers d'un arbre avant de le retirer.
-    ///
-    /// `pub(crate)` et non `pub` : `chemin_enu` est un champ privé du
-    /// [`Scribe`](super::Scribe), qu'aucun appelant extérieur ne peut fournir —
-    /// l'emplacement du dépôt sur le disque n'a pas à sortir du crate. Le point
-    /// d'entrée public est une commande de [`FeuApplication`](crate::FeuApplication).
+    /// `pub(crate)` parce que `chemin_enu` est privé au
+    /// [`Scribe`](super::Scribe) : l'emplacement du dépôt ne sort pas du crate.
     pub(crate) fn new(chemin_enu: &'a Path, hash_carte: &[u8; 32]) -> Self {
         Self {
             chemin_enu,
@@ -180,21 +112,15 @@ impl<'a> Descendants<'a> {
 
 /// Remonte les racines du nœud, de la plus récente vers la genèse.
 ///
-/// Suit la méta `_racine`, que chaque racine porte pour désigner celle qu'elle a
-/// remplacée. C'est une liste chaînée, pas un arbre : un seul successeur par pas,
-/// ni file ni déduplication — le contraire de [`Descendants`], qui parcourt un
-/// DAG et doit tenir plusieurs branches en attente.
+/// Suit la méta `_racine`, par laquelle chaque racine désigne celle qu'elle a
+/// remplacée : une liste chaînée, ni file ni déduplication, contrairement au DAG
+/// de [`Descendants`].
 ///
-/// **La racine de départ fait partie du parcours**, comme chez [`Descendants`] :
-/// elle est rechargée avant d'être rendue. Le nom dit l'axe du parcours, pas une
-/// garantie que le premier item soit antérieur à quoi que ce soit.
+/// **La racine de départ fait partie du parcours** — le nom dit l'axe, pas une
+/// garantie d'antériorité du premier item.
 ///
-/// Le parcours s'arrête sur la genèse, que rien ne précède : sa méta `_racine`
-/// est **vide, pas absente** (`Enu::new_racine`, cas `None`).
-///
-/// La durée de vie `'a` couvre les deux emprunts : un `RacinesAnterieures` ne
-/// survit ni au Scribe dont il tient le chemin, ni à la session dont il tire la
-/// clé de vérification à chaque pas.
+/// L'arrêt se fait sur la genèse, dont la méta `_racine` est **vide, pas
+/// absente**.
 pub struct RacinesAnterieures<'a> {
     /// Dossier `enu/` où sont lus les fichiers, propriété du
     /// [`Scribe`](super::Scribe).
@@ -250,20 +176,17 @@ impl<'a> RacinesAnterieures<'a> {
     /// Charge la racine de `hash` et arme le pas suivant à partir de sa méta
     /// `_racine`.
     ///
-    /// Tient tout le travail de `next`, qui ne peut pas l'écrire lui-même : `?`
-    /// ne s'applique qu'à un type de retour homogène, et `next` rend un
-    /// `Option<Result<…>>` où il propagerait l'absence, pas l'échec.
+    /// Existe parce que `next` ne peut pas porter de `?` : il rend un
+    /// `Option<Result<…>>`, où l'opérateur propagerait l'absence et non l'échec.
     ///
-    /// Deux contrôles s'ajoutent à ceux de [`Enu::charger`](super::enu::Enu) :
-    /// braise vide et méta `_racine` présente. Une ENU de contenu atteinte par
-    /// ce chemin serait une anomalie de la chaîne des versions, pas un contenu à
-    /// rendre.
+    /// Deux contrôles s'ajoutent à [`Enu::charger`](super::enu::Enu) : braise vide
+    /// et méta `_racine` présente — une ENU de contenu atteinte par ce chemin
+    /// serait une anomalie de la chaîne des versions.
     ///
-    /// `hash_suivant` n'est réarmé que si la méta est non vide — vide, c'est la
-    /// genèse, et le champ reste `None`, ce qui termine le parcours au tour
-    /// suivant.
+    /// `hash_suivant` n'est réarmé que si la méta est non vide, la genèse
+    /// terminant ainsi le parcours au tour suivant.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeEnuRacineAttendue`] si la racine
     /// n'en est pas une ou si sa méta `_racine` n'est pas un hash de 32 octets,

@@ -121,7 +121,7 @@ impl Scribe {
     /// Le Scribe étant seul à connaître l'emplacement du lien, il est le seul à
     /// pouvoir le résoudre pour un appelant qui ne veut que l'ENU.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage les erreurs de [`Enu::charger_derniere_racine`] : lien absent,
     /// lecture, authentification.
@@ -144,7 +144,7 @@ impl Scribe {
     /// disparaîtrait entre les deux ressortirait en erreur d'E/S plutôt qu'en
     /// `None` — cas sans portée, aucun appelant de production ne supprime d'ENU.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage les erreurs de [`Enu::charger`] : lecture, authentification.
     pub(super) fn charge_enu(
@@ -166,23 +166,15 @@ impl Scribe {
     /// Traduit une ENU en ce que le noyau attend : l'index du foyer et
     /// l'empreinte du blob.
     ///
-    /// Le Scribe ignore ce qu'est un foyer, le noyau ignore ce qu'est une ENU.
-    /// Cette fonction est la charnière : la braise devient un index par
-    /// [`SessionApplication::braise_vers_index`], la carte livre son
-    /// `hash_donnee`. C'est ce qui permet aux appelants de ne désigner une
-    /// donnée que par son ENU, sans jamais recomposer un couple foyer/hash —
-    /// qu'ils pourraient former incohérent.
+    /// Charnière entre deux ignorances : le Scribe ne sait pas ce qu'est un
+    /// foyer, le noyau ne sait pas ce qu'est une ENU. D'où des appelants qui
+    /// désignent une donnée par sa seule ENU, sans recomposer un couple
+    /// foyer/hash qu'ils pourraient former incohérent.
     ///
-    /// Facteur commun des quatre fonctions de blob — [`charge_blob`](Self::charge_blob),
-    /// [`supprime_blob`](Self::supprime_blob), [`existence_blob`](Self::existence_blob)
-    /// et [`informations_blob`](Self::informations_blob) — qui ne diffèrent que
-    /// par l'appel noyau qui suit.
+    /// Facteur commun des quatre fonctions de blob. **Rien n'est authentifié
+    /// ici** : les quatre rechargent l'ENU par [`Enu::charger`].
     ///
-    /// **Rien n'est authentifié ici** : les quatre reçoivent une [`Fiche`] et
-    /// rechargent l'ENU par [`Enu::charger`], qui vérifie la signature. La
-    /// refaire ici en vérifierait une deuxième par appel.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la
     /// braise ne résout vers aucun foyer de la session, et
@@ -217,7 +209,7 @@ impl Scribe {
     /// puis passer la main. Le hash lui est transmis en hexadécimal, forme sous
     /// laquelle le noyau nomme ses blobs.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage les refus du chargement de l'ENU (lecture, authentification) et
     /// les deux de [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
@@ -247,7 +239,7 @@ impl Scribe {
     /// L'ENU survit à son blob. Rien ici ne la retire de l'arborescence, où elle
     /// continue de référencer un fichier absent.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage les refus du chargement de l'ENU (lecture, authentification) et
     /// les deux de [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
@@ -276,7 +268,7 @@ impl Scribe {
     /// [`supprime_blob`](Self::supprime_blob)) — c'est ce que cette méthode
     /// permet de détecter.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage les refus du chargement de l'ENU (lecture, authentification) et
     /// les deux de [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
@@ -300,7 +292,7 @@ impl Scribe {
     ///
     /// Renseigne sur le fichier, jamais sur son contenu : rien n'est déchiffré.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage les refus du chargement de l'ENU (lecture, authentification) et
     /// les deux de [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
@@ -322,22 +314,15 @@ impl Scribe {
 
     /// Active le Scribe et, à la première activation, amorce l'arborescence.
     ///
-    /// Appelé par [`commande_allumage_noeud`](crate::FeuApplication::commande_allumage_noeud)
-    /// après que le noyau a été allumé avec succès. Si le dossier `enu/` est
-    /// absent (tout premier allumage du nœud), il est créé en `rwx------`
-    /// (0o700), puis la **racine origine** est forgée et posée en sommet
-    /// courant via [`Enu::new_racine`] (carte `None` : répertoire vide, signé
-    /// par le nœud, symlink `.DERNIERE_RACINE` pointé dessus). `feu_noyau` est
-    /// requis pour cette signature de genèse ; `session` n'est que transmis à
-    /// [`Enu::new_racine`], qui n'en fait rien dans le cas `None` — il n'y a pas
-    /// encore de racine précédente à relire.
+    /// `enu/` absent signifie tout premier allumage : le dossier est créé en
+    /// `0o700` et la **racine origine** — répertoire vide signé par le nœud — est
+    /// posée en sommet courant. Le noyau est requis pour cette signature de
+    /// genèse ; la session n'est que transmise, sans racine précédente à relire.
     ///
-    /// Aux allumages ultérieurs (`enu/` déjà présent), cette amorce est sautée.
+    /// Aux allumages suivants, l'amorce est sautée. Ce qui devrait avoir lieu à
+    /// *chaque* allumage s'accrocherait hors du `if`.
     ///
-    /// Point d'accroche du travail que le Scribe aurait à mener à chaque
-    /// allumage : hors du `if`, que seule la genèse franchit.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la création du dossier, la signature de la racine
     /// origine, sa sauvegarde ou la pose du symlink échoue. Le Scribe reste
@@ -380,22 +365,16 @@ impl Scribe {
 
     /// Ouvre un comptoir de dépôt au chemin donné.
     ///
-    /// Crée le dossier physique sur le système de fichiers, l'enregistre
-    /// dans [`comptoirs_depot`](Self::comptoirs_depot) et retourne son
-    /// identifiant.
+    /// Crée le dossier, l'enregistre dans
+    /// [`comptoirs_depot`](Self::comptoirs_depot) et rend son identifiant. Les
+    /// deux index sont validés ici contre des bornes de compilation : le comptoir
+    /// les porte ensuite jusqu'à sa fermeture, qui n'a plus à en douter.
     ///
-    /// Les deux index sont validés ici, contre des bornes de compilation : le
-    /// comptoir les porte ensuite jusqu'à sa fermeture, qui n'a plus à en
-    /// douter.
+    /// `session` est mutable pour recevoir le même identifiant à la ligne
+    /// suivante, avec sa destination : le Scribe tient les comptoirs, la session
+    /// les rend lisibles hors de la crate, et les deux se remplissent donc ici.
     ///
-    /// `session` est prise en mutable pour y inscrire le même identifiant, à la
-    /// ligne qui suit l'enregistrement, avec les deux index de destination : le
-    /// comptoir lui-même ne sort pas de la crate, seul ce couple dit hors d'ici
-    /// vers où il dépose. Le Scribe tient les comptoirs, la session les rend
-    /// lisibles : les deux se remplissent donc ici, où l'identifiant vient
-    /// d'être formé.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] ou
     /// [`ErreurFeuApplication::ScribeIndexClasseurInvalide`] si l'index sort des
@@ -435,44 +414,16 @@ impl Scribe {
     /// Ferme un comptoir de dépôt : greffe son contenu sous `enu_racine_depot`,
     /// puis propage la nouvelle racine de dépôt jusqu'à la racine du nœud.
     ///
-    /// Parcourt le dossier en bottom-up (`contents_first(true)`) : chaque
-    /// fichier est déposé dans le classeur du comptoir via
-    /// [`FeuNoyau::depot_blob`], puis encapsulé dans une ENU signée de
-    /// type [`Carte::Donnee`]. Chaque répertoire devient une
-    /// [`Carte::Repertoire`] référençant ses enfants par leur `hash_carte`.
-    /// Toutes les ENU produites sont sauvegardées dans `~/.feu/enu/`.
+    /// Parcourt le dossier en bottom-up : chaque fichier devient un blob puis une
+    /// ENU signée, chaque répertoire une [`Carte::Repertoire`]. Le dossier est
+    /// ensuite supprimé ; un comptoir vide ne greffe rien.
     ///
-    /// Le classeur du comptoir n'est qu'une demande : si la donnée existe déjà
-    /// dans un autre classeur du foyer, [`FeuNoyau::depot_blob`] l'y laisse et
-    /// rend l'index réel. Le traitement se poursuit sans rien changer et l'ENU
-    /// produite reste valable — elle référence un hash, pas un emplacement —
-    /// mais l'écart n'est **remonté nulle part** : le classeur réel est ignoré
-    /// ici, et le comptoir croira avoir déposé dans le sien.
+    /// **Le classeur demandé n'est pas garanti, et l'écart n'est remonté nulle
+    /// part** : une donnée déjà présente ailleurs dans le foyer y reste.
     ///
-    /// Le nom de chaque entrée (fichier ou dossier) est conservé comme
-    /// métadonnée `"nom"`. Le marquage de la racine du nœud (`"_racine"`) n'est
-    /// **pas** posé ici : il l'est par [`Enu::new_racine`] sur le sommet final.
-    ///
-    /// L'accrochage sous `enu_racine_depot` et la remontée jusqu'au sommet sont
-    /// délégués à [`Self::greffe_enfants`], qui traite les deux destinations
-    /// possibles selon le signataire du répertoire d'accueil.
-    ///
-    /// Les entrées directement à la racine du comptoir (`depth == 1`) sont
-    /// ajoutées comme enfants directs de `enu_racine_depot`. Les entrées plus
-    /// profondes (`depth > 1`) forment des sous-arbres autonomes dont la
-    /// racine devient enfant de `enu_racine_depot`. Le dossier physique du comptoir
-    /// est supprimé en fin de traitement. Un comptoir vide est simplement
-    /// supprimé sans modifier `enu_racine_depot`.
-    ///
-    /// Le comptoir est retiré de [`comptoirs_depot`](Self::comptoirs_depot) dès
-    /// les gardes passées : au-delà, la fermeture est un aller simple, et son
-    /// identifiant ne désigne plus rien.
-    ///
-    /// Il sort de `session` à la ligne suivante, d'où le `&mut` sur un paramètre
-    /// que le reste de la fonction ne fait que lire. Les deux retraits sont
-    /// collés parce que ce qui les sépare finit toujours par grandir : une garde
-    /// glissée entre eux rendrait la session menteuse sur un chemin d'erreur,
-    /// sans que rien ne le signale.
+    /// Le comptoir quitte le Scribe puis la session dès les gardes passées — d'où
+    /// le `&mut` sur un paramètre que le reste ne fait que lire. Les deux retraits
+    /// sont collés : une garde glissée entre eux rendrait la session menteuse.
     ///
     /// # Retour
     ///
@@ -481,7 +432,7 @@ impl Scribe {
     /// inchangée. L'appelant qui a besoin de la racine à jour la relit via
     /// [`Enu::charger_derniere_racine`].
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Quatre refus, dont deux laissent une seconde chance :
     /// [`ErreurFeuApplication::ScribeEnuRAttendue`], racine de dépôt qui n'est
@@ -652,31 +603,15 @@ impl Scribe {
     /// Accroche des ENU déjà signées sous `enu_racine_depot`, puis propage la
     /// nouvelle racine de dépôt jusqu'à la racine du nœud.
     ///
-    /// Point de passage unique des deux voies de dépôt : le comptoir y greffe
-    /// les N entrées de son premier niveau, un dépôt unitaire un seul hash. Les
-    /// enfants sont supposés **déjà signés et sauvegardés** dans `~/.feu/enu/` —
-    /// cette méthode ne touche qu'au répertoire d'accueil et à ce qui le
-    /// surplombe.
+    /// Point de passage unique des deux voies de dépôt. Les enfants sont supposés
+    /// **déjà signés et sauvegardés** : seuls le répertoire d'accueil et ce qui le
+    /// surplombe sont touchés ici, jusqu'à un nouveau sommet du nœud.
     ///
-    /// Le `hash_carte` d'un répertoire dépendant de ses enfants, enrichir la
-    /// carte d'accueil en produit une nouvelle version, et la modification
-    /// remonte de proche en proche jusqu'à un nouveau sommet du nœud.
+    /// **Unique endroit où se décide qui signe le sommet.** Un répertoire de foyer
+    /// est re-signé sous sa propre braise puis remonté par [`Enu::remplacer`] ; la
+    /// racine du nœud repart en [`Enu::new_racine`], qui la signe *nœud*.
     ///
-    /// Deux destinations, selon le signataire de `enu_racine_depot` — c'est
-    /// l'unique endroit où se décide qui signe le sommet :
-    ///
-    /// - **répertoire d'un foyer** — reconstruit avec ses nouveaux enfants,
-    ///   re-signé sous sa propre braise, puis remonté par [`Enu::remplacer`] ;
-    /// - **racine du nœud** ([`BRAISE_VIDE`], que seule une racine porte) — la
-    ///   greffe se fait à même le sommet : sa carte enrichie repart directement
-    ///   en [`Enu::new_racine`], qui la signe *nœud*. Passer par [`Enu::new`]
-    ///   échouerait en [`ErreurFeuApplication::ScribeBraiseInconnue`] — cette
-    ///   braise ne désigne aucun foyer — et
-    ///   re-signer une racine sous un foyer serait un contresens : le sommet
-    ///   appartient au nœud, quel que soit le foyer qui reçoit les contenus.
-    ///
-    /// Tout foyer présent sur le chemin reconstruit doit être **ouvert**, sa
-    /// re-signature l'exigeant.
+    /// Tout foyer du chemin reconstruit doit être **ouvert**.
     ///
     /// # Greffe sans effet
     ///
@@ -692,7 +627,7 @@ impl Scribe {
     /// n'en a besoin aujourd'hui ; le jour où l'un d'eux le demandera, ce sera
     /// au type de retour de le dire.
     ///
-    /// # Invariants tenus par les appelants
+    /// # Invariants
     ///
     /// Cette méthode intervient **en fin de chaîne** — les blobs sont déposés,
     /// les ENU signées et sauvegardées. Refuser à ce stade invaliderait un
@@ -701,7 +636,7 @@ impl Scribe {
     /// [`Self::fermeture_comptoir_depot`] sort avant l'appel si le comptoir est
     /// vide, [`Self::depot_enu`] passe toujours exactement un hash.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si
     /// `enu_racine_depot` n'est pas un répertoire. Propage toute erreur d'E/S,
@@ -758,7 +693,7 @@ impl Scribe {
     /// la fois, quelle que soit sa carte. Elle ne signe rien — le foyer
     /// signataire a été fixé par l'appelant en construisant l'enveloppe.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage les erreurs de sauvegarde et celles de [`Self::greffe_enfants`].
     fn depot_enu(
@@ -778,19 +713,16 @@ impl Scribe {
     /// Dépose un texte dans un foyer en l'accrochant sous `enu_racine_depot`,
     /// puis propage la nouvelle racine de dépôt jusqu'à la racine du nœud.
     ///
-    /// Variante allégée de [`Self::fermeture_comptoir_depot`] : pas de comptoir,
-    /// pas de blob, pas de classeur. Le texte est embarqué dans une
-    /// [`Carte::Texte`] (bornée à `MAX_TAILLE_TEXTE`, nommée par la méta `"nom"`
-    /// — validée à la construction), mise sous enveloppe signée — l'`EnuT` —
-    /// puis confiée à [`Self::depot_enu`], qui la sauvegarde et la greffe.
+    /// Variante allégée de [`Self::fermeture_comptoir_depot`] : ni comptoir, ni
+    /// blob, ni classeur. Le texte est embarqué dans une [`Carte::Texte`], bornée
+    /// et nommée, mise sous enveloppe signée puis confiée à [`Self::depot_enu`].
     ///
-    /// Elle survit à l'existence de [`Self::depot_enu`], plus général, parce
-    /// qu'elle est la **seule** voie pour une `EnuT` : un texte n'existe pas
-    /// comme fichier, il ne peut donc pas passer par un comptoir de dépôt.
+    /// Seule voie possible pour une `EnuT` : un texte n'existe pas comme fichier,
+    /// il ne peut donc pas passer par un comptoir.
     ///
-    /// L'`EnuT` est signée sous la braise d'`index_foyer`, pas sous celle du
-    /// répertoire d'accueil. Le foyer du texte doit donc être ouvert, en plus
-    /// de ceux qu'exige la greffe.
+    /// La signature se fait sous la braise d'`index_foyer`, pas sous celle du
+    /// répertoire d'accueil : ce foyer-là doit être ouvert en plus de ceux
+    /// qu'exige la greffe.
     ///
     /// # Retour
     ///
@@ -798,7 +730,7 @@ impl Scribe {
     /// cible de `.DERNIERE_RACINE` ; l'appelant qui en a besoin le relit via
     /// [`Enu::charger_derniere_racine`].
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage [`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`] si le
     /// texte dépasse `MAX_TAILLE_TEXTE`, ou
@@ -835,37 +767,18 @@ impl Scribe {
     /// Matérialise l'arborescence d'une `EnuR` dans un dossier OS, en lecture
     /// seule — opération inverse du dépôt par comptoir.
     ///
-    /// Crée `chemin_retrait` (0o700) puis y reconstruit récursivement ce que
-    /// décrit `enu_r` : chaque [`Carte::Donnee`] redevient un fichier (blob
-    /// déchiffré via le noyau), chaque [`Carte::Texte`] un fichier portant son
-    /// contenu embarqué, chaque [`Carte::Repertoire`] un sous-dossier. Chaque
-    /// enfant est chargé **et authentifié** ([`Enu::charger`]) avant d'être
-    /// écrit, `fiche_r` comme les autres : le retrait engage — il écrit sur le
-    /// disque — il n'a donc rien à gagner au chargement rapide.
+    /// Crée `chemin_retrait` en `0o700` puis y reconstruit ce que décrit `enu_r`,
+    /// chaque enfant **authentifié** avant écriture. **Sans reprise** : le dossier
+    /// appartient ensuite à l'utilisateur.
     ///
-    /// **Lecture seule, sans reprise.** Contrairement au comptoir de dépôt,
-    /// aucun état n'est retenu et aucune « fermeture » ne relira le dossier :
-    /// Feu écrit puis s'en désintéresse — d'où une simple méthode, sans type
-    /// comptoir dédié. Le dossier appartient ensuite à l'utilisateur.
-    ///
-    /// L'ENU de `fiche_r` est traitée comme le dossier de sortie lui-même : son éventuel
-    /// nom est ignoré, seuls ses enfants sont matérialisés — la récursion ne
-    /// voit jamais la racine, qui peut donc être le sommet du nœud (sans méta
-    /// `"nom"`).
+    /// L'ENU de `fiche_r` **est** le dossier de sortie : son nom est ignoré, elle
+    /// peut donc être le sommet du nœud.
     ///
     /// **Tout foyer du sous-arbre doit être ouvert**, et [`Self::foyers_requis`]
-    /// le vérifie d'entrée : la descente authentifie chaque ENU et déchiffre
-    /// chaque blob, deux gestes qui réclament une clé de foyer. La garde passe
-    /// avant le chargement de `fiche_r` — sans elle, un `fiche_r` de foyer fermé
-    /// sortait en [`ErreurFeuApplication::ScribeEnuNonAuthentique`], soit
-    /// l'erreur d'une falsification pour un foyer qu'il suffisait d'ouvrir.
+    /// le vérifie avant le chargement de `fiche_r` — sans quoi un foyer fermé
+    /// sortait en falsification apparente. Le sous-arbre est donc lu deux fois.
     ///
-    /// Le sous-arbre est donc lu deux fois, une fois par la pré-passe et une
-    /// fois par la descente. C'est le prix d'un refus avant écriture, là où
-    /// l'échec en cours de route laissait un dossier à moitié rempli que
-    /// personne ne reprenait.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeFoyersFermes`] si un seul foyer
     /// requis manque — aucune écriture n'a eu lieu, l'appel se retente une fois
@@ -927,24 +840,17 @@ impl Scribe {
 
     /// Inventorie les foyers dont dépend le sous-arbre de `hash_carte`.
     ///
-    /// Pré-passe de [`Self::retrait_lecture_seule`] : elle répond « que faut-il
-    /// ouvrir ? » avant la moindre écriture, là où la descente ne le découvre
-    /// qu'en échouant à mi-chemin, sur un dossier à moitié rempli que rien ne
-    /// reprend.
+    /// Pré-passe de [`Self::retrait_lecture_seule`], qui répond avant la moindre
+    /// écriture là où la descente ne le découvrirait qu'à mi-chemin.
     ///
-    /// **Toutes les cartes comptent**, pas seulement les [`Carte::Donnee`] dont
-    /// le blob se déchiffre : la descente passe chaque enfant par
-    /// [`Enu::charger`], qui exige la clé publique du signataire — un répertoire
-    /// de foyer fermé arrête le retrait aussi sûrement qu'une donnée.
+    /// **Toutes les cartes comptent**, pas seulement les [`Carte::Donnee`] : un
+    /// répertoire de foyer fermé arrête le retrait aussi sûrement qu'une donnée.
     ///
-    /// L'inventaire, lui, se fait **tous foyers fermés** : [`Descendants`] ne
-    /// vérifie aucune signature, donc ne réclame aucune clé. C'est ce qui permet
-    /// de nommer ce qui manque au lieu de buter dessus.
+    /// L'inventaire se fait **tous foyers fermés**, [`Descendants`] ne vérifiant
+    /// aucune signature. Une braise qui ne résout vers aucun foyer est écartée
+    /// sans erreur : c'est la racine du nœud.
     ///
-    /// Une braise qui ne résout vers aucun foyer est écartée sans erreur : c'est
-    /// la racine du nœud, signée nœud, que tout parcours parti d'elle traverse.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage l'échec de chargement d'une ENU du parcours — le premier arrête
     /// l'inventaire, `collect` court-circuitant sur `Err`. Une ENU illisible est
@@ -994,26 +900,14 @@ impl Scribe {
     /// Cœur récursif de [`Self::retrait_lecture_seule`] : matérialise **une**
     /// entrée nommée dans un dossier parent existant.
     ///
-    /// Invariant d'entrée : `enu_courante` est un enfant — jamais la racine du
-    /// retrait — et porte donc une méta `"nom"`, validée comme composant de
-    /// chemin par [`Carte::nom_fichier`] avant tout `join`. Le chemin final
-    /// passe par [`Self::chemin_libre`] : deux enfants homonymes d'un même
-    /// répertoire coexistent par suffixage au lieu d'entrer en collision.
+    /// Invariant d'entrée : `enu_courante` est un enfant, jamais la racine, et
+    /// porte donc une méta `"nom"` — validée comme composant de chemin avant tout
+    /// `join`. Deux homonymes coexistent par suffixage.
     ///
-    /// Par variante :
+    /// Seule [`Carte::Donnee`] passe par le noyau, qui écrit le clair directement
+    /// dans le fichier de sortie — le `File` est consommé par l'appel.
     ///
-    /// - [`Carte::Donnee`] — la braise résout l'`index_foyer` (elle seule en a
-    ///   besoin, déjà garanti par [`Enu::charger`] sur `enu_courante`), puis
-    ///   [`FeuNoyau::lecture_blob`] retrouve le classeur du blob, le
-    ///   déchiffre et écrit le clair directement dans le fichier de sortie
-    ///   (0o600). Le `File` est consommé par l'appel — flush et fermeture au
-    ///   drop, rien à reprendre ensuite.
-    /// - [`Carte::Texte`] — le contenu embarqué est écrit tel quel, sans
-    ///   passage par le noyau.
-    /// - [`Carte::Repertoire`] — sous-dossier créé (0o700), puis récursion sur
-    ///   chaque enfant chargé et authentifié.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeMetaNomAbsente`] ou
     /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] selon que le nom est

@@ -80,20 +80,16 @@ pub(crate) const TAILLE_CHUNK: usize = 8 * 1024;
 
 /// Contrat de communication entre `feu-noyau` et toute interface utilisateur.
 ///
-/// Ce trait définit le canal d'échange entre le cœur du protocole et sa
-/// couche de présentation — CLI, TUI ou application. Il remplit deux rôles :
+/// Canal d'échange entre le cœur du protocole et sa couche de présentation —
+/// CLI, TUI ou application. Deux sens.
 ///
-/// **Entrées** — le noyau collecte ce dont il a besoin pour opérer :
-/// `demander_mdp` pour les mots de passe. La collecte du mot de passe est
-/// une responsabilité du noyau : il est le seul à savoir quand et pourquoi
-/// en avoir besoin, ce qui minimise la fenêtre d'exposition en mémoire.
+/// **Entrées** : `demander_mdp`. Collecter le mot de passe est une
+/// responsabilité du noyau, seul à savoir quand il en a besoin, ce qui réduit
+/// sa fenêtre d'exposition en mémoire.
 ///
-/// **Notifications d'état** — le noyau informe l'interface des changements
-/// d'état significatifs qu'elle ne peut pas observer autrement : seed
-/// mnémotechnique à l'initialisation, clé publique du nœud à l'allumage,
-/// clés publiques des foyers à leur ouverture.
-/// L'interface fait ce qu'elle veut de ces informations — les stocker, les
-/// afficher, les transmettre au réseau.
+/// **Notifications** : seed à l'initialisation, clé publique du nœud à
+/// l'allumage, clés publiques des foyers à leur ouverture — ce que l'interface
+/// ne peut pas observer autrement. Elle en fait ce qu'elle veut.
 pub trait InterfaceFeuNoyau {
     /// Collecte le mot de passe Feu en masquant la saisie.
     ///
@@ -305,7 +301,7 @@ impl SessionFoyers {
 
     /// Retourne l'adresse `.braise` du foyer à la position `index`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si `index_foyer` est hors
     /// bornes.
@@ -367,7 +363,7 @@ impl Drop for FeuNoyau {
     /// avant de quitter. Ce `drop` ne fait pas de cleanup — il garantit uniquement
     /// qu'une sortie silencieuse avec des foyers ouverts est impossible.
     ///
-    /// # Dette technique
+    /// # Dettes techniques
     ///
     /// Si le programme s'est terminé anormalement avec des foyers ouverts, les
     /// dossiers clairs restent sur le disque et les archives `.feu` sont absentes.
@@ -385,48 +381,19 @@ impl Drop for FeuNoyau {
 impl FeuNoyau {
     /// Crée une instance de [`FeuNoyau`] prête à l'emploi — nœud allumé, foyers fermés.
     ///
-    /// Détecte automatiquement l'état du nœud en vérifiant l'existence de l'arborescence
-    /// `~/.feu`. Selon le cas, exécute l'initialisation ou l'allumage. Dans les deux cas,
-    /// retourne un [`FeuNoyau`] pleinement opérationnel avec le nœud allumé et tous les
-    /// foyers fermés.
+    /// L'existence de `~/.feu` décide seule entre initialisation et allumage : la
+    /// première dérive les clés depuis une seed neuve ou depuis `phrase_seed`,
+    /// crée l'arborescence et referme les foyers ; le second relit `config.feu` et
+    /// déchiffre la clé privée du nœud avec le mot de passe collecté.
     ///
-    /// `chemin_feu` est le chemin racine du nœud (`~/.feu` en usage nominal). Le
-    /// noyau ne lit jamais l'environnement lui-même : l'emplacement lui est fourni
-    /// par l'appelant, ce qui permet notamment de l'enraciner dans un dossier
+    /// `chemin_feu` est le chemin racine du nœud, fourni par l'appelant : le noyau
+    /// ne lit jamais l'environnement, ce qui permet de l'enraciner dans un dossier
     /// temporaire pour les tests.
     ///
-    /// # Initialisation (première utilisation — arborescence absente)
+    /// `phrase_seed` est une phrase BIP39 de 12, 15, 18, 21 ou 24 mots, séparés par
+    /// des blancs quelconques et normalisés en NFKD ; Feu en génère de 24.
     ///
-    /// **Phase mémoire — cryptographe**
-    /// 1. Génère une nouvelle seed BIP39 (si `phrase_seed` est `None`) ou utilise la phrase
-    ///    mnémotechnique fournie, collecte le mot de passe et dérive les clés du nœud, des foyers et le sel.
-    /// 2. Produit le trousseau public complet.
-    ///
-    /// **Phase disque — gardien**
-    /// 3. Crée l'arborescence globale `~/.feu` et les arborescences de chaque foyer.
-    /// 4. Enregistre les `MAX_FOYERS` adresses `.braise` dans `config.feu`.
-    ///
-    /// **Fermeture**
-    /// 5. Ferme chaque foyer — archive, chiffre et supprime le dossier clair.
-    ///
-    /// # Allumage (utilisations suivantes — arborescence présente)
-    ///
-    /// **Phase disque — gardien**
-    /// 1. Charge `config.feu` et lit le trousseau public du nœud depuis `~/.feu/.cles/`.
-    ///
-    /// **Phase mémoire — cryptographe**
-    /// 2. Collecte le mot de passe via l'interface.
-    /// 3. Dérive la clé éphémère Argon2id et déchiffre la clé privée du nœud.
-    /// 4. Notifie l'interface de la clé publique de signature du nœud.
-    ///
-    /// # Format de `phrase_seed`
-    ///
-    /// `phrase_seed` est une phrase mnémotechnique BIP39 : mots en minuscules séparés
-    /// par des espaces (tout blanc accepté — espaces multiples tolérés). Comptes
-    /// valides : 12, 15, 18, 21 ou 24 mots. Feu génère des seeds de 24 mots.
-    /// La normalisation NFKD est appliquée automatiquement avant validation.
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une [`ErreurFeuNoyau`] si `config.feu` est illisible, si un
     /// fichier de clé est absent ou corrompu, ou si le mot de passe est
@@ -536,34 +503,16 @@ impl FeuNoyau {
     /// Répare l'arborescence d'un nœud existant en régénérant toutes ses clés depuis
     /// une seed BIP39 fournie.
     ///
-    /// À utiliser quand des fichiers de clés ont été supprimés ou corrompus mais que
-    /// les archives `.feu` des foyers sont intactes. La dérivation des clés est
-    /// déterministe — la même seed produit exactement les mêmes clés, le même sel et
-    /// les mêmes adresses `.braise`.
+    /// À utiliser quand des fichiers de clés ont disparu mais que les archives
+    /// `.feu` sont intactes : la dérivation étant déterministe, la même seed rend
+    /// les mêmes clés, le même sel et les mêmes braises.
     ///
-    /// Le mot de passe original est demandé à plusieurs reprises : une première fois
-    /// pour chiffrer les fichiers de clés, puis une fois par foyer pour désarchiver
-    /// (comportement identique à [`ouverture_foyer`](Self::ouverture_foyer) standard).
-    /// Il doit correspondre à celui utilisé lors de la dernière fermeture des foyers,
-    /// car les archives ont été chiffrées avec ce mot de passe.
+    /// Le mot de passe est redemandé à chaque foyer et doit être celui de la
+    /// dernière fermeture, dont les archives dépendent.
     ///
-    /// Enchaîne les opérations suivantes :
-    ///
-    /// 1. Régénère toutes les clés en mémoire, collecte le mot de passe original et dérive
-    ///    le sel via `genere_trousseau_a_partir_seed`.
-    /// 2. Produit le trousseau public chiffré (efface mot de passe et clé éphémère).
-    /// 3. Recrée `config.feu` avec les adresses `.braise` dérivées.
-    /// 4. **Première passe** — écrit les fichiers root `~/.feu/.cles/` (dont `<braise>.cle`)
-    ///    nécessaires à l'ouverture des foyers. Les erreurs sont ignorées — les répertoires
-    ///    `<braise>/` n'existent pas encore, les clés de classeurs seront écrites à la passe suivante.
-    /// 5. Ouvre chaque foyer — désarchive et charge les clés en mémoire.
-    /// 6. **Deuxième passe** — écrit l'intégralité du trousseau public, y compris les
-    ///    clés de classeurs dans `~/.feu/<braise>/.cles/`.
-    /// 7. Ferme chaque foyer — archive le dossier clair (avec les nouvelles `.cles/`) et
-    ///    supprime le dossier clair.
-    ///
-    /// Retourne `()` — la fonction répare le disque et rend la main. L'appelant doit
-    /// ensuite invoquer [`FeuNoyau::new`] pour démarrer normalement.
+    /// Les clés root sont écrites en **deux passes**, de part et d'autre de
+    /// l'ouverture des foyers, dont les dossiers n'existent pas avant. Répare le
+    /// disque et rend la main — l'appelant enchaîne sur [`FeuNoyau::new`].
     ///
     /// # Format de `phrase_seed`
     ///
@@ -572,7 +521,7 @@ impl FeuNoyau {
     /// valides : 12, 15, 18, 21 ou 24 mots. Feu génère des seeds de 24 mots.
     /// La normalisation NFKD est appliquée automatiquement avant validation.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le compte de mots est invalide, si un mot est absent
     /// du dictionnaire BIP39 français, si le checksum est incorrect, si une opération
@@ -652,7 +601,7 @@ impl FeuNoyau {
     /// **Phase disque — gardien**
     /// 5. Réécrit atomiquement tous les fichiers de clés sur le disque.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::AuMoinsUnFoyerFerme`] si un seul foyer est
     /// fermé, ou propage l'échec du rechiffrement et des opérations disque.
@@ -675,32 +624,9 @@ impl FeuNoyau {
     /// Ouvre un foyer FeuNoyau existant : déchiffre l'archive, charge les clés en mémoire
     /// et initialise l'Archiviste du foyer.
     ///
-    /// Enchaîne six phases séquentielles :
-    ///
-    /// **Vérifications préalables**
-    /// 1. Vérifie que `index < MAX_FOYERS` et que le foyer n'est pas déjà ouvert.
-    ///
-    /// **Phase mémoire — cryptographe**
-    /// 2. Collecte le mot de passe FeuNoyau et dérive la clé éphémère Argon2id.
-    /// 3. Déchiffre la clé symétrique du foyer (`<braise>.cle`) avec la clé éphémère.
-    /// 4. Crée un flux de lecture déchiffré AES-256-GCM-stream.
-    ///
-    /// **Phase disque — gardien**
-    /// 5. Déchiffre `<braise>.feu` vers l'archive intermédiaire `<braise>.tar`,
-    ///    l'extrait dans `~/.feu/<braise>/`, puis supprime les deux fichiers.
-    /// 6. Lit les clés chiffrées du foyer depuis le dossier extrait.
-    ///
-    /// **Phase mémoire — cryptographe**
-    /// 7. Déchiffre et charge les clés du foyer dans le trousseau.
-    /// 8. Efface le mot de passe et la clé éphémère.
-    ///
-    /// **Archiviste**
-    /// 9. Instancie l'Archiviste du foyer. À la première ouverture, crée l'arborescence
-    ///    `registre/` et `classeur0/` à `classeur4/`. Lors des ouvertures suivantes,
-    ///    l'Archiviste détecte la présence de `registre/` et ne fait rien.
-    ///
-    /// **SessionFoyers**
-    /// 10. Marque le foyer comme ouvert.
+    /// L'Archiviste est instancié en fin de parcours et crée `registre/` et les
+    /// cinq classeurs à la première ouverture seulement — ensuite il constate
+    /// leur présence et ne fait rien.
     ///
     /// # Archive `.tar` intermédiaire
     ///
@@ -712,7 +638,7 @@ impl FeuNoyau {
     /// L'échec de cette suppression est ignoré — le fichier peut avoir déjà
     /// disparu, et c'est l'erreur d'origine qui renseigne l'appelant.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
     /// [`ErreurFeuNoyau::FoyerDejaOuvert`] si le foyer l'est déjà,
@@ -794,20 +720,9 @@ impl FeuNoyau {
     ///
     /// Réarchive le dossier clair du foyer en une archive `.feu` chiffrée, efface
     /// toute trace en clair du disque et libère les ressources mémoire associées.
+    /// L'Archiviste est détruit au passage, son dossier venant de disparaître.
     ///
-    /// Enchaîne sept étapes séquentielles :
-    ///
-    /// 1. Valide l'index du foyer.
-    /// 2. Vérifie que le foyer est bien ouvert.
-    /// 3. Prépare l'archivage : empaquette le dossier clair en `<braise>.tar`,
-    ///    source du chiffrement, et crée `<braise>.feu`, sa destination.
-    /// 4. Chiffre le dossier du foyer dans l'archive `.feu` via le Cryptographe.
-    /// 5. Supprime l'archive `.tar` intermédiaire et le dossier clair du disque.
-    /// 6. Détruit l'Archiviste du foyer — son dossier vient d'être supprimé.
-    /// 7. Marque le foyer comme fermé dans la session et notifie la couche de
-    ///    présentation.
-    ///
-    /// # Invariant de sécurité
+    /// # Invariants de sécurité
     ///
     /// À la fin de l'opération, aucune donnée du foyer ne subsiste en clair sur
     /// le disque : seule demeure l'archive `.feu` chiffrée.
@@ -828,7 +743,7 @@ impl FeuNoyau {
     /// Aucun test ne couvre ces deux chemins : les atteindre suppose une panne
     /// disque, qu'aucun mauvais usage ne provoque.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
     /// [`ErreurFeuNoyau::FoyerFerme`] si le foyer l'est déjà, ou propage l'échec
@@ -889,22 +804,16 @@ impl FeuNoyau {
     /// `ouverture_foyer` attend une archive `.feu` qui n'existe pas, et
     /// `fermeture_foyer` requiert les clés en mémoire.
     ///
-    /// Enchaîne cinq étapes séquentielles :
-    ///
-    /// 1. Valide l'index du foyer.
-    /// 2. Effectue un diagnostic de l'arborescence — rejette si une anomalie est détectée.
-    /// 3. Collecte le mot de passe, dérive la clé éphémère et déchiffre les clés
-    ///    du foyer depuis le dossier clair.
-    /// 4. Marque le foyer comme ouvert dans la session — prérequis de la fermeture.
-    /// 5. Déclenche la fermeture standard : archive et chiffre le dossier, détruit
-    ///    l'archiviste, supprime le dossier clair.
+    /// Les clés sont relues depuis le dossier clair, puis le foyer est marqué
+    /// ouvert — prérequis de la fermeture standard, à laquelle tout le reste est
+    /// délégué.
     ///
     /// # Prérequis
     ///
     /// Le dossier clair `<braise>/` doit exister sur disque et être intact —
     /// le diagnostic vérifie la présence de toutes les clés nécessaires.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
     /// [`ErreurFeuNoyau::FermetureSecoursFoyerImpossible`] si le diagnostic
@@ -939,18 +848,10 @@ impl FeuNoyau {
 
     /// Stocke un blob dans un classeur d'un foyer ouvert, sans jamais le dupliquer.
     ///
-    /// Orchestre six opérations séquentielles :
-    ///
-    /// 1. Valide les index et l'état du foyer.
-    /// 2. Crée un tiroir vide via l'Archiviste du foyer.
-    /// 3. Lit `source` dans le tiroir par chunks — erreur si la taille dépasse
-    ///    [`MAX_TAILLE_BLOB`].
-    /// 4. Calcule le hash SHA3-256 du clair et chiffre le blob avec la clé du
-    ///    classeur **demandé** (AES-256-GCM) via le Cryptographe.
-    /// 5. Balaie **tous** les classeurs du foyer : si l'un détient déjà ce hash,
-    ///    retourne son index sans rien écrire — le chiffré préparé à l'étape 4
-    ///    est alors abandonné.
-    /// 6. Sinon écrit le blob chiffré dans `classeurN/<hash>.dat` via l'Archiviste.
+    /// Le clair est lu par chunks dans un tiroir, haché et chiffré sous la clé du
+    /// classeur **demandé**, puis tous les classeurs du foyer sont balayés : si
+    /// l'un détient déjà ce hash, son index est rendu sans rien écrire et le
+    /// chiffré préparé est abandonné.
     ///
     /// # Unicité dans le foyer
     ///
@@ -981,7 +882,7 @@ impl FeuNoyau {
     /// [`lecture_blob`](Self::lecture_blob) — et l'index du classeur qui
     /// détient le blob, celui demandé ou celui où il résidait déjà.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::IndexClasseurInvalide`] si `index_classeur` est
     /// hors bornes, puis délègue à `archiviste_foyer_ouvert` l'index de foyer
@@ -1019,34 +920,20 @@ impl FeuNoyau {
 
     /// Lit et déchiffre un blob d'un foyer ouvert, sans en connaître le classeur.
     ///
-    /// Le classeur n'est pas fourni : il est **découvert** en balayant les
-    /// classeurs du foyer ([`existence_blob`](Self::existence_blob)) jusqu'à
-    /// celui qui détient `classeurN/<hash>.dat`. Le nommage étant
-    /// content-addressed sur le hash du clair, l'appelant (couche ENU) connaît le
-    /// `hash` mais pas l'emplacement ; le noyau lève cette indétermination.
+    /// Le classeur est **découvert** en balayant le foyer : l'adressage étant fait
+    /// sur le hash du clair, l'appelant connaît le `hash` mais pas l'emplacement.
+    /// Un blob ne résidant jamais dans deux classeurs d'un même foyer, le premier
+    /// trouvé est le bon, et sa clé est celle sous laquelle il a été chiffré.
     ///
-    /// Un même blob ne réside jamais dans deux classeurs d'un même foyer : le
-    /// premier trouvé est donc le bon, et le balayage n'a pas d'arbitrage à
-    /// rendre.
-    ///
-    /// Le classeur trouvé sert aux deux temps qui suivent — localiser le `.dat` et
-    /// fournir la clé de déchiffrement (propre à chaque classeur) — et les deux
-    /// sont nécessairement cohérents, le blob ayant été chiffré sous la clé du
-    /// classeur où il réside.
-    ///
-    /// Orchestre ensuite trois opérations séquentielles :
-    ///
-    /// 1. Charge le blob chiffré depuis `classeurN/<hash>.dat` via l'Archiviste du foyer.
-    /// 2. Déchiffre le blob avec la clé du classeur (AES-256-GCM) et vérifie son
-    ///    intégrité — le hash SHA3-256 du clair doit correspondre à `hash`.
-    /// 3. Écrit le blob en clair dans `destination` via le tiroir, puis zéroïse le clair.
+    /// L'intégrité est vérifiée après déchiffrement — le hash SHA3-256 du clair
+    /// doit retomber sur `hash` — avant l'écriture dans `destination`.
     ///
     /// # Invariants de sécurité
     ///
     /// Le blob en clair ne transite que dans le tiroir et n'est jamais écrit sur
     /// le disque. Le tiroir est zéroïsé après vidage.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// La validation du foyer est déléguée à `archiviste_foyer_ouvert`, appelé en
     /// tête : c'est lui qui teste les bornes de `index_foyer`
@@ -1100,7 +987,7 @@ impl FeuNoyau {
     /// résidant jamais dans deux classeurs d'un même foyer, le premier trouvé
     /// est le bon.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si `index_foyer` est hors
     /// bornes, puis délègue à `archiviste_foyer_ouvert` le foyer fermé
@@ -1131,7 +1018,7 @@ impl FeuNoyau {
     ///
     /// L'ordre des hashes retournés n'est pas garanti.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::IndexClasseurInvalide`] si `index_classeur` est
     /// hors bornes, puis délègue à `archiviste_foyer_ouvert` l'index de foyer
@@ -1162,7 +1049,7 @@ impl FeuNoyau {
     /// admet « non » pour réponse. Les erreurs sont réservées à ce qui empêche
     /// de répondre — index hors bornes, foyer fermé.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si `index_foyer` est hors
     /// bornes, puis délègue à `archiviste_foyer_ouvert` le foyer fermé
@@ -1188,7 +1075,7 @@ impl FeuNoyau {
     /// ici une erreur : on a demandé les métadonnées d'un blob, pas s'il en
     /// avait.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si `index_foyer` est hors
     /// bornes, puis délègue à `archiviste_foyer_ouvert` le foyer fermé et
@@ -1225,7 +1112,7 @@ impl FeuNoyau {
     /// le ciphertext ML-KEM-1024 (1568 octets), le nonce AES-GCM (12 octets),
     /// le ciphertext, puis le tag d'authentification AES-GCM (16 octets).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::TailleMaxDepasseeChiffrementAsymetrique`] si la
     /// taille dépasse [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`], ou propage l'échec
@@ -1255,7 +1142,7 @@ impl FeuNoyau {
     /// La taille des données est limitée à [`MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE`] + 1596 octets
     /// (surcoût du schéma KEM : 1568 ciphertext KEM + 12 nonce + 16 auth tag).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
     /// [`ErreurFeuNoyau::FoyerFerme`] si le foyer n'est pas ouvert,
@@ -1294,7 +1181,7 @@ impl FeuNoyau {
     /// cette fonction est destinée aux structures légères (IdNU, ENU),
     /// pas aux blobs de données.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::TailleMaxDepasseeSignature`] si la taille
     /// dépasse [`MAX_TAILLE_SIGNATURE`], ou propage l'échec de la signature.
@@ -1318,7 +1205,7 @@ impl FeuNoyau {
     /// cette fonction est destinée aux structures légères (IdNU, ENU),
     /// pas aux blobs de données.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
     /// [`ErreurFeuNoyau::FoyerFerme`] si le foyer n'est pas ouvert,
@@ -1350,7 +1237,7 @@ impl FeuNoyau {
     /// Retourne `Ok(true)` si `signature` est valide pour `octets_signes` avec
     /// `cle_publique`, `Ok(false)` sinon.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::CryptographeSignatureMlDsaMalFormee`] si
     /// `signature` n'est pas un encodage ML-DSA-87 décodable.
@@ -1416,7 +1303,7 @@ impl FeuNoyau {
     /// `Ok(vec![])` si le foyer est dans un état nominal.
     /// `Ok(vec![...])` avec la liste des anomalies détectées sinon.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// La validation du foyer est déléguée à `archiviste_foyer_ouvert`, appelé en
     /// tête : index hors bornes ([`ErreurFeuNoyau::IndexFoyerInvalide`]), foyer

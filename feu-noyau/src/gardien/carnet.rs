@@ -16,10 +16,10 @@
 //! Les noms de fichiers du protocole sont définis comme constantes privées
 //! au niveau du module — point de vérité unique pour toute l'arborescence.
 //!
-//! # Erreurs
+//! # Errors
 //!
 //! Tout échec du système de fichiers remonte tel quel en
-//! [`ErreurFeuNoyau::IoError`] par `?` : les sections `# Erreurs` qui parlent
+//! [`ErreurFeuNoyau::IoError`] par `?` : les sections `# Errors` qui parlent
 //! d'un fichier « absent ou illisible » désignent ce cas. Ne sont nommées que
 //! les variantes propres au carnet, quand il constate lui-même l'anomalie.
 
@@ -193,7 +193,7 @@ impl Carnet {
 
     /// Supprime le dossier `~/.feu/<braise>` et tout son contenu.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le dossier est absent ou si la suppression échoue.
     pub(super) fn supprime_dossier_braise(&self, braise: Braise) -> ResultFeuNoyau<()> {
@@ -205,7 +205,7 @@ impl Carnet {
 
     /// Écrit le contenu de `config.feu` sur le disque.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si l'écriture échoue.
     pub(super) fn enregistre_configuration(&self, configuration: String) -> ResultFeuNoyau<()> {
@@ -219,7 +219,7 @@ impl Carnet {
 
     /// Lit le contenu de `config.feu` depuis le disque et le retourne en `String`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le fichier est absent ou illisible.
     pub(super) fn ouvre_configuration(&self) -> ResultFeuNoyau<String> {
@@ -233,23 +233,13 @@ impl Carnet {
     /// Écrit l'intégralité du trousseau public sur le disque.
     ///
     /// Crée l'arborescence complète du nœud puis écrit chaque fichier de clé :
+    /// sel et clés du nœud sous `~/.feu/.cles/`, clés de chaque foyer sous
+    /// `~/.feu/<braise>/.cles/`, la clé symétrique d'archive restant à la racine.
     ///
-    /// - `~/.feu/.cles/sel.feu` — sel Argon2id (en clair)
-    /// - `~/.feu/.cles/feu_sig.priv` — clé privée de signature du nœud (chiffrée)
-    /// - `~/.feu/.cles/feu_sig.pub` — clé publique de signature du nœud (en clair)
+    /// Les clés privées et symétriques partent chiffrées, les publiques et le sel
+    /// en clair. Dossiers en `0o700`, fichiers en `0o600`.
     ///
-    /// Pour chaque foyer :
-    /// - `~/.feu/.cles/<braise>.cle` — clé symétrique d'archive (chiffrée)
-    /// - `~/.feu/<braise>/.cles/sig.priv` — clé privée de signature réseau (chiffrée)
-    /// - `~/.feu/<braise>/.cles/sig.pub` — clé publique de signature réseau (en clair)
-    /// - `~/.feu/<braise>/.cles/chif.priv` — clé privée ML-KEM-1024 (chiffrée, 92 o)
-    /// - `~/.feu/<braise>/.cles/chif.pub` — clé publique ML-KEM-1024 (en clair, 1568 o)
-    /// - `~/.feu/<braise>/.cles/classeur0.cle` à `classeur4.cle` — clés des classeurs (chiffrées)
-    ///
-    /// Tous les dossiers sont créés avec les permissions `rwx------` (0o700).
-    /// Tous les fichiers sont créés avec les permissions `rw-------` (0o600).
-    ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur à la première opération disque qui échoue.
     pub(super) fn ecrire_trousseau_public_complet(
@@ -352,7 +342,7 @@ impl Carnet {
     /// Les clés privées et symétriques sont retournées chiffrées (AES-256-GCM),
     /// y compris les cinq clés de classeurs (`classeur0.cle` à `classeur4.cle`).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage l'absence ou l'illisibilité d'un fichier de clé, et retourne
     /// [`ErreurFeuNoyau::GardienTailleFichierInattendue`] si l'un d'eux est lu
@@ -433,7 +423,7 @@ impl Carnet {
 
     /// Lit le sel Argon2id depuis `~/.feu/.cles/sel.feu`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage l'absence ou l'illisibilité du fichier, et retourne
     /// [`ErreurFeuNoyau::GardienTailleFichierInattendue`] s'il ne fait pas 16 octets.
@@ -449,7 +439,7 @@ impl Carnet {
 
     /// Lit la clé privée de signature du nœud depuis `~/.feu/.cles/feu_sig.priv`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage l'absence ou l'illisibilité du fichier, et retourne
     /// [`ErreurFeuNoyau::GardienTailleFichierInattendue`] s'il ne fait pas 60 octets.
@@ -465,7 +455,7 @@ impl Carnet {
 
     /// Lit la clé publique de signature du nœud depuis `~/.feu/.cles/feu_sig.pub`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage l'absence ou l'illisibilité du fichier, et retourne
     /// [`ErreurFeuNoyau::GardienTailleFichierInattendue`] s'il ne fait pas 2592 octets.
@@ -481,7 +471,7 @@ impl Carnet {
 
     /// Lit la clé symétrique de chiffrement d'un foyer depuis `~/.feu/.cles/<braise>.cle`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Propage l'absence ou l'illisibilité du fichier, et retourne
     /// [`ErreurFeuNoyau::GardienTailleFichierInattendue`] s'il ne fait pas 60 octets.
@@ -508,7 +498,7 @@ impl Carnet {
 
     /// Ouvre le fichier `<braise>.feu` en écriture exclusive avec les permissions `rw-------` (0o600).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le fichier existe déjà ou si la création échoue.
     pub(super) fn ouvre_archive_chiffree_foyer_ecriture(
@@ -524,7 +514,7 @@ impl Carnet {
 
     /// Ouvre l'archive `<braise>.feu` en lecture.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le fichier est absent ou illisible.
     pub(super) fn ouvre_archive_chiffree_foyer_lecture(
@@ -538,7 +528,7 @@ impl Carnet {
 
     /// Ouvre l'archive tar intermédiaire `<braise>.tar` en lecture.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le fichier est absent ou illisible.
     pub(super) fn ouvre_archive_tar_foyer_lecture(&self, braise: Braise) -> ResultFeuNoyau<File> {
@@ -552,7 +542,7 @@ impl Carnet {
     /// Destiné à recevoir les données déchiffrées depuis `<braise>.feu`.
     /// Doit être supprimé après désarchivage via [`supprime_archive_foyer_tar`](Self::supprime_archive_foyer_tar).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le fichier existe déjà ou si la création échoue.
     pub(super) fn ouvre_archive_tar_vide_ecriture(&self, braise: Braise) -> ResultFeuNoyau<File> {
@@ -576,7 +566,7 @@ impl Carnet {
     /// Ce fichier tar est destiné à être chiffré par le cryptographe immédiatement après.
     /// Il doit être supprimé après chiffrement.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le fichier existe déjà, si la création échoue,
     /// si l'archivage tar échoue, ou si la finalisation échoue.
@@ -606,7 +596,7 @@ impl Carnet {
     /// pratique, là où tout le reste de l'arborescence est en `0o700`. Les
     /// entrées de l'archive, elles, portent leur mode d'origine.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si `<braise>.tar` est absent, illisible,
     /// ou si l'extraction échoue.
@@ -620,7 +610,7 @@ impl Carnet {
 
     /// Supprime l'archive chiffrée `~/.feu/<braise>.feu` après extraction.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
     pub(super) fn supprime_archive_foyer_chiffree(&self, braise: Braise) -> ResultFeuNoyau<()> {
@@ -630,7 +620,7 @@ impl Carnet {
 
     /// Supprime l'archive tar intermédiaire `~/.feu/<braise>.tar`.
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si le fichier est absent ou si la suppression échoue.
     pub(super) fn supprime_archive_foyer_tar(&self, braise: Braise) -> ResultFeuNoyau<()> {
@@ -644,7 +634,7 @@ impl Carnet {
     ///
     /// Crée les dossiers intermédiaires si nécessaire (`recursive`).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si la création échoue — permissions
     /// insuffisantes, chemin invalide ou erreur d'entrée/sortie.
@@ -660,7 +650,7 @@ impl Carnet {
     /// fichier s'il existe. Fonctionne à l'initialisation (fichier absent)
     /// comme au changement de mot de passe (fichier existant).
     ///
-    /// # Erreurs
+    /// # Errors
     ///
     /// Retourne une erreur si l'écriture du fichier temporaire échoue,
     /// ou si le renommage vers la cible échoue.

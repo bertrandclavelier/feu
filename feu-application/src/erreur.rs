@@ -27,33 +27,18 @@ pub type ResultFeuApplication<T> = Result<T, ErreurFeuApplication>;
 
 /// Type d'erreur unique exposé par `feu-application`.
 ///
-/// Les variantes **internes** viennent d'abord, par ordre alphabétique — c'est
-/// le seul ordre qui dise sans ambiguïté où insérer la suivante. Elles couvrent
-/// les préconditions et les refus de la couche applicative : états que la
-/// couche de présentation reconnaît pour décider quoi proposer, pas des
-/// messages qu'elle se contenterait d'afficher. Une variante ne porte de charge
-/// utile que si le message seul ne suffit pas au diagnostic.
+/// Les variantes **internes** viennent d'abord, par ordre alphabétique — le seul
+/// ordre qui dise où insérer la suivante. Ce sont des états que la présentation
+/// reconnaît pour décider quoi proposer, pas des messages à afficher.
 ///
-/// Le préfixe `Scribe` désigne le composant qui lève la variante lorsque le cas
-/// lui est propre. Les deux qui n'en portent pas sont levées par `commandes.rs`
-/// sur l'état de la session, hors de toute branche du Scribe.
+/// Les variantes **externes** ferment la liste et portent l'erreur d'une crate
+/// tierce, par `#[from]` quand le type source le permet. [`ErreurFeuNoyau`] fait
+/// exception, aplatie en `String` : aucun type du noyau ne traverse l'API.
 ///
-/// Les variantes **externes** ferment la liste, également par ordre
-/// alphabétique : elles portent l'erreur d'une crate tierce ou d'une couche
-/// inférieure au lieu de la traduire, conservée via `#[from]` quand le type
-/// source implémente `std::error::Error`. [`ErreurFeuNoyau`] fait exception —
-/// elle est aplatie en `String`, pour n'exposer aucun type du noyau à travers
-/// l'API applicative.
+/// **Pas de variante fourre-tout.** Le préfixe `APP >` marque la couche.
 ///
-/// Pas de variante fourre-tout : un refus qui n'entre dans aucune des
-/// existantes en réclame une nouvelle, nommée.
-///
-/// Le préfixe `APP >` dans chaque message sert de marqueur de couche lorsque
-/// les messages sont encapsulés par la couche de présentation.
-///
-/// Aucune charge utile n'est sensible : ce qu'une variante porte doit pouvoir
-/// s'afficher. Les valeurs qui n'y ont pas leur place — chemin absolu — sont
-/// portées pour inspection mais absentes du message.
+/// **Aucune charge utile n'est sensible** : un chemin absolu est porté pour
+/// inspection, jamais affiché.
 #[derive(Error, Debug)]
 pub enum ErreurFeuApplication {
     /// Extinction du nœud refusée : au moins un foyer est encore ouvert, et

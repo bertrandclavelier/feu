@@ -10,36 +10,21 @@
 //! confiance de `charger`, et tenue de l'arborescence — racine du nœud,
 //! remplacements, greffe d'enfants.
 //!
-//! Le Scribe y est consommé comme le fait `feu-application` : appels directs à
-//! ses fonctions, sur des composants montés à la main. C'est le pendant de
-//! `src/tests.rs`, qui éprouve la crate depuis son contrat public — [`FeuApplication`]
-//! et ses seules `commande_*`, comme le fait `feu-tui`.
+//! Le Scribe y est consommé par appels directs, sur des composants montés à la
+//! main — pendant de `src/tests.rs`, qui éprouve la crate par son contrat
+//! public.
 //!
 //! **Ce fichier garde ce que `src/tests.rs` n'atteindrait qu'en se bâtissant un
-//! décor exprès** : l'enveloppe et sa signature, la barrière de confiance de
-//! `charger`, la tenue de l'arborescence sous `remplacer` et `greffe_enfants`.
-//! Quand le test du haut coûte le même décor, il prend tout — il prouve en plus
-//! le câblage. C'est ce qui a emporté `cycle_depot_retrait_simple` et
-//! `depot_enu_texte` le 2026-08-11.
+//! décor exprès.** Quand le test du haut coûte le même décor, il prend tout : il
+//! prouve en plus le câblage.
 //!
-//! Ces tests montent une pile réelle — noyau allumé depuis une seed neuve dans
-//! un `TempDir`, foyer ouvert, scribe activé — plutôt que des composants isolés :
-//! seule une pile complète permet de signer une ENU puis d'éprouver sa relecture
-//! authentifiée. Ils vivent dans un `mod` sous `scribe`, et non dans un dossier
-//! `tests/`, parce que les fonctions couvertes (`Enu::sauvegarder`, `charger`,
-//! `supprimer`…) sont `pub(super)` : invisibles depuis un crate de test externe.
+//! Une pile réelle est montée — noyau allumé, foyer ouvert, scribe activé —
+//! seule façon de signer une ENU puis d'éprouver sa relecture authentifiée. D'où
+//! un `mod` sous `scribe` : les fonctions couvertes sont `pub(super)`, donc
+//! invisibles depuis un crate de test externe.
 //!
-//! **Au sein de ce fichier**, les tests portant sur une même fonction se
-//! répartissent le travail : l'un éprouve le comportement, l'autre se contente
-//! de prouver qu'un appelant l'invoque, et la doc de chacun dit son rôle. Cette
-//! répartition ne franchit pas la frontière avec `src/tests.rs`, où le test du
-//! haut prend tout.
-//!
-//! **Un troisième emplacement existe** : les `mod tests` en ligne de
-//! `session.rs`, `scribe/comptoir.rs` et `scribe/enu.rs`. Ils prennent ce qui se
-//! prouve sans monter de pile — format canonique, gardes de forme, comptage,
-//! cycle disque d'un dossier. Le critère est la pile, pas la visibilité : dès
-//! qu'un test a besoin d'un noyau allumé, il vient ici.
+//! Un troisième emplacement existe, les `mod tests` en ligne, pour ce qui se
+//! prouve **sans monter de pile**. Le critère est la pile, pas la visibilité.
 
 use std::{collections::BTreeSet, fs::write};
 
@@ -299,17 +284,10 @@ fn cycle_racine() {
 /// Éprouve [`Enu::remplacer`] sur trois substitutions, de la plus triviale à la
 /// plus profonde.
 ///
-/// - **Garde du remplacement sans effet** : refuser un remplacement dont la carte est déjà celle
-///   de la racine courante — aucune nouvelle version à produire.
-/// - **Cible = la racine** : cas de base de la récursion — le sommet (vide, issu
-///   de la genèse) est remplacé par une arborescence entière, dont la carte
-///   devient le nouveau sommet nœud, lignée `_racine` posée.
-/// - **Cible en profondeur** : substituer un nœud à deux niveaux force la
-///   reconstruction et la re-signature (sous braise foyer) de chaque répertoire
-///   du chemin jusqu'au sommet. Le répertoire intermédiaire reconstruit ayant un
-///   nouveau hash, on le retrouve par élimination parmi les enfants du sommet et
-///   on vérifie qu'il porte le greffon. On vérifie enfin que les versions
-///   précédentes ne sont pas supprimées (historique).
+/// Le remplacement sans effet est refusé ; la racine comme cible est le cas de
+/// base de la récursion ; une cible en profondeur force la reconstruction et la
+/// re-signature de chaque répertoire du chemin. Établit au passage que les
+/// versions précédentes ne sont pas supprimées.
 #[test]
 fn cycle_remplacements() {
     let (_tmp, chemin_enu, chemin_derniere_racine, noyau, _, session) =
@@ -432,22 +410,12 @@ fn cycle_remplacements() {
 /// `Scribe::greffe_enfants`, qui forge une nouvelle racine par `Enu::new_racine`
 /// au lieu de reconstruire un chemin sous un foyer.
 ///
-/// Deux greffes successives, parce qu'elles n'éprouvent pas la même chose : la
-/// première part de la racine de genèse, dont la carte est **vide** — les
-/// enfants greffés sont alors les seuls ; la seconde part d'une racine déjà
-/// peuplée et prouve l'*union*, à savoir que les trois enfants précédents
-/// survivent à l'arrivée du quatrième.
+/// **Deux greffes successives** : la première part de la genèse, dont la carte
+/// est vide ; la seconde d'une racine peuplée, et prouve l'*union*.
 ///
-/// Chaque greffe vérifie :
-///
-/// - **chaînage** : la méta `_racine` du nouveau sommet pointe vers celui qu'il
-///   remplace — sans quoi une racine de genèse fraîche, elle aussi valide et
-///   signée nœud, passerait pour une greffe réussie ;
-/// - **enfants** : cardinal attendu *et* présence de chacun. Le cardinal seul
-///   laisserait passer une substitution, la présence seule un hash parasite ;
-/// - **nouveau sommet** : le `hash_carte` a changé, donc la racine a bien été
-///   re-forgée et `.DERNIERE_RACINE` repointé, plutôt que l'ancienne complétée
-///   en place.
+/// Chacune vérifie le chaînage — sans quoi une genèse fraîche passerait pour une
+/// greffe réussie —, le cardinal **et** la présence de chaque enfant, et le
+/// changement de `hash_carte` du sommet.
 #[test]
 fn greffe_enfants_racine() -> ResultFeuApplication<()> {
     let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
@@ -557,26 +525,14 @@ fn greffe_enfants_racine() -> ResultFeuApplication<()> {
 /// `Scribe::greffe_enfants`, celle qui re-signe l'EnuR sous sa propre braise
 /// puis remonte jusqu'au sommet par `Enu::remplacer`.
 ///
-/// L'EnuR doit être réellement accrochée sous la racine avant la greffe : c'est
-/// en descendant depuis `.DERNIERE_RACINE` que `remplacer` la retrouve, et une
-/// EnuR seulement présente sur le disque serait introuvable. Le décor emprunte
-/// donc la branche `BRAISE_VIDE`, déjà éprouvée par [`greffe_enfants_racine`].
+/// L'EnuR doit être **réellement accrochée** sous la racine : `remplacer` la
+/// retrouve en descendant depuis `.DERNIERE_RACINE`, une EnuR seulement présente
+/// sur le disque serait introuvable. La greffe en forge ensuite une nouvelle, si
+/// bien que la variable du test désigne une version périmée.
 ///
-/// La greffe ne modifie pas l'EnuR : elle en forge une nouvelle, de carte
-/// augmentée, donc de `hash_carte` différent. La variable `enur` du test désigne
-/// dès lors une version périmée — la version courante se retrouve comme unique
-/// enfant du sommet reconstruit.
-///
-/// Le test vérifie :
-///
-/// - **union** : les cinq enfants — les trois d'origine conservés, les deux
-///   greffés ajoutés. C'est le comportement propre à cette branche, la racine
-///   de genèse partant nécessairement d'une carte vide ;
-/// - **braise inchangée** : la nouvelle EnuR reste signée sous le foyer de
-///   l'ancienne. Une greffe qui changerait de braise déplacerait silencieusement
-///   un contenu d'un foyer vers un autre — l'invariant du tiroir l'interdit ;
-/// - **remontée** : le sommet a été reconstruit et n'a toujours qu'un enfant,
-///   la nouvelle EnuR ayant remplacé l'ancienne au lieu de s'y ajouter.
+/// Vérifie l'union des cinq enfants, la **braise inchangée** — en changer
+/// déplacerait silencieusement un contenu d'un foyer vers un autre — et la
+/// remontée jusqu'au sommet.
 #[test]
 fn greffe_enfants() -> ResultFeuApplication<()> {
     let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
@@ -672,23 +628,14 @@ fn greffe_enfants() -> ResultFeuApplication<()> {
 /// Greffe sans effet : re-greffer un enfant déjà présent ne produit aucune
 /// version.
 ///
-/// La carte étant un ensemble, un hash déjà là est absorbé sans rien changer.
-/// Forger malgré tout une nouvelle racine allongerait la lignée des `_racine`
-/// d'un maillon identique au précédent — d'où la sortie anticipée de
-/// `greffe_enfants` lorsque la carte augmentée égale celle de départ.
-///
-/// Le cas n'est pas théorique : le comptoir reforge la carte d'un fichier à
-/// partir de son contenu et de son nom, si bien qu'un même fichier redéposé
-/// produit le même `hash_carte`.
-///
-/// La première greffe n'est pas là pour être vérifiée — `greffe_enfants_racine`
-/// s'en charge — mais pour **établir le décor** : son contrôle de chaînage
-/// prouve qu'une version a bien été produite. Sans lui, l'égalité qui suit
-/// passerait tout aussi bien si rien n'avait jamais fonctionné.
+/// La carte étant un ensemble, un hash déjà là est absorbé sans rien changer, et
+/// forger malgré tout une racine allongerait la lignée d'un maillon identique.
+/// Le cas n'est pas théorique : un même fichier redéposé produit le même
+/// `hash_carte`.
 ///
 /// L'égalité porte sur les ENU **entières**, pas sur leur `hash_carte` : une
-/// racine re-forgée à contenu identique se trahirait par sa date et par sa
-/// signature, qu'une comparaison de cartes seules laisserait passer.
+/// racine re-forgée à contenu identique se trahirait par sa date et sa
+/// signature.
 #[test]
 fn greffe_enfants_doublon() -> ResultFeuApplication<()> {
     let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
