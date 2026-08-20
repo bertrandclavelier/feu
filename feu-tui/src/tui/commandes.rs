@@ -34,7 +34,8 @@
 //! lève la marque ; les cas ci-dessous sont ceux du pilotage.
 //!
 //! Deux autres y sont omises pour ne pas alourdir la liste : `!` affiche
-//! l'à-propos en toute circonstance, `r` dès que le nœud est allumé.
+//! l'à-propos en toute circonstance, `r` retire l'ENU marquée sous le chemin
+//! marqué, dès que le nœud est allumé et que les deux marques existent.
 //!
 //! - **Nœud éteint, racine** : `a` allume le nœud, `q` quitte Feu.
 //! - **Nœud allumé, racine, aucun foyer ouvert** : `e` éteint le nœud, `o`
@@ -322,6 +323,12 @@ pub(super) enum Commande {
     /// doit être un répertoire parce que la greffe y ajoute des enfants ; le
     /// Scribe le revérifie, la table ne fait que ne pas proposer l'impossible.
     ///
+    /// En revanche, **rien ici ne vérifie que les foyers en jeu sont ouverts**,
+    /// alors que le Scribe les exige : une touche qui s'évanouit sans rien dire
+    /// renseigne moins que l'erreur qu'il renvoie, laquelle nomme le foyer à
+    /// rouvrir. Le filtrage par contexte s'arrête donc à ce qui n'a aucun sens,
+    /// et laisse remonter ce qui a une explication.
+    ///
     /// La commande ne porte pas d'identifiant : plusieurs comptoirs pouvant être
     /// ouverts, le bras d'exécution bascule en saisie pour le collecter, et le
     /// valide contre
@@ -389,20 +396,30 @@ pub(super) enum Commande {
     /// le nœud est allumé : l'utilisateur doit d'abord l'éteindre.
     PilotageQuitter,
 
-    /// Matérialise l'arborescence de la dernière racine dans un dossier de l'OS
+    /// Matérialise l'arborescence de l'ENU marquée dans un dossier de l'OS
     /// — émet [`crate::connecteurs::MessageTuiCoeur::RetraitLectureSeule`].
     ///
-    /// Active dès que le nœud est allumé, sans autre condition : le retrait part
-    /// de la dernière racine, que le cœur va chercher lui-même, et ne lit donc
-    /// ni la position courante ni l'état des foyers. Seule commande du nœud
-    /// allumé dans ce cas — les autres dépendent toutes de l'une ou de l'autre.
+    /// Active quand le nœud est allumé **et** que les deux marques sont posées :
+    /// l'ENU à retirer et le chemin où écrire. Elle est la seule à les consommer
+    /// ensemble — le dépôt ne lit que le chemin, la fermeture de comptoir que
+    /// l'ENU —, et c'est ce qui la rend indépendante de la position courante :
+    /// le retrait ne vise ni un foyer ni un classeur, mais un sous-arbre.
     ///
-    /// Elle peut malgré tout échouer à l'exécution : le déchiffrement d'un blob
-    /// exige que le foyer signataire soit ouvert, et la table ne le vérifie pas.
-    /// C'est la seule entorse au filtrage strict décrit dans
-    /// [`CommandesActives::new`] — parcourir l'arbre pour dresser la liste des
-    /// foyers requis demande un itérateur qui n'existe pas encore. L'erreur
-    /// remonte en [`crate::connecteurs::MessageCoeurTui::AffichageErreur`].
+    /// La variante ne porte rien : le chemin est formé au dispatch dans
+    /// [`crate::tui::Tui::saisie_mode_normal`], en joignant à la marque un
+    /// sous-dossier `retrait_feu_{4 premiers octets du hash}`. C'est lui le
+    /// dossier de sortie, jamais le dossier marqué : le cœur refuse d'écrire
+    /// dans un dossier existant, et celui-là appartient à l'utilisateur. Son nom
+    /// porte sa cible comme celui du comptoir porte la sienne — deux ENU
+    /// retirées sous la même marque cohabitent, la même ENU retirée deux fois se
+    /// heurte, ce qui est alors l'information juste.
+    ///
+    /// **Les foyers fermés ne sont pas filtrés ici**, comme pour
+    /// [`Commande::PilotageFermerComptoirDepot`] et pour la même raison : le
+    /// Scribe les relève tous avant d'écrire quoi que ce soit et les nomme dans
+    /// son erreur, ce qu'une touche évanouie ne dirait pas. Les établir depuis
+    /// la table coûterait par ailleurs un parcours de l'arbre entier à chaque
+    /// frappe, la table étant reconstruite à chacune.
     PilotageRetraitLectureSeule,
 }
 
@@ -478,8 +495,8 @@ impl CommandesActives {
     /// les siennes en détail :
     ///
     /// - nœud éteint → `PilotageAllumerNoeud`, `PilotageQuitter` ;
-    /// - nœud allumé → `PilotageRetraitLectureSeule` sans condition,
-    ///   `PilotageEteindreNoeud` si aucun foyer n'est ouvert,
+    /// - nœud allumé → `PilotageRetraitLectureSeule` si les deux marques sont
+    ///   posées, `PilotageEteindreNoeud` si aucun foyer n'est ouvert,
     ///   `PilotageOuvrirFoyer` s'il reste une place ;
     /// - au moins un foyer ouvert, la navigation suit la position courante :
     ///   à la racine, `0`-`9` entrent dans les foyers ouverts ; dans un foyer,
@@ -503,10 +520,12 @@ impl CommandesActives {
         commandes_actives: &mut HashMap<(KeyCode, KeyModifiers), Commande>,
     ) {
         if let Some(session) = &etat_tui.session_application {
-            commandes_actives.insert(
-                (KeyCode::Char('r'), KeyModifiers::NONE),
-                Commande::PilotageRetraitLectureSeule,
-            );
+            if etat_tui.chemin_selectionne.is_some() && etat_tui.enu_selectionnee.is_some() {
+                commandes_actives.insert(
+                    (KeyCode::Char('r'), KeyModifiers::NONE),
+                    Commande::PilotageRetraitLectureSeule,
+                );
+            }
 
             if session.nombre_foyers_ouverts() == 0 {
                 commandes_actives.insert(

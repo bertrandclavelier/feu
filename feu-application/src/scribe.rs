@@ -36,7 +36,7 @@ mod tests;
 
 use data_encoding::HEXLOWER;
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     fs::{DirBuilder, OpenOptions, read, read_dir},
     io::Write,
     os::unix::fs::{DirBuilderExt, OpenOptionsExt},
@@ -487,9 +487,13 @@ impl Scribe {
     /// [`ErreurFeuApplication::ScribeEnuRAttendue`], racine de dépôt qui n'est
     /// pas un répertoire — greffer des enfants sous une donnée n'a pas de sens,
     /// et le refus tombe avant tout dépôt de blob, donc l'utilisateur en désigne
-    /// une autre et retente. [`ErreurFeuApplication::ScribeFoyerFerme`], foyer
-    /// de destination fermé depuis l'ouverture — le comptoir est encore
-    /// enregistré, la fermeture se retente une fois le foyer rouvert.
+    /// une autre et retente. [`ErreurFeuApplication::ScribeFoyerFerme`], levée
+    /// pour **deux foyers distincts** : celui du comptoir, qui reçoit les blobs,
+    /// et celui de la racine de dépôt, qui signe la greffe — l'un peut être
+    /// ouvert sans l'autre. Le second est sauté quand la racine de dépôt est
+    /// celle du nœud, signée nœud et sans foyer : sa braise ne désigne alors
+    /// rien. Ces refus laissent le comptoir enregistré, la fermeture se retente
+    /// une fois le ou les foyers rouverts.
     /// [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] sort au même endroit,
     /// mais ne couvre ici que le `None` de
     /// [`SessionApplication::braise_foyer`], que la validation d'index à
@@ -535,6 +539,12 @@ impl Scribe {
             return Err(ErreurFeuApplication::ScribeFoyerFerme(
                 comptoir.index_foyer(),
             ));
+        }
+
+        if let Some(index) = session.braise_vers_index(enu_racine_depot.braise())
+            && !session.etat_foyers()[index]
+        {
+            return Err(ErreurFeuApplication::ScribeFoyerFerme(index));
         }
 
         // `None` inatteignable : le `get` d'entrée a réussi et rien entre les
@@ -843,19 +853,30 @@ impl Scribe {
     /// voit jamais la racine, qui peut donc être le sommet du nœud (sans méta
     /// `"nom"`).
     ///
-    /// Tout foyer signataire d'une `Donnee` rencontrée doit être **ouvert**
-    /// (déchiffrement du blob) ; naviguer les répertoires, eux, ne demande
-    /// aucune ouverture.
+    /// **Tout foyer du sous-arbre doit être ouvert**, et [`Self::foyers_requis`]
+    /// le vérifie d'entrée : la descente authentifie chaque ENU et déchiffre
+    /// chaque blob, deux gestes qui réclament une clé de foyer. La garde passe
+    /// avant le chargement de `fiche_r` — sans elle, un `fiche_r` de foyer fermé
+    /// sortait en [`ErreurFeuApplication::ScribeEnuNonAuthentique`], soit
+    /// l'erreur d'une falsification pour un foyer qu'il suffisait d'ouvrir.
+    ///
+    /// Le sous-arbre est donc lu deux fois, une fois par la pré-passe et une
+    /// fois par la descente. C'est le prix d'un refus avant écriture, là où
+    /// l'échec en cours de route laissait un dossier à moitié rempli que
+    /// personne ne reprenait.
     ///
     /// # Erreurs
     ///
-    /// Retourne [`ErreurFeuApplication::ScribeEnuNonAuthentique`] si le
-    /// chargement de `fiche_r` ne passe pas la barrière,
+    /// Retourne [`ErreurFeuApplication::ScribeFoyersFermes`] si un seul foyer
+    /// requis manque — aucune écriture n'a eu lieu, l'appel se retente une fois
+    /// les foyers rouverts. Puis
+    /// [`ErreurFeuApplication::ScribeEnuNonAuthentique`] si le chargement de
+    /// `fiche_r` ne passe pas la barrière,
     /// [`ErreurFeuApplication::ScribeDossierDejaExistant`] si `chemin_retrait`
     /// est un dossier existant, ou [`ErreurFeuApplication::ScribeEnuRAttendue`]
-    /// si ce n'est pas un répertoire. Propage les erreurs de la descente : authentification d'un
-    /// enfant, nom absent ou invalide, E/S et lecture de blob (foyer fermé,
-    /// blob introuvable).
+    /// si ce n'est pas un répertoire. Propage les erreurs de la descente :
+    /// authentification d'un enfant, nom absent ou invalide, E/S et lecture de
+    /// blob (blob introuvable).
     pub(super) fn retrait_lecture_seule(
         &self,
         noyau: &mut FeuNoyau,
@@ -863,6 +884,16 @@ impl Scribe {
         chemin_retrait: &Path,
         fiche_r: &Fiche,
     ) -> ResultFeuApplication<()> {
+        let foyers_fermes: Vec<usize> = self
+            .foyers_requis(session, &fiche_r.hash_carte())?
+            .into_iter()
+            .filter(|index| !session.etat_foyers()[*index])
+            .collect();
+
+        if !foyers_fermes.is_empty() {
+            return Err(ErreurFeuApplication::ScribeFoyersFermes(foyers_fermes));
+        }
+
         let enu_r = Enu::charger(&self.chemin_enu, session, &fiche_r.hash_carte())?;
 
         if chemin_retrait.is_dir() {
@@ -892,6 +923,43 @@ impl Scribe {
         }
 
         Ok(())
+    }
+
+    /// Inventorie les foyers dont dépend le sous-arbre de `hash_carte`.
+    ///
+    /// Pré-passe de [`Self::retrait_lecture_seule`] : elle répond « que faut-il
+    /// ouvrir ? » avant la moindre écriture, là où la descente ne le découvre
+    /// qu'en échouant à mi-chemin, sur un dossier à moitié rempli que rien ne
+    /// reprend.
+    ///
+    /// **Toutes les cartes comptent**, pas seulement les [`Carte::Donnee`] dont
+    /// le blob se déchiffre : la descente passe chaque enfant par
+    /// [`Enu::charger`], qui exige la clé publique du signataire — un répertoire
+    /// de foyer fermé arrête le retrait aussi sûrement qu'une donnée.
+    ///
+    /// L'inventaire, lui, se fait **tous foyers fermés** : [`Descendants`] ne
+    /// vérifie aucune signature, donc ne réclame aucune clé. C'est ce qui permet
+    /// de nommer ce qui manque au lieu de buter dessus.
+    ///
+    /// Une braise qui ne résout vers aucun foyer est écartée sans erreur : c'est
+    /// la racine du nœud, signée nœud, que tout parcours parti d'elle traverse.
+    ///
+    /// # Erreurs
+    ///
+    /// Propage l'échec de chargement d'une ENU du parcours — le premier arrête
+    /// l'inventaire, `collect` court-circuitant sur `Err`. Une ENU illisible est
+    /// de toute façon un retrait qui échouera.
+    fn foyers_requis(
+        &self,
+        session: &SessionApplication,
+        hash_carte: &[u8; 32],
+    ) -> ResultFeuApplication<BTreeSet<usize>> {
+        self.donne_descendants(hash_carte)
+            .filter_map(|item| match item {
+                Err(e) => Some(Err(e)),
+                Ok((_, fiche)) => session.braise_vers_index(fiche.braise()).map(Ok),
+            })
+            .collect()
     }
 
     /// Fabrique un parcours descendant à partir de `hash_carte`.

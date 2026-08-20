@@ -115,6 +115,11 @@ pub enum ErreurFeuApplication {
     #[error("APP > Opération impossible sur foyer {0} fermé")]
     ScribeFoyerFerme(usize),
 
+    /// Foyers signataires du sous-arbre encore fermés, relevés avant la moindre
+    /// écriture. Tous sont à ouvrir : les nommer évite de les découvrir un par un.
+    #[error("APP > Foyers à ouvrir : {liste}", liste = .0.iter().map(usize::to_string).collect::<Vec<_>>().join(", "))]
+    ScribeFoyersFermes(Vec<usize>),
+
     /// Index de classeur hors bornes, refusé à l'ouverture du comptoir : l'index
     /// y est figé, un comptoir hors bornes échouerait à chaque fermeture.
     #[error("APP > Index classeur invalide : {0} (max {max})", max = MAX_CLASSEURS - 1)]

@@ -31,23 +31,6 @@ use feu_application::fiche::Fiche;
 use feu_application::{FeuApplication, InterfaceFeuApplication, SessionApplication};
 use secrecy::SecretString;
 
-/// Emplacement du dossier de retrait, en dur le temps de brancher la TUI.
-///
-/// L'utilisateur n'a encore aucun moyen de désigner où retirer, contrairement au
-/// dépôt qui part du chemin marqué sur l'écran d'arborescence disque. `env!` est
-/// résolu **à la compilation** : la valeur est une chaîne littérale figée dans
-/// le binaire, jamais une lecture de l'environnement à l'exécution. C'est ce qui
-/// garde tout chemin personnel hors des sources, `workspace/` étant public.
-///
-/// Elle vit ici et non dans la table des commandes : le retrait n'a pas d'index
-/// à capturer dans la position courante, la TUI n'a donc rien à transmettre et
-/// le cœur lit le chemin lui-même.
-///
-/// Le nom étant fixe, un second retrait échoue tant que le dossier précédent
-/// n'est pas supprimé à la main — l'erreur remonte en
-/// [`MessageCoeurTui::AffichageErreur`].
-const CHEMIN_COMPTOIR_RETRAIT: &str = concat!(env!("HOME"), "/Desktop/retrait");
-
 /// Messages envoyés du thread cœur vers le thread TUI.
 // `EnvoiSessionApplication` est bien plus grosse que les autres variantes
 // (`SessionApplication`, dont la taille est irréductible). On assume l'écart
@@ -183,16 +166,21 @@ pub(crate) enum MessageTuiCoeur {
     /// seule à décider où le dossier apparaît, le cœur ne fait que l'y créer.
     OuvertureComptoir(PathBuf, usize, usize),
 
-    /// Demande la matérialisation de la dernière racine dans un dossier de l'OS.
+    /// Demande la matérialisation d'une ENU dans un dossier de l'OS.
+    ///
+    /// La variante porte le dossier **à créer** — sous-dossier de la marque
+    /// posée sur l'écran du disque, comme pour le dépôt — et l'ENU marquée sur
+    /// l'écran des ENU. Le cœur ne décide donc plus rien du retrait : ni d'où il
+    /// part, ni où il écrit — à la différence du chargement d'arborescence, qui
+    /// va chercher la dernière racine lui-même.
     ///
     /// Émis par [`crate::tui::Tui`] sur dispatch de la commande
-    /// `PilotageRetraitLectureSeule` — la variante ne porte rien : le chemin est
-    /// [`CHEMIN_COMPTOIR_RETRAIT`], lu ici, et la racine est demandée au même
-    /// endroit. Le bras enchaîne
-    /// [`FeuApplication::commande_derniere_enu_racine`] puis
-    /// [`FeuApplication::commande_retrait_lecture_seule`] ; l'erreur de l'une
-    /// comme de l'autre est propagée via [`MessageCoeurTui::AffichageErreur`].
-    RetraitLectureSeule,
+    /// `PilotageRetraitLectureSeule` ; consommé par
+    /// [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
+    /// [`FeuApplication::commande_retrait_lecture_seule`]. L'erreur est propagée
+    /// via [`MessageCoeurTui::AffichageErreur`] — notamment la liste des foyers
+    /// à rouvrir, que le Scribe dresse avant d'écrire quoi que ce soit.
+    RetraitLectureSeule(PathBuf, Fiche),
 
     /// L'utilisateur a confirmé l'enregistrement de la seed — débloque le thread cœur en attente.
     ///
@@ -374,16 +362,9 @@ impl ConnecteurVersTui {
                             ));
                         }
                     }
-                    Ok(MessageTuiCoeur::RetraitLectureSeule) => {
+                    Ok(MessageTuiCoeur::RetraitLectureSeule(chemin, fiche)) => {
                         if let Err(e) =
-                            feu_application
-                                .commande_derniere_enu_racine()
-                                .and_then(|enu| {
-                                    feu_application.commande_retrait_lecture_seule(
-                                        &PathBuf::from(CHEMIN_COMPTOIR_RETRAIT),
-                                        &enu,
-                                    )
-                                })
+                            feu_application.commande_retrait_lecture_seule(&chemin, &fiche)
                         {
                             self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
                                 e.to_string(),

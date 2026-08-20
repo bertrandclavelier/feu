@@ -713,8 +713,18 @@ impl Tui {
                     return Ok(false);
                 }
                 Commande::PilotageRetraitLectureSeule => {
-                    self.connecteur_vers_coeur
-                        .envoyer_message_tui_coeur(MessageTuiCoeur::RetraitLectureSeule);
+                    let chemin = self.etat_tui.chemin_selectionne.as_ref().unwrap();
+                    let fiche = self.etat_tui.enu_selectionnee.as_ref().unwrap();
+                    let hash = fiche.hash_carte();
+                    self.connecteur_vers_coeur.envoyer_message_tui_coeur(
+                        MessageTuiCoeur::RetraitLectureSeule(
+                            chemin.join(format!(
+                                "retrait_feu_{:02x}{:02x}{:02x}{:02x}",
+                                hash[0], hash[1], hash[2], hash[3]
+                            )),
+                            fiche.clone(),
+                        ),
+                    );
                 }
             }
 

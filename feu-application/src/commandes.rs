@@ -564,15 +564,21 @@ impl FeuApplication {
     /// est authentifiée avant d'être écrite. Le détail est porté par le Scribe.
     ///
     /// Sans reprise : Feu écrit le dossier puis s'en désintéresse — aucune
-    /// fermeture, rien n'est réinjecté dans le nœud. Tout foyer signataire d'un
-    /// blob rencontré doit être **ouvert** pour le déchiffrement.
+    /// fermeture, rien n'est réinjecté dans le nœud.
+    ///
+    /// **Tout foyer du sous-arbre doit être ouvert** : signature à vérifier pour
+    /// les ENU, déchiffrement pour les blobs. Le Scribe en dresse la liste avant
+    /// d'écrire quoi que ce soit et refuse d'un bloc s'il en manque, plutôt que
+    /// d'abandonner un dossier à moitié rempli au premier foyer fermé venu.
     ///
     /// # Erreurs
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : dossier de sortie déjà existant, `fiche_r`
-    /// qui ne désigne pas un répertoire, nom absent ou invalide, braise inconnue,
-    /// authentification, E/S ou lecture de blob (foyer fermé, blob introuvable).
+    /// propage les erreurs du Scribe : foyers requis fermés
+    /// ([`ErreurFeuApplication::ScribeFoyersFermes`], qui les nomme tous, avant
+    /// toute écriture), dossier de sortie déjà existant, `fiche_r` qui ne désigne
+    /// pas un répertoire, nom absent ou invalide, braise inconnue,
+    /// authentification, E/S ou lecture de blob (blob introuvable).
     pub fn commande_retrait_lecture_seule(
         &mut self,
         chemin_retrait: &Path,
