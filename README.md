@@ -1,8 +1,10 @@
 # Feu
 
+🇬🇧 [English version](README.en.md)
+
 ### 24 mots, un nœud, tout ton numérique.
 
-Feu est un protocole de souveraineté numérique personnelle. Depuis une unique seed BIP39, il dérive de manière déterministe l'ensemble des clés cryptographiques nécessaires à la gestion d'identités multiples (foyers), au chiffrement local des données et à leur contrôle d'accès. Les données sont organisées par des **ENU** — des enveloppes signées, en clair, qui les nomment et les rangent en arborescence sans jamais les toucher.
+Feu est un nœud personnel de souveraineté numérique : un schéma de dérivation déterministe et un format d'enveloppes signées. Depuis une unique seed BIP39, il dérive l'ensemble des clés cryptographiques nécessaires à la gestion d'identités multiples (foyers), au chiffrement local des données et à leur contrôle d'accès. Les données sont organisées par des **ENU** — des enveloppes signées, en clair, qui les nomment et les rangent en arborescence sans jamais les toucher.
 
 L'architecture cible repose sur un dispositif matériel dédié, à l'image des portefeuilles matériels de cryptomonnaie, qui génère la seed et garde les clés maîtres du nœud hors de l'ordinateur. La version actuelle gère l'ensemble du processus cryptographique en logiciel, selon le même schéma de dérivation.
 
@@ -58,7 +60,7 @@ Linux et macOS uniquement.
 
 ## Documentation
 
-- [Livre blanc](documentation/livre_blanc.md) — vision et architecture du protocole
+- [Livre blanc](documentation/livre_blanc.md) — vision et architecture de Feu
 - [Note de release](documentation/release.md) — détails techniques de la version courante
 
 ---
