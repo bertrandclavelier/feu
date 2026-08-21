@@ -330,18 +330,21 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
     // Pastilles des foyers
 
     if let Some(session) = &etat_tui.session_application {
-        let donne_span_foyer = |i| -> Span {
-            if session.etat_foyer(i).unwrap_or(false) {
-                Span::styled(
-                    format!("{PASTILLE_ALLUMEE} "),
-                    Style::default().fg(COULEUR_ACCENT),
-                )
-            } else {
-                Span::raw(format!("{PASTILLE_ETEINTE} "))
-            }
-        };
-        let vecteur_span: Vec<Span> = (0..session.nombre_foyers).map(donne_span_foyer).collect();
-
+        let vecteur_span: Vec<Span> = session
+            .etat_foyers()
+            .iter()
+            .take(session.nombre_foyers)
+            .map(|allume| {
+                if *allume {
+                    Span::styled(
+                        format!("{PASTILLE_ALLUMEE} "),
+                        Style::default().fg(COULEUR_ACCENT),
+                    )
+                } else {
+                    Span::raw(format!("{PASTILLE_ETEINTE} "))
+                }
+            })
+            .collect();
         let pastilles_foyers = Line::from(vecteur_span).right_aligned();
 
         frame.render_widget(

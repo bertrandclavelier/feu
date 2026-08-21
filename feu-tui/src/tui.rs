@@ -77,6 +77,7 @@ use secrecy::SecretString;
 
 use crate::{
     connecteurs::{ConnecteurVersCoeur, MessageCoeurTui, MessageTuiCoeur},
+    erreur::{ErreurFeuTui, ResultFeuTui},
     tui::{
         ecran_arborescence_disque::EtatArborescenceDisque,
         ecran_arborescence_enu::EtatArborescenceEnu, ecran_pilotage::EtatPilotage,
@@ -465,16 +466,20 @@ impl Tui {
 
     /// Boucle principale : dessine, traite les événements clavier, lit le canal cœur.
     ///
-    /// Dessin, puis décompte des messages éphémères, puis `poll(50 ms)` sur le
-    /// clavier avec dispatch selon [`EtatTui::mode_saisie`], puis `try_recv` non
-    /// bloquant sur le canal cœur.
-    ///
     /// `horloge` est le seul `Instant` de la boucle : [`EtatTui`] ne manipule que
     /// des entiers, jamais du temps.
     ///
     /// Une session reçue à `None` — extinction — suffit à tout éteindre d'un
     /// coup. La déconnexion du thread cœur est signalée comme une erreur
     /// ordinaire.
+    ///
+    /// **C'est ici que les deux natures d'erreur se séparent** :
+    /// [`ErreurFeuTui::Io`] sort du programme, tout le reste s'affiche et la
+    /// boucle continue — les `saisie_mode_*` ignorent laquelle elles remontent.
+    ///
+    /// # Errors
+    ///
+    /// L'`std::io::Error` du dessin, du `poll`, ou celui qu'une saisie remonte.
     pub(crate) fn lancer(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         let mut horloge = Instant::now();
         loop {
@@ -487,13 +492,22 @@ impl Tui {
 
             if crossterm::event::poll(Duration::from_millis(50))? {
                 match self.etat_tui.mode_saisie {
-                    ModeSaisie::Normal => {
-                        if !self.saisie_mode_normal()? {
-                            break;
-                        }
-                    }
-                    ModeSaisie::Insertion => self.saisie_mode_insertion()?,
-                    ModeSaisie::Information => self.saisie_mode_information()?,
+                    ModeSaisie::Normal => match self.saisie_mode_normal() {
+                        Ok(true) => {}
+                        Ok(false) => break,
+                        Err(ErreurFeuTui::Io(erreur)) => return Err(erreur),
+                        Err(erreur) => self.etat_tui.ajouter_message_erreur(erreur.to_string()),
+                    },
+                    ModeSaisie::Insertion => match self.saisie_mode_insertion() {
+                        Ok(()) => {}
+                        Err(ErreurFeuTui::Io(erreur)) => return Err(erreur),
+                        Err(erreur) => self.etat_tui.ajouter_message_erreur(erreur.to_string()),
+                    },
+                    ModeSaisie::Information => match self.saisie_mode_information() {
+                        Ok(()) => {}
+                        Err(ErreurFeuTui::Io(erreur)) => return Err(erreur),
+                        Err(erreur) => self.etat_tui.ajouter_message_erreur(erreur.to_string()),
+                    },
                 }
             }
 
@@ -565,16 +579,23 @@ impl Tui {
     ///
     /// La table est reconstruite après chaque dispatch : la position ou l'écran
     /// ont pu changer. Rend `false` pour arrêter la boucle principale.
-    fn saisie_mode_normal(&mut self) -> std::io::Result<bool> {
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuTui::Io`] si le terminal ne rend plus d'événement.
+    /// [`ErreurFeuTui::TuiAucunCheminSelectionne`] si `d` ou `r` s'exécute sans chemin marqué.
+    /// [`ErreurFeuTui::TuiAucuneEnuSelectionnee`] si `r` s'exécute sans ENU marquée.
+    /// Les variantes `Disque*` et `Enu*`, propagées par les deux arborescences.
+    fn saisie_mode_normal(&mut self) -> ResultFeuTui<bool> {
         if let Some(touche) = Self::lire_touche()?
             && let Some(commande) = self.etat_tui.commandes_actives.get(&touche)
         {
             match commande {
                 Commande::DisqueBasculerPli => {
-                    self.etat_tui.etat_arborescence_disque.basculer_pli();
+                    self.etat_tui.etat_arborescence_disque.basculer_pli()?;
                 }
                 Commande::DisqueRechargerRepertoire => {
-                    self.etat_tui.etat_arborescence_disque.recharger();
+                    self.etat_tui.etat_arborescence_disque.recharger()?;
                 }
                 Commande::DisqueDescendreCurseur => {
                     self.etat_tui.etat_arborescence_disque.descendre_curseur();
@@ -598,7 +619,7 @@ impl Tui {
                     self.etat_tui.supprimer_selection();
                 }
                 Commande::EnuBasculerPli => {
-                    self.etat_tui.etat_arborescence_enu.basculer_pli();
+                    self.etat_tui.etat_arborescence_enu.basculer_pli()?;
                 }
                 Commande::EnuChargerArborescence => {
                     self.connecteur_vers_coeur
@@ -656,7 +677,9 @@ impl Tui {
                     self.etat_tui.etat_pilotage.position_courante.classeur = None;
                 }
                 Commande::PilotageOuvrirComptoirDepot(index_foyer, index_classeur) => {
-                    let chemin = self.etat_tui.chemin_selectionne.as_ref().unwrap();
+                    let Some(chemin) = self.etat_tui.chemin_selectionne.as_ref() else {
+                        return Err(ErreurFeuTui::TuiAucunCheminSelectionne);
+                    };
                     self.connecteur_vers_coeur.envoyer_message_tui_coeur(
                         MessageTuiCoeur::OuvertureComptoir(
                             chemin.join(format!("f{index_foyer}.c{index_classeur}_depot_feu")),
@@ -676,8 +699,12 @@ impl Tui {
                     return Ok(false);
                 }
                 Commande::PilotageRetraitLectureSeule => {
-                    let chemin = self.etat_tui.chemin_selectionne.as_ref().unwrap();
-                    let fiche = self.etat_tui.enu_selectionnee.as_ref().unwrap();
+                    let Some(chemin) = self.etat_tui.chemin_selectionne.as_ref() else {
+                        return Err(ErreurFeuTui::TuiAucunCheminSelectionne);
+                    };
+                    let Some(fiche) = self.etat_tui.enu_selectionnee.as_ref() else {
+                        return Err(ErreurFeuTui::TuiAucuneEnuSelectionnee);
+                    };
                     let hash = fiche.hash_carte();
                     self.connecteur_vers_coeur.envoyer_message_tui_coeur(
                         MessageTuiCoeur::RetraitLectureSeule(
@@ -703,79 +730,90 @@ impl Tui {
     /// un `Ctrl+Entrée` n'est pas une validation, un `Ctrl+C` n'est pas un caractère.
     ///
     /// À la validation, [`EtatTui::validation_buffer_saisie`] décide quel message
-    /// envoyer — chaque variante y documente sa garde. Un buffer refusé affiche
-    /// une erreur et n'envoie rien.
+    /// envoyer — chaque variante y documente sa garde.
     ///
-    /// Quel que soit le bras pris, l'écran revient au repos et le buffer est vidé,
-    /// **sans jamais consulter l'écran courant**.
+    /// **L'état est remis au repos avant toute vérification**, la saisie clonée
+    /// d'abord : c'est ce qui garantit qu'un buffer refusé ne laisse derrière lui
+    /// ni prompt ni saisie ratée. **Sans jamais consulter l'écran courant.**
     ///
     /// À l'annulation, [`MessageTuiCoeur::Annulation`] part vers le cœur, ce dont
     /// dépendent ses attentes bloquantes.
-    fn saisie_mode_insertion(&mut self) -> std::io::Result<()> {
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuTui::Io`] si le terminal ne rend plus d'événement.
+    /// [`ErreurFeuTui::TuiAucuneEnuSelectionnee`] si la fermeture d'un comptoir est validée sans marque.
+    /// [`ErreurFeuTui::TuiNoeudEteint`] si la commande demande une session absente.
+    /// [`ErreurFeuTui::TuiEntreeNonEntier`] si la saisie n'est pas un entier.
+    /// [`ErreurFeuTui::TuiIndexComptoirInvalide`] si aucun comptoir de dépôt ne porte cet index.
+    /// [`ErreurFeuTui::TuiIndexFoyerInvalide`] si l'index dépasse le nombre de foyers.
+    fn saisie_mode_insertion(&mut self) -> ResultFeuTui<()> {
         match Self::lire_touche()? {
             Some((KeyCode::Char(c), KeyModifiers::NONE)) => {
                 self.etat_tui.buffer_saisie.push(c);
             }
+
             Some((KeyCode::Backspace, KeyModifiers::NONE)) => {
                 self.etat_tui.buffer_saisie.pop();
             }
+
             Some((KeyCode::Enter, KeyModifiers::NONE)) => {
+                let saisie = self.etat_tui.buffer_saisie.clone();
+
+                self.etat_tui.prompt.clear();
+                self.etat_tui.buffer_saisie.clear();
                 self.etat_tui.vers_ecran_principal();
+
                 match self.etat_tui.validation_buffer_saisie {
                     ValidationBufferSaisie::EnvoiMdp => {
                         self.connecteur_vers_coeur.envoyer_message_tui_coeur(
-                            MessageTuiCoeur::EnvoieMdp(SecretString::from(
-                                self.etat_tui.buffer_saisie.clone(),
-                            )),
+                            MessageTuiCoeur::EnvoieMdp(SecretString::from(saisie)),
                         );
                     }
-                    ValidationBufferSaisie::FermetureComptoirDepot => {
-                        let enu = self.etat_tui.enu_selectionnee.as_ref().unwrap();
-                        let session = self.etat_tui.session_application.as_ref().unwrap();
 
-                        let index_result: Result<usize, _> =
-                            self.etat_tui.buffer_saisie.trim().parse();
-                        if let Ok(index) = index_result
-                            && session.comptoirs_depot_ouverts().contains_key(&index)
-                        {
-                            self.connecteur_vers_coeur.envoyer_message_tui_coeur(
-                                MessageTuiCoeur::FermetureComptoirDepot(index, enu.clone()),
-                            );
-                        } else {
-                            self.etat_tui.ajouter_message_erreur(String::from(
-                                "Numéro de comptoir invalide",
-                            ));
+                    ValidationBufferSaisie::FermetureComptoirDepot => {
+                        let Some(enu) = self.etat_tui.enu_selectionnee.as_ref() else {
+                            return Err(ErreurFeuTui::TuiAucuneEnuSelectionnee);
+                        };
+                        let Some(session) = self.etat_tui.session_application.as_ref() else {
+                            return Err(ErreurFeuTui::TuiNoeudEteint);
+                        };
+                        let Ok(index) = saisie.trim().parse() else {
+                            return Err(ErreurFeuTui::TuiEntreeNonEntier);
+                        };
+
+                        if !session.comptoirs_depot_ouverts().contains_key(&index) {
+                            return Err(ErreurFeuTui::TuiIndexComptoirInvalide(index));
                         }
+                        self.connecteur_vers_coeur.envoyer_message_tui_coeur(
+                            MessageTuiCoeur::FermetureComptoirDepot(index, enu.clone()),
+                        );
                     }
+
                     ValidationBufferSaisie::OuvertureFoyer => {
-                        let index_result: Result<usize, _> =
-                            self.etat_tui.buffer_saisie.trim().parse();
-                        if let Ok(index) = index_result
-                            && index
-                                < self
-                                    .etat_tui
-                                    .session_application
-                                    .as_ref()
-                                    .unwrap()
-                                    .nombre_foyers
-                        {
-                            self.connecteur_vers_coeur
-                                .envoyer_message_tui_coeur(MessageTuiCoeur::OuvertureFoyer(index));
-                        } else {
-                            self.etat_tui
-                                .ajouter_message_erreur(String::from("Numéro de foyer invalide"));
+                        let Some(session) = self.etat_tui.session_application.as_ref() else {
+                            return Err(ErreurFeuTui::TuiNoeudEteint);
+                        };
+                        let Ok(index) = saisie.trim().parse() else {
+                            return Err(ErreurFeuTui::TuiEntreeNonEntier);
+                        };
+                        if index >= session.nombre_foyers {
+                            return Err(ErreurFeuTui::TuiIndexFoyerInvalide(index));
                         }
+                        self.connecteur_vers_coeur
+                            .envoyer_message_tui_coeur(MessageTuiCoeur::OuvertureFoyer(index));
                     }
+
                     ValidationBufferSaisie::Rien => {}
                 }
                 self.etat_tui.validation_buffer_saisie = ValidationBufferSaisie::Rien;
-                self.etat_tui.prompt.clear();
-                self.etat_tui.buffer_saisie.clear();
             }
+
             Some((KeyCode::Esc, KeyModifiers::NONE)) => {
                 self.etat_tui.prompt.clear();
                 self.etat_tui.buffer_saisie.clear();
                 self.etat_tui.vers_ecran_principal();
+
                 self.connecteur_vers_coeur
                     .envoyer_message_tui_coeur(MessageTuiCoeur::Annulation);
             }
@@ -793,7 +831,12 @@ impl Tui {
     /// Ce qu'« avancer » signifie revient à l'écran affiché ; cette méthode ne
     /// garde que ce qu'elle seule peut faire — prévenir le cœur, dont elle
     /// tient le connecteur.
-    fn saisie_mode_information(&mut self) -> std::io::Result<()> {
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuTui::Io`] si le terminal ne rend plus d'événement, seule
+    /// possible ici : rien n'y est vérifié que la touche.
+    fn saisie_mode_information(&mut self) -> ResultFeuTui<()> {
         if let Some((KeyCode::Enter, KeyModifiers::NONE)) = Self::lire_touche()?
             && self.etat_tui.entree_mode_information()
         {

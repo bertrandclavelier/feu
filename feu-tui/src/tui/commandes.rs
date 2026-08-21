@@ -551,6 +551,9 @@ impl CommandesActives {
     /// condition demanderait de recalculer les lignes visibles à chaque frappe,
     /// pour un cas que l'utilisateur ne distingue pas d'une touche inactive.
     ///
+    /// `R` reste active nœud éteint, seule touche d'ici à s'adresser au cœur :
+    /// elle revient alors en erreur affichée, ce qui dit pourquoi rien ne vient.
+    ///
     /// `R` est une majuscule, donc `KeyModifiers::SHIFT` : le lookup étant une
     /// égalité exacte sur le tuple, s'en écarter rendrait la touche muette.
     fn new_ecran_enu(commandes_actives: &mut HashMap<(KeyCode, KeyModifiers), Commande>) {
@@ -628,9 +631,9 @@ impl CommandesActives {
 
     /// Retourne une chaîne énumérant les touches actives, séparées par des espaces.
     ///
-    /// Le caractère lui-même, ou `'⌫'` pour la seule touche nommée de la table.
-    /// Tout autre `KeyCode` est ignoré, `Entrée` comprise : une touche muette
-    /// dans l'aide vaut mieux qu'un nom illisible.
+    /// Le caractère lui-même, ou son symbole pour les deux touches nommées de la
+    /// table. Tout autre `KeyCode` est ignoré : une touche muette dans l'aide
+    /// vaut mieux qu'un nom illisible.
     ///
     /// **L'ordre suit l'itération du `HashMap`**, non déterministe d'un appel à
     /// l'autre. L'aide sert à repérer ce qui est actif, pas à être lue deux
@@ -643,6 +646,9 @@ impl CommandesActives {
                 KeyCode::Char(c) => liste_commandes.push_str(&format!(" '{c}'")),
 
                 KeyCode::Backspace => liste_commandes.push_str(" '⌫'"),
+
+                KeyCode::Enter => liste_commandes.push_str(" '⏎'"),
+
                 _ => {}
             }
         }

@@ -578,6 +578,7 @@ dependencies = [
  "feu-application",
  "ratatui",
  "secrecy",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

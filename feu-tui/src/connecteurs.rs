@@ -252,95 +252,63 @@ impl ConnecteurVersTui {
             loop {
                 match self.recepteur.recv() {
                     Ok(MessageTuiCoeur::AllumageNoeud) => {
-                        if let Err(e) = feu_application.commande_allumage_noeud(&self, None) {
-                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
-                                e.to_string(),
-                            ));
-                        }
+                        self.signaler_erreur(feu_application.commande_allumage_noeud(&self, None));
                     }
                     Ok(MessageTuiCoeur::ChargementArborescenceEnu) => {
-                        match feu_application.commande_derniere_enu_racine() {
+                        let arborescence = feu_application
+                            .commande_derniere_enu_racine()
+                            .and_then(|racine| feu_application.commande_descendants(&racine))
+                            .and_then(|descendants| {
+                                descendants.collect::<Result<Vec<(usize, Fiche)>, _>>()
+                            });
+
+                        match arborescence {
                             Err(e) => self.envoyer_message_coeur_tui(
                                 MessageCoeurTui::AffichageErreur(e.to_string()),
                             ),
-                            Ok(enu_racine) => {
-                                match feu_application.commande_descendants(&enu_racine) {
-                                    Err(e) => self.envoyer_message_coeur_tui(
-                                        MessageCoeurTui::AffichageErreur(e.to_string()),
-                                    ),
-                                    Ok(descendants) => {
-                                        self.envoyer_message_coeur_tui(
-                                            MessageCoeurTui::EnvoiArborescenceEnu(
-                                                descendants
-                                                    .collect::<Result<Vec<(usize, Fiche)>, _>>()
-                                                    .unwrap(),
-                                            ),
-                                        );
-                                    }
-                                }
-                            }
+                            Ok(arborescence) => self.envoyer_message_coeur_tui(
+                                MessageCoeurTui::EnvoiArborescenceEnu(arborescence),
+                            ),
                         }
                     }
                     Ok(MessageTuiCoeur::ExtinctionNoeud) => {
-                        if let Err(e) = feu_application.commande_extinction_noeud(&self) {
-                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
-                                e.to_string(),
-                            ));
-                        }
+                        self.signaler_erreur(feu_application.commande_extinction_noeud(&self));
                     }
                     Ok(MessageTuiCoeur::Quitter) => break,
                     Ok(MessageTuiCoeur::EnvoieMdp(_)) => {}
                     Ok(MessageTuiCoeur::FermetureFoyer(index_foyer)) => {
-                        if let Err(e) = feu_application.commande_fermeture_foyer(&self, index_foyer)
-                        {
-                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
-                                e.to_string(),
-                            ));
-                        }
+                        self.signaler_erreur(
+                            feu_application.commande_fermeture_foyer(&self, index_foyer),
+                        );
                     }
                     Ok(MessageTuiCoeur::OuvertureFoyer(index_foyer)) => {
-                        if let Err(e) = feu_application.commande_ouverture_foyer(&self, index_foyer)
-                        {
-                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
-                                e.to_string(),
-                            ));
-                        }
+                        self.signaler_erreur(
+                            feu_application.commande_ouverture_foyer(&self, index_foyer),
+                        );
                     }
                     Ok(MessageTuiCoeur::OuvertureComptoir(
                         chemin_comptoir_depot,
                         index_foyer,
                         index_classeur,
                     )) => {
-                        if let Err(e) = feu_application.commande_ouverture_comptoir_depot(
+                        self.signaler_erreur(feu_application.commande_ouverture_comptoir_depot(
                             &self,
                             &chemin_comptoir_depot,
                             index_foyer,
                             index_classeur,
-                        ) {
-                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
-                                e.to_string(),
-                            ));
-                        }
+                        ));
                     }
                     Ok(MessageTuiCoeur::FermetureComptoirDepot(index_comptoir, fiche)) => {
-                        if let Err(e) = feu_application.commande_fermeture_comptoir_depot(
+                        self.signaler_erreur(feu_application.commande_fermeture_comptoir_depot(
                             &self,
                             index_comptoir,
                             &fiche,
-                        ) {
-                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
-                                e.to_string(),
-                            ));
-                        }
+                        ));
                     }
                     Ok(MessageTuiCoeur::RetraitLectureSeule(chemin, fiche)) => {
-                        if let Err(e) =
-                            feu_application.commande_retrait_lecture_seule(&chemin, &fiche)
-                        {
-                            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(
-                                e.to_string(),
-                            ));
-                        }
+                        self.signaler_erreur(
+                            feu_application.commande_retrait_lecture_seule(&chemin, &fiche),
+                        );
                     }
                     Ok(MessageTuiCoeur::SeedBienRecue) => {}
                     Ok(MessageTuiCoeur::Annulation) => {}
@@ -348,6 +316,20 @@ impl ConnecteurVersTui {
                 }
             }
         })
+    }
+
+    /// Transmet l'échec d'une commande à la TUI.
+    ///
+    /// **Aucune erreur applicative n'arrête le thread** : elles disent un refus
+    /// — nœud éteint, foyer déjà ouvert —, pas une panne. Seuls `Quitter` et la
+    /// fermeture du canal rompent la boucle.
+    ///
+    /// `impl Display` évite de nommer le type d'erreur de [`FeuApplication`], et
+    /// `T` couvre les commandes qui rendent une valeur, inutile ici.
+    fn signaler_erreur<T>(&self, resultat: Result<T, impl std::fmt::Display>) {
+        if let Err(erreur) = resultat {
+            self.envoyer_message_coeur_tui(MessageCoeurTui::AffichageErreur(erreur.to_string()));
+        }
     }
 }
 

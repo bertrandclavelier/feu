@@ -9,6 +9,7 @@ crossterm = "0.29"
 feu-application = { path = "../feu-application/" }
 ratatui = "0.30"
 secrecy = "0.10"
+thiserror = "2"
 
 [lints]
 workspace = true

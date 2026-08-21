@@ -44,6 +44,7 @@
 //! ligne, sans quoi le texte sauterait en changeant d'onglet.
 
 use std::{
+    ffi::OsStr,
     fs::read_dir,
     path::{Path, PathBuf},
 };
@@ -56,11 +57,14 @@ use ratatui::{
     widgets::{List, ListState},
 };
 
-use crate::tui::{
-    EtatTui,
-    rendu::{
-        COULEUR_ACCENT, GUIDE_TUYAU, MARQUE_SELECTION, MAX_LONGUEUR_MOT, SYMBOLE_DONNEE,
-        SYMBOLE_REPERTOIRE_DEPLIE, SYMBOLE_REPERTOIRE_REPLIE, carre_principal,
+use crate::{
+    erreur::{ErreurFeuTui, ResultFeuTui},
+    tui::{
+        EtatTui,
+        rendu::{
+            COULEUR_ACCENT, GUIDE_TUYAU, MARQUE_SELECTION, MAX_LONGUEUR_MOT, SYMBOLE_DONNEE,
+            SYMBOLE_REPERTOIRE_DEPLIE, SYMBOLE_REPERTOIRE_REPLIE, carre_principal,
+        },
     },
 };
 
@@ -155,46 +159,62 @@ impl EtatArborescenceDisque {
     ///
     /// Le test sur `est_repertoire` est redondant et le reste : l'invariant est
     /// écrit plutôt que supposé.
-    pub(super) fn recharger(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuTui::DisqueSansCurseur`] si rien n'est sélectionné.
+    /// [`ErreurFeuTui::DisqueSelectionHorsListe`] si le curseur dépasse les lignes.
+    /// [`ErreurFeuTui::DisqueRepertoireIllisible`] si le dépliage échoue.
+    pub(super) fn recharger(&mut self) -> ResultFeuTui<()> {
         let Some(curseur) = self.curseur.selected() else {
-            return;
+            return Err(ErreurFeuTui::DisqueSansCurseur);
         };
         let Some(ligne) = self.lignes.get(curseur) else {
-            return;
+            return Err(ErreurFeuTui::DisqueSelectionHorsListe);
         };
         if ligne.est_repertoire && ligne.deplie {
             self.replier(curseur);
-            self.deplier(curseur);
+            self.deplier(curseur)?;
         }
+
+        Ok(())
     }
 
     /// Ouvre ou ferme le répertoire sous le curseur.
     ///
     /// **Seule porte d'entrée depuis le clavier**, et donc le seul endroit qui
-    /// vérifie : deux sorties silencieuses — pas de sélection, sélection hors
-    /// de la liste, ce dernier couvrant le débordement d'une frappe décrit sur
-    /// [`Self::curseur`] — puis le refus des lignes qui ne sont pas des
-    /// répertoires. [`Self::deplier`] et [`Self::replier`] ne retestent rien :
-    /// elles reçoivent un index déjà validé.
+    /// vérifie : chacun des trois refus porte sa variante, le second couvrant le
+    /// débordement d'une frappe décrit sur [`Self::curseur`].
+    /// [`Self::deplier`] et [`Self::replier`] ne retestent rien : elles reçoivent
+    /// un index déjà validé.
     ///
     /// `deplie` n'est pas une condition mais l'aiguillage : il dit laquelle des
     /// deux appeler.
-    pub(super) fn basculer_pli(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuTui::DisqueSansCurseur`] si rien n'est sélectionné.
+    /// [`ErreurFeuTui::DisqueSelectionHorsListe`] si le curseur dépasse les lignes.
+    /// [`ErreurFeuTui::DisqueSelectionPasRepertoire`] si la ligne est un fichier.
+    /// [`ErreurFeuTui::DisqueRepertoireIllisible`] si le dépliage échoue.
+    pub(super) fn basculer_pli(&mut self) -> ResultFeuTui<()> {
         let Some(curseur) = self.curseur.selected() else {
-            return;
+            return Err(ErreurFeuTui::DisqueSansCurseur);
         };
         let Some(ligne) = self.lignes.get(curseur) else {
-            return;
+            return Err(ErreurFeuTui::DisqueSelectionHorsListe);
         };
         if !ligne.est_repertoire {
-            return;
+            return Err(ErreurFeuTui::DisqueSelectionPasRepertoire);
         }
 
         if ligne.deplie {
             self.replier(curseur);
         } else {
-            self.deplier(curseur);
+            self.deplier(curseur)?;
         }
+
+        Ok(())
     }
 
     /// Lit un niveau du disque et insère ses entrées sous la ligne `index`.
@@ -204,25 +224,30 @@ impl EtatArborescenceDisque {
     /// entier.
     ///
     /// Chemin cloné et profondeur copiée d'avance, la suite mutant `lignes`. Un
-    /// `read_dir` en échec laisse la ligne fermée : un répertoire illisible se
-    /// comporte comme un vide, faute d'un type d'erreur propre à `feu-tui`.
+    /// `read_dir` en échec laisse la ligne fermée et remonte l'erreur : à ce
+    /// stade la ligne est un répertoire, c'est donc l'accès qui a manqué.
     ///
     /// **Les entrées cachées sont écartées** — `~` en est rempli ; les montrer
     /// demandera une bascule, pas un filtre au rendu. Tri en deux passes, stable ;
     /// insertion par `splice`, une boucle d'`insert` inversant les enfants.
-    fn deplier(&mut self, index: usize) {
-        let LigneDisque {
-            chemin,
-            profondeur,
-            est_repertoire: _,
-            deplie: _,
-        } = self.lignes.get(index).unwrap();
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuTui::DisqueSelectionHorsListe`] si `index` ne désigne aucune ligne.
+    /// [`ErreurFeuTui::DisqueRepertoireIllisible`] si `read_dir` échoue.
+    fn deplier(&mut self, index: usize) -> ResultFeuTui<()> {
+        let Some(LigneDisque {
+            chemin, profondeur, ..
+        }) = self.lignes.get(index)
+        else {
+            return Err(ErreurFeuTui::DisqueSelectionHorsListe);
+        };
 
         let chemin = chemin.clone();
         let profondeur = *profondeur;
 
         let Ok(entrees) = read_dir(&chemin) else {
-            return;
+            return Err(ErreurFeuTui::DisqueRepertoireIllisible);
         };
 
         let mut lignes_temp = Vec::new();
@@ -247,6 +272,8 @@ impl EtatArborescenceDisque {
         self.lignes.splice(index + 1..index + 1, lignes_temp);
 
         self.lignes[index].deplie = true;
+
+        Ok(())
     }
 
     /// Retire de la liste tout le sous-arbre de la ligne `index`.
@@ -394,7 +421,13 @@ pub(super) fn dessiner_ecran_arborescence_disque(frame: &mut Frame, etat_tui: &m
 /// `to_string_lossy` traite les noms non UTF-8 que le disque accepte — l'entrée
 /// reste désignable, son chemin n'étant jamais reconstruit depuis ce texte.
 fn libelle(ligne: &LigneDisque) -> String {
-    let nom = ligne.chemin.file_name().unwrap().to_string_lossy();
+    // `None` demanderait une racine à `/` ou un chemin finissant par `..`, que ni
+    // `chemin_home` ni `read_dir` ne produisent : `???` se verrait sans rien casser.
+    let nom = ligne
+        .chemin
+        .file_name()
+        .unwrap_or(OsStr::new("???"))
+        .to_string_lossy();
 
     let mut libelle = String::from(nom);
     if libelle.chars().count() > MAX_LONGUEUR_MOT {

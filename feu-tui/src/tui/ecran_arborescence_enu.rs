@@ -63,12 +63,15 @@ use ratatui::{
     widgets::{List, ListState},
 };
 
-use crate::tui::{
-    EtatTui,
-    rendu::{
-        COULEUR_ACCENT, GUIDE_TUYAU, MARQUE_SELECTION, MAX_LONGUEUR_MOT, SYMBOLE_DONNEE,
-        SYMBOLE_RACINE, SYMBOLE_REPERTOIRE_DEPLIE, SYMBOLE_REPERTOIRE_REPLIE,
-        SYMBOLE_REPERTOIRE_VIDE, SYMBOLE_TEXTE, carre_principal,
+use crate::{
+    erreur::{ErreurFeuTui, ResultFeuTui},
+    tui::{
+        EtatTui,
+        rendu::{
+            COULEUR_ACCENT, GUIDE_TUYAU, MARQUE_SELECTION, MAX_LONGUEUR_MOT, SYMBOLE_DONNEE,
+            SYMBOLE_RACINE, SYMBOLE_REPERTOIRE_DEPLIE, SYMBOLE_REPERTOIRE_REPLIE,
+            SYMBOLE_REPERTOIRE_VIDE, SYMBOLE_TEXTE, carre_principal,
+        },
     },
 };
 
@@ -194,8 +197,8 @@ impl EtatArborescenceEnu {
 
     /// Replie ou déplie le répertoire sous le curseur.
     ///
-    /// Trois sorties silencieuses avant d'agir : pas d'arbre, pas de sélection,
-    /// sélection hors de la liste visible.
+    /// Trois refus avant d'agir, chacun portant sa variante : pas d'arbre, pas
+    /// de sélection, sélection hors de la liste visible.
     ///
     /// **Seuls les répertoires peuplés basculent** : laisser entrer les feuilles
     /// ne changerait rien à l'affichage mais remplirait [`Self::deplies`] d'index
@@ -203,15 +206,21 @@ impl EtatArborescenceEnu {
     ///
     /// « Si on ne peut pas le retirer, on l'ajoute » : `HashSet::remove` rend
     /// `false` quand l'index était absent, exactement la condition d'insertion.
-    pub(super) fn basculer_pli(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuTui::EnuSansArborescence`] si aucun arbre n'a été demandé.
+    /// [`ErreurFeuTui::EnuSansCurseur`] si rien n'est sélectionné.
+    /// [`ErreurFeuTui::EnuSelectionHorsListe`] si le curseur dépasse les lignes visibles.
+    pub(super) fn basculer_pli(&mut self) -> ResultFeuTui<()> {
         let Some(arborescence_enus) = &self.arborescence_enus else {
-            return;
+            return Err(ErreurFeuTui::EnuSansArborescence);
         };
         let Some(curseur) = self.curseur.selected() else {
-            return;
+            return Err(ErreurFeuTui::EnuSansCurseur);
         };
         let Some(index) = self.lignes_visibles().get(curseur).copied() else {
-            return;
+            return Err(ErreurFeuTui::EnuSelectionHorsListe);
         };
 
         if matches!(arborescence_enus[index].1.carte(), Carte::Repertoire { hashs_enu, .. } if !hashs_enu.is_empty())
@@ -219,6 +228,8 @@ impl EtatArborescenceEnu {
         {
             self.deplies.insert(index);
         }
+
+        Ok(())
     }
 
     /// La fiche sous le curseur, à ranger dans

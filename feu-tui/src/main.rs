@@ -19,11 +19,13 @@
 //! orchestrant ses sous-modules : la table des commandes, l'aiguillage du
 //! rendu, et un module par écran.
 //!
-//! En cas de panique du thread cœur, le processus sort avec le code 1.
+//! Le code de sortie 1 signale une panique du thread cœur, qu'aucun chemin
+//! connu ne provoque : ses erreurs partent en message vers la TUI.
 //! Le terminal est restauré automatiquement par le guard de [`ratatui::run`]
 //! même si la TUI panique avant ce point.
 
 mod connecteurs;
+mod erreur;
 mod tui;
 
 use std::env;
@@ -43,7 +45,8 @@ fn main() -> Result<(), Error> {
     // TUI, où il est la racine de l'écran du disque. Aucune couche en aval ne
     // touche à `$HOME`, ce qui les rend testables en les enracinant dans un
     // dossier temporaire.
-    let chemin_home = PathBuf::from(env::var("HOME").expect("HOME absente"));
+    let chemin_home =
+        PathBuf::from(env::var("HOME").expect("La variable d'environnement HOME est absente"));
     let chemin_feu = chemin_home.join(".feu/");
 
     // Canal Tui -> Coeur

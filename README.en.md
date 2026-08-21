@@ -33,7 +33,7 @@ Earlier versions are in the [changelog](CHANGELOG.md) (French).
 
 ## Requirements
 
-- Rust ≥ 1.97.1 (2024 edition)
+- Rust ≥ 1.98.0 (2024 edition)
 - Linux or macOS
 - No additional system dependencies
 
