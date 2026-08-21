@@ -165,10 +165,18 @@ enum ValidationBufferSaisie {
     /// [`crate::connecteurs::MessageTuiCoeur::OuvertureFoyer`].
     ///
     /// Posé par [`Tui::saisie_mode_normal`] sur dispatch de
-    /// [`Commande::PilotageOuvrirFoyer`]. À la validation, l'index doit être
-    /// inférieur au nombre de foyers ; sinon un message d'erreur est affiché et
-    /// rien n'est envoyé au cœur.
+    /// [`Commande::PilotageOuvrirFoyer`]. À la validation, seul le format entier
+    /// est vérifié ; la validité de l'index est tranchée par le noyau.
     OuvertureFoyer,
+
+    /// Le buffer est interprété comme un numéro de foyer et envoyé via
+    /// [`crate::connecteurs::MessageTuiCoeur::SecoursFermetureFoyer`].
+    ///
+    /// Posé par [`Tui::saisie_mode_normal`] sur dispatch de
+    /// [`Commande::PilotageSecoursFermetureFoyer`]. À la validation, seul le
+    /// format entier est vérifié ; l'index et l'état du foyer sont tranchés par
+    /// le noyau.
+    SecoursFermetureFoyer,
 }
 
 /// État courant de l'interface entre deux frames.
@@ -716,6 +724,12 @@ impl Tui {
                         ),
                     );
                 }
+                Commande::PilotageSecoursFermetureFoyer => {
+                    self.etat_tui.prompt = String::from("secours fermeture foyer");
+                    self.etat_tui.mode_saisie = ModeSaisie::Insertion;
+                    self.etat_tui.validation_buffer_saisie =
+                        ValidationBufferSaisie::SecoursFermetureFoyer;
+                }
             }
 
             self.etat_tui.commandes_actives = CommandesActives::new(&self.etat_tui);
@@ -746,7 +760,6 @@ impl Tui {
     /// [`ErreurFeuTui::TuiNoeudEteint`] si la commande demande une session absente.
     /// [`ErreurFeuTui::TuiEntreeNonEntier`] si la saisie n'est pas un entier.
     /// [`ErreurFeuTui::TuiIndexComptoirInvalide`] si aucun comptoir de dépôt ne porte cet index.
-    /// [`ErreurFeuTui::TuiIndexFoyerInvalide`] si l'index dépasse le nombre de foyers.
     fn saisie_mode_insertion(&mut self) -> ResultFeuTui<()> {
         match Self::lire_touche()? {
             Some((KeyCode::Char(c), KeyModifiers::NONE)) => {
@@ -791,20 +804,24 @@ impl Tui {
                     }
 
                     ValidationBufferSaisie::OuvertureFoyer => {
-                        let Some(session) = self.etat_tui.session_application.as_ref() else {
-                            return Err(ErreurFeuTui::TuiNoeudEteint);
-                        };
                         let Ok(index) = saisie.trim().parse() else {
                             return Err(ErreurFeuTui::TuiEntreeNonEntier);
                         };
-                        if index >= session.nombre_foyers {
-                            return Err(ErreurFeuTui::TuiIndexFoyerInvalide(index));
-                        }
                         self.connecteur_vers_coeur
                             .envoyer_message_tui_coeur(MessageTuiCoeur::OuvertureFoyer(index));
                     }
 
                     ValidationBufferSaisie::Rien => {}
+
+                    ValidationBufferSaisie::SecoursFermetureFoyer => {
+                        let Ok(index) = saisie.trim().parse() else {
+                            return Err(ErreurFeuTui::TuiEntreeNonEntier);
+                        };
+
+                        self.connecteur_vers_coeur.envoyer_message_tui_coeur(
+                            MessageTuiCoeur::SecoursFermetureFoyer(index),
+                        );
+                    }
                 }
                 self.etat_tui.validation_buffer_saisie = ValidationBufferSaisie::Rien;
             }

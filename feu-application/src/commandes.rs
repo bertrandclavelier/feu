@@ -251,9 +251,9 @@ impl FeuApplication {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si l'index est invalide, si le diagnostic du foyer
-    /// détecte une anomalie, si le mot de passe est incorrect, ou si une
-    /// opération disque échoue.
+    /// Retourne une erreur si l'index est invalide, si le foyer est marqué
+    /// ouvert, si le diagnostic du foyer détecte une anomalie, si le mot de passe
+    /// est incorrect, ou si une opération disque échoue.
     pub fn commande_secours_fermeture_foyer(
         &mut self,
         interface_feu_application: &impl InterfaceFeuApplication,

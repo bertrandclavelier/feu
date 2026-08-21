@@ -175,6 +175,13 @@ pub(crate) enum MessageTuiCoeur {
     /// liste des foyers à ouvrir que le Scribe dresse avant d'écrire.
     RetraitLectureSeule(PathBuf, Fiche),
 
+    /// Demande la fermeture en secours du foyer à la position donnée.
+    ///
+    /// Porte le seul numéro saisi : la TUI ne sait pas quels foyers sont dans
+    /// l'état du secours. Le refus — index hors bornes, foyer sain — remonte en
+    /// [`MessageCoeurTui::AffichageErreur`].
+    SecoursFermetureFoyer(usize),
+
     /// L'utilisateur a confirmé l'enregistrement de la seed — débloque le thread cœur en attente.
     ///
     /// Émis par [`crate::tui::Tui`] à la deuxième frappe en mode information ;
@@ -279,6 +286,11 @@ impl ConnecteurVersTui {
                     Ok(MessageTuiCoeur::FermetureFoyer(index_foyer)) => {
                         self.signaler_erreur(
                             feu_application.commande_fermeture_foyer(&self, index_foyer),
+                        );
+                    }
+                    Ok(MessageTuiCoeur::SecoursFermetureFoyer(index_foyer)) => {
+                        self.signaler_erreur(
+                            feu_application.commande_secours_fermeture_foyer(&self, index_foyer),
                         );
                     }
                     Ok(MessageTuiCoeur::OuvertureFoyer(index_foyer)) => {

@@ -811,14 +811,17 @@ impl FeuNoyau {
     /// # Prérequis
     ///
     /// Le dossier clair `<braise>/` doit exister sur disque et être intact —
-    /// le diagnostic vérifie la présence de toutes les clés nécessaires.
+    /// le diagnostic vérifie la présence de toutes les clés nécessaires. Le foyer
+    /// doit aussi être marqué fermé dans la session : ouvert, ses clés sont en
+    /// mémoire et c'est [`fermeture_foyer`](Self::fermeture_foyer) qui s'applique.
     ///
     /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
-    /// [`ErreurFeuNoyau::FermetureSecoursFoyerImpossible`] si le diagnostic
-    /// préalable relève une anomalie, [`ErreurFeuNoyau::AesGcm`] si le mot de
-    /// passe est incorrect, ou propage l'échec d'une opération disque.
+    /// [`ErreurFeuNoyau::FermetureSecoursFoyerImpossible`] si le foyer est marqué
+    /// ouvert ou si le diagnostic préalable relève une anomalie,
+    /// [`ErreurFeuNoyau::AesGcm`] si le mot de passe est incorrect, ou propage
+    /// l'échec d'une opération disque.
     pub fn secours_fermeture_foyer(
         &mut self,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
@@ -827,8 +830,11 @@ impl FeuNoyau {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));
         }
+
         let braise = self.session.index_vers_braise(index_foyer)?;
-        if !self.gardien.diagnostic_foyer(braise).is_empty() {
+        if self.session.est_ouvert(index_foyer)?
+            || !self.gardien.diagnostic_foyer(braise).is_empty()
+        {
             return Err(ErreurFeuNoyau::FermetureSecoursFoyerImpossible);
         }
 

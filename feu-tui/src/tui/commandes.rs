@@ -364,6 +364,15 @@ pub(super) enum Commande {
     /// **Les foyers fermés ne sont pas filtrés ici**, comme pour
     /// [`Commande::PilotageFermerComptoirDepot`].
     PilotageRetraitLectureSeule,
+
+    /// Prépare la fermeture en secours d'un foyer — bascule l'invite en mode
+    /// saisie pour collecter le numéro.
+    ///
+    /// Active dès que le nœud est allumé, sans autre condition : l'état qui
+    /// appelle un secours — dossier clair resté sur disque, trousseau perdu —
+    /// ne se lit pas dans la session. Seul le noyau le constate, et c'est lui
+    /// qui refuse l'appel sur un foyer sain.
+    PilotageSecoursFermetureFoyer,
 }
 
 /// Table de dispatch des commandes actives dans le contexte courant.
@@ -400,9 +409,10 @@ impl CommandesActives {
     ///
     /// # Filtrage strict
     ///
-    /// Toute touche présente déclenche un effet réel dans le contexte courant ;
-    /// toute touche absente est ignorée silencieusement. Aucune n'est « activée
-    /// en bloc » pour être rejetée à l'exécution.
+    /// Une touche n'est posée que si l'état connu de la TUI la rend praticable ;
+    /// absente, elle est ignorée silencieusement. Le filtre ne va pas au-delà de
+    /// ce que la session porte : ce qu'elle ignore — l'état du disque — reste
+    /// tranché plus bas et remonte en message d'erreur.
     pub(crate) fn new(etat_tui: &EtatTui) -> Self {
         let mut commandes_actives: HashMap<(KeyCode, KeyModifiers), Commande> = HashMap::new();
 
@@ -451,6 +461,11 @@ impl CommandesActives {
                     Commande::PilotageRetraitLectureSeule,
                 );
             }
+
+            commandes_actives.insert(
+                (KeyCode::Char('S'), KeyModifiers::SHIFT),
+                Commande::PilotageSecoursFermetureFoyer,
+            );
 
             if session.nombre_foyers_ouverts() == 0 {
                 commandes_actives.insert(

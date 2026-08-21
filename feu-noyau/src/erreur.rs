@@ -159,9 +159,10 @@ pub enum ErreurFeuNoyau {
     #[error("NOY > Le foyer {0} n'a pas de trousseau")]
     CryptographeTrousseauFoyerAbsent(usize),
 
-    /// Dossier clair du foyer trop abîmé pour que la reconstruction du trousseau
-    /// aboutisse — le diagnostic préalable a relevé au moins une anomalie.
-    #[error("NOY > Diagnostic impossible pour fermeture en secours du foyer")]
+    /// Foyer hors de l'état qui justifie un secours : soit il est déjà marqué
+    /// ouvert dans la session, soit son dossier clair est trop abîmé pour que la
+    /// reconstruction du trousseau aboutisse.
+    #[error("NOY > Fermeture de secours impossible")]
     FermetureSecoursFoyerImpossible,
 
     /// Tentative d'ouvrir un foyer déjà marqué comme ouvert dans la session.

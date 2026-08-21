@@ -68,10 +68,6 @@ pub(crate) enum ErreurFeuTui {
     #[error("TUI > {0} : Index comptoir invalide")]
     TuiIndexComptoirInvalide(usize),
 
-    /// L'index saisi dépasse le nombre de foyers du nœud.
-    #[error("TUI > {0} : Index foyer invalide")]
-    TuiIndexFoyerInvalide(usize),
-
     /// Le nœud s'est éteint entre l'affichage de la commande et sa validation.
     #[error("TUI > Le nœud doit être allumé")]
     TuiNoeudEteint,
