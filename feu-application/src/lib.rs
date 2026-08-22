@@ -129,7 +129,10 @@ pub trait InterfaceFeuApplication {
 ///
 /// Privé — la couche de présentation n'en a pas connaissance.
 struct RecepteurNoyau<'a, 'b> {
+    /// Le miroir à tenir : c'est ici qu'atterrissent les notifications du noyau.
     session_application: &'a mut SessionApplication,
+    /// L'interface de la couche de présentation, à qui les interactions
+    /// bloquantes sont repassées telles quelles.
     interface_feu_application: &'b dyn InterfaceFeuApplication,
 }
 

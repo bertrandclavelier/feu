@@ -26,14 +26,23 @@ use crate::{Braise, ErreurFeuNoyau, MAX_CLASSEURS, MAX_FOYERS, ResultFeuNoyau};
 /// La plupart des clés font 32 o (→ 60 o chiffrées). La seed ML-KEM-1024 (privée)
 /// fait 64 o (→ 92 o chiffrées).
 pub(crate) struct TrousseauPublicFoyer {
+    /// Adresse `.braise` du foyer — le nom de son dossier sur le disque.
     braise: Braise,
 
+    /// Clé AES-256 de l'archive `.feu`, chiffrée.
     cle_chiffrement: [u8; 60], // chiffrée
-    cle_sig_privee: [u8; 60],  // chiffrée
+    /// Clé de signature ML-DSA-87, chiffrée.
+    cle_sig_privee: [u8; 60], // chiffrée
+    /// Clé de vérification ML-DSA-87, écrite en clair : elle authentifie les ENU
+    /// du foyer sans qu'il soit ouvert.
     cle_sig_pub: [u8; 2592],
+    /// Seed ML-KEM-1024, chiffrée — 64 o en clair, d'où les 92.
     cle_chiff_privee: [u8; 92], // chiffrée
+    /// Clé d'encapsulation ML-KEM-1024, en clair.
     cle_chiff_pub: [u8; 1568],
 
+    /// Une clé AES-256 chiffrée par classeur, `None` tant que le classeur n'a
+    /// pas servi.
     cles_chiffrement_classeurs: [Option<[u8; 60]>; MAX_CLASSEURS], // chiffrées
 }
 
@@ -135,9 +144,14 @@ impl TrousseauPublicFoyer {
 /// Contient la paire de signature du nœud et le sel Argon2id.
 /// Le sel est stocké en clair — il est re-dérivable depuis la seed en cas de perte du disque.
 pub(crate) struct TrousseauPublicNoeud {
+    /// Sel Argon2id, en clair : il se re-dérive de la seed, le cacher
+    /// n'apporterait rien.
     sel: [u8; 16],
 
+    /// Clé de signature ML-DSA-87 du nœud, chiffrée.
     cle_sig_privee: [u8; 60], // chiffrée
+    /// Clé de vérification ML-DSA-87 du nœud, en clair : elle authentifie une
+    /// racine nœud éteint.
     cle_sig_pub: [u8; 2592],
 }
 
@@ -172,7 +186,10 @@ impl TrousseauPublicNoeud {
 /// Agrège un [`TrousseauPublicNoeud`] et l'ensemble des [`TrousseauPublicFoyer`].
 /// Utilisé lors de l'initialisation pour écrire l'intégralité des clés sur le disque en une passe.
 pub(crate) struct TrousseauPublicComplet {
+    /// Les clés du nœud lui-même.
     trousseau_public_noeud: TrousseauPublicNoeud,
+    /// Un emplacement par foyer, rempli au fur et à mesure de la construction ;
+    /// les trois foyers sont dérivés à la genèse, donc tous présents ensuite.
     trousseaux_publics_foyers: [Option<TrousseauPublicFoyer>; MAX_FOYERS],
 }
 

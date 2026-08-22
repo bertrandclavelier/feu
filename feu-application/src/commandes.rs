@@ -52,7 +52,7 @@
 //! n'y a pas d'autre façon de dire où ranger.
 //!
 //! **Ensuite, tout passe par l'ENU, sans exception.** Charger, supprimer,
-//! interroger un blob se fait par sa [`Fiche`](fiche::Fiche), jamais par un
+//! interroger un blob se fait par sa [`Fiche`], jamais par un
 //! couple foyer/hash : la carte porte les deux, et les tenir ensemble interdit
 //! d'en former une paire incohérente. Le hash d'un blob identifie un fichier, il
 //! ne le désigne pas.

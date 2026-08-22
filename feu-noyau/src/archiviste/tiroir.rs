@@ -47,8 +47,12 @@ use zeroize::Zeroize;
 ///   dépasser cette limite retourne une erreur immédiate.
 /// - `lire_hash` retourne une erreur si le hash n'a pas encore été défini.
 pub(crate) struct Tiroir {
+    /// Le classeur de destination, fixé à la construction.
     index_classeur: usize,
+    /// Le contenu, clair à l'aller, chiffré au retour — le tiroir ne distingue
+    /// pas les deux, c'est l'étape du cycle qui le dit.
     blob: Vec<u8>,
+    /// Hash du clair, `None` tant que le Cryptographe ne l'a pas posé.
     hash: Option<String>,
 }
 

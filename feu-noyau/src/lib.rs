@@ -76,6 +76,11 @@ pub const MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE: usize = 1024 * 1024;
 /// Borne incluse.
 pub const MAX_TAILLE_SIGNATURE: usize = 64 * 1024;
 
+/// Taille du tampon de lecture d'un blob — 8 Kio.
+///
+/// Le [`Tiroir`](archiviste::tiroir::Tiroir) lit sa source par tranches de cette
+/// taille plutôt que d'un coup : un blob va jusqu'à [`MAX_TAILLE_BLOB`], que la
+/// pile ne tiendrait pas.
 pub(crate) const TAILLE_CHUNK: usize = 8 * 1024;
 
 /// Contrat de communication entre `feu-noyau` et toute interface utilisateur.
@@ -159,9 +164,14 @@ pub trait InterfaceFeuNoyau {
 /// Restitue les informations fournies par l'OS sur le fichier `.dat` correspondant
 /// au blob. Les données sont brutes — aucune conversion n'est effectuée par le noyau.
 pub struct DonneesBlob {
+    /// Taille du `.dat` en octets — celle du chiffré, donc supérieure au clair.
     taille: u64,
+    /// `None` sur les systèmes qui ne la tiennent pas : Linux n'a pas de date de
+    /// création portable.
     date_creation: Option<SystemTime>,
+    /// Dernière écriture du `.dat`.
     date_derniere_modification: SystemTime,
+    /// Dernière lecture du `.dat`.
     date_dernier_acces: SystemTime,
 }
 
@@ -230,7 +240,10 @@ impl DonneesBlob {
 
 /// État d'un foyer dans la session courante.
 struct Foyer {
+    /// Adresse `.braise` du foyer, dérivée à l'allumage et fixe ensuite.
     braise: Braise,
+    /// `true` entre l'ouverture et la fermeture : le dossier clair existe et les
+    /// clés sont en mémoire.
     est_ouvert: bool,
 }
 
@@ -1328,6 +1341,17 @@ impl FeuNoyau {
         Ok(resultat)
     }
 
+    /// L'Archiviste du foyer, après les trois vérifications qui le conditionnent.
+    ///
+    /// Point de passage unique de toute opération sur un blob : sans lui, chaque
+    /// appelant répéterait les mêmes gardes avant d'atteindre le même champ.
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
+    /// [`ErreurFeuNoyau::FoyerFerme`] si le foyer l'est, et
+    /// [`ErreurFeuNoyau::ArchivisteIndisponible`] si le foyer est marqué ouvert
+    /// sans Archiviste — état qui ne devrait pas survenir.
     fn archiviste_foyer_ouvert(&self, index_foyer: usize) -> ResultFeuNoyau<&Archiviste> {
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));

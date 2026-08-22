@@ -217,7 +217,9 @@ pub(crate) enum MessageTuiCoeur {
 /// faute de quoi les appels bloquants et les envois de messages se retrouveraient
 /// dans des contextes séparés sans moyen de se synchroniser.
 pub(crate) struct ConnecteurVersTui {
+    /// Vers la TUI : réponses, erreurs et demandes d'interaction.
     emetteur: Sender<MessageCoeurTui>,
+    /// Depuis la TUI : les commandes à exécuter, lues en bloquant.
     recepteur: Receiver<MessageTuiCoeur>,
 }
 
@@ -420,7 +422,10 @@ impl InterfaceFeuApplication for ConnecteurVersTui {
 /// Expose les commandes de haut niveau à la boucle ratatui et permet de recevoir
 /// les événements remontés par le cœur via un `try_recv` non bloquant à chaque frame.
 pub(crate) struct ConnecteurVersCoeur {
+    /// Vers le cœur : les commandes déclenchées par une frappe.
     emetteur: Sender<MessageTuiCoeur>,
+    /// Depuis le cœur, lu en `try_recv` à chaque frame pour ne pas bloquer le
+    /// rendu.
     recepteur: Receiver<MessageCoeurTui>,
 }
 

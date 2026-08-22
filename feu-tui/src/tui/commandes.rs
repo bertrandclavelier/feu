@@ -33,9 +33,10 @@
 //! retient ce qui est sous le curseur (une ENU, ou un chemin du disque) et `x`
 //! lève la marque ; les cas ci-dessous sont ceux du pilotage.
 //!
-//! Deux autres y sont omises pour ne pas alourdir la liste : `!` affiche
-//! l'à-propos en toute circonstance, `r` retire l'ENU marquée sous le chemin
-//! marqué, dès que le nœud est allumé et que les deux marques existent.
+//! Trois autres y sont omises pour ne pas alourdir la liste : `!` affiche
+//! l'à-propos en toute circonstance ; `r` retire l'ENU marquée sous le chemin
+//! marqué, dès que le nœud est allumé et que les deux marques existent ; `S`
+//! ferme un foyer en secours, dès que le nœud est allumé.
 //!
 //! - **Nœud éteint, racine** : `a` allume le nœud, `q` quitte Feu.
 //! - **Nœud allumé, racine, aucun foyer ouvert** : `e` éteint le nœud, `o`
@@ -327,7 +328,7 @@ pub(super) enum Commande {
     /// où les deux index sont connus, capturés depuis la position courante sans
     /// saisie.
     ///
-    /// Le chemin est formé au dispatch, sous-dossier `{fN.cM}depot_feu` de la
+    /// Le chemin est formé au dispatch, sous-dossier `fN.cM_depot_feu` de la
     /// marque : **c'est lui le comptoir, jamais le dossier marqué**, que le cœur
     /// crée puis supprime à la fermeture. Son nom porte la destination, ce qui le
     /// rend unique par couple foyer-classeur.

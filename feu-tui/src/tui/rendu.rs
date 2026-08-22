@@ -80,6 +80,8 @@ const DIMENSIONS_ECRAN_PRINCIPAL: Dimensions = Dimensions {
 /// visuelle repose sur la casse et le gras.
 pub(crate) const COULEUR_ACCENT: Color = Color::Rgb(255, 90, 31);
 
+/// Trait vertical répété devant chaque ligne d'arborescence, un par niveau de
+/// profondeur, pour relier une entrée à son parent.
 pub(crate) const GUIDE_TUYAU: &str = "│";
 
 /// Découpe d'un onglet dans la bordure haute, et trait qui les relie.
@@ -88,11 +90,25 @@ pub(crate) const GUIDE_TUYAU: &str = "│";
 /// ils le referment de part et d'autre du titre au lieu d'y laisser un trou.
 const ONGLET_LIAISON: &str = "─";
 
+/// Une racine du nœud, reconnue à sa méta `_racine`. Tient aussi lieu de nom
+/// sur l'écran de pilotage, une racine n'en portant pas.
 pub(crate) const SYMBOLE_RACINE: &str = "⌂";
+
+/// Répertoire peuplé dont le sous-arbre est montré.
 pub(crate) const SYMBOLE_REPERTOIRE_DEPLIE: &str = "▾";
+
+/// Répertoire peuplé dont le sous-arbre est caché.
 pub(crate) const SYMBOLE_REPERTOIRE_REPLIE: &str = "▸";
+
+/// Répertoire sans enfant — distinct des peuplés, dont le triangle promettrait
+/// un contenu à ouvrir.
 pub(crate) const SYMBOLE_REPERTOIRE_VIDE: &str = "▻";
+
+/// Une `Carte::Donnee` côté ENU, un fichier côté disque : le contenu est
+/// ailleurs, dans un blob ou sur le système de fichiers.
 pub(crate) const SYMBOLE_DONNEE: &str = "•";
+
+/// Une `Carte::Texte` : le contenu tient dans la carte, sans blob.
 pub(crate) const SYMBOLE_TEXTE: &str = "≡";
 
 /// Marque de l'entrée retenue, dans sa colonne en tête de ligne.
@@ -103,12 +119,25 @@ pub(crate) const SYMBOLE_TEXTE: &str = "≡";
 /// l'utilisateur, pas une nature d'entrée.
 pub(crate) const MARQUE_SELECTION: &str = "*";
 
+/// Nœud allumé ou foyer ouvert, en tête de l'écran de pilotage. Portée à la
+/// couleur d'accent, là où l'éteinte reste au gris du terminal.
 pub(crate) const PASTILLE_ALLUMEE: &str = "●";
+
+/// Nœud éteint ou foyer fermé.
 pub(crate) const PASTILLE_ETEINTE: &str = "○";
 
+/// Ouvre l'invite de saisie, et sépare son étiquette de son contenu sur les
+/// lignes d'état — dépôts, ENU retenue, chemin retenu.
 pub(crate) const CHEVRON_INVITE: &str = "›";
+
+/// Fin du buffer de saisie, affiché sous le seul mode insertion.
 pub(crate) const CURSEUR: &str = "▌";
+
+/// Substitué à chaque caractère d'un mot de passe saisi — un par caractère, la
+/// longueur reste donc visible.
 pub(crate) const MASQUE_MOT_DE_PASSE: &str = "•";
+
+/// Sépare deux entrées d'une même ligne d'état, la liste des comptoirs ouverts.
 pub(crate) const SEPARATEUR: &str = "·";
 
 /// Longueur maximale d'un libellé affiché, ellipse comprise.

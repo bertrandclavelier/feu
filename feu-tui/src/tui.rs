@@ -563,6 +563,11 @@ impl Tui {
     /// [`KeyModifiers`] est inclus dans le retour pour permettre les raccourcis
     /// avec modificateur (Ctrl, Alt…) à mesure que les commandes s'étoffent.
     /// Les appels qui n'ont besoin que du code ignorent les modificateurs avec `_`.
+    ///
+    /// # Errors
+    ///
+    /// Propage l'échec de lecture d'événement de crossterm — terminal fermé
+    /// sous les pieds du programme.
     fn lire_touche() -> std::io::Result<Option<(KeyCode, KeyModifiers)>> {
         match crossterm::event::read()? {
             Event::Key(KeyEvent {

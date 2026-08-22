@@ -14,17 +14,18 @@ The target architecture relies on dedicated hardware, along the lines of a crypt
 
 Under active development. Working locally, with no networking.
 
-### v0.0.5 — 12 August 2026
+### v0.0.6 — 22 August 2026
 
-Integration of ENUs — *Enveloppes Numériques Universelles*, Universal Digital Envelopes — which were absent from the code until now. A new application layer, the **Scribe**, maintains a tree of signed envelopes that names and organises the node's blobs without ever touching them. The version's second undertaking: the code had no tests at all, it now has 61.
+The first version whose chain works end to end: a user opens a *foyer*, deposits a tree into it, takes it back out and browses it, without leaving the TUI. Three undertakings carry it — the overhaul of error handling, deposit counters and read-only withdrawal, and the wiring of the TUI.
 
-- **ENU**: signed envelope `Enu` and card `Carte` (Data, Text, Directory), content-addressed, ML-DSA-87 signature over the card. Exposed read-only.
-- **Tree** held at the node's root, therefore readable with every *foyer* closed: roots signed by the node, chained together, current head designated by a symlink.
-- **Deposit counter**: a directory is filled, then closed; its contents are stored as blobs and ENUs, then grafted under the node's root. Driven from the TUI.
-- **Read-only withdrawal**: materialising the tree of a directory ENU into an OS folder, with no path back in.
-- **Blob access through the ENU alone**, without naming either a *foyer* or a binder.
-- **`Braise` type** in the core, replacing `String` throughout; API refocused on the index.
-- **61 tests** where there were none, integrated into the crates.
+- **Error handling overhauled**: a single type per crate, with variants named after the fact they report. The TUI structures its own without ever interrupting its loop — only a terminal failure exits the program.
+- **A TUI with three working screens**: control, ENU tree, disk tree. Navigation, folding, and marking either an ENU or a path.
+- **Multiple counters**: several deposits open at once, each designated by its path and by the ENU to graft under.
+- **Guarded withdrawal**: refused outright if a *foyer* that signed part of the subtree is closed, the list of *foyers* to open being drawn up before any writing.
+- **Tree traversals**: descending and ascending, both usable with every *foyer* closed.
+- **`Enu` made private, `Fiche` at the boundary**: the presentation layer now handles only cards — the envelope without its signature.
+- **Emergency closing** of a *foyer* left open after an abrupt shutdown, reachable from the TUI.
+- **67 tests**, up from 61.
 - Cryptography unchanged. Still no networking.
 
 Earlier versions are in the [changelog](CHANGELOG.md) (French).
@@ -48,6 +49,11 @@ cargo build --release
 cargo run --release -p feu-tui
 ```
 
+Feu opens on its control screen, node off. The
+[user guide](documentation/guide_utilisateur.md) (French) takes over from
+there: the three screens, the keys, and a first deposit and withdrawal end to
+end.
+
 The reference repository is on Forgejo. [GitHub](https://github.com/bertrandclavelier/feu) is an outgoing mirror only: nothing is received there, neither issues nor contributions.
 
 ---
@@ -60,10 +66,11 @@ Linux and macOS only.
 
 ## Documentation
 
-Both documents are in French.
+All three are in French — this README is the only English page.
 
+- [User guide](documentation/guide_utilisateur.md) — from install to a first deposit and withdrawal
 - [White paper](documentation/livre_blanc.md) — the vision and architecture of Feu
-- [Release notes](documentation/release.md) — technical details of the current version
+- [Release notes](documentation/note_de_version.md) — technical details of the current version
 
 ---
 

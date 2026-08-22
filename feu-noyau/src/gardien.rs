@@ -35,6 +35,10 @@ use crate::cryptographe::trousseaux_publics::{
 };
 use crate::gardien::carnet::Carnet;
 
+/// Version du format de `config.feu`, écrite en tête et relue à l'allumage.
+///
+/// Aucune version n'a été déployée : un fichier d'une autre version est refusé,
+/// il n'y a pas de migration à écrire.
 const VERSION_CONFIGURATION: u32 = 1;
 
 /// Configuration globale du nœud — miroir de `config.feu` en mémoire.
@@ -124,12 +128,15 @@ impl Configuration {
 /// et maintient en mémoire la configuration globale via [`Configuration`].
 /// Aucun autre composant n'accède directement au disque.
 pub(super) struct Gardien {
+    /// Le seul composant qui touche au disque : chemins, lectures, écritures.
     carnet: Carnet,
+    /// Miroir en mémoire de `config.feu`, relu à l'allumage et réécrit à chaque
+    /// changement.
     configuration: Configuration,
 }
 
 impl Gardien {
-    /// Crée le gardien de [`FeuNoyau`] pour le nœud enraciné à `chemin_feu`.
+    /// Crée le gardien de [`crate::FeuNoyau`] pour le nœud enraciné à `chemin_feu`.
     ///
     /// `chemin_feu` est le chemin racine du nœud (`~/.feu` en usage nominal),
     /// fourni par l'appelant et transmis tel quel au [`Carnet`].
@@ -190,7 +197,7 @@ impl Gardien {
 
     /// Ancre le nœud vierge sur le disque à partir du trousseau public.
     ///
-    /// Délègue à [`Carnet::ecrire_trousseau_public`] la création de l'arborescence
+    /// Délègue à [`Carnet::ecrire_trousseau_public_complet`] la création de l'arborescence
     /// complète et l'écriture de toutes les clés chiffrées. Cette opération
     /// n'est valide que pour un nœud vierge — elle échoue si `~/.feu` existe déjà.
     ///
@@ -325,7 +332,7 @@ impl Gardien {
     ///
     /// Le dossier `<braise>` est empaqueté en `<braise>.tar`, ouvert en lecture,
     /// et `<braise>.feu` créé en écriture exclusive. Le couple rendu part tel quel
-    /// vers [`Cryptographe::donne_flux_chiffrement_foyer`].
+    /// vers [`donne_flux_chiffrement_foyer`](crate::cryptographe::Cryptographe::donne_flux_chiffrement_foyer).
     ///
     /// `<braise>.tar` doit être supprimé après chiffrement.
     ///
@@ -348,7 +355,7 @@ impl Gardien {
     /// Prépare les éléments nécessaires au déchiffrement d'un foyer.
     ///
     /// Lit depuis le disque et ouvre les fichiers dans l'ordre attendu par
-    /// [`Cryptographe::donne_flux_dechiffrement_foyer`] :
+    /// [`donne_flux_dechiffrement_foyer`](crate::cryptographe::Cryptographe::donne_flux_dechiffrement_foyer) :
     ///
     /// 1. La clé symétrique chiffrée depuis `~/.feu/.cles/<braise>.cle` — 60 octets.
     /// 2. L'archive chiffrée `<braise>.feu` en lecture — source du déchiffrement.
@@ -377,7 +384,7 @@ impl Gardien {
     /// Extrait `<braise>.tar` vers `~/.feu/<braise>/`, puis supprime les deux
     /// fichiers intermédiaires — le `.tar` et le `.feu`.
     ///
-    /// Doit suivre immédiatement [`Cryptographe::donne_flux_dechiffrement_foyer`].
+    /// Doit suivre immédiatement [`donne_flux_dechiffrement_foyer`](crate::cryptographe::Cryptographe::donne_flux_dechiffrement_foyer).
     ///
     /// # Errors
     ///

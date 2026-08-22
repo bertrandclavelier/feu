@@ -22,7 +22,7 @@
 //!
 //! Les données sensibles transitant dans ce module (`Mnemonic`, `phrase_seed`)
 //! sont encapsulées dans [`SecretBox`] / [`SecretString`] dès leur création. L'accès au contenu
-//! est explicitement contraint à [`expose_secret()`], rendant toute
+//! est explicitement contraint à `expose_secret()`, rendant toute
 //! manipulation visible à la lecture du code.
 //!
 //! Des blocs de scope `{ }` limitent la durée de vie de chaque secret au
@@ -58,7 +58,13 @@ use crate::cryptographe::trousseaux_publics::{
 use crate::{ErreurFeuNoyau, MAX_FOYERS};
 use crate::{InterfaceFeuNoyau, ResultFeuNoyau};
 
+/// Longueur de la phrase mnémonique BIP39 — 24 mots, soit 256 bits d'entropie.
 const NOMBRE_MOTS_SEED: usize = 24;
+
+/// Étiquette `info` du HKDF qui tire la clé AES du secret partagé ML-KEM.
+///
+/// Fixe et propre à cet usage : elle sépare cette dérivation de toute autre
+/// partant du même secret.
 const INFO_HKDF_CHIFFREMENT_ASYMETRIQUE: &str = "feu-chiffrement-asymetrique";
 
 /// Gardien de la sécurité cryptographique du nœud.
@@ -74,7 +80,7 @@ pub(super) struct Cryptographe {
 }
 
 impl Cryptographe {
-    /// Crée le cryptographe de [`FeuNoyau`].
+    /// Crée le cryptographe de [`crate::FeuNoyau`].
     pub(super) fn new() -> Self {
         Cryptographe {
             trousseau: Trousseau::new(),
@@ -644,6 +650,12 @@ impl Cryptographe {
     /// Le mot de passe est encapsulé dans [`SecretBox`] dès réception et
     /// remplace tout mot de passe précédemment défini (l'ancien est zéroïsé
     /// automatiquement au remplacement).
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuNoyau::CryptographeMotDePasseNonSaisi`] si l'une des deux
+    /// saisies est annulée, [`ErreurFeuNoyau::CryptographeMotsDePasseDiscordants`]
+    /// si elles diffèrent.
     fn initialisation_nouveau_mdp(
         &mut self,
         interface: &impl InterfaceFeuNoyau,
@@ -664,6 +676,11 @@ impl Cryptographe {
     /// Le mot de passe est encapsulé dans [`SecretBox`] dès réception.
     /// Il doit être effacé via [`efface_mdp_et_cle_ephemere`](Self::efface_mdp_et_cle_ephemere)
     /// dès qu'il n'est plus nécessaire.
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuNoyau::CryptographeMotDePasseNonSaisi`] si la saisie est
+    /// annulée.
     fn demande_mdp(&mut self, interface: &impl InterfaceFeuNoyau) -> ResultFeuNoyau<()> {
         if let Some(mdp) = interface.demander_mdp() {
             self.trousseau.definit_mdp(mdp);

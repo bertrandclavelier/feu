@@ -14,17 +14,18 @@ L'architecture cible repose sur un dispositif matériel dédié, à l'image des 
 
 Projet en développement actif. Fonctionnel localement, sans réseau.
 
-### v0.0.5 — 12 août 2026
+### v0.0.6 — 22 août 2026
 
-Intégration des ENU, les Enveloppes Numériques Universelles, jusque-là absentes du code. Une couche applicative neuve, le **Scribe**, tient une arborescence d'enveloppes signées qui nomme et organise les blobs du nœud sans jamais les toucher. Second chantier de la version : le code ne comportait aucun test, il en compte 61.
+Première version dont la chaîne fonctionne de bout en bout : un utilisateur ouvre un foyer, y dépose une arborescence, la ressort, la parcourt, sans quitter la TUI. Trois chantiers la portent — la refonte de la gestion des erreurs, les comptoirs de dépôt et le retrait en lecture seule, et le câblage de la TUI.
 
-- **ENU** : enveloppe signée `Enu` et carte `Carte` (Donnée, Texte, Répertoire), content-addressed, signature ML-DSA-87 sur la carte. Exposées en lecture seule.
-- **Arborescence** tenue à la racine du nœud, donc lisible foyers fermés : racines signées par le nœud, chaînées entre elles, sommet courant désigné par un symlink.
-- **Comptoir de dépôt** : un dossier est rempli puis refermé, son contenu est rangé en blobs et en ENU, puis greffé sous la racine du nœud. Piloté depuis la TUI.
-- **Retrait en lecture seule** : matérialisation de l'arborescence d'une ENUr dans un dossier OS, sans reprise.
-- **Accès aux blobs par l'ENU seule**, sans désigner ni foyer ni classeur.
-- **Type `Braise`** dans le noyau, qui remplace la `String` partout ; API recentrée sur l'index.
-- **61 tests** là où il n'y en avait aucun, intégrés aux crates.
+- **Gestion des erreurs refondue** : un seul type par crate, à variantes nommées par le fait. La TUI structure les siennes sans jamais interrompre sa boucle — seule une panne du terminal sort du programme.
+- **TUI à trois écrans de travail** : pilotage, arborescence des ENU, arborescence du disque. Navigation, plis, marquage d'une ENU ou d'un chemin.
+- **Comptoirs multiples** : plusieurs dépôts ouverts à la fois, chacun désigné par son chemin et par l'ENU sous laquelle greffer.
+- **Retrait gardé** : refusé d'un bloc si un foyer signataire du sous-arbre est fermé, la liste des foyers à ouvrir étant dressée avant toute écriture.
+- **Parcours de l'arborescence** : descendant et remontant, tous deux praticables foyers fermés.
+- **`Enu` privée, `Fiche` en frontière** : la couche présentation ne manipule plus que des fiches, l'enveloppe sans sa signature.
+- **Fermeture de secours** d'un foyer resté ouvert après un arrêt brutal, accessible depuis la TUI.
+- **67 tests**, contre 61.
 - Cryptographie inchangée. Toujours aucun réseau.
 
 Les versions antérieures sont dans le [changelog](CHANGELOG.md).
@@ -48,6 +49,10 @@ cargo build --release
 cargo run --release -p feu-tui
 ```
 
+Feu s'ouvre sur son écran de pilotage, nœud éteint. Le
+[guide utilisateur](documentation/guide_utilisateur.md) prend le relais ici :
+les trois écrans, les touches, et un premier dépôt-retrait de bout en bout.
+
 Le dépôt de référence est sur Forgejo. [GitHub](https://github.com/bertrandclavelier/feu) n'en est qu'un miroir sortant : rien n'y est reçu, ni issue ni contribution.
 
 ---
@@ -60,8 +65,9 @@ Linux et macOS uniquement.
 
 ## Documentation
 
+- [Guide utilisateur](documentation/guide_utilisateur.md) — de l'installation au premier dépôt-retrait
 - [Livre blanc](documentation/livre_blanc.md) — vision et architecture de Feu
-- [Note de release](documentation/release.md) — détails techniques de la version courante
+- [Note de version](documentation/note_de_version.md) — détails techniques de la version courante
 
 ---
 

@@ -38,16 +38,34 @@ use crate::ResultFeuNoyau;
 use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
 use crate::{Anomalie, MAX_CLASSEURS, MAX_FOYERS};
 
+/// Configuration globale du nœud, à la racine de `~/.feu/`.
 const FEU_CONFIGURATION: &str = "config.feu";
+
+/// Sel Argon2id du nœud, lu avant toute dérivation depuis le mot de passe.
 const FEU_SEL: &str = "sel.feu";
+
+/// Clé de signature privée du nœud, chiffrée — signataire des racines.
 const CLE_NOEUD_SIG_PRIV: &str = "feu_sig.priv";
+
+/// Clé de signature publique du nœud, en clair : elle sert à vérifier une
+/// racine nœud éteint.
 const CLE_NOEUD_SIG_PUB: &str = "feu_sig.pub";
 
 // Pour chaque foyer
 // La clé symétrique de chiffrement est sous la forme : adresse_braise.cle
+
+/// Clé de signature privée du foyer, chiffrée — dans son dossier `.cles/`.
 const CLE_FOYER_SIG_PRIV: &str = "sig.priv";
+
+/// Clé de signature publique du foyer, en clair : elle authentifie ses ENU
+/// sans que le foyer soit ouvert.
 const CLE_FOYER_SIG_PUB: &str = "sig.pub";
+
+/// Clé de déchiffrement ML-KEM du foyer, chiffrée.
 const CLE_FOYER_CHIF_PRIV: &str = "chif.priv";
+
+/// Clé de chiffrement ML-KEM du foyer, en clair : c'est elle qu'un tiers
+/// utiliserait pour lui adresser un contenu.
 const CLE_FOYER_CHIF_PUB: &str = "chif.pub";
 
 /// Registre cartographique du gardien.

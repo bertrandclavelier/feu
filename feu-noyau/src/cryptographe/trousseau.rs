@@ -21,14 +21,14 @@
 //! l'écosystème :
 //!
 //! - [`SecretBox<T>`] (crate `secrecy`) : wrapping explicite des secrets dont
-//!   le type implémente [`Zeroize`]. L'accès au contenu est volontairement
-//!   contraint à [`expose_secret()`] / [`expose_secret_mut()`], rendant toute
+//!   le type implémente `Zeroize`. L'accès au contenu est volontairement
+//!   contraint à `expose_secret()` / `expose_secret_mut()`, rendant toute
 //!   manipulation visible à la lecture du code. La mémoire est zéroïsée à la
 //!   destruction.
 //!
 //! - `ZeroizeOnDrop` (crate `zeroize`) : utilisé pour [`SigningKey`]
 //!   (ml-dsa) et [`DecapsulationKey1024`] (ml-kem), dont les types
-//!   n'implémentent pas [`Zeroize`] et ne peuvent donc pas être encapsulés
+//!   n'implémentent pas `Zeroize` et ne peuvent donc pas être encapsulés
 //!   dans [`SecretBox`]. La mémoire est garantie zéroïsée à la destruction par
 //!   l'implémentation interne de la crate, mais `.zeroize()` ne peut pas être
 //!   appelé manuellement.
@@ -108,16 +108,34 @@ use std::io::{Read, Write};
 //
 // Leur unicité garantit l'absence de collision entre clés ; elle se vérifie à
 // l'œil, d'où des chaînes lisibles plutôt qu'opaques.
+/// Sel Argon2id du nœud.
 const LABEL_DERIVATION_SEL: &str = "feu/noeud/sel";
+
+/// Paire ML-DSA-87 du nœud, signataire des racines.
 const LABEL_DERIVATION_SIGNATURE_NOEUD: &str = "feu/noeud/signature";
+
+/// Paire ML-DSA-87 d'un foyer, signataire de ses ENU.
 const LABEL_DERIVATION_SIGNATURE_FOYER: &str = "feu/foyer/signature";
+
+/// Clé AES-256 qui chiffre l'archive `.feu` du foyer.
 const LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_FOYER: &str = "feu/foyer/symetrique";
+
+/// Paire ML-KEM-1024 d'un foyer, destinataire d'un chiffrement asymétrique.
 const LABEL_DERIVATION_CHIFFREMENT_FOYER: &str = "feu/foyer/chiffrement";
+
+/// Adresse `.braise` du foyer — un identifiant, pas une clé, mais dérivé du
+/// même secret pour être retrouvé depuis la seule seed.
 const LABEL_DERIVATION_BRAISE_FOYER: &str = "feu/foyer/braise";
+
+/// Clé AES-256 qui chiffre les blobs d'un classeur — une par classeur.
 const LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_CLASSEUR: &str = "feu/classeur/symetrique";
 
 // ── Constantes d'implémentation ──────────────────────────────────────────────
 
+/// Taille des tranches du chiffrement en flux — 4 Kio.
+///
+/// Un foyer entier passe par ce tampon plutôt que par la mémoire : sa taille
+/// n'est pas bornée.
 const CHUNK_SIZE: usize = 4096;
 
 /// Paire de clés ML-DSA-87 de signature d'un foyer.
@@ -129,7 +147,9 @@ struct PaireClesSignature {
     // SigningKey n'implémente pas Zeroize (contrainte de ml-dsa) —
     // SecretBox impossible. La mémoire est zéroïsée à la destruction via
     // ZeroizeOnDrop, garanti par ml-dsa avec le feature "zeroize".
+    /// Signe une carte d'ENU ou un message.
     privee: SigningKey<MlDsa87>,
+    /// Publiée en clair : elle vérifie une signature sans ouvrir le foyer.
     publique: VerifyingKey<MlDsa87>,
 }
 
@@ -142,7 +162,9 @@ struct PaireClesChiffrement {
     // DecapsulationKey n'implémente que ZeroizeOnDrop (ml-kem feature "zeroize") —
     // SecretBox impossible, comme pour SigningKey. La clé privée ML-KEM-1024 est
     // stockée sous forme de seed 64 o (sérialisation recommandée par la crate).
+    /// Décapsule le secret partagé d'un message reçu.
     privee: DecapsulationKey1024,
+    /// Publiée en clair : c'est elle qu'un tiers encapsule pour écrire au foyer.
     publique: EncapsulationKey1024,
 }
 
@@ -152,10 +174,16 @@ struct PaireClesChiffrement {
 /// de signature, la paire de chiffrement réseau et les clés des classeurs. Toutes les
 /// clés privées et symétriques sont encapsulées dans [`SecretBox`] ou protégées par `ZeroizeOnDrop`.
 struct TrousseauFoyer {
+    /// Adresse `.braise` du foyer, qui le désigne sur le disque.
     braise: Braise,
+    /// Clé AES-256 de l'archive `.feu`.
     cle_chiffrement: SecretBox<[u8; 32]>,
+    /// Paire ML-DSA-87 signataire des ENU du foyer.
     paire_signature: PaireClesSignature,
+    /// Paire ML-KEM-1024 du foyer, sans emploi tant qu'il n'y a pas de réseau.
     paire_chiffrement: PaireClesChiffrement,
+    /// Une clé AES-256 par classeur, `None` tant que le classeur n'a pas servi :
+    /// la dérivation n'a lieu qu'au premier blob déposé.
     cles_chiffrement_classeurs: [Option<SecretBox<[u8; 32]>>; MAX_CLASSEURS],
 }
 
@@ -255,10 +283,19 @@ impl TrousseauFoyer {
 /// Toutes les clés privées et symétriques sont encapsulées dans [`SecretBox`]
 /// ou protégées par `ZeroizeOnDrop`.
 pub(super) struct Trousseau {
+    /// Mot de passe du nœud, retenu le temps de la session : il faut le
+    /// représenter à chaque dérivation.
     mdp: Option<SecretString>,
+    /// Clé tirée du mot de passe par Argon2id, qui déverrouille les clés du
+    /// nœud. Effacée dès que possible sur les chemins qui la posent.
     cle_ephemere: Option<SecretBox<[u8; 32]>>,
+    /// Sel Argon2id relu de `sel.feu`, sans quoi la clé éphémère ne se retrouve
+    /// pas.
     sel: Option<[u8; 16]>,
+    /// Paire ML-DSA-87 du nœud, chargée à l'allumage.
     paire_signature_noeud: Option<PaireClesSignature>,
+    /// Un trousseau par foyer ouvert, `None` pour les autres : c'est ce champ
+    /// qui porte l'état d'ouverture côté secrets.
     trousseaux_foyers: [Option<TrousseauFoyer>; MAX_FOYERS],
 }
 
@@ -276,7 +313,7 @@ impl Trousseau {
 
     /// Indique si un mot de passe est actuellement présent dans le trousseau.
     ///
-    /// Utilisé par [`Cryptographe::genere_trousseau_a_partir_seed`] pour déterminer
+    /// Utilisé par [`genere_trousseau_a_partir_seed`](super::Cryptographe::genere_trousseau_a_partir_seed) pour déterminer
     /// si la collecte du mot de passe doit être déclenchée ou non.
     pub(super) fn mdp_existe(&self) -> bool {
         self.mdp.is_some()
@@ -291,6 +328,10 @@ impl Trousseau {
     /// domaine de dérivation de celui des clés de foyer.
     /// La clé brute intermédiaire est portée par un `SecretBox`, zéroïsé en fin
     /// d'instruction.
+    ///
+    /// # Errors
+    ///
+    /// Propage l'échec de [`Self::derive_depuis_seed`].
     pub(super) fn ajouter_paire_noeud(
         &mut self,
         seed_bytes: &SecretBox<[u8; 64]>,
@@ -321,6 +362,12 @@ impl Trousseau {
     ///
     /// Les clés brutes intermédiaires sont portées par des `SecretBox` et
     /// zéroïsées dès qu'elles ne servent plus.
+    ///
+    /// # Errors
+    ///
+    /// Propage l'échec de [`Self::derive_depuis_seed`], et
+    /// [`ErreurFeuNoyau::BraiseErronnee`] si la braise dérivée est refusée par
+    /// `Braise::try_from`.
     pub(super) fn ajouter_trousseau_foyer(
         &mut self,
         seed_bytes: &SecretBox<[u8; 64]>,
@@ -449,6 +496,10 @@ impl Trousseau {
     /// migration vers ML-DSA (v0.0.4, signature déterministe en place, mode
     /// *hedged* possible demain) ne risque donc pas de rendre le sel non
     /// reproductible.
+    ///
+    /// # Errors
+    ///
+    /// Propage l'échec de [`Self::derive_depuis_seed`].
     pub(super) fn genere_sel(&mut self, seed_bytes: &SecretBox<[u8; 64]>) -> ResultFeuNoyau<()> {
         self.sel = Some(
             *Self::derive_depuis_seed::<16>(seed_bytes, LABEL_DERIVATION_SEL)?.expose_secret(),
@@ -492,7 +543,7 @@ impl Trousseau {
     /// Produit 32 octets de matière clé à partir du mot de passe et du sel. La clé
     /// résultante est encapsulée dans [`SecretBox`] et stockée dans `cle_ephemere`.
     ///
-    /// Cette clé sert uniquement à chiffrer les clés privées via [`chiffre_cle`] —
+    /// Cette clé sert uniquement à chiffrer les clés privées via [`Self::chiffre_cle`] —
     /// elle doit être effacée dès que le trousseau persistable est constitué.
     ///
     /// # Errors

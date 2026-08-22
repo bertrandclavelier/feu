@@ -3,7 +3,7 @@
 ### 24 mots, un nœud, tout son numérique.
 
 **Livre blanc**
-**Date : 12 août 2026**
+**Date : 22 août 2026**
 
 *Le 17 février 2026, nouvel an chinois marquant le début de l'année du Cheval de Feu, naît le projet Feu.*
 
@@ -93,7 +93,7 @@ Si un foyer est compromis, le propriétaire dérive un nouveau jeu de clés au p
 
 L'IdNU n'est pas une preuve d'identité civile. Elle prouve une continuité cryptographique — ce foyer appartient à ce nœud, ce nœud a toujours la même seed. L'association avec une personne physique est hors protocole.
 
-Côté architecture, l'IdNU est une donnée comme les autres : un blob stocké dans un classeur via le tiroir, décrit par une ENUd. Elle circule sur le réseau comme un paquet ordinaire.
+Côté architecture, l'IdNU est une donnée comme les autres : un blob stocké dans un classeur, décrit par une ENUd. Elle circule sur le réseau comme un paquet ordinaire.
 
 ---
 
@@ -111,7 +111,7 @@ Deux niveaux d'adressage : le hash de la carte identifie l'enveloppe, le hash de
 
 Trois types d'ENU couvrent tous les besoins :
 
-**Donnée (ENUd)** — Associée à un fichier, elle porte le hash de la donnée qu'elle décrit, et ses métadonnées : nom, créateur, date, tags, type. Elle ne sait pas *où* se trouve le fichier — ni dans quel classeur, ni même sur quelle machine. Elle sait *ce qu'il est*. Quand la donnée est dans un foyer, la braise du signataire suffit à la retrouver : le noyau la sert via le tiroir, quel que soit le classeur qui l'héberge.
+**Donnée (ENUd)** — Associée à un fichier, elle porte le hash de la donnée qu'elle décrit, et ses métadonnées : nom, créateur, date, tags, type. Elle ne sait pas *où* se trouve le fichier — ni dans quel classeur, ni même sur quelle machine. Elle sait *ce qu'il est*. Quand la donnée est dans un foyer, la braise du signataire suffit à la retrouver : le noyau la sert quel que soit le classeur qui l'héberge.
 
 Quand la donnée est externe (serveur mail, cloud, API), le hash reste la référence — c'est lui qui dit que le fichier récupéré est bien celui que l'enveloppe décrit — et une métadonnée porte son adresse. Le noyau n'intervient pas : résoudre une URL, s'authentifier auprès d'un service, rapatrier un fichier sont l'affaire des couches supérieures. Une même donnée peut ainsi être décrite avant d'être possédée, puis rapatriée sans que son enveloppe change de sens.
 
@@ -121,9 +121,9 @@ Quand la donnée est externe (serveur mail, cloud, API), le hash reste la réfé
 
 ### Séparation noyau / ENU
 
-Les ENU ne vivent pas dans le noyau. Le noyau est une boîte noire qui gère des octets chiffrés : on pousse des octets via le tiroir, il chiffre, range, et retourne un hash. On donne un hash, il retourne des octets. On donne des octets à signer, il retourne une signature. C'est tout.
+Les ENU ne vivent pas dans le noyau. Le noyau est une boîte noire qui gère des octets chiffrés : on lui pousse des octets, il chiffre, range, et retourne un hash. On donne un hash, il retourne des octets. On donne des octets à signer, il retourne une signature. C'est tout.
 
-La couche ENU vit au-dessus. Elle reçoit le hash du noyau, construit la carte (type, hash de la donnée, métadonnées), demande au noyau de la signer via le tiroir, et stocke elle-même l'enveloppe dans un dossier dédié `enu/`, **à la racine du nœud — hors de tout foyer**. Ce dossier est en clair : les ENU sont signées, leur intégrité est garantie par la signature, pas par le chiffrement.
+La couche ENU vit au-dessus. Elle reçoit le hash du noyau, construit la carte (type, hash de la donnée, métadonnées), demande au noyau de la signer, et stocke elle-même l'enveloppe dans un dossier dédié `enu/`, **à la racine du nœud — hors de tout foyer**. Ce dossier est en clair : les ENU sont signées, leur intégrité est garantie par la signature, pas par le chiffrement.
 
 Cet emplacement est un choix de fond. Un foyer se ferme, et fermé il n'est plus qu'une archive chiffrée : ce qu'il contient devient inatteignable. Si les enveloppes vivaient dedans, on ne pourrait plus rien consulter ni chercher sans tout ouvrir. Hors des foyers, elles restent navigables en permanence — on parcourt son catalogue, on cherche, on organise, et l'on n'ouvre un foyer qu'au moment de toucher une donnée. La confidentialité protège les données ; la signature protège le catalogue.
 
@@ -141,11 +141,11 @@ Rien n'est effacé au passage. Les anciens sommets restent, et avec eux l'arbore
 
 ### Exemple local — Alice organise ses photos
 
-Alice stocke une photo via le tiroir. Le noyau chiffre, écrit le blob dans `classeur1/`, retourne `hash_photo`. La couche ENU crée une carte Donnée : hash de la donnée = `hash_photo`, métadonnées (nom, date, tags "vacances", "2026"). Le hash de la carte est calculé sur ce contenu, la carte est signée par le foyer, et l'enveloppe est écrite dans `enu/` sous le nom de ce hash.
+Alice stocke une photo. Le noyau chiffre, écrit le blob dans `classeur1/`, retourne `hash_photo`. La couche ENU crée une carte Donnée : hash de la donnée = `hash_photo`, métadonnées (nom, date, tags "vacances", "2026"). Le hash de la carte est calculé sur ce contenu, la carte est signée par le foyer, et l'enveloppe est écrite dans `enu/` sous le nom de ce hash.
 
 Alice veut organiser par projet. La couche ENU crée une ENUr "Vacances 2026" contenant les hashs de plusieurs ENUd — signée, stockée dans `enu/`, greffée sous la racine. Pour créer une deuxième vue — "Meilleures photos" — une autre ENUr est créée, référençant les mêmes hashs. La photo n'existe qu'une fois dans le classeur. Les ENUd n'existent qu'une fois dans `enu/` : le nom du fichier étant le hash, deux enveloppes identiques sont le même fichier. Seules les ENUr se multiplient pour offrir des vues différentes.
 
-Pour modifier la photo (recadrage), Alice récupère le blob via le tiroir (déchiffrement), modifie, re-stocke. Nouveau hash de donnée, donc nouvelle carte, donc nouvelle ENUd. Les ENUr qui référençaient l'ancienne sont reconstruites avec le nouveau hash, de proche en proche jusqu'à un nouveau sommet. L'ancienne ENUd n'est pas supprimée : elle sort de l'arborescence courante mais reste atteignable par le sommet précédent — la photo d'avant recadrage est toujours là, et son enveloppe dit encore ce qu'elle était.
+Pour modifier la photo (recadrage), Alice récupère le blob (déchiffrement), modifie, re-stocke. Nouveau hash de donnée, donc nouvelle carte, donc nouvelle ENUd. Les ENUr qui référençaient l'ancienne sont reconstruites avec le nouveau hash, de proche en proche jusqu'à un nouveau sommet. L'ancienne ENUd n'est pas supprimée : elle sort de l'arborescence courante mais reste atteignable par le sommet précédent — la photo d'avant recadrage est toujours là, et son enveloppe dit encore ce qu'elle était.
 
 ### Exemple réseau — Alice partage avec Bob
 
@@ -157,7 +157,7 @@ Bob reçoit le paquet. Il lit l'ENUd, vérifie la signature avec la clé publiqu
 
 Le foyer d'Alice reçoit la requête : « je veux `hash_photo`, je suis Bob ». Le noyau cherche dans le registre : `<hash_photo>.1` existe, la cible donne `<hash_condition>`. Le noyau évalue la condition : `Braise(bob)`, le demandeur est Bob — condition remplie. Le noyau déchiffre le blob (clé du classeur), le rechiffre pour Bob (ML-KEM-1024, clé publique tirée de l'IdNU de Bob), et le sert.
 
-Bob déchiffre avec sa clé privée ML-KEM-1024. Il vérifie le hash contre celui contenu dans l'ENUd — la donnée est authentique et correspond à l'enveloppe reçue. Il stocke la photo dans son propre classeur via son tiroir, et peut créer sa propre ENUd s'il le souhaite.
+Bob déchiffre avec sa clé privée ML-KEM-1024. Il vérifie le hash contre celui contenu dans l'ENUd — la donnée est authentique et correspond à l'enveloppe reçue. Il stocke la photo dans son propre classeur, et peut créer sa propre ENUd s'il le souhaite.
 
 Le noyau d'Alice n'a jamais entendu parler d'ENU, de Bob, ni de photos. Il a stocké des octets, évalué une condition, signé, chiffré, déchiffré. Le reste appartient aux couches supérieures.
 
@@ -169,7 +169,10 @@ Le foyer est l'espace souverain de l'utilisateur. Il contient les classeurs (don
 
 ```
 ~/.feu/
+    .cles/                          ← clés du nœud et clés d'archive des foyers
+    config.feu                      ← configuration globale
     <braise>/                       ← un foyer ouvert
+        .cles/                      ← clés du foyer et des classeurs, chiffrées
         classeur0/
             <hash>.dat              ← blob chiffré
         classeur1/
@@ -180,6 +183,7 @@ Le foyer est l'espace souverain de l'utilisateur. Il contient les classeurs (don
             <hash_donnée>.N  →  <hash_condition>
     <braise>.feu                    ← un foyer fermé : archive chiffrée
     enu/
+        .DERNIERE_RACINE            ← symlink vers le sommet courant
         <hash_carte>.enu            ← ENU signée, en clair
 ```
 
@@ -207,7 +211,7 @@ registre/<hash_donnée>.N  →  <hash_condition>
 
 Le nom du lien porte deux informations : le hash de la donnée et le numéro du classeur où elle se trouve (via l'extension `.N`). La cible du lien est le hash de la condition d'accès. La condition elle-même est un blob chiffré dans un classeur — une donnée comme une autre, adressée par son hash.
 
-Pas de lien = pas de condition. La donnée existe dans son classeur, accessible par le propriétaire via le tiroir comme n'importe quel blob. Le registre n'intervient pas. Le lien n'est créé que lorsqu'une condition est explicitement posée sur une donnée — que ce soit pour un tiers (accès réseau) ou pour le propriétaire lui-même (coffre-fort temporel, restriction volontaire).
+Pas de lien = pas de condition. La donnée existe dans son classeur, accessible par le propriétaire comme n'importe quel blob. Le registre n'intervient pas. Le lien n'est créé que lorsqu'une condition est explicitement posée sur une donnée — que ce soit pour un tiers (accès réseau) ou pour le propriétaire lui-même (coffre-fort temporel, restriction volontaire).
 
 ### Conditions
 
@@ -225,7 +229,7 @@ Une même condition peut être réutilisée par plusieurs données — le hash e
 
 ### Flux de consultation
 
-On reçoit un hash de donnée. Le noyau cherche dans `registre/` un lien portant ce hash comme nom. Si trouvé : `readlink` donne le hash de la condition, l'extension donne le classeur de la donnée. Le noyau localise la condition dans les classeurs, la déchiffre, l'évalue. Si la condition est remplie, il sert la donnée depuis le bon classeur. Si la condition n'est pas remplie, accès refusé. Si pas de lien : pas de condition — pour le propriétaire en local, la donnée est servie directement via le tiroir ; pour un tiers distant, l'absence de condition signifie que la donnée n'est pas partagée.
+On reçoit un hash de donnée. Le noyau cherche dans `registre/` un lien portant ce hash comme nom. Si trouvé : `readlink` donne le hash de la condition, l'extension donne le classeur de la donnée. Le noyau localise la condition dans les classeurs, la déchiffre, l'évalue. Si la condition est remplie, il sert la donnée depuis le bon classeur. Si la condition n'est pas remplie, accès refusé. Si pas de lien : pas de condition — pour le propriétaire en local, la donnée est servie directement ; pour un tiers distant, l'absence de condition signifie que la donnée n'est pas partagée.
 
 Le noyau évalue les conditions sans exception — y compris pour le propriétaire. Une condition posée par le propriétaire sur ses propres données s'applique à lui aussi.
 
@@ -237,19 +241,7 @@ Un simple `rm` du lien symbolique suffit à couper instantanément l'accès à u
 
 ---
 
-## 6. Le tiroir
-
-Le **tiroir** est l'interface unique entre le noyau et les couches supérieures. Rien ne rentre ni ne sort du noyau sans passer par le tiroir. Deux tiroirs couvrent l'ensemble des opérations.
-
-**Tiroir données** — Entrée/sortie des données chiffrées dans les classeurs. On pousse un flux d'octets et un numéro de classeur, le noyau chiffre avec la clé du classeur, range le blob sous son hash, et retourne ce hash. Le hash est calculé sur le clair avant chiffrement — c'est l'identifiant content-addressable de la donnée. On donne un hash, le noyau localise le blob dans les classeurs, déchiffre, et retourne le flux d'octets. Aucune donnée en clair ne touche le disque — le chiffrement et le déchiffrement sont strictement en mémoire.
-
-**Tiroir signature** — Signature et vérification. On donne des octets, le noyau signe en ML-DSA-87 et retourne la signature — avec la clé du foyer désigné, ou avec celle du nœud pour ce qui engage le nœud entier : IdNU, racines de l'arborescence. On donne des octets, une signature et une clé publique, le noyau vérifie et retourne vrai ou faux. La couche ENU utilise ce tiroir pour signer les enveloppes qu'elle crée et vérifier celles qu'elle relit ou reçoit du réseau.
-
-Les deux tiroirs sont les seuls chemins vers le noyau. Les couches supérieures ne voient jamais une clé, ne touchent jamais un classeur directement, ne manipulent jamais un blob chiffré. Elles travaillent avec des hashs, des flux d'octets en clair, et des signatures.
-
----
-
-## 7. Centralisation locale
+## 6. Centralisation locale
 
 Feu permet de référencer n'importe quelle donnée accessible : fichier local, serveur de fichiers, messagerie, cloud, API. L'ENUd porte le hash de la donnée et son adresse en métadonnée — donc tant que la donnée existe et n'est pas modifiée, l'enveloppe qui la décrit reste valide, et le hash le prouve au moment de la récupérer. C'est déjà un catalogue unifié de tout son numérique, indépendant des plateformes, et consultable sans ouvrir un seul foyer.
 
@@ -257,7 +249,7 @@ La philosophie du projet encourage à aller plus loin : rapatrier ses données d
 
 ---
 
-## 8. Le réseau
+## 7. Le réseau
 
 Chaque foyer Feu est un service caché sur le réseau Tor. Pas d'adresse IP exposée, pas de NAT à configurer, chiffrement de bout en bout natif. L'adresse `.onion` est l'adresse de transport — jetable, elle peut changer sans que l'identité du foyer change. L'identité du foyer, c'est la **braise** — permanente, dérivée de la seed, indépendante du réseau.
 
@@ -285,7 +277,7 @@ La combinaison Tor et rumeur engendre des délais de propagation de l'ordre de q
 
 ---
 
-## 9. Perspectives
+## 8. Perspectives
 
 ### Intelligence artificielle
 
@@ -313,13 +305,13 @@ Inscrire le hash de la carte d'une ENU sur une blockchain publique constitue un 
 
 ---
 
-## 10. Les six garanties
+## 9. Les six garanties
 
 L'architecture de Feu repose sur six garanties. Elles ne sont pas des objectifs — elles découlent mécaniquement des choix du protocole.
 
 1. **Souveraineté en 24 mots.** Vingt-quatre mots suffisent à dériver l'intégralité d'une vie numérique — clés, identités, foyers, adresses réseau. Aucune autorité extérieure, aucun serveur, aucun tiers. La seed est la seule dépendance, et la seule chose qu'aucune sauvegarde ne remplace : les données et les enveloppes, elles, se répliquent.
 
-2. **Chiffré par défaut, clair par exception.** Les données sont chiffrées au repos dans les classeurs, chiffrées en transit sur le réseau, chiffrées dans l'archive du foyer. Les ENU sont en clair mais signées — leur intégrité repose sur la signature, pas sur le chiffrement. Les clés en clair n'existent qu'en mémoire, le temps d'une opération via le tiroir. Le disque ne voit jamais de secret en clair.
+2. **Chiffré par défaut, clair par exception.** Les données sont chiffrées au repos dans les classeurs, chiffrées en transit sur le réseau, chiffrées dans l'archive du foyer. Les ENU sont en clair mais signées — leur intégrité repose sur la signature, pas sur le chiffrement. Les clés en clair n'existent qu'en mémoire, le temps d'une opération. Le disque ne voit jamais de secret en clair.
 
 3. **Compartimenté par construction.** Chaque classeur a sa propre clé. Chaque foyer a ses propres clés. La compromission d'un compartiment n'affecte pas les autres. La séparation gardien/cryptographe garantit que le disque et les données en clair ne se rencontrent jamais dans le même composant.
 
@@ -354,8 +346,6 @@ L'architecture de Feu repose sur six garanties. Elles ne sont pas des objectifs 
 **Racine** — ENUr signée par le nœud, sommet de l'arborescence des enveloppes. Chaque racine porte le hash de la précédente : la lignée des racines est l'historique du nœud, conservé par construction.
 
 **Classeur** — Compartiment chiffré du foyer, possédant sa propre clé dérivée de la seed. Contient des blobs chiffrés adressés par hash (données et conditions). Exportable sous forme d'archive opaque pour la sauvegarde.
-
-**Tiroir** — Interface unique entre le noyau et les couches supérieures. Tiroir données : entrée/sortie des blobs chiffrés dans les classeurs. Tiroir signature : signature et vérification via les clés du foyer.
 
 **Registre** — Répertoire de liens symboliques dans le foyer. Chaque lien associe le hash d'une donnée (et son classeur) au hash de sa condition d'accès. Reconstructible depuis les classeurs.
 

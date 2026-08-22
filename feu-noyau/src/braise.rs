@@ -29,14 +29,18 @@ use crate::{ErreurFeuNoyau, ResultFeuNoyau};
 /// 34 octets encodés en BASE32 sans padding donnent 55 caractères (`a-z2-7`).
 pub(super) const LONGUEUR_BRAISE: usize = 55;
 
-/// Braise par défaut d'un slot de foyer non encore initialisé.
+/// Braise qui ne désigne aucun foyer — et qui désigne donc **le nœud**.
 ///
-/// Les tableaux de foyers (`SessionFoyers`, `Configuration::adresses_braise`)
-/// réservent `MAX_FOYERS` emplacements ; ceux sans foyer réel portent cette
-/// valeur. Corps de 55 `a` — valide par construction (l'alphabet inclut `a`),
-/// d'où l'absence de validation. Elle ne désigne aucun foyer réel : une
-/// opération qui la rencontrerait échoue à la frontière disque (aucun fichier
-/// correspondant). D'où une braise par défaut plutôt qu'un `Option`.
+/// Deux emplois. Valeur d'initialisation des tableaux de foyers
+/// (`SessionFoyers`, `Configuration::adresses_braise`), le temps que les
+/// braises réelles soient dérivées. Et surtout **signataire nœud** : c'est la
+/// braise que porte toute racine de l'arborescence ENU, et à quoi
+/// `feu-application` la reconnaît.
+///
+/// Corps de 55 `a` — valide par construction, l'alphabet BASE32 incluant `a`,
+/// d'où l'absence de validation. Une braise par défaut plutôt qu'un `Option` :
+/// le second imposerait un déballage à chaque lecture pour un cas qui n'arrive
+/// pas, les trois foyers étant dérivés dès la genèse.
 pub const BRAISE_VIDE: Braise = Braise([b'a'; LONGUEUR_BRAISE]);
 
 /// Adresse `.braise` d'un foyer, bien formée par construction.

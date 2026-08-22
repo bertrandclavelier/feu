@@ -56,7 +56,7 @@ pub struct Descendants<'a> {
 
 impl<'a> Iterator for Descendants<'a> {
     /// L'erreur est celle de l'API publique : `Descendants` traverse la
-    /// frontière du crate, et [`ErreurFeuApplication`](crate::ErreurFeuApplication)
+    /// frontière du crate, et [`ErreurFeuApplication`]
     /// est le seul type d'erreur qu'il expose.
     type Item = ResultFeuApplication<(usize, Fiche)>;
 

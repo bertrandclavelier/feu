@@ -6,11 +6,45 @@ Aucune version n'a été déployée : les ruptures de format sont assumées d'un
 version à l'autre, et les données d'une version antérieure ne sont pas reprises.
 
 La photo technique complète de la version courante vit dans
-[documentation/release.md](documentation/release.md). Les notes des versions
-antérieures restent atteignables à leur tag, par exemple
-`git show v0.0.4:documentation/releases/v0_0_4_release.md`.
+[documentation/note_de_version.md](documentation/note_de_version.md). Les notes
+des versions antérieures restent atteignables à leur tag, par exemple
+`git show v0.0.4:documentation/releases/v0_0_4_release.md` ou
+`git show v0.0.5:documentation/release.md` — le fichier a porté trois noms.
 
 ---
+
+## v0.0.6 — 22 août 2026
+
+Première version dont la chaîne fonctionne de bout en bout : un utilisateur
+ouvre un foyer, y dépose une arborescence, la ressort, la parcourt, sans quitter
+la TUI. Trois chantiers la portent — la refonte de la gestion des erreurs, les comptoirs de dépôt et le
+retrait en lecture seule, et le câblage de la TUI.
+
+- **Gestion des erreurs refondue** : un seul type par crate — `ErreurFeuNoyau`
+  (46 variantes), `ErreurFeuApplication` (26), `ErreurFeuTui` (13). Les types de
+  module et les codes numérotés (`GAR-*`, `SCR-NNN`, `ENU-NNN`…) disparaissent au
+  profit de variantes nommées. La TUI structure les siennes sans jamais
+  interrompre sa boucle : seule une panne du terminal sort du programme.
+- **Itérateurs ENU** : `Descendants` (profondeur d'abord, sans vérification de
+  signature, doublons conservés) et `RacinesAnterieures` (remonte les racines
+  jusqu'à la genèse), parcourables foyers fermés.
+- **`Enu` privée, `Fiche` en frontière** : la présentation ne manipule plus que
+  des fiches — l'enveloppe, sans sa signature, rechargée et authentifiée avant
+  toute action.
+- **Comptoirs multiples** : plusieurs comptoirs simultanés, désignés par leur
+  chemin et par leur ENU d'accueil, identifiés par un compteur jamais remis à
+  zéro.
+- **Retrait gardé** : refusé d'un bloc si un foyer signataire du sous-arbre est
+  fermé — la liste des foyers à ouvrir est dressée avant toute écriture.
+- **Fermeture de secours câblée** jusqu'à la TUI (touche `S`).
+- **TUI à trois écrans de travail** : pilotage, arborescence des ENU,
+  arborescence du disque — navigation `h`/`l`, plis, marquage `m`/`x`, dépôt
+  `d` et retrait `r` sur les marques posées.
+- **Dépôt gardé** : refusé sous une ENU d'accueil sortie de l'arbre courant.
+  Déposer sous une racine périmée produisait jusque-là une version amputée de
+  tout ce qui avait été déposé depuis, sans la moindre erreur.
+- **67 tests**, contre 61, tous intégrés aux crates.
+- Cryptographie inchangée. Toujours aucun réseau.
 
 ## v0.0.5 — 12 août 2026
 

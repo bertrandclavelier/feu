@@ -68,8 +68,11 @@ use crate::MAX_CLASSEURS;
 use crate::ResultFeuNoyau;
 use crate::archiviste::tiroir::Tiroir;
 
-/// Noms des sous-dossiers de l'arborescence d'un foyer.
+/// Sous-dossier du foyer qui tient le registre des blobs.
 const REGISTRE: &str = "registre";
+
+/// Préfixe des sous-dossiers de classeur — `classeur0` à `classeur<MAX-1>`, et
+/// `classeur.<index>` dans le registre.
 const CLASSEUR: &str = "classeur";
 
 /// Archiviste d'un foyer ouvert.
@@ -252,6 +255,11 @@ impl Archiviste {
     /// Contrôle `registre/` et les `MAX_CLASSEURS` liens symboliques
     /// `registre/classeur.N`, ainsi que l'existence des cibles de ces liens.
     /// N'inspecte pas le contenu des classeurs — seule la structure est vérifiée.
+    ///
+    /// # Errors
+    ///
+    /// Propage l'échec de lecture d'un lien symbolique — un lien présent mais
+    /// illisible n'est pas une anomalie de structure mais une panne d'accès.
     pub(super) fn verifier_arborescence_classeurs(&self) -> ResultFeuNoyau<Vec<Anomalie>> {
         let mut resultat: Vec<Anomalie> = Vec::new();
 

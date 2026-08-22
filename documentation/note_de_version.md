@@ -1,7 +1,7 @@
-# Feu — Release v0.0.5
+# Feu — Note de version v0.0.6
 
-> **Date :** 12 août 2026
-> **Statut :** cinquième release
+> **Date :** 22 août 2026
+> **Statut :** sixième version
 > **Licence :** GNU General Public License v3.0 ou ultérieure (GPL-3.0-or-later)
 > **Photo technique** — ce document décrit l'état réel du code, pas les intentions de conception.
 
@@ -9,50 +9,32 @@
 
 ## Résumé
 
-Cinquième version. Deux chantiers l'occupent entièrement.
+Sixième version, et la première **dont la chaîne fonctionne de bout en bout** : un utilisateur ouvre un foyer, y dépose une arborescence, la ressort, la parcourt, sans quitter la TUI.
 
-**L'intégration des ENU** — les Enveloppes Numériques Universelles, jusqu'ici absentes du code, sont posées et branchées de bout en bout. Une couche applicative neuve, le **Scribe**, tient une arborescence d'enveloppes signées qui référence, nomme et organise les blobs du nœud. Elle est pilotable depuis la TUI : un dossier est rempli puis refermé pour déposer, l'arborescence est matérialisée sur le disque pour retirer. Le noyau accompagne le mouvement — type `Braise`, API recentrée sur l'index, blobs désignés par leur seul hash.
-
-**Les tests** — le code n'en comportait aucun. Il en compte 61, **intégrés aux crates** plutôt que rangés dans un dossier `tests/` externe : 24 pour `feu-noyau`, 37 pour `feu-application`, du format canonique d'une carte au cycle de vie complet du nœud.
-
-La cryptographie ne bouge pas : ML-DSA-87, ML-KEM-1024, HKDF-SHA3-256, AES-256-GCM, SHA3-256, Argon2id. Toujours aucun réseau, aucun IdNU, aucune condition, aucun relais, aucun paquet.
+La cryptographie ne bouge pas : ML-DSA-87, ML-KEM-1024, HKDF-SHA3-256, AES-256-GCM, SHA3-256, Argon2id, mêmes labels de dérivation et mêmes formats de clés. Gardien, Cryptographe et Archiviste gardent leurs responsabilités, le cycle de vie du nœud et des foyers ne change pas, la structure disque des foyers non plus.
 
 ---
 
 ## Périmètre
 
-**Ce qui change en v0.0.5 :**
+**Ce qui change en v0.0.6 :**
 
-- **ENU** — enveloppe signée `Enu` + carte `Carte` (Donnée, Texte, Répertoire), content-addressed, sérialisation maison, signature ML-DSA-87 sur la carte. Exposées en lecture seule.
-- **Arborescence ENU** — racines signées par le nœud (`BRAISE_VIDE`), chaînées par la méta `_racine`, sommet courant désigné par le symlink `.DERNIERE_RACINE`, posé à la genèse.
-- **Comptoir de dépôt** — dossier OS ouvert puis refermé ; contenu rangé en blobs + ENU, greffé sous la racine du nœud.
-- **Retrait en lecture seule** — matérialisation de l'arborescence d'une ENUr dans un dossier OS, sans reprise.
-- **Accès aux blobs par l'ENU** — chargement, suppression, existence, informations, sans désigner ni foyer ni classeur.
-- **`Braise`** — newtype `Braise([u8; 55])` dans `feu-noyau`, remplace la `String` partout ; `BRAISE_VIDE` désigne le signataire nœud et sert de valeur d'initialisation.
-- **API du noyau** — recentrée sur l'index ; blobs renommés (`depot_blob`, `lecture_blob`, `suppression_blob`, `existence_blob`, `informations_blob`), le dépôt rend `(hash, classeur)` et garantit l'unicité d'un hash dans le foyer.
-- **Chemin racine injecté** — le binaire lit `$HOME`, toutes les couches en aval reçoivent le chemin en paramètre.
-- **Diagnostic** — deux nouvelles anomalies (`ArchiveIntermediaireResiduelle`, `FoyerClairEtArchive`), quatre contrôles par foyer.
-- **Correctifs** — nettoyage des archives `.tar`/`.feu` résiduelles sur les chemins d'erreur d'ouverture/fermeture ; dossier de foyer créé en 0o700 ; clé publique du nœud propagée à la genèse.
-- **TUI** — comptoir de dépôt (`d` ouvre depuis un classeur, `c` ferme), retrait de la dernière racine (`r`).
-- **Tests** — 61 tests là où il n'y en avait aucun, en `#[cfg(test)] mod tests` dans les crates ; `tempfile` et `rand` en dépendances de test.
-
-**Ce qui reste inchangé depuis la v0.0.4 :**
-
-- Cryptographie : ML-DSA-87 (signature), ML-KEM-1024 (chiffrement asymétrique), HKDF-SHA3-256 (dérivation), AES-256-GCM, SHA3-256, Argon2id. Labels de dérivation, tailles, formats de clés identiques.
-- Gardien / Cryptographe / Archiviste — mêmes responsabilités.
-- Cycle de vie nœud et foyer (initialisation, allumage, ouverture, fermeture, archivage chiffré, secours).
-- Structure disque des foyers (classeurs, registre, archives `.feu`, `config.feu`).
-- Écran « à propos » (`!`), navigation TUI, table de commandes contextuelle.
+- **Gestion d'erreurs refondue** — un seul type par crate : `ErreurFeuNoyau` (46 variantes), `ErreurFeuApplication` (26), `ErreurFeuTui` (13). Les types internes des modules (`ErreurGardien`, `ErreurCryptographe`, `ErreurArchiviste`, `ErreurScribe`) et les codes numérotés (`GAR-*`, `CRY-*`, `ARC-*`, `TIR-*`, `ENU-NNN`, `SCR-NNN`, `COM_D-001`) cèdent la place à des variantes nommées par le fait. `feu-tui` structure les siennes **sans jamais interrompre sa boucle** : seule une panne d'entrée-sortie du terminal sort du programme.
+- **Comptoirs multiples** — plusieurs comptoirs simultanés, identifiés par un compteur croissant jamais remis à zéro ; chacun porte son chemin (sous-dossier de la marque disque) et sa destination (foyer, classeur). L'accueil est l'ENU marquée.
+- **Retrait gardé** — `Scribe::foyers_requis` dresse les foyers signataires du sous-arbre avant toute écriture ; un foyer fermé refuse le retrait d'un bloc (`ScribeFoyersFermes`, qui les nomme tous).
+- **TUI câblée** — trois écrans de travail à onglets (`h`/`l`), arborescence des ENU chargée par `R`, navigation `j`/`k`, plis (`Entrée`), marquage (`m`) et effacement (`x`), arborescence du disque depuis `$HOME`, dépôt (`d`) et retrait (`r`) sur les marques posées.
+- **`Fiche` en frontière** — `Enu` redevient privée au crate ; la présentation ne reçoit et ne rend que des `Fiche` (l'enveloppe sans sa signature), la crate rechargeant et authentifiant l'`Enu` avant toute action.
+- **Itérateurs ENU** — `Descendants` (profondeur d'abord, sans vérification de signature, doublons conservés) et `RacinesAnterieures` (remonte les racines jusqu'à la genèse), exposés par deux commandes.
+- **Fermeture de secours câblée** — `commande_secours_fermeture_foyer` gagne son premier appelant de production : la touche `S` du pilotage. La garde noyau refuse un foyer marqué ouvert ou un dossier clair abîmé.
+- **Correctif** — le dépôt est refusé sous une ENU d'accueil sortie de l'arbre courant (`ScribeRacinePerimee` / `ScribeRemplacementSansEffet`).
+- **Tests** — 67, contre 61 en v0.0.5, tous en `#[cfg(test)] mod tests` dans les crates.
 
 **Ce qui n'existe pas :**
 
 - Réseau (Tor, gossip protocol).
 - IdNU, conditions, registre de conditions, relais, paquets.
-- Itérateurs ENU (descendant, remontant) — la navigation programmatique de l'arborescence n'est pas exposée.
-- Désignation d'un dossier de dépôt ou de retrait par l'utilisateur — les deux chemins sont en dur dans le binaire.
-- Vérification préalable des foyers requis avant un retrait — l'échec survient en cours d'écriture.
-- Ménage des versions d'ENU abandonnées (`Enu::supprimer` n'a pas d'appelant de production).
 - Export/import de classeurs, révocation de foyer.
+- Rafraîchissement automatique des arborescences affichées : le chargement (`R`) reste explicite. Le seul dépôt que la TUI déclenche — la fermeture d'un comptoir — vide l'arbre des ENU et la marque plutôt que de les rafraîchir ; l'arborescence du disque, elle, ne suit aucun changement extérieur.
 
 ---
 
@@ -71,25 +53,23 @@ Trois crates, empilées en couches strictes. Chaque couche ne connaît que celle
 └────────────────────────────────────────────┘
 ```
 
-- **`feu-noyau`** expose la structure `FeuNoyau`. Aucun composant interne n'est accessible de l'extérieur.
-- **`feu-application`** est l'**unique** consommateur de `feu-noyau`. Elle héberge désormais le **Scribe**, tenant de la couche ENU.
-- **`feu-tui`** est un binaire qui consomme `feu-application`.
+`feu-noyau` n'expose que la structure `FeuNoyau`, aucun composant interne. `feu-application` en est l'**unique** consommateur et héberge le Scribe. `feu-tui` est un binaire qui consomme `feu-application`. Chaque crate porte son type d'erreur — `ErreurFeuNoyau`, `ErreurFeuApplication`, `ErreurFeuTui`.
 
 ### Le noyau — composants internes
 
-`FeuNoyau` orchestre trois composants, dont la répartition ne change pas :
+`FeuNoyau` orchestre trois composants :
 
 - **Gardien** — unique point d'accès au système de fichiers. Délègue la connaissance de l'arborescence à son `Carnet`, maintient la `Configuration` en mémoire (miroir de `config.feu`).
 - **Cryptographe** — unique composant autorisé à manipuler des données en clair. Maintient les clés déchiffrées dans son `Trousseau`, et leur représentation persistable — secrets chiffrés, clés publiques en clair — dans ses trousseaux publics, seule forme que le Gardien écrit sur le disque.
-- **Archiviste** — un par foyer ouvert, gère l'arborescence interne d'un foyer (registre + classeurs). Ne détient jamais de clés, ne voit jamais d'octets en clair. Transfert des blobs via le **Tiroir** (zéroïsation).
+- **Archiviste** — un par foyer ouvert, gère l'arborescence interne d'un foyer (registre + classeurs). Ne détient jamais de clés, ne voit jamais d'octets en clair.
 
-### Le Scribe — nouvelle couche applicative
+Un blob ne passe de l'Archiviste au Cryptographe que par le **Tiroir** : un conteneur de transport interne au noyau, qui porte le contenu, l'index de son classeur et son hash, et qui **zéroïse le clair** dès qu'il est remplacé par le chiffré. Il ne sort jamais de `feu-noyau`.
 
-Le **Scribe** (`feu-application/src/scribe/`) est le tenant de la couche ENU. Il crée et maintient le dossier `~/.feu/enu/` — à la racine du nœud, pas dans un foyer, pour que les ENU restent navigables même foyers fermés (elles sont en clair, leur intégrité est garantie par la signature, pas par le chiffrement). Il est activé à l'allumage et désactivé à l'extinction.
+### Le Scribe — couche applicative ENU
 
-Il fait la charnière entre deux mondes qui s'ignorent : **le noyau ne sait pas ce qu'est une ENU, le Scribe ne sait pas ce qu'est un foyer**. Une ENU est traduite en ce que le noyau attend (index de foyer + empreinte de blob), et inversement.
+Le **Scribe** (`feu-application/src/scribe/`) crée et maintient `~/.feu/enu/` — à la racine du nœud, pas dans un foyer, pour que les ENU restent navigables foyers fermés : elles sont en clair, leur intégrité venant de la signature et non du chiffrement. Il est activé à l'allumage, désactivé à l'extinction.
 
-Un nœud ne contient que deux sortes de fichiers : les **ENU**, tenues par le Scribe, et les **blobs**, tenus par le noyau dans les classeurs.
+Il fait la charnière entre deux mondes qui s'ignorent : **le noyau ne sait pas ce qu'est une ENU, le Scribe ne sait pas ce qu'est un foyer**. Une ENU est traduite en ce que le noyau attend — index de foyer, empreinte de blob —, et inversement. Un nœud ne contient que ces deux sortes de fichiers : les ENU, tenues par le Scribe, et les blobs, tenus par le noyau dans les classeurs.
 
 ---
 
@@ -97,7 +77,7 @@ Un nœud ne contient que deux sortes de fichiers : les **ENU**, tenues par le Sc
 
 ### `InterfaceFeuNoyau`
 
-Contrat entre le noyau et son appelant direct (`feu-application`). Sept méthodes ; les adresses `.braise` y sont désormais portées par le type `Braise` :
+Contrat entre le noyau et son appelant direct (`feu-application`). Sept méthodes ; les adresses `.braise` y sont portées par le type `Braise` :
 
 | Méthode | Rôle |
 |---|---|
@@ -134,19 +114,42 @@ Contrat entre le noyau et son appelant direct (`feu-application`). Sept méthode
 | `diagnostic_noeud` | Diagnostic de présence des fichiers du nœud, **sans** `Result` | associée |
 | `diagnostic_foyer` | Diagnostic d'un foyer ouvert | `&self` |
 
-Les blobs sont désormais désignés **par leur hash seul**, le classeur étant découvert par balayage : `depot_blob`, `lecture_blob`, `suppression_blob`, `existence_blob` et `informations_blob` ne prennent plus d'`index_classeur` là où il n'est pas indispensable. Cette évolution accompagne l'ENU, qui référence une donnée par le couple `(foyer, hash)` — le classeur n'y figure pas. `depot_blob` garantit en contrepartie l'**unicité d'un hash dans un foyer** : il balaie avant d'écrire et, si le blob existe déjà, rend le classeur réel sans rien dupliquer.
+Les blobs sont désignés **par leur hash seul**, le classeur étant découvert par balayage : `depot_blob`, `lecture_blob`, `suppression_blob`, `existence_blob` et `informations_blob` ne prennent plus d'`index_classeur` là où il n'est pas indispensable. Cette évolution accompagne l'ENU, qui référence une donnée par le couple `(foyer, hash)` — le classeur n'y figure pas. `depot_blob` garantit en contrepartie l'**unicité d'un hash dans un foyer** : il balaie avant d'écrire et, si le blob existe déjà, rend le classeur réel sans rien dupliquer.
 
-`diagnostic_noeud` rend désormais un `Vec<Anomalie>` et ne peut pas échouer. Deux variantes s'ajoutent à `Anomalie` :
+### Fermeture de secours d'un foyer
 
+`secours_fermeture_foyer` répond à l'arrêt anormal de Feu avec un foyer ouvert : le dossier clair `<braise>/` est encore sur disque, mais le trousseau — donc les clés — a été perdu. Ni `ouverture_foyer` (qui attend une archive `.feu` absente) ni `fermeture_foyer` (qui exige les clés en mémoire) ne peut alors refermer le foyer.
+
+La méthode relit les clés depuis le dossier clair, marque le foyer ouvert — prérequis de la fermeture standard — puis **délègue tout le reste à `fermeture_foyer`**. Deux prérequis la gardent :
+
+- le foyer doit être **marqué fermé** dans la session — ouvert, ses clés sont en mémoire et c'est la fermeture standard qui s'applique ;
+- le **diagnostic du dossier clair** doit être sans anomalie — un dossier trop abîmé empêcherait la reconstruction du trousseau.
+
+Les deux refus sont fondus en une seule variante, `FermetureSecoursFoyerImpossible`. Le test mémoire passe avant tout accès disque.
+
+### Diagnostic
+
+Deux fonctions, l'une sans instance, l'autre sur un foyer ouvert :
+
+- `diagnostic_noeud(chemin_feu)` — associée, utilisable **sans nœud allumé** (notamment pour comprendre pourquoi `new` échoue). Vérifie `~/.feu`, `config.feu`, `.cles/`, les clés du nœud, archives et clés de chaque foyer connu. Rend un `Vec<Anomalie>`, **sans `Result`** : l'inspection se limite à des tests de présence, et une config illisible est une anomalie (`ConfigurationIllisible`), pas une erreur.
+- `diagnostic_foyer(index_foyer)` — complète le précédent sur le foyer ouvert : clés du foyer, clés de classeurs, `registre/` et liens symboliques.
+
+`Anomalie` compte quatre variantes :
+
+- `ElementAbsent(PathBuf)` — un fichier ou dossier attendu manque ;
+- `ConfigurationIllisible` — `config.feu` présent mais illisible ;
 - `ArchiveIntermediaireResiduelle(PathBuf)` — un `.tar` subsiste au repos, signe d'une ouverture/fermeture interrompue ;
 - `FoyerClairEtArchive(PathBuf)` — un foyer existe à la fois en clair et en `.feu` ; l'archive est complète, le clair se supprime.
+
+`secours_fermeture_foyer` se sert du diagnostic du Gardien sur le dossier clair : la moindre anomalie l'arrête, un foyer trop abîmé ne pouvant plus rendre son trousseau.
 
 ### Contraintes d'état
 
 Préconditions vérifiées avant tout effet :
-- `changement_mdp` : tous les foyers ouverts.
-- `ouverture_foyer` : index valide, foyer non déjà ouvert.
-- `fermeture_foyer` / `secours_fermeture_foyer` : foyer ouvert / diagnostic sans anomalie.
+- `changement_mdp` : tous les foyers ouverts (`AuMoinsUnFoyerFerme`).
+- `ouverture_foyer` : index valide, foyer non déjà ouvert (`FoyerDejaOuvert`).
+- `fermeture_foyer` : foyer ouvert (`FoyerFerme`).
+- `secours_fermeture_foyer` : foyer marqué fermé **et** dossier clair sans anomalie (`FermetureSecoursFoyerImpossible`).
 - Blobs : foyer ouvert ; `depot_blob` exige en outre un `index_classeur` valide.
 - `dechiffrement_asymetrique`, `signature_foyer` : foyer ouvert. `chiffrement_asymetrique`, `signature_noeud` : nœud allumé.
 
@@ -172,9 +175,9 @@ Enu {
 
 Le hash et la signature couvrent **uniquement la carte sérialisée**, jamais la braise ni la date — qui restent des métadonnées malléables (routage, horodatage indicatif). Deux signataires possibles : un **foyer** (ENU de contenu, braise du foyer) ou le **nœud** lui-même (`BRAISE_VIDE`, réservée aux racines de l'arborescence).
 
-Le **modèle de confiance** est porté par le chargement : `Enu::charger` relit l'enveloppe depuis le disque puis vérifie, selon la braise annoncée, la signature contre la clé publique du nœud ou du foyer, **et** que le hash recalculé de la carte égale le `hash_carte` stocké. La braise restant hors signature, la falsifier ne peut que router vers la mauvaise clé et faire **échouer** la vérification — jamais faire accepter une ENU.
+Le **modèle de confiance** est porté par le chargement. `Enu::charger` relit l'enveloppe puis vérifie, selon la braise annoncée, la signature contre la clé publique du nœud ou du foyer, **et** que le hash recalculé de la carte égale le `hash_carte` stocké. La braise restant hors signature, la falsifier ne peut que router vers la mauvaise clé et faire **échouer** la vérification — jamais faire accepter une ENU.
 
-`Enu` est exposé **en lecture seule** : champs privés, accesseurs publics, constructeurs `pub(super)`. Construire une enveloppe depuis l'extérieur est impossible ; une `Enu` venue de l'extérieur a nécessairement transité par `Enu::charger`, qui garantit son intégrité.
+`Enu` est **privée au crate**. Elle n'est plus réexportée depuis `lib.rs` : l'extérieur ne reçoit que des `Fiche` (voir plus bas). Les deux chargements restent `pub(super)` — `charger` (hash **et** signature), et `charger_sans_verification_signature` (hash seul, réservé au parcours). La barrière d'authenticité `authentique` est repassée par tout ce qui agit sur un blob.
 
 #### `Carte` — le contenu
 
@@ -186,9 +189,9 @@ Trois variantes, chacune portant des métadonnées structurées (`BTreeMap<Strin
 | `Texte` (CaT) | `contenu: String` | texte brut embarqué, borné à 60 kio, nommé par la méta `"nom"` |
 | `Repertoire` (CaR) | `hashs_enu: BTreeSet<[u8; 32]>` | référence ses enfants par leur `hash_carte` |
 
-Une enveloppe prend le nom de sa carte : **ENUd** pour une donnée, **ENUt** pour un texte, **ENUr** pour un répertoire. Les messages d'erreur du code emploient la graphie `EnuD` / `EnuT` / `EnuR` (`SCR-003 > Ce doit être une EnuR`).
+Une enveloppe prend le nom de sa carte : **ENUd** pour une donnée, **ENUt** pour un texte, **ENUr** pour un répertoire. Les messages d'erreur du code emploient la graphie `EnuD` / `EnuT` / `EnuR` (`Ce doit être une EnuR`).
 
-`Carte` est l'inverse d'`Enu` : un `enum` public dont les variantes exposent leurs champs. C'est ce qui permet à un consommateur de descendre l'arborescence en lisant les `hashs_enu` d'une `Carte::Repertoire`. La confiance ne vient pas de l'encapsulation mais de la vérification de la signature à chaque chargement.
+`Carte` est l'inverse d'`Enu` : un `enum` public dont les variantes exposent leurs champs. C'est ce qui permet à un consommateur de descendre l'arborescence en lisant les `hashs_enu` d'une `Carte::Repertoire`. `hashs_enu()` rend une **`Option`** plutôt qu'une erreur sur une feuille : une feuille est le cas normal d'un parcours, et l'`Option` distingue la feuille du répertoire réellement vide.
 
 #### Sérialisation
 
@@ -198,7 +201,35 @@ Format maison, sans crate, en deux passes. L'**enveloppe** s'écrit : `braise` (
 
 - **Content-addressing** — le nom du fichier est le hash hexadécimal de la carte : `~/.feu/enu/<hash_hex>.enu`. Une carte donnée vise toujours le même fichier. `Enu::sauvegarder` est **idempotent** : si le fichier existe, rien n'est réécrit — un contenu identique n'est stocké qu'une fois et peut être référencé par autant d'ENU que nécessaire.
 - **Racines** — le sommet de l'arborescence est signé par le **nœud** (`BRAISE_VIDE`), jamais par un foyer. `Enu::new_racine` pose la méta `_racine` (hash de la racine précédente, ou `""` à la genèse) puis repointe atomiquement le symlink `.DERNIERE_RACINE` (lien temporaire puis `rename`, cible relative au nom de fichier). À la toute première activation, une racine origine est forgée.
-- **`Enu::remplacer`** — un « chercher-remplacer » par hash dans l'arborescence courante : substitue une ENU, reconstruit les répertoires du chemin cible → racine (re-signés sous leur braise pour les répertoires de contenu, signés nœud pour le sommet), puis pose un nouveau sommet. Les anciens sommets et répertoires sont **conservés** — ce sont les versions précédentes de la lignée `_racine`. `Enu::supprimer` existe mais n'a pas d'appelant de production (futur ménage).
+- **`Enu::remplacer`** — un « chercher-remplacer » par hash dans l'arborescence courante : substitue une ENU, reconstruit les répertoires du chemin cible → racine (re-signés sous leur braise pour les répertoires de contenu, signés nœud pour le sommet), puis pose un nouveau sommet. Les anciens sommets et répertoires sont **conservés** — ce sont les versions précédentes de la lignée `_racine`. `Enu::supprimer` existe mais n'a aucun appelant de production.
+
+### `Fiche` — la vue publique d'une ENU
+
+L'interface ne voit jamais `Enu`. Elle reçoit des **`Fiche`** (`scribe/fiche.rs`) : les mêmes champs **sans la signature** — `braise`, `hash_carte`, `date`, `carte` — et elle les rend telles quelles. Les 4 627 octets de signature n'ont ainsi aucune raison de traverser un canal ni de rester en mémoire côté interface.
+
+Une fiche se reçoit et se rend, elle ne se fabrique pas : `Fiche::new` est `pub(crate)`. Le retour se fait par le `hash_carte`, qui suffit à recharger la vraie `Enu` et à la repasser par `authentique` avant d'agir. C'est toujours la crate qui garantit, jamais la fiche — sa `braise`, hors signature, ne vaut que pour l'affichage.
+
+### Itérateurs
+
+Deux parcours exposés par `commandes`, tous deux **paresseux**, **sans cache**, et **sans rien construire** — ni signature, ni écriture. Ils rendent des `Fiche`.
+
+#### `Descendants` — l'espace, en profondeur d'abord
+
+Descend l'arborescence par les `hashs_enu` de chaque `Carte::Repertoire`. Une **pile** (`Vec<(usize, [u8; 32])>`, `pop` par l'arrière, enfants empilés en `.rev()`) impose la profondeur d'abord, dans l'ordre trié du `BTreeSet`. Chaque item porte sa **profondeur**, qui ne peut pas vivre dans la `Fiche` : dans un DAG, la même ENU se rencontre à deux profondeurs.
+
+- `Item = ResultFeuApplication<(usize, Fiche)>` ;
+- le **point de départ fait partie du parcours** (profondeur 0) ;
+- **les doublons sont conservés** — qui veut un inventaire déduplique chez lui ;
+- **aucune signature n'est vérifiée**, pas même au départ : l'arborescence étant un DAG de Merkle, recalculer le hash de la carte à chaque pas (`charger_sans_verification_signature`) chaîne l'intégrité de toute la descendance. C'est ce qui permet de parcourir un arbre **foyer fermé** — les blobs, eux, restent illisibles ;
+- un échec de chargement est rendu **comme un item**, sans interrompre le parcours : seule la branche fautive est perdue, faute de connaître ses enfants.
+
+#### `RacinesAnterieures` — le temps, de la dernière racine à la genèse
+
+Remonte les racines du nœud par la méta `_racine` : une liste chaînée, ni file ni déduplication. La racine de départ fait partie du parcours. L'arrêt se fait sur la **genèse**, dont la méta `_racine` est **vide, pas absente**.
+
+- `Item = ResultFeuApplication<Fiche>` ;
+- **chaque pas est authentifié** (`Enu::charger`, donc hash **et** signature contre la clé du nœud) : le remontant ne traverse que des racines signées par le nœud ;
+- **une erreur termine le parcours**, contrairement au descendant : la racine précédente n'est connue que par la méta de celle qu'on n'a pas pu lire, il n'y a plus de chaîne à suivre (`take` vide le champ avant le chargement).
 
 ### Le Scribe — opérations
 
@@ -206,21 +237,33 @@ Format maison, sans crate, en deux passes. L'**enveloppe** s'écrit : `braise` (
 |---|---|
 | `activation` / `desactivation` | Crée `enu/` (0o700) et amorce la genèse au premier allumage ; oublie les comptoirs à l'extinction |
 | `derniere_enu_racine` | Charge le sommet courant en suivant `.DERNIERE_RACINE` |
-| `charge_enu` | Charge l'ENU de `hash` — `None` si absente |
+| `charge_enu` | Charge l'ENU de `hash` et en rend la `Fiche` — `None` si absente |
 | `ouverture_comptoir_depot` / `fermeture_comptoir_depot` | Ouvre/ferme un comptoir de dépôt |
-| `depot_enu_texte` | Dépose un texte (ENUt) dans un foyer |
+| `depot_enu_texte` / `depot_enu` | Dépose un texte (ENUt), puis le greffe |
+| `greffe_enfants` | Point de passage unique de tout dépôt : accroche les ENU et remonte au sommet |
 | `retrait_lecture_seule` | Matérialise l'arborescence d'une ENUr dans un dossier OS |
-| `charge_blob` / `supprime_blob` / `existence_blob` / `informations_blob` | Accès aux blobs par l'ENU |
+| `charge_blob` / `supprime_blob` / `existence_blob` / `informations_blob` | Accès aux blobs par la `Fiche` de leur ENU |
+| `donne_descendants` / `donne_racines_anterieures` | Arme les deux itérateurs sans laisser sortir `chemin_enu` |
+| `foyers_requis` | Dresse les foyers signataires d'un sous-arbre (pré-passe du retrait) |
 
-**Comptoir de dépôt.** `ouverture_comptoir_depot` crée le dossier, valide les index foyer/classeur, l'enregistre et l'inscrit dans la session. `fermeture_comptoir_depot` parcourt le dossier **bottom-up** (`walkdir`) : chaque fichier est déposé via `FeuNoyau::depot_blob` puis enveloppé dans une `Carte::Donnee` signée ; chaque répertoire devient une `Carte::Repertoire` référençant ses enfants. Le nom de chaque entrée est conservé en méta `"nom"`. Les nouvelles ENU sont greffées sous une racine de dépôt (`greffe_enfants`), et la modification remonte jusqu'à un nouveau sommet du nœud. Le dossier du comptoir est supprimé à la fin ; un comptoir vide laisse la racine inchangée.
+**Comptoir de dépôt.** `ouverture_comptoir_depot` valide les index, crée le dossier et l'enregistre sous un identifiant de compteur croissant — **jamais remis à zéro**, même à l'extinction, pour qu'un identifiant périmé ne désigne jamais un comptoir neuf. L'identifiant et sa destination sont recopiés dans la session (`BTreeMap<usize, (usize, usize)>`). `fermeture_comptoir_depot` reçoit en outre l'**ENU d'accueil** (la `Fiche` marquée), sous laquelle greffer. Le parcours est **bottom-up** (`walkdir`) : chaque fichier est déposé via `FeuNoyau::depot_blob` puis enveloppé dans une `Carte::Donnee` signée ; chaque répertoire devient une `Carte::Repertoire` référençant ses enfants. Le nom de chaque entrée est conservé en méta `"nom"`. Le dossier du comptoir est supprimé à la fin ; un comptoir vide laisse la racine inchangée.
 
 Le **classeur demandé n'est pas garanti** : si la donnée existe déjà ailleurs dans le foyer, le noyau l'y laisse et l'ENU reste valable (elle référence un hash, pas un emplacement) — mais l'écart n'est remonté nulle part.
 
-**Retrait.** `retrait_lecture_seule` crée le dossier de sortie (qui ne doit pas exister) puis reconstruit récursivement ce que décrit l'ENUr : chaque `Donnee` redevient un fichier (blob déchiffré), chaque `Texte` un fichier portant son contenu, chaque `Repertoire` un sous-dossier. Chaque enfant est chargé **et authentifié** avant d'être écrit. Le nom est validé comme composant de chemin (`nom_fichier`), et deux homonymes coexistent par suffixage (`chemin_libre`). Tout foyer signataire d'une `Donnee` rencontrée doit être ouvert.
+**Dépôt.** Les deux voies — comptoir et ENU isolée — convergent vers `greffe_enfants`, seul endroit où se décide qui signe le nouveau sommet. Les enfants y arrivent **déjà signés et sauvegardés** ; seuls l'accueil et ce qui le surplombe sont touchés. L'accueil décide :
+
+- **une racine du nœud**, reconnue à sa braise vide — `Enu::new_racine` forge directement la version suivante, signée *nœud* ;
+- **un répertoire de foyer** — `Enu::new` le re-signe sous sa braise, puis `Enu::remplacer` le substitue dans l'arbre et remonte jusqu'à un `new_racine`.
+
+Si la carte augmentée égale celle de départ, rien n'est forgé et la méthode rend `Ok(())` : les hashs étaient déjà tous présents (la carte est un ensemble) ou la liste était vide. Le cas se produit réellement quand un même fichier est redéposé par le comptoir.
+
+**L'accueil doit appartenir à l'arbre courant**, et chaque voie le vérifie. Une racine qui n'est plus la dernière est refusée (`ScribeRacinePerimee`) : la version qu'elle produirait repartirait d'une carte périmée et perdrait tout ce qui a été déposé depuis. Un répertoire absent de l'arbre l'est aussi (`ScribeRemplacementSansEffet`) : la substitution ne trouve pas sa cible et n'ajouterait qu'un maillon mort à la lignée `_racine`.
+
+**Retrait.** `retrait_lecture_seule` dresse d'abord `foyers_requis` : le `BTreeSet` des foyers signataires du sous-arbre, par un `Descendants` (toutes cartes comptent, pas seulement les `Donnee` — un répertoire de foyer fermé arrête aussi sûrement qu'une donnée). Tout foyer fermé **refuse le retrait avant la moindre écriture** (`ScribeFoyersFermes`, qui les nomme tous). Ensuite seulement, le dossier de sortie (qui ne doit pas exister) est créé et chaque enfant **chargé et authentifié** avant d'être écrit ; le nom est validé comme composant de chemin (`nom_fichier`), et deux homonymes coexistent par suffixage (`chemin_libre`). Une braise qui ne résout vers aucun foyer est écartée de l'inventaire : c'est la racine du nœud.
 
 ### `SessionApplication`
 
-La session porte désormais l'état utile à la présentation : capacités du noyau, braises et états des foyers, clés publiques, et les **comptoirs de dépôt ouverts** (`BTreeSet<usize>`, miroir de ce que le Scribe détient). Les accesseurs indexés rendent des `Option` — un index hors bornes est une absence, pas une erreur. S'ajoutent `nombre_foyers_ouverts` et `foyers_fermes`, lus par la TUI pour filtrer les commandes.
+La session porte l'état utile à la présentation : capacités du noyau, braises et états des foyers, clés publiques, et les **comptoirs de dépôt ouverts** — une `BTreeMap<usize, (usize, usize)>` (identifiant → foyer, classeur), miroir de ce que le Scribe détient. L'unicité de l'identifiant est portée par le type, l'ordre trié est celui des ouvertures (le compteur est croissant). Les accesseurs indexés rendent des `Option` — un index hors bornes est une absence, pas une erreur. S'ajoutent `nombre_foyers_ouverts` et `foyers_fermes`, lus par la TUI pour filtrer les commandes.
 
 ### `InterfaceFeuApplication`
 
@@ -228,7 +271,7 @@ Contrat entre `feu-application` et sa couche de présentation, symétrique d'`In
 
 ### Commandes
 
-Réordonnées en cinq parties (foyer, cryptographie, dépôt-retrait, blobs, ENU). La précondition commune est l'allumage : hors `commande_allumage_noeud`, `commande_verification_signature` et `commande_diagnostic_noeud`, toute commande rend `ErreurFeuApplication::NoeudEteint` nœud éteint.
+Vingt-cinq commandes, réordonnées en cinq parties (foyer, cryptographie, dépôt-retrait, blobs, ENU). La précondition commune est l'allumage : hors `commande_allumage_noeud`, `commande_verification_signature` et `commande_diagnostic_noeud`, toute commande rend `ErreurFeuApplication::NoeudEteint` nœud éteint.
 
 | Commande | Rôle |
 |---|---|
@@ -238,64 +281,81 @@ Réordonnées en cinq parties (foyer, cryptographie, dépôt-retrait, blobs, ENU
 | `commande_diagnostic_noeud` / `commande_diagnostic_foyer` | Diagnostics |
 | `commande_chiffrement_asymetrique` / `commande_dechiffrement_asymetrique` | ML-KEM-1024 |
 | `commande_signature_noeud` / `commande_signature_foyer` / `commande_verification_signature` | Signatures ML-DSA-87 |
-| `commande_ouverture_comptoir_depot` / `commande_fermeture_comptoir_depot` | Comptoir de dépôt |
-| `commande_retrait_lecture_seule` | Retrait sur disque |
-| `commande_chargement_blob` / `commande_suppression_blob` / `commande_existence_blob` / `commande_informations_blob` | Blobs, par l'ENU seule |
+| `commande_ouverture_comptoir_depot` / `commande_fermeture_comptoir_depot` | Comptoirs de dépôt, plusieurs à la fois |
+| `commande_retrait_lecture_seule` | Retrait sur disque, gardé par les foyers requis |
+| `commande_chargement_blob` / `commande_suppression_blob` / `commande_existence_blob` / `commande_informations_blob` | Blobs, désignés par la `Fiche` de leur ENU |
 | `commande_derniere_enu_racine` / `commande_chargement_enu` | Sommet et descente de l'arborescence |
 | `commande_depot_enu_texte` | Dépôt d'un texte court (ENUt) |
+| `commande_descendants` / `commande_racines_anterieures` | Les deux parcours |
 
-Chaque commande qui mute la session notifie la présentation via `recevoir_session_application(Option<SessionApplication>)` — `Some(session)` après mutation, `None` à l'extinction.
+Chaque commande qui mute la session notifie la présentation via `recevoir_session_application(Option<SessionApplication>)` — `Some(session)` après mutation, `None` à l'extinction. `commande_changement_mdp` est la seule commande de foyer à ne pas notifier : les clés publiques ne changent pas, le miroir reste exact.
 
 ---
 
 ## `feu-tui`
 
-Interface terminal sur Ratatui et crossterm. **Deux threads** : le principal tient la boucle TUI, le second pilote `FeuApplication`. Ils communiquent par deux canaux `mpsc` typés (`MessageTuiCoeur`, `MessageCoeurTui`) créés dans `main.rs` et confiés à deux connecteurs. Une panique du thread cœur sort en code 1 ; le terminal est restauré par le guard de `ratatui::run`.
+Interface terminal sur Ratatui et crossterm. **Deux threads** : le principal tient la boucle TUI, le second pilote `FeuApplication`. Ils communiquent par deux canaux `mpsc` typés (`MessageTuiCoeur`, `MessageCoeurTui`) créés dans `main.rs` et confiés à deux connecteurs. Une panique du thread cœur sort en code 1 ; le terminal est restauré par le guard de `ratatui::run`. `main` reste le seul point de lecture de `$HOME` : il résout `chemin_home` (racine de l'écran du disque) et `chemin_feu` (racine du nœud) au bord du programme.
 
-La table de commandes contextuelle (`CommandesActives`) s'enrichit de trois gestes :
+### Trois écrans de travail à onglets
 
-- **`d`** — ouvre un comptoir de dépôt depuis le classeur courant (foyer et classeur capturés de la position courante, chemin en dur `CHEMIN_COMPTOIR_DEPOT`). Active tant qu'aucun comptoir n'est ouvert.
-- **`c`** — ferme le comptoir ouvert. Prend la place de `d` dans la table dès qu'un comptoir l'est.
-- **`r`** — retire la dernière racine sur le disque (`CHEMIN_COMPTOIR_RETRAIT`, en dur). Active dès que le nœud est allumé.
+Un module par écran (`ecran_pilotage`, `ecran_arborescence_enu`, `ecran_arborescence_disque`), chacun tenant son état, son rendu et ses transitions. `Ecran` est un pur sélecteur sans données. Les onglets sont portés par la bordure basse du cadre commun (`rendu::carre_principal`), l'actif en couleur d'accent. `h` et `l` passent d'un écran à l'autre, **en ligne et non en cycle** : `ArborescenceEnu` → `Pilotage` → `ArborescenceDisque`.
 
-Les comptoirs ouverts sont lus dans la session, plus dans un état TUI local : la TUI ne retient rien entre deux envois. `r` est la seule entorse au filtrage strict — elle est active sans que la table vérifie les foyers requis, faute d'itérateur pour les dresser ; l'échec remonte en erreur.
+- **Pilotage** — l'usage courant, et ses trois modales : saisie du mot de passe (cadre orange arrondi), affichage de la seed (trois colonnes), information générique (l'à-propos sur `!`).
+- **Arborescence des ENU** — l'arbre du nœud, chargé par `R` (le cœur répond par un `Vec<(usize, Fiche)>` à plat, déjà en profondeur d'abord), rendu indenté de la profondeur avec une colonne de marque, un guide par niveau et un symbole par carte. Repliable : `Entrée` plie/déplie un répertoire peuplé.
+- **Arborescence du disque** — depuis `$HOME`, construite un niveau à la fois (`read_dir`), repliable, triée (chemin puis répertoires en tête), sans rafraîchissement automatique (`R` recharge la branche sous le curseur). La lecture du disque vit dans `feu-tui`, pas dans le cœur.
 
-Quatre écrans, inchangés : `Normal` (carré à angles droits), `SaisieMdp` (cadre orange arrondi, mot de passe masqué), `AffichageSeed` (mots en trois colonnes), `AffichageInformation` (message générique — l'écran « à propos » sur `!`).
+Sur les deux arborescences, les mêmes touches font les mêmes gestes : `R` charge ou rafraîchit, `j`/`k` déplacent le curseur, `Entrée` plie ou déplie, `m` retient ce qui est sous le curseur — une `Fiche` d'un côté, un `PathBuf` de l'autre —, `x` lève la marque.
 
-Le binaire (`main.rs`) est le seul point de lecture de `$HOME` : le chemin racine est résolu au bord du programme puis injecté vers l'application, le noyau et le Scribe.
+### Marques et actions
+
+Deux marques **transversales** vivent dans `EtatTui` : `enu_selectionnee: Option<Fiche>` et `chemin_selectionne: Option<PathBuf>`. L'une se pose sur l'écran des ENU, l'autre sur celui du disque, et toutes deux se consomment sur le pilotage. `x` est une seule commande (`SupprimerSelection`), l'écran affiché disant laquelle des deux marques elle vise.
+
+- **`d`** — ouvre un comptoir de dépôt depuis un classeur, **au chemin marqué** : le comptoir est le sous-dossier `fN.cM_depot_feu` de la marque (par exemple `f0.c0_depot_feu`), jamais le dossier marqué lui-même. Son nom porte sa destination, ce qui le rend unique par couple foyer-classeur.
+- **`c`** — ferme un comptoir : l'identifiant est saisi et validé contre la session, l'ENU d'accueil est la marque ENU (il faut une `Carte::Repertoire`). Fermer un comptoir vide la marque et l'arbre affiché.
+- **`r`** — retire l'ENU marquée **au chemin marqué** : le dossier de sortie est le sous-dossier `retrait_feu_<8 caractères hex>`, les quatre premiers octets du `hash_carte`. Active dès que les deux marques sont posées.
+- **`S`** — fermeture de secours d'un foyer (saisie du numéro). Active dès que le nœud est allumé, sans autre condition : l'état qui appelle un secours ne se lit pas dans la session, seul le noyau le constate.
+
+Les foyers fermés ne sont pas filtrés par la table pour `c` et `r` : une touche qui s'évanouit renseigne moins que l'erreur qui nomme le foyer à rouvrir.
+
+### Gestion des erreurs dans la boucle
+
+`ErreurFeuTui` (`feu-tui/src/erreur.rs`) porte les deux natures qui remontent la boucle : les refus que l'utilisateur lit et corrige, et l'échec d'entrée-sortie du terminal, qui ne s'affiche nulle part puisque plus rien ne s'affiche. C'est la **variante** qui trie, pas le texte, et le tri se fait dans `Tui::lancer` : **seul `Io` sort vers `main`**, toute autre variante devient un message à l'écran et **la boucle continue**. Les trois `saisie_mode_*` rendent un `ResultFeuTui` sans distinguer les deux natures. Plus aucun `unwrap` faillible dans la TUI ; les gardes contre la panique ont quitté la table au profit de l'erreur nommée.
 
 ---
 
 ## Gestion d'erreurs
 
-Une chaîne de conversion `From` par couche. Chaque couche encapsule l'erreur de la couche inférieure dans une `String` — le type interne est perdu, seul le message textuel remonte. La couche ENU ajoute un maillon.
+Un seul type d'erreur par crate : aucun type interne de module, aucune erreur en `String` à l'intérieur d'une crate.
 
-| Type | Crate | Préfixe | Variantes notables |
+| Type | Crate | Variantes | Notes |
 |---|---|---|---|
-| `ErreurFeuNoyau` | `feu-noyau` | `NOY >` | `Gardien`, `Cryptographe`, `Archiviste` (String) ; `IndexInvalide`, `FoyerFerme`, `TousFoyersNonOuverts`, `BraiseIntrouvable`, `BraiseTryFromStr`, `BlobIntrouvable`, `TailleMaxDepassee`, … |
-| `ErreurScribe` | `feu-application` (interne) | `SCR >` | `Interne(String)`, `FeuNoyau(String)`, `IoError` |
-| `ErreurFeuApplication` | `feu-application` | `APP >` | `FeuNoyau(String)`, `Scribe(String)`, `NoeudEteint`, `AuMoinsUnFoyerOuvert` |
+| `ErreurFeuNoyau` | `feu-noyau` | 46 | levée partout, jusqu'à la frontière, sans type de module |
+| `ErreurFeuApplication` | `feu-application` | 26 | unique type exposé ; reçoit `ErreurFeuNoyau` aplatie en `String` |
+| `ErreurFeuTui` | `feu-tui` (`pub(crate)`) | 13 | seules les siennes ; `Io` sort, le reste s'affiche |
 
-Les refus du Scribe voyagent dans la chaîne, pas dans le type, sous des codes documentés : `ENU-NNN` (`scribe/enu.rs`), `SCR-NNN` (`scribe.rs`), et l'unique `COM_D-001` (`scribe/comptoir.rs`, dossier de comptoir déjà présent). Codes notables :
+La règle de nommage est commune : des **variantes nommées par le fait**, pas par le module ni par un code séquentiel. Les variantes **internes** viennent d'abord, par ordre alphabétique — le seul ordre qui dise où insérer la suivante —, le préfixe du nom rappelant le composant qui lève quand le cas lui est propre. Les variantes **externes** ferment la liste et portent l'erreur d'une crate tierce, par `#[from]` quand le type source implémente `std::error::Error` ; sinon la conversion est manuelle (`.to_string()`), le type original étant perdu.
 
-| Code | Sens |
-|---|---|
-| `ENU-003` | ENU non authentifiable (signataire inconnu, signature ou hash invalides) |
-| `ENU-004` | carte ciblée non répertoire |
-| `ENU-006` / `ENU-009` | texte trop long / nom refusé comme composant de chemin |
-| `ENU-008` | méta `"nom"` absente |
-| `SCR-001` / `SCR-007` / `SCR-008` | comptoir invalide / dossier disparu / foyer fermé |
-| `SCR-002` / `SCR-003` | dossier de retrait déjà présent / racine non répertoire |
-| `SCR-004` / `SCR-005` | braise inconnue / carte non donnée |
-| `SCR-006` / `SCR-009` | index foyer / classeur hors bornes |
+### `ErreurFeuNoyau`
 
-Seul `SCR-008` laisse retenter la fermeture du comptoir ; tout autre échec le consomme et laisse le dossier à l'utilisateur.
+Les variantes internes couvrent l'état du nœud et des foyers (`AuMoinsUnFoyerFerme`, `FoyerDejaOuvert`, `FoyerFerme`, `FermetureSecoursFoyerImpossible`, `SeedRefuseeNoeudExistant`), les index et les bornes (`IndexFoyerInvalide`, `IndexClasseurInvalide`, les quatre `TailleMaxDepassee*`), et ce qui est propre à un composant (`Gardien*`, `Cryptographe*`, `ArchivisteIndisponible`, `BlobIntrouvable`, `BraiseErronnee`, `CheminInexistant`). Variantes externes : `IoError`, `ParseIntError`, `Bip39` (par `#[from]`) ; `Hkdf(String)`, `AesGcm(String)`, `DecodePartial(String)` (conversion manuelle, les types sources n'implémentant pas `std::error::Error`). Aucune charge utile n'est sensible : une braise ou un chemin absolu est porté pour inspection, jamais affiché.
+
+### `ErreurFeuApplication`
+
+Deux variantes hors Scribe — `AuMoinsUnFoyerOuvert`, `NoeudEteint` — puis dix-neuf `Scribe*` : forme d'une carte (`ScribeEnuDAttendue`, `ScribeEnuRAttendue`, `ScribeEnuRacineAttendue`, `ScribeCarteMalFormee`, `ScribeMetaNomAbsente`), confiance (`ScribeEnuNonAuthentique`, `ScribeEnuNonIntegre`, `ScribeBraiseInconnue`), index et bornes (`ScribeIndex*`, `ScribeTailleMaxDepasseeTexte`), disque (`ScribeDossierDejaExistant`, `ScribeDossierDepotIntrouvable`, `ScribeNomFichierInvalide`), état des foyers (`ScribeFoyerFerme`, `ScribeFoyersFermes`) et place dans l'arbre (`ScribeRacinePerimee`, `ScribeRemplacementSansEffet`). Variantes externes : `DecodeError`, `FeuNoyau(String)` (le type du noyau est aplati : aucun type interne ne traverse l'API), `IoError`, `Utf8Error`, `WalkDirError`.
+
+### `ErreurFeuTui`
+
+Une variante par échec nommable de la couche terminal : sept portent le préfixe de l'écran qui les lève (`Disque*`, `Enu*` — curseur absent, sélection hors liste, arbre non chargé, entrée qui n'est pas un répertoire), cinq le préfixe `Tui*` pour ce qui manque au moment d'agir (marque, nœud allumé, entier valide, index de comptoir), et `Io` ferme la liste. Le préfixe des messages marque la couche : `NOY >`, `APP >`, `TUI >`.
+
+### Séparation des erreurs et du flux
+
+Le cœur (`ConnecteurVersTui`) transforme tout échec de `FeuApplication` en `MessageCoeurTui::AffichageErreur(String)` : **aucune erreur applicative n'arrête le thread**. Seuls `Quitter` et la fermeture du canal rompent sa boucle. Côté TUI, le message est posé par `EtatTui::ajouter_message_erreur`, avec un compte à rebours de cinq secondes.
 
 ---
 
 ## Tests
 
-61 tests, tous **intégrés aux crates** en `#[cfg(test)] mod tests`. Le dossier `tests/` externe a été écarté : l'essentiel des cibles utiles est `pub(super)` ou `pub(crate)` — `Enu::sauvegarder`, `Enu::charger`, les fonctions du Scribe — donc invisible depuis un crate de test séparé.
+67 tests, tous **intégrés aux crates** en `#[cfg(test)] mod tests`. Le dossier `tests/` externe a été écarté : l'essentiel des cibles utiles est `pub(super)` ou `pub(crate)` — `Enu::sauvegarder`, `Enu::charger`, les fonctions du Scribe — donc invisible depuis un crate de test séparé.
 
 | Emplacement | Nb | Objet |
 |---|---|---|
@@ -304,13 +364,13 @@ Seul `SCR-008` laisse retenter la fermeture du comptoir ; tout autre échec le c
 | `feu-noyau/src/cryptographe/trousseau.rs` | 5 | Déterminisme de la dérivation, distinction des clés, cycle de chiffrement, mauvais mot de passe |
 | `feu-noyau/src/cryptographe.rs` | 2 | Cycles signature/vérification et chiffrement/déchiffrement asymétrique |
 | `feu-noyau/src/gardien.rs` | 1 | Cycle de `config.feu` |
-| `feu-application/src/tests.rs` | 6 | La crate par ses seules `commande_*` : cycle applicatif, persistance à travers extinction/rallumage, vie d'un blob, comptoir, dépôt→retrait, ENU texte |
+| `feu-application/src/tests.rs` | 12 | La crate par ses seules `commande_*` : cycle applicatif, persistance à travers extinction/rallumage, vie d'un blob, comptoir, dépôt→retrait, ENU texte, **descendants, racines antérieures, secours, retrait foyer fermé, dépôt sous racine ou ENUr périmée** |
 | `feu-application/src/scribe/tests.rs` | 9 | Ce qui exige une pile réelle : cycle disque d'une ENU, falsification de signature et de braise, cycle de racine, remplacements, greffe |
 | `feu-application/src/scribe/enu.rs` | 20 | Sérialisation canonique (octets attendus, aller-retour) et gardes de forme des cartes |
 | `feu-application/src/session.rs` | 1 | Comptage des états de foyers |
 | `feu-application/src/scribe/comptoir.rs` | 1 | Cycle de vie disque d'un comptoir |
 
-**Trois étages.** `src/tests.rs` éprouve la crate depuis son contrat public, comme le fait son consommateur réel. `scribe/tests.rs` garde ce que le contrat public n'atteindrait qu'en se bâtissant un décor exprès — l'enveloppe et sa signature, la barrière de confiance de `charger`, la tenue de l'arborescence. Les `mod tests` en ligne prennent ce qui se prouve sans monter de pile. **Le critère est la pile, pas la visibilité** : dès qu'un test exige un noyau allumé et un foyer ouvert, il quitte le module en ligne. À décor égal, le test du haut prend tout — il prouve en plus le câblage ; deux tests du Scribe sont remontés à ce titre.
+**Trois étages.** `src/tests.rs` éprouve la crate depuis son contrat public, comme le fait son consommateur réel. `scribe/tests.rs` garde ce que le contrat public n'atteindrait qu'en se bâtissant un décor exprès — l'enveloppe et sa signature, la barrière de confiance de `charger`, la tenue de l'arborescence. Les `mod tests` en ligne prennent ce qui se prouve sans monter de pile. **Le critère est la pile, pas la visibilité** : dès qu'un test exige un noyau allumé et un foyer ouvert, il quitte le module en ligne.
 
 Les tests d'intégration montent une pile réelle : noyau allumé depuis une seed neuve dans un `TempDir`, foyer ouvert, Scribe activé, l'interface de la couche (`InterfaceFeuNoyau` ou `InterfaceFeuApplication`) implémentée par un `InterfaceTest` qui collecte les notifications. Aucun mock de la cryptographie ni du disque.
 
@@ -320,7 +380,7 @@ Les tests d'intégration montent une pile réelle : noyau allumé depuis une see
 
 ## Cryptographie
 
-Aucune primitive ne change en v0.0.5. La cryptographie est purement post-quantique côté asymétrique ; les primitives symétriques et de hachage (AES-256-GCM, SHA3-256, Argon2id) restent en place, leur sécurité effective post-Grover étant jugée suffisante (~128 bits).
+La cryptographie est purement post-quantique côté asymétrique ; les primitives symétriques et de hachage (AES-256-GCM, SHA3-256, Argon2id) restent en place, leur sécurité effective post-Grover étant jugée suffisante (~128 bits).
 
 ### Mode logiciel
 
@@ -372,7 +432,7 @@ Paramètres Argon2id effectifs (défauts de la crate, conformes aux recommandati
 
 Signature purement post-quantique (FIPS 204, niveau 5 ≈ AES-256). Deux niveaux :
 
-- **Nœud** (label `feu/noeud/signature`) — clé racine, signe les actes engageant le nœud dans sa globalité : les **racines de l'arborescence ENU** en v0.0.5.
+- **Nœud** (label `feu/noeud/signature`) — clé racine, signe les actes engageant le nœud dans sa globalité : les **racines de l'arborescence ENU**.
 - **Foyer** (label `feu/foyer/signature/{i}`) — authentifie ce qui appartient au foyer : les **ENU de contenu**.
 
 La signature est **déterministe** avec l'implémentation `ml-dsa` 0.1 — pour une même clé et un même message, la signature est identique. Le protocole ne s'appuie pas sur ce déterminisme (le sel en a été découplé précisément pour cette raison).
@@ -420,7 +480,7 @@ adresse  = BASE32_NOPAD(braise || checksum).to_lowercase() + ".braise"
 
 La braise est l'identifiant du foyer de bout en bout : clé de `config.feu`, nom du dossier `~/.feu/<braise>/`, nom des archives `<braise>.feu` et `<braise>.tar`, signataire annoncé d'une ENU.
 
-**Nouveauté v0.0.5 :** elle est portée par le newtype `Braise([u8; 55])`, qui stocke les 55 caractères BASE32 sans le suffixe (réintroduit par `Display`) et ne peut naître que d'une chaîne validée par `TryFrom<&str>` — longueur, alphabet, suffixe. La `String` a disparu de toutes les signatures. `BRAISE_VIDE` (55 fois `a`) désigne le signataire nœud et sert de valeur d'initialisation des tableaux de braises — session neuve, configuration avant lecture. **Aucun foyer réel ne la porte**, et c'est précisément ce qui permet de l'employer comme aiguillage de vérification : une ENU qui l'annonce est vérifiée contre la clé du nœud.
+Elle est portée par le newtype `Braise([u8; 55])`, qui stocke les 55 caractères BASE32 sans le suffixe (réintroduit par `Display`) et ne peut naître que d'une chaîne validée par `TryFrom<&str>` — longueur, alphabet, suffixe. `BRAISE_VIDE` (55 fois `a`) désigne le signataire nœud et sert de valeur d'initialisation des tableaux de braises. **Aucun foyer réel ne la porte**, et c'est précisément ce qui permet de l'employer comme aiguillage de vérification : une ENU qui l'annonce est vérifiée contre la clé du nœud.
 
 ### Chiffrement symétrique des blobs
 
@@ -460,8 +520,6 @@ Le Tiroir zéroïse le blob en clair lors du remplacement par le blob chiffré e
 ## Structure disque
 
 Racine : `~/.feu/`, résolue par le binaire puis injectée. Permissions : dossiers `rwx------` (0o700), fichiers `rw-------` (0o600). Toutes les écritures de fichiers de clés sont atomiques : écriture dans `<chemin>.tmp` (0o600), puis `rename` sur la cible.
-
-La structure des foyers ne change pas ; le dossier `enu/` s'y ajoute.
 
 ### Nœud, foyers fermés
 
@@ -547,7 +605,7 @@ Fichier `<hash_carte_hex>.enu` dans `enu/`, en clair. Contenu : `braise (62 o UT
 
 ### Archive du foyer
 
-Fermeture : dossier → `.tar` → chiffrement AES-256-GCM-stream → `.feu`. Ouverture : `.feu` → déchiffrement → `.tar` → extraction. Les archives intermédiaires `.tar` et `.feu` sont supprimées après usage, y compris **sur les chemins d'erreur** depuis la v0.0.5 ; un `.tar` résiduel au repos est signalé par le diagnostic.
+Fermeture : dossier → `.tar` → chiffrement AES-256-GCM-stream → `.feu`. Ouverture : `.feu` → déchiffrement → `.tar` → extraction. Les archives intermédiaires `.tar` et `.feu` sont supprimées après usage, y compris **sur les chemins d'erreur** ; un `.tar` résiduel au repos est signalé par le diagnostic.
 
 **Format binaire de l'archive `.feu` :**
 
@@ -584,7 +642,7 @@ Linux et macOS uniquement. Le noyau repose sur des primitives Unix (permissions 
 
 ## Environnement technique
 
-**Edition Rust :** 2024. Version `0.0.5` et licence `GPL-3.0-or-later` définies au niveau workspace. Le lint `missing_docs = "warn"` est actif sur toutes les crates.
+**Edition Rust :** 2024. Version `0.0.6` et licence `GPL-3.0-or-later` définies au niveau workspace. Le lint `missing_docs = "warn"` est actif sur toutes les crates.
 
 ### Dépendances `feu-noyau`
 
@@ -603,7 +661,7 @@ Linux et macOS uniquement. Le noyau repose sur des primitives Unix (permissions 
 | `tar` | Archivage/extraction des dossiers de foyer |
 | `data-encoding` (`alloc`) | BASE32_NOPAD (adresses `.braise`), HEXLOWER (hashes) |
 | `rand` | Génération de nonces aléatoires (`OsRng`) |
-| `thiserror` | Dérivation des types d'erreur |
+| `thiserror` | Dérivation du type d'erreur |
 
 Dev-dépendance : `tempfile` (dossiers temporaires des tests).
 
@@ -613,7 +671,7 @@ Dev-dépendance : `tempfile` (dossiers temporaires des tests).
 |---|---|
 | `feu-noyau` | Dépendance locale (chemin relatif) |
 | `secrecy` | `SecretString` pour le mot de passe et la phrase seed |
-| `thiserror` | Dérivation de `ErreurFeuApplication` et `ErreurScribe` |
+| `thiserror` | Dérivation de `ErreurFeuApplication` |
 | `data-encoding` | HEXLOWER (noms de fichiers ENU, hashes de blobs) |
 | `walkdir` | Parcours bottom-up du comptoir de dépôt |
 
@@ -627,6 +685,7 @@ Dev-dépendances : `tempfile` (dossiers temporaires), `rand` (contenus aléatoir
 | `ratatui` | Rendu de l'interface terminal |
 | `crossterm` | Événements clavier, gestion du terminal |
 | `secrecy` | `SecretString` (mot de passe, mots de la seed) |
+| `thiserror` | Dérivation d'`ErreurFeuTui` |
 
 ---
 
@@ -650,7 +709,7 @@ Dev-dépendances : `tempfile` (dossiers temporaires), `rand` (contenus aléatoir
 2. **Toutes les clés sont dérivables depuis la seed** — la perte des clés est récupérable par ressaisie de la seed. Les archives chiffrées, les blobs et les ENU doivent être sauvegardés séparément.
 3. **Une clé, un usage** — ML-DSA-87 (signature), ML-KEM-1024 (chiffrement), AES-256-GCM (symétrique) sont strictement séparés. La séparation de domaine est structurelle (labels HKDF), pas conventionnelle.
 4. **Résistance post-quantique** — toutes les primitives asymétriques sont de niveau NIST 5 (≈ AES-256). Les primitives symétriques conservent ~128 bits de sécurité post-Grover.
-5. **Les clés en clair n'existent qu'en mémoire** — sur le disque, toutes les clés privées et symétriques sont chiffrées. Exception connue : un crash pendant la fermeture d'un foyer peut laisser un `.tar` non chiffré dans `~/.feu/` — le diagnostic le signale désormais.
+5. **Les clés en clair n'existent qu'en mémoire** — sur le disque, toutes les clés privées et symétriques sont chiffrées. Exception connue : un crash pendant la fermeture d'un foyer peut laisser un `.tar` non chiffré dans `~/.feu/` — le diagnostic le signale, le secours le répare.
 6. **Gardien / Cryptographe** — le disque et le clair ne se rencontrent jamais dans le même composant.
 7. **L'Archiviste ne voit jamais de clair** — uniquement des blobs chiffrés et des hashes. Le Tiroir zéroïse le blob en clair dès son remplacement par le chiffré, et à chaque vidage.
 8. **Double chiffrement des blobs** — clé de classeur (permanent), puis clé d'archive du foyer (à la fermeture).

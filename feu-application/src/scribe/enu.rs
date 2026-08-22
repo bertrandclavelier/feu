@@ -38,7 +38,7 @@
 //! # Exposition publique
 //!
 //! [`Enu`] et [`Carte`] sont exposés en **lecture seule** à toutes les crates
-//! du workspace via [`crate::Enu`] et [`crate::Carte`] (réexportés depuis
+//! du workspace via [`Enu`] et [`Carte`] (réexportés depuis
 //! `lib.rs`).
 //!
 //! - **`Enu`** — champs privés, accesseurs publics. Seule la crate
@@ -124,6 +124,8 @@ pub struct Enu {
     /// Timestamp Unix de mise sous enveloppe (non couvert par la signature).
     date: u64,
 
+    /// Le contenu enveloppé, seule partie couverte par `hash_carte` et par la
+    /// signature.
     carte: Carte,
 }
 
@@ -392,9 +394,7 @@ impl Enu {
     /// Supprime le fichier `.enu` de cette ENU du disque.
     ///
     /// Sans appelant de production depuis que [`Enu::remplacer`] conserve les
-    /// anciens sommets (historique des versions) : seul un test l'exerce
-    /// aujourd'hui, d'où le `#[allow(dead_code)]`. Elle servira au futur
-    /// chantier de ménage (reset), qui élague les versions abandonnées.
+    /// anciens sommets : seul un test l'exerce, d'où le `#[allow(dead_code)]`.
     ///
     /// # Errors
     ///
