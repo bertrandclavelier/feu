@@ -1100,3 +1100,105 @@ fn retrait_foyer_ferme() -> ResultFeuApplication<()> {
 
     Ok(())
 }
+
+/// Déposer sous une racine qui n'est plus la dernière est refusé, et ne produit
+/// aucune version.
+///
+/// La voie `BRAISE_VIDE` de `greffe_enfants` : sans le refus, la nouvelle racine
+/// repartirait d'une carte périmée et perdrait tout ce qui a été déposé depuis.
+#[test]
+fn depot_dans_racine_perimee() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+
+    let interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    app.commande_ouverture_foyer(&interface_test, 0)?;
+
+    let enu_racine1 = app.commande_derniere_enu_racine()?;
+
+    // Ce dépôt fait de enu_racine1 une racine périmée.
+    app.commande_depot_enu_texte(&enu_racine1, 0, "enu texte 1", "test")?;
+
+    let enu_racine2 = app.commande_derniere_enu_racine()?;
+
+    assert!(matches!(
+        app.commande_depot_enu_texte(&enu_racine1, 0, "enu texte 2", "test"),
+        Err(ErreurFeuApplication::ScribeRacinePerimee)
+    ));
+
+    let enu_racine3 = app.commande_derniere_enu_racine()?;
+
+    assert_eq!(enu_racine3.hash_carte(), enu_racine2.hash_carte());
+
+    app.commande_fermeture_foyer(&interface_test, 0)?;
+
+    app.commande_extinction_noeud(&interface_test)?;
+
+    Ok(())
+}
+
+/// Déposer sous un répertoire de foyer sorti de l'arbre courant est refusé, et
+/// ne produit aucune version.
+///
+/// L'autre voie de `greffe_enfants`, celle qui passe par [`Enu::remplacer`] :
+/// la cible absente laissait forger une racine identique à la précédente, un
+/// maillon mort dans la lignée des `_racine`.
+#[test]
+fn depot_dans_enur_perimee() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+
+    let interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    app.commande_ouverture_foyer(&interface_test, 0)?;
+
+    let enu_racine1 = app.commande_derniere_enu_racine()?;
+
+    let dossier_temporaire = TempDir::new().unwrap();
+    let chemin_comptoir = dossier_temporaire.path().join("comptoir_depot");
+
+    let index_comptoir =
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir, 0, 0)?;
+
+    // Un dossier et rien d'autre : la racine n'aura qu'un enfant, le répertoire
+    // de foyer que le test vise.
+    create_dir(chemin_comptoir.join("test")).unwrap();
+
+    app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine1)?;
+
+    let enu_racine2 = app.commande_derniere_enu_racine()?;
+
+    let fiche = app
+        .commande_chargement_enu(enu_racine2.carte().hashs_enu().unwrap().first().unwrap())
+        .unwrap()
+        .unwrap();
+
+    // Ce dépôt remplace le répertoire : la fiche en main sort de l'arbre.
+    app.commande_depot_enu_texte(&fiche, 0, "enu texte 1", "test")?;
+
+    let enu_racine3 = app.commande_derniere_enu_racine()?;
+
+    assert!(matches!(
+        app.commande_depot_enu_texte(&fiche, 0, "enu texte 2", "test"),
+        Err(ErreurFeuApplication::ScribeRemplacementSansEffet)
+    ));
+
+    let enu_racine4 = app.commande_derniere_enu_racine()?;
+
+    assert_eq!(enu_racine3.hash_carte(), enu_racine4.hash_carte());
+
+    app.commande_fermeture_foyer(&interface_test, 0)?;
+
+    app.commande_extinction_noeud(&interface_test)?;
+
+    Ok(())
+}

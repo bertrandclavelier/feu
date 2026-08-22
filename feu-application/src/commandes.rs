@@ -503,7 +503,10 @@ impl FeuApplication {
     /// comptoir disparu ([`ErreurFeuApplication::ScribeDossierDepotIntrouvable`]),
     /// foyer de destination fermé ([`ErreurFeuApplication::ScribeFoyerFerme`])
     /// ou braise introuvable
-    /// ([`ErreurFeuApplication::ScribeIndexFoyerInvalide`]), E/S, dépôt de
+    /// ([`ErreurFeuApplication::ScribeIndexFoyerInvalide`]), racine d'accueil qui
+    /// n'est plus la dernière ([`ErreurFeuApplication::ScribeRacinePerimee`]),
+    /// répertoire d'accueil absent de l'arbre courant
+    /// ([`ErreurFeuApplication::ScribeRemplacementSansEffet`]), E/S, dépôt de
     /// données ou signature (notamment si un foyer du chemin reconstruit est
     /// fermé).
     ///
@@ -775,8 +778,12 @@ impl FeuApplication {
     /// ([`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`]), nom invalide
     /// ([`ErreurFeuApplication::ScribeNomFichierInvalide`]), `index_foyer` hors
     /// bornes ([`ErreurFeuApplication::ScribeIndexFoyerInvalide`]), répertoire
-    /// d'accueil invalide ([`ErreurFeuApplication::ScribeEnuRAttendue`]), E/S ou
-    /// signature (notamment si un foyer du chemin reconstruit est fermé).
+    /// d'accueil invalide ([`ErreurFeuApplication::ScribeEnuRAttendue`]), racine
+    /// d'accueil qui n'est plus la dernière
+    /// ([`ErreurFeuApplication::ScribeRacinePerimee`]), répertoire d'accueil
+    /// absent de l'arbre courant
+    /// ([`ErreurFeuApplication::ScribeRemplacementSansEffet`]), E/S ou signature
+    /// (notamment si un foyer du chemin reconstruit est fermé).
     pub fn commande_depot_enu_texte(
         &self,
         fiche_racine_depot: &Fiche,

@@ -85,9 +85,9 @@ pub(super) struct EtatArborescenceEnu {
     /// Le dernier arbre reçu du cœur, à plat et prêt à dessiner : l'ordre est
     /// celui de l'affichage, la profondeur son décalage.
     ///
-    /// `None` ne veut pas dire « arbre vide » mais **jamais demandé** — c'est
-    /// lui qui distingue l'écran au premier abord d'un nœud sans contenu, et
-    /// qui décidera lequel des deux messages afficher.
+    /// `None` ne veut pas dire « arbre vide » mais **rien à montrer** : jamais
+    /// demandé, ou invalidé par un dépôt. C'est lui qui distingue l'écran d'un
+    /// nœud sans contenu, et il porte le même appel au `R` dans les deux cas.
     arborescence_enus: Option<Vec<(usize, Fiche)>>,
 
     /// Les index de [`Self::arborescence_enus`] dont le sous-arbre est montré.
@@ -251,6 +251,19 @@ impl EtatArborescenceEnu {
             .copied()?;
 
         Some(arborescence_enus[index].1.clone())
+    }
+
+    /// Jette l'arbre affiché, qu'un dépôt vient de rendre faux.
+    ///
+    /// Les fiches qu'il portait désignent des ENU sorties de l'arbre courant, et
+    /// une commande qui en recevrait une serait refusée. L'écran retombe sur son
+    /// appel au `R`, plutôt que de recharger d'office : le parcours coûte, et
+    /// rien ne dit que l'utilisateur veut le revoir tout de suite.
+    ///
+    /// Ni les plis ni le curseur ne sont touchés — voir
+    /// [`Self::recevoir_arborescence_enus`], qui les laisse déjà tels quels.
+    pub(super) fn vider_arborescence(&mut self) {
+        self.arborescence_enus = None;
     }
 }
 

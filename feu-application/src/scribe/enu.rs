@@ -573,8 +573,8 @@ impl Enu {
     /// Remplace une ENU de l'arbre du nœud et produit la version suivante.
     ///
     /// Un « chercher-remplacer » par hash dans l'arborescence courante.
-    /// `remplacement` doit déjà être sauvegardée. Une cible absente laisse l'arbre
-    /// inchangé, à une génération identique près.
+    /// `remplacement` doit déjà être sauvegardée. Une cible absente est refusée
+    /// plutôt que de produire une version identique à la précédente.
     ///
     /// Le `hash_carte` d'un répertoire dépendant de ses enfants, la substitution
     /// fait remonter de nouveaux hashs jusqu'à un sommet signé par le nœud, dont
@@ -589,8 +589,9 @@ impl Enu {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si
-    /// `remplacement` est identique (même hash de carte) à la racine courante.
+    /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si la
+    /// substitution laisse l'arbre inchangé — cible absente, ou remplacement déjà
+    /// en place.
     /// Propage les erreurs de [`Self::remplacer_recursif`] (E/S,
     /// authentification, signature — notamment si un foyer du chemin
     /// reconstruit est fermé) et de [`Enu::new_racine`].
@@ -602,20 +603,23 @@ impl Enu {
         noyau: &FeuNoyau,
         session: &SessionApplication,
     ) -> ResultFeuApplication<()> {
-        let racine = Enu::charger_derniere_racine(chemin_derniere_racine, session)?;
-
-        if racine.hash_carte() == remplacement.hash_carte() {
-            return Err(ErreurFeuApplication::ScribeRemplacementSansEffet);
-        }
+        let racine_depart = Enu::charger_derniere_racine(chemin_derniere_racine, session)?;
 
         let racine = Self::remplacer_recursif(
             chemin_enu,
-            &racine,
+            &racine_depart,
             hash_a_remplacer,
             remplacement,
             noyau,
             session,
         )?;
+
+        // Si la cible est absente de l'arbre de la dernière racine, la récursion
+        // rend le départ inchangé — et une nouvelle racine n'apporterait qu'un
+        // maillon mort à la lignée des `_racine`.
+        if racine.carte() == racine_depart.carte() {
+            return Err(ErreurFeuApplication::ScribeRemplacementSansEffet);
+        }
 
         let nouvelle_carte = racine.carte().clone();
 

@@ -600,18 +600,25 @@ impl Scribe {
         Ok(())
     }
 
-    /// Accroche des ENU déjà signées sous `enu_racine_depot`, puis propage la
-    /// nouvelle racine de dépôt jusqu'à la racine du nœud.
+    /// Accroche des ENU déjà signées sous `enu_racine_depot`, puis remonte
+    /// jusqu'à un nouveau sommet du nœud.
     ///
-    /// Point de passage unique des deux voies de dépôt. Les enfants sont supposés
-    /// **déjà signés et sauvegardés** : seuls le répertoire d'accueil et ce qui le
-    /// surplombe sont touchés ici, jusqu'à un nouveau sommet du nœud.
+    /// **Point de passage unique de tout dépôt**, comptoir comme ENU isolée. Les
+    /// enfants arrivent signés et sauvegardés ; seuls l'accueil et ce qui le
+    /// surplombe sont touchés ici, et tout foyer du chemin doit être ouvert.
     ///
-    /// **Unique endroit où se décide qui signe le sommet.** Un répertoire de foyer
-    /// est re-signé sous sa propre braise puis remonté par [`Enu::remplacer`] ; la
-    /// racine du nœud repart en [`Enu::new_racine`], qui la signe *nœud*.
+    /// # Les deux voies
     ///
-    /// Tout foyer du chemin reconstruit doit être **ouvert**.
+    /// L'accueil décide, et lui seul, qui signe le sommet :
+    ///
+    /// - **racine du nœud**, reconnue à sa braise vide — [`Enu::new_racine`]
+    ///   forge directement la version suivante, signée *nœud* ;
+    /// - **répertoire de foyer** — [`Enu::new`] le re-signe sous sa braise, puis
+    ///   [`Enu::remplacer`] le substitue dans l'arbre et remonte jusqu'à un
+    ///   `new_racine`.
+    ///
+    /// Dans les deux cas l'accueil doit appartenir à l'arbre courant : une racine
+    /// périmée ou un répertoire qui n'y est plus sont refusés.
     ///
     /// # Greffe sans effet
     ///
@@ -632,14 +639,21 @@ impl Scribe {
     /// Cette méthode intervient **en fin de chaîne** — les blobs sont déposés,
     /// les ENU signées et sauvegardées. Refuser à ce stade invaliderait un
     /// travail déjà accompli sans moyen de le défaire ; elle absorbe donc les
-    /// cas dégénérés au lieu de les rejeter. Les appelants gardent en amont :
+    /// cas dégénérés au lieu de les rejeter — sauf l'accueil sorti de l'arbre
+    /// courant, dont la greffe ampute l'arbre ou n'ajoute qu'un maillon mort :
+    /// quelques ENU orphelines coûtent moins cher. Les appelants gardent en
+    /// amont :
     /// [`Self::fermeture_comptoir_depot`] sort avant l'appel si le comptoir est
     /// vide, [`Self::depot_enu`] passe toujours exactement un hash.
     ///
     /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si
-    /// `enu_racine_depot` n'est pas un répertoire. Propage toute erreur d'E/S,
+    /// `enu_racine_depot` n'est pas un répertoire, et
+    /// [`ErreurFeuApplication::ScribeRacinePerimee`] si c'est une racine qui
+    /// n'est plus la dernière, ou
+    /// [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si c'est un
+    /// répertoire absent de l'arbre courant. Propage toute erreur d'E/S,
     /// d'authentification ou de signature — notamment un foyer fermé sur le
     /// chemin remonté.
     fn greffe_enfants(
@@ -655,11 +669,19 @@ impl Scribe {
             nouvelle_carte.ajout_hash_enu(h)?;
         }
 
+        // Si contenu identique
         if nouvelle_carte == *enu_racine_depot.carte() {
             return Ok(());
         }
 
+        // Si dépôt à la racine — seule une racine du nœud porte BRAISE_VIDE
         if enu_racine_depot.braise() == BRAISE_VIDE {
+            // Si la racine est périmée — repartir d'une ancienne amputerait
+            // l'arbre de tout ce qui a été déposé depuis
+            let derniere_racine = self.derniere_enu_racine(session)?;
+            if enu_racine_depot.hash_carte() != derniere_racine.hash_carte() {
+                return Err(ErreurFeuApplication::ScribeRacinePerimee);
+            }
             Enu::new_racine(
                 noyau,
                 session,
@@ -668,6 +690,7 @@ impl Scribe {
                 Some(nouvelle_carte),
             )?;
         } else {
+            // Si dépôt plus bas dans l'arborescence
             let nouvelle_enu_racine_depot =
                 Enu::new(nouvelle_carte, noyau, session, enu_racine_depot.braise())?;
 

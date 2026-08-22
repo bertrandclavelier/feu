@@ -801,6 +801,11 @@ impl Tui {
                         self.connecteur_vers_coeur.envoyer_message_tui_coeur(
                             MessageTuiCoeur::FermetureComptoirDepot(index, enu.clone()),
                         );
+
+                        // Le dépôt change la racine : ce qui est affiché et ce qui
+                        // est marqué désignent un arbre qui n'existe plus.
+                        self.etat_tui.enu_selectionnee = None;
+                        self.etat_tui.etat_arborescence_enu.vider_arborescence();
                     }
 
                     ValidationBufferSaisie::OuvertureFoyer => {

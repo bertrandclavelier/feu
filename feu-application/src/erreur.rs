@@ -130,9 +130,16 @@ pub enum ErreurFeuApplication {
     #[error("APP > Nom de fichier invalide")]
     ScribeNomFichierInvalide,
 
-    /// Le contenu proposé en remplacement porte le même `hash_carte` que la
-    /// dernière racine : la substitution n'aurait rien à produire.
-    #[error("APP > Le contenu est déjà la racine")]
+    /// Racine d'accueil qui n'est plus la dernière : un dépôt s'y greffe sur une
+    /// carte périmée, et la version qu'il produit ampute l'arbre de tout ce qui
+    /// a été déposé depuis.
+    #[error("APP > Dépôt refusé : la racine d'accueil n'est plus la dernière")]
+    ScribeRacinePerimee,
+
+    /// Substitution sans effet : la cible est absente de l'arbre courant, ou le
+    /// remplacement y est déjà en place. Dans les deux cas la version produite
+    /// serait identique à la précédente.
+    #[error("APP > La substitution ne produirait rien de nouveau")]
     ScribeRemplacementSansEffet,
 
     /// Contenu textuel plus grand que `MAX_TAILLE_TEXTE` : la carte est refusée
