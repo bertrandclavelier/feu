@@ -162,6 +162,10 @@ impl FeuApplication {
     /// `interface_feu_application` est utilisée pour collecter l'ancien et le
     /// nouveau mot de passe.
     ///
+    /// **Seule commande de foyer qui ne notifie pas la session** : les clés
+    /// publiques ne changent pas, seul le chiffrement qui les protège est
+    /// refait, et le miroir reste donc exact.
+    ///
     /// # Errors
     ///
     /// Retourne une erreur si un foyer est fermé, si la saisie échoue,

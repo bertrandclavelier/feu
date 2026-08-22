@@ -28,13 +28,14 @@
 //! `ScribeCarteMalFormee`, branche d'un `else` immédiat. Les `From`, `Display`
 //! et accesseurs de champ, passe-plats. Le pont `RecepteurNoyau`, exercé de
 //! biais — rien ne se signerait sans lui. Le contrat de notification, prouvé par
-//! chaque assertion portant sur la session reçue. Neuf des vingt-trois commandes
+//! chaque assertion portant sur la session reçue. Huit des vingt-cinq commandes
 //! publiques, dont `feu-noyau` éprouve déjà le comportement.
 
 use std::{
     cell::RefCell,
     collections::HashSet,
     fs::{File, create_dir, read_to_string, remove_dir, write},
+    mem::forget,
 };
 
 use data_encoding::HEXLOWER;
@@ -226,6 +227,7 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
     let mut app = FeuApplication::new(&chemin_feu);
     assert!(interface_test.session_application().is_none());
 
+    // Nœud éteint : toute commande qui le suppose allumé se refuse d'emblée.
     assert!(matches!(
         app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0),
         Err(ErreurFeuApplication::NoeudEteint)
@@ -260,6 +262,7 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
 
     app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0)?;
 
+    // L'extinction bute d'abord sur le foyer 0, encore ouvert.
     assert!(matches!(
         app.commande_extinction_noeud(&interface_test),
         Err(ErreurFeuApplication::AuMoinsUnFoyerOuvert)
@@ -429,15 +432,19 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
         .commande_informations_blob(&enu_rechargee)?
         .donne_taille();
 
+    // Le chiffré pèse plus que les cent caractères déposés.
     assert!(taille_blob > 100);
 
+    // Un hash inconnu rend une absence, pas une erreur.
     assert!(matches!(app.commande_chargement_enu(&[0u8; 32]), Ok(None)));
 
+    // La racine du nœud porte `BRAISE_VIDE`, qu'aucun foyer ne résout.
     assert!(matches!(
         app.commande_existence_blob(&enu_racine),
         Err(ErreurFeuApplication::ScribeBraiseInconnue)
     ));
 
+    // Le blob part, sa carte reste : c'est ce décalage que le test vise.
     app.commande_suppression_blob(&enu_rechargee)?;
 
     assert!(!app.commande_existence_blob(&enu_rechargee)?);
@@ -527,11 +534,13 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
 
     app.commande_ouverture_foyer(&interface_test, 0)?;
 
+    // L'index 1 n'a jamais été attribué : le Scribe ne connaît que le zéro.
     assert!(matches!(
         app.commande_fermeture_comptoir_depot(&interface_test, 1, &enu_racine),
         Err(ErreurFeuApplication::ScribeIndexComptoirInconnu(_))
     ));
 
+    // Le dossier du comptoir est effacé sous les pieds du Scribe.
     remove_dir(&chemin_comptoir1).unwrap();
 
     assert!(matches!(
@@ -650,6 +659,7 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
         .commande_chargement_enu(&hashs.pop_first().unwrap())?
         .unwrap();
 
+    // Des deux ENU sous la racine, l'EnuR est celle dont la carte est répertoire.
     let enur = if matches!(
         enu1.carte(),
         Carte::Repertoire {
@@ -663,6 +673,7 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
         enu2
     };
 
+    // Une commande blob refuse une carte répertoire.
     assert!(matches!(
         app.commande_existence_blob(&enur),
         Err(ErreurFeuApplication::ScribeEnuDAttendue)
@@ -734,12 +745,14 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
     };
     assert_eq!(metas1["nom"], "test");
     assert_eq!(metas2["nom"], "test");
+    // Les deux textes portent la braise du foyer 1, pas celle de leur racine.
     assert_eq!(enu1.braise(), app.session.braise_foyer(1).unwrap());
     assert_eq!(enu2.braise(), app.session.braise_foyer(1).unwrap());
 
     let contenus = HashSet::from([contenu1.as_str(), contenu2.as_str()]);
     assert_eq!(contenus, HashSet::from(["enu test 1", "enu test 2"]));
 
+    // Un dépôt sous une `EnuT` est refusé : l'accueil est réservé aux racines.
     assert!(matches!(
         app.commande_depot_enu_texte(&enu1, 1, "test", "enu test 3"),
         Err(ErreurFeuApplication::ScribeEnuRAttendue)
@@ -748,6 +761,7 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
     let chemin_retrait = tmp.path().join("retrait");
     app.commande_retrait_lecture_seule(&chemin_retrait, &troisieme_enu_racine)?;
 
+    // Homonymes sur disque : le second sort suffixé.
     let mut contenus = [
         read_to_string(chemin_retrait.join("test")).unwrap(),
         read_to_string(chemin_retrait.join("test_1")).unwrap(),
@@ -918,5 +932,171 @@ fn racines_anterieures() -> ResultFeuApplication<()> {
     assert_eq!(nombre_filles, [10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
 
     app.commande_extinction_noeud(&interface_test)?;
+    Ok(())
+}
+
+/// Un foyer laissé ouvert par une terminaison brutale se referme par
+/// [`FeuApplication::commande_secours_fermeture_foyer`], et redevient ouvrable
+/// ensuite.
+///
+/// L'état instable est monté par [`forget`](std::mem::forget), qui reproduit ce
+/// que laisse un processus tué. Un second foyer, sain, reste utilisable pendant
+/// ce temps. Chaque constat lit la session notifiée : le secours doit la publier
+/// comme n'importe quelle commande.
+#[test]
+fn secours_fermeture_foyer() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+
+    let interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    app.commande_ouverture_foyer(&interface_test, 1)?;
+
+    // Terminaison brutale : aucun `Drop` ne passe, le dossier clair survit.
+    forget(app);
+
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    // Le foyer 0, intact, s'ouvre malgré le foyer 1 resté en vrac.
+    app.commande_ouverture_foyer(&interface_test, 0)?;
+
+    assert!(
+        !interface_test
+            .session_application()
+            .unwrap()
+            .etat_foyer(1)
+            .unwrap(),
+    );
+
+    // L'archive `.feu`, consommée à la première ouverture, ne peut plus se rouvrir.
+    assert!(matches!(
+        app.commande_ouverture_foyer(&interface_test, 1),
+        Err(ErreurFeuApplication::FeuNoyau(_))
+    ));
+
+    app.commande_secours_fermeture_foyer(&interface_test, 1)?;
+
+    assert!(
+        !interface_test
+            .session_application()
+            .unwrap()
+            .etat_foyer(1)
+            .unwrap(),
+    );
+
+    // La réparation se prouve ici : le foyer 1 s'ouvre de nouveau.
+    app.commande_ouverture_foyer(&interface_test, 1)?;
+
+    assert!(
+        interface_test
+            .session_application()
+            .unwrap()
+            .etat_foyer(1)
+            .unwrap(),
+    );
+
+    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, 1)?;
+    app.commande_extinction_noeud(&interface_test)?;
+
+    Ok(())
+}
+
+/// La garde du retrait refuse tant qu'un foyer du sous-arbre est fermé, et rend
+/// la main sans avoir rien écrit.
+///
+/// Deux foyers alimentent le même arbre : la liste rendue nomme exactement ceux
+/// qui manquent, et se réduit à mesure qu'on les rouvre.
+///
+/// **Seul test dont le sous-arbre mêle plusieurs braises.** Partout ailleurs
+/// tout est ouvert, et la pré-passe passerait même si elle ne regardait que la
+/// racine.
+#[test]
+fn retrait_foyer_ferme() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+
+    let interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, 1)?;
+
+    let dossier_temporaire = TempDir::new().unwrap();
+
+    let enu_racine = app.commande_derniere_enu_racine()?;
+
+    // Le premier dépôt est signé sous le foyer 0.
+    let chemin_comptoir = dossier_temporaire.path().join("comptoir_depot");
+
+    let index_comptoir =
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir, 0, 0)?;
+
+    remplir_dossier(&chemin_comptoir)?;
+
+    app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine)?;
+
+    let deuxieme_enu_racine = app.commande_derniere_enu_racine()?;
+
+    // Le second est signé sous le foyer 1, greffé sur la racine rendue par le premier.
+    let chemin_comptoir2 = dossier_temporaire.path().join("comptoir_depot2");
+
+    let index_comptoir2 =
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir2, 1, 0)?;
+
+    remplir_dossier(&chemin_comptoir2)?;
+
+    app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir2, &deuxieme_enu_racine)?;
+
+    let troisieme_enu_racine = app.commande_derniere_enu_racine()?;
+
+    // Les deux foyers refermés : plus une braise du sous-arbre ne se résout.
+    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, 1)?;
+
+    // Chemin encore inexistant : le dossier ne doit naître que d'un retrait abouti.
+    let dossier_temporaire2 = TempDir::new().unwrap();
+    let chemin_retrait = dossier_temporaire2.path().join("retrait");
+
+    let Err(ErreurFeuApplication::ScribeFoyersFermes(liste_fermes)) =
+        app.commande_retrait_lecture_seule(&chemin_retrait, &troisieme_enu_racine)
+    else {
+        panic!("Le retrait aurait dû renvoyer une erreur");
+    };
+
+    assert_eq!(liste_fermes, vec![0, 1]);
+    assert!(!chemin_retrait.exists());
+
+    // Un seul foyer rouvert : la liste se réduit à celui qui manque encore.
+    app.commande_ouverture_foyer(&interface_test, 0)?;
+
+    let Err(ErreurFeuApplication::ScribeFoyersFermes(liste_fermes)) =
+        app.commande_retrait_lecture_seule(&chemin_retrait, &troisieme_enu_racine)
+    else {
+        panic!("Le retrait aurait dû renvoyer une erreur");
+    };
+
+    assert_eq!(liste_fermes, vec![1]);
+    assert!(!chemin_retrait.exists());
+
+    // Les deux foyers ouverts, le retrait passe : la garde ne refuse pas à tort.
+    app.commande_ouverture_foyer(&interface_test, 1)?;
+
+    app.commande_retrait_lecture_seule(&chemin_retrait, &troisieme_enu_racine)?;
+
+    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, 1)?;
+
+    app.commande_extinction_noeud(&interface_test)?;
+
     Ok(())
 }
