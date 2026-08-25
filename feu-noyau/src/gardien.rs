@@ -13,7 +13,7 @@
 //! Il délègue la connaissance de l'arborescence à son [`Carnet`] et
 //! orchestre les opérations sur le système de fichiers sans les exposer
 //! à l'extérieur du module. Il maintient en mémoire la configuration
-//! globale du nœud via [`Configuration`] — miroir du fichier `config.feu` sur
+//! globale du nœud via [`Configuration`] — miroir du fichier `noyau.feu` sur
 //! disque, écrit en dernière étape de chaque opération structurante.
 //! Cette centralisation est un invariant de sécurité et de cohérence
 //! du protocole.
@@ -35,19 +35,19 @@ use crate::cryptographe::trousseaux_publics::{
 };
 use crate::gardien::carnet::Carnet;
 
-/// Version du format de `config.feu`, écrite en tête et relue à l'allumage.
+/// Version du format de `noyau.feu`, écrite en tête et relue à l'allumage.
 ///
 /// Aucune version n'a été déployée : un fichier d'une autre version est refusé,
 /// il n'y a pas de migration à écrire.
 const VERSION_CONFIGURATION: u32 = 1;
 
-/// Configuration globale du nœud — miroir de `config.feu` en mémoire.
+/// Configuration globale du nœud — miroir de `noyau.feu` en mémoire.
 ///
 /// Contient la version du format de fichier, le prochain index de dérivation
 /// et les adresses `.braise` des `MAX_FOYERS` foyers du nœud.
 #[derive(Debug, PartialEq)]
 struct Configuration {
-    /// Version du format de `config.feu` — incrémentée à chaque changement
+    /// Version du format de `noyau.feu` — incrémentée à chaque changement
     /// de structure incompatible.
     version: u32,
     /// Prochain index de dérivation à attribuer au prochain foyer créé.
@@ -70,7 +70,7 @@ impl Configuration {
         }
     }
 
-    /// Reconstruit la configuration depuis le contenu textuel de `config.feu`.
+    /// Reconstruit la configuration depuis le contenu textuel de `noyau.feu`.
     ///
     /// Attend exactement `2 + MAX_FOYERS` lignes : version, prochain_index,
     /// puis une adresse `.braise` par foyer.
@@ -103,7 +103,7 @@ impl Configuration {
         })
     }
 
-    /// Sérialise la configuration en texte pour écriture dans `config.feu`.
+    /// Sérialise la configuration en texte pour écriture dans `noyau.feu`.
     ///
     /// Format : version, prochain_index, puis chaque adresse `.braise`,
     /// chaque champ séparé par `\n`.
@@ -130,7 +130,7 @@ impl Configuration {
 pub(super) struct Gardien {
     /// Le seul composant qui touche au disque : chemins, lectures, écritures.
     carnet: Carnet,
-    /// Miroir en mémoire de `config.feu`, relu à l'allumage et réécrit à chaque
+    /// Miroir en mémoire de `noyau.feu`, relu à l'allumage et réécrit à chaque
     /// changement.
     configuration: Configuration,
 }
@@ -147,17 +147,17 @@ impl Gardien {
         }
     }
 
-    /// Ouvre un nœud Feu existant en chargeant sa configuration depuis `config.feu`.
+    /// Ouvre un nœud Feu existant en chargeant sa configuration depuis `noyau.feu`.
     ///
     /// Crée le carnet à partir de `chemin_feu`, vérifie que l'arborescence
-    /// `~/.feu` existe, lit `config.feu` sur le disque et reconstruit la
+    /// `~/.feu` existe, lit `noyau.feu` sur le disque et reconstruit la
     /// [`Configuration`] en mémoire.
     ///
     /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::GardienArborescenceNoeudManquante`] si
     /// `~/.feu` est introuvable, puis propage l'absence ou l'illisibilité de
-    /// `config.feu` et l'échec de son parsing.
+    /// `noyau.feu` et l'échec de son parsing.
     pub(super) fn ouvre_nouveau(chemin_feu: &Path) -> ResultFeuNoyau<Self> {
         let carnet = Carnet::new(chemin_feu);
         if !carnet.existe_arborescence_noeud() {
@@ -241,7 +241,7 @@ impl Gardien {
 
     // ── Configuration ─────────────────────────────────────────────────────────
 
-    /// Orchestre la persistance de `config.feu` sur le disque.
+    /// Orchestre la persistance de `noyau.feu` sur le disque.
     ///
     /// Exporte la configuration en mémoire via [`Configuration::exporte_en_texte`]
     /// puis délègue l'écriture à [`Carnet::enregistre_configuration`].
@@ -435,7 +435,7 @@ impl Gardien {
 
     /// Orchestre le diagnostic complet du nœud.
     ///
-    /// `config.feu` illisible interrompt la vérification des foyers : leurs
+    /// `noyau.feu` illisible interrompt la vérification des foyers : leurs
     /// braises en viennent. Quatre contrôles par foyer couvrent les huit états du
     /// trio dossier clair / `.feu` / `.tar`.
     ///

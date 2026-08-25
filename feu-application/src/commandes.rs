@@ -451,7 +451,9 @@ impl FeuApplication {
     /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : index de foyer
+    /// propage les erreurs du Scribe : comptoir de travail ouvert
+    /// ([`ErreurFeuApplication::ScribeComptoirTravailOuvert`]), qui leur est
+    /// exclusif, index de foyer
     /// ([`ErreurFeuApplication::ScribeIndexFoyerInvalide`]) ou de classeur
     /// ([`ErreurFeuApplication::ScribeIndexClasseurInvalide`]) hors bornes,
     /// dossier déjà existant
@@ -677,7 +679,9 @@ impl FeuApplication {
     /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
+    /// propage les erreurs du Scribe : comptoir de travail ouvert
+    /// ([`ErreurFeuApplication::ScribeComptoirTravailOuvert`]), braise ne
+    /// résolvant vers aucun foyer
     /// ([`ErreurFeuApplication::ScribeBraiseInconnue`]), carte qui n'est pas une
     /// [`Carte::Donnee`] ([`ErreurFeuApplication::ScribeEnuDAttendue`]), foyer
     /// fermé, blob introuvable, ou échec de la suppression disque.
@@ -814,7 +818,9 @@ impl FeuApplication {
     /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
-    /// propage les erreurs du Scribe : texte trop long
+    /// propage les erreurs du Scribe : comptoir de travail ouvert
+    /// ([`ErreurFeuApplication::ScribeComptoirTravailOuvert`]), qui verrouille
+    /// l'arborescence, texte trop long
     /// ([`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`]), nom invalide
     /// ([`ErreurFeuApplication::ScribeNomFichierInvalide`]), `index_foyer` hors
     /// bornes ([`ErreurFeuApplication::ScribeIndexFoyerInvalide`]), répertoire

@@ -1274,8 +1274,12 @@ fn ouverture_comptoir_travail_depot_deja_ouvert() -> ResultFeuApplication<()> {
     Ok(())
 }
 
-/// Comptoir de travail ouvert, plus rien ne s'ouvre : ni un second comptoir de
-/// travail, ni un comptoir de dépôt.
+/// Comptoir de travail ouvert, plus rien ne s'ouvre — ni un second comptoir de
+/// travail, ni un comptoir de dépôt — et plus rien ne s'écrit : dépôt de texte
+/// et suppression de blob sont refusés eux aussi.
+///
+/// La suppression vise la racine, qui n'a pas de blob : c'est le refus du verrou
+/// qui remonte, donc il tombe avant la résolution de la cible.
 #[test]
 fn exclusivite_comptoir_travail() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -1309,6 +1313,16 @@ fn exclusivite_comptoir_travail() -> ResultFeuApplication<()> {
 
     assert!(matches!(
         app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot, 0, 0),
+        Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
+    ));
+
+    assert!(matches!(
+        app.commande_depot_enu_texte(&derniere_enu_racine, 0, "test", "contenu de test"),
+        Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
+    ));
+
+    assert!(matches!(
+        app.commande_suppression_blob(&derniere_enu_racine),
         Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
     ));
 

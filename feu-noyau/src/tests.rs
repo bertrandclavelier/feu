@@ -755,7 +755,11 @@ fn diagnostic_noeud() -> ResultFeuNoyau<()> {
     // supprimer donnerait une absence. Le compte retombe à un parce que la
     // boucle sur les foyers est court-circuitée, masquant l'anomalie de
     // l'étape 4.
-    write(chemin_feu.join("config.feu"), "n'importe quoi").unwrap();
+    write(
+        chemin_feu.join(".config").join("noyau.feu"),
+        "n'importe quoi",
+    )
+    .unwrap();
 
     let anomalies = FeuNoyau::diagnostic_noeud(&chemin_feu);
 

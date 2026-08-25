@@ -125,7 +125,7 @@ pub trait InterfaceFeuNoyau {
     /// Notifie l'interface de l'adresse `.braise` d'un foyer.
     ///
     /// Appelée à l'allumage du nœud pour chaque foyer présent dans
-    /// `config.feu`, et à l'initialisation pour chaque foyer créé. Permet à
+    /// `noyau.feu`, et à l'initialisation pour chaque foyer créé. Permet à
     /// l'interface de construire un index stable `index_foyer → braise` sans
     /// avoir à inspecter la configuration elle-même.
     fn recevoir_braise_foyer(&mut self, index_foyer: usize, braise: Braise);
@@ -183,7 +183,7 @@ pub struct DonneesBlob {
 pub enum Anomalie {
     /// Un fichier ou dossier attendu est absent du système de fichiers.
     ElementAbsent(PathBuf),
-    /// `config.feu` est présent mais son contenu ne peut pas être parsé.
+    /// `noyau.feu` est présent mais son contenu ne peut pas être parsé.
     ConfigurationIllisible,
 
     /// Une archive `.tar` subsiste alors qu'elle n'est qu'une forme de passage
@@ -300,7 +300,7 @@ impl SessionFoyers {
     /// Remplace le tableau des foyers par celui fourni.
     ///
     /// Utilisé à l'allumage pour peupler la session avec les adresses
-    /// lues depuis `config.feu`.
+    /// lues depuis `noyau.feu`.
     fn definition_foyers(
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
@@ -396,7 +396,7 @@ impl FeuNoyau {
     ///
     /// L'existence de `~/.feu` décide seule entre initialisation et allumage : la
     /// première dérive les clés depuis une seed neuve ou depuis `phrase_seed`,
-    /// crée l'arborescence et referme les foyers ; le second relit `config.feu` et
+    /// crée l'arborescence et referme les foyers ; le second relit `noyau.feu` et
     /// déchiffre la clé privée du nœud avec le mot de passe collecté.
     ///
     /// `chemin_feu` est le chemin racine du nœud, fourni par l'appelant : le noyau
@@ -408,7 +408,7 @@ impl FeuNoyau {
     ///
     /// # Errors
     ///
-    /// Retourne une [`ErreurFeuNoyau`] si `config.feu` est illisible, si un
+    /// Retourne une [`ErreurFeuNoyau`] si `noyau.feu` est illisible, si un
     /// fichier de clé est absent ou corrompu, ou si le mot de passe est
     /// incorrect. Retourne [`ErreurFeuNoyau::SeedRefuseeNoeudExistant`] si
     /// `phrase_seed` est fournie alors que l'arborescence existe déjà. Si `phrase_seed`
@@ -494,7 +494,7 @@ impl FeuNoyau {
                 interface_feu_noyau.recevoir_braise_foyer(i, braise);
             }
 
-            // Enregistrement de config.feu
+            // Enregistrement de noyau.feu
             gardien.enregistrement_configuration()?;
 
             let mut noyau = Self {
@@ -565,7 +565,7 @@ impl FeuNoyau {
             session.foyers[i] = Foyer::new(braise, false);
         }
 
-        // Enregistrement de config.feu
+        // Enregistrement de noyau.feu
         gardien.enregistrement_configuration()?;
 
         let mut noyau = Self {
@@ -1281,7 +1281,7 @@ impl FeuNoyau {
     /// Diagnostique l'état du nœud sans modifier quoi que ce soit.
     ///
     /// Vérifie la présence de tous les fichiers nécessaires pour allumer le nœud
-    /// et ouvrir ses foyers : arborescence `~/.feu`, `config.feu`, `.cles/`,
+    /// et ouvrir ses foyers : arborescence `~/.feu`, `.config/noyau.feu`, `.cles/`,
     /// clés du nœud, archives et clés de chaque foyer connu.
     ///
     /// Fonction associée — utilisable sans nœud allumé, notamment pour

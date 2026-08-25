@@ -189,9 +189,9 @@ pub enum ErreurFeuNoyau {
     #[error("NOY > L'archive chiffrée est inexistante")]
     GardienArchiveChiffreeInexistante,
 
-    /// `config.feu` compte moins de `2 + MAX_FOYERS` lignes : version, prochain
+    /// `noyau.feu` compte moins de `2 + MAX_FOYERS` lignes : version, prochain
     /// index ou braise de foyer manquants.
-    #[error("NOY > Il manque au moins un élément dans config.feu")]
+    #[error("NOY > Il manque au moins un élément dans noyau.feu")]
     GardienConfigManqueAuMoinsUnElement,
 
     /// Le trousseau public du foyer ne détient pas de clé pour ce classeur —
@@ -199,7 +199,7 @@ pub enum ErreurFeuNoyau {
     #[error("NOY > Foyer {0} : pas de clé pour le classeur {1}")]
     GardienPasDeClePourClasseur(usize, usize),
 
-    /// Braise de `config.feu` que `Braise::try_from` refuse — le fichier est
+    /// Braise de `noyau.feu` que `Braise::try_from` refuse — le fichier est
     /// lisible, c'est son contenu qui est corrompu.
     #[error("NOY > Problème d'encodage de la braise")]
     GardienProblemeEncodageBraise,
@@ -249,7 +249,7 @@ pub enum ErreurFeuNoyau {
     #[error("NOY > IoError > {0}")]
     IoError(#[from] std::io::Error),
 
-    /// Version ou prochain index de `config.feu` illisibles comme entiers,
+    /// Version ou prochain index de `noyau.feu` illisibles comme entiers,
     /// remontés tels quels par `?`.
     #[error("NOY > ParseIntError > {0}")]
     ParseIntError(#[from] std::num::ParseIntError),

@@ -38,8 +38,11 @@ use crate::ResultFeuNoyau;
 use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
 use crate::{Anomalie, MAX_CLASSEURS, MAX_FOYERS};
 
-/// Configuration globale du nœud, à la racine de `~/.feu/`.
-const FEU_CONFIGURATION: &str = "config.feu";
+/// Dossier des fichiers de configuration, sous `~/.feu/`.
+const FEU_DOSSIER_CONFIG: &str = ".config";
+
+/// Configuration globale du nœud, dans `~/.feu/.config/`.
+const FEU_CONFIGURATION: &str = "noyau.feu";
 
 /// Sel Argon2id du nœud, lu avant toute dérivation depuis le mot de passe.
 const FEU_SEL: &str = "sel.feu";
@@ -98,6 +101,13 @@ impl Carnet {
         self.chemin_feu.clone()
     }
 
+    /// Donne le chemin de la configuration du nœud `~/.feu/.config/noyau.feu`.
+    fn donne_chemin_configuration(&self) -> PathBuf {
+        self.chemin_feu
+            .join(FEU_DOSSIER_CONFIG)
+            .join(FEU_CONFIGURATION)
+    }
+
     /// Donne le chemin du dossier `~/.feu/adresse.braise`
     pub(super) fn donne_chemin_braise(&self, braise: Braise) -> PathBuf {
         self.chemin_feu.join(PathBuf::from(braise.to_string()))
@@ -120,13 +130,17 @@ impl Carnet {
 
     /// Vérifie la présence des fichiers fixes du nœud.
     ///
-    /// Contrôle `~/.feu/`, `.cles/`, `config.feu` et les trois clés du nœud.
+    /// Contrôle `~/.feu/`, `.config/noyau.feu`, `.cles/` et les trois clés du
+    /// nœud.
     /// N'inspecte pas les foyers — leurs fichiers dépendent de la config,
     /// lue séparément par [`super::Gardien::diagnostic_noeud`].
     pub(super) fn verifier_arborescence_noeud(&self) -> Vec<Anomalie> {
         let mut resultat: Vec<Anomalie> = Vec::new();
         if !self.chemin_feu.exists() {
-            resultat.push(Anomalie::ElementAbsent(self.chemin_feu.clone()));
+            resultat.push(Anomalie::ElementAbsent(self.donne_chemin_feu()));
+        }
+        if !self.donne_chemin_configuration().exists() {
+            resultat.push(Anomalie::ElementAbsent(self.donne_chemin_configuration()));
         }
         if !self.chemin_feu.join(".cles").exists() {
             resultat.push(Anomalie::ElementAbsent(self.chemin_feu.join(".cles")));
@@ -154,11 +168,6 @@ impl Carnet {
         {
             resultat.push(Anomalie::ElementAbsent(
                 self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB),
-            ));
-        }
-        if !self.chemin_feu.join(FEU_CONFIGURATION).exists() {
-            resultat.push(Anomalie::ElementAbsent(
-                self.chemin_feu.join(FEU_CONFIGURATION),
             ));
         }
 
@@ -221,29 +230,24 @@ impl Carnet {
 
     // ── Configuration ─────────────────────────────────────────────────────────
 
-    /// Écrit le contenu de `config.feu` sur le disque.
+    /// Écrit le contenu de `noyau.feu` sur le disque.
     ///
     /// # Errors
     ///
     /// Retourne une erreur si l'écriture échoue.
     pub(super) fn enregistre_configuration(&self, configuration: String) -> ResultFeuNoyau<()> {
-        Self::ecrire_fichier_600(
-            &self.chemin_feu.join(FEU_CONFIGURATION),
-            configuration.as_bytes(),
-        )?;
+        Self::ecrire_fichier_600(&self.donne_chemin_configuration(), configuration.as_bytes())?;
 
         Ok(())
     }
 
-    /// Lit le contenu de `config.feu` depuis le disque et le retourne en `String`.
+    /// Lit le contenu de `noyau.feu` depuis le disque et le retourne en `String`.
     ///
     /// # Errors
     ///
     /// Retourne une erreur si le fichier est absent ou illisible.
     pub(super) fn ouvre_configuration(&self) -> ResultFeuNoyau<String> {
-        Ok(std::fs::read_to_string(
-            self.chemin_feu.join(FEU_CONFIGURATION),
-        )?)
+        Ok(std::fs::read_to_string(self.donne_chemin_configuration())?)
     }
 
     // ── Trousseaux ────────────────────────────────────────────────────────────
@@ -257,6 +261,9 @@ impl Carnet {
     /// Les clés privées et symétriques partent chiffrées, les publiques et le sel
     /// en clair. Dossiers en `0o700`, fichiers en `0o600`.
     ///
+    /// `.config/` est créé vide : rien n'y est écrit ici, et
+    /// [`Self::ecrire_fichier_600`] ne crée aucun dossier parent.
+    ///
     /// # Errors
     ///
     /// Retourne une erreur à la première opération disque qui échoue.
@@ -265,6 +272,7 @@ impl Carnet {
         trousseau_public_complet: &TrousseauPublicComplet,
     ) -> ResultFeuNoyau<()> {
         Self::creer_dossier(&self.chemin_feu)?;
+        Self::creer_dossier(&self.chemin_feu.join(FEU_DOSSIER_CONFIG))?;
         Self::creer_dossier(&self.chemin_feu.join(".cles"))?;
 
         // Écriture du sel

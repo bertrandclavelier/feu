@@ -27,6 +27,7 @@
 //! jamais une donnée autrement que par la [`Fiche`] de son ENU.
 
 mod comptoir;
+mod configuration;
 pub mod enu;
 pub mod fiche;
 pub mod iterateurs;
@@ -56,6 +57,12 @@ use crate::{
     },
 };
 
+/// Version du format de `scribe.feu`, écrite en tête et relue au chargement.
+const VERSION_CONFIGURATION: u32 = 1;
+
+/// État des comptoirs du Scribe, dans `~/.feu/.config/`.
+const SCRIBE_CONFIGURATION: &str = "scribe.feu";
+
 /// Tenant de la couche ENU — créé et maintient `~/.feu/enu/`.
 ///
 /// Activé à l'allumage du nœud, désactivé à l'extinction. Le dossier
@@ -79,6 +86,11 @@ pub(super) struct Scribe {
     /// atomiquement à chaque nouvelle racine. Le Scribe est ainsi la source
     /// unique de cet emplacement.
     chemin_derniere_racine: PathBuf,
+
+    /// Chemin de `scribe.feu`, dérivé une fois à la construction comme les
+    /// deux précédents. Le dossier `.config/` est celui du nœud, où
+    /// `feu-noyau` pose déjà sa propre configuration.
+    chemin_configuration: PathBuf,
 
     /// Comptoirs de dépôt actifs, indexés par leur identifiant.
     comptoirs_depot: HashMap<usize, ComptoirDepot>,
@@ -110,6 +122,7 @@ impl Scribe {
             est_actif: false,
             chemin_enu: chemin_feu.join("enu/"),
             chemin_derniere_racine: chemin_feu.join("enu/").join(".DERNIERE_RACINE"),
+            chemin_configuration: chemin_feu.join(".config/").join(SCRIBE_CONFIGURATION),
             comptoirs_depot: HashMap::new(),
             comptoir_travail: None,
             prochain_id: 0,
@@ -248,8 +261,10 @@ impl Scribe {
     ///
     /// # Errors
     ///
-    /// Propage les refus du chargement de l'ENU (lecture, authentification) et
-    /// les deux de [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
+    /// Retourne [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si le
+    /// comptoir de travail est ouvert — rien n'est supprimé. Propage ensuite les
+    /// refus du chargement de l'ENU (lecture, authentification) et les deux de
+    /// [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
     /// noyau : foyer fermé, blob introuvable, suppression disque.
     pub(super) fn supprime_blob(
         &self,
@@ -257,6 +272,9 @@ impl Scribe {
         session: &SessionApplication,
         fiche: &Fiche,
     ) -> ResultFeuApplication<()> {
+        if self.comptoir_travail.is_some() {
+            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
+        }
         let (index, hash_donnees) = self.index_et_hash_blob(
             session,
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
@@ -383,7 +401,9 @@ impl Scribe {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] ou
+    /// Retourne [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si le
+    /// comptoir de travail est ouvert, qui leur est exclusif. Retourne
+    /// [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] ou
     /// [`ErreurFeuApplication::ScribeIndexClasseurInvalide`] si l'index sort des
     /// bornes, et propage l'échec de création du dossier — notamment s'il existe
     /// déjà.
@@ -702,11 +722,16 @@ impl Scribe {
     /// quelques ENU orphelines coûtent moins cher. Les appelants gardent en
     /// amont :
     /// [`Self::fermeture_comptoir_depot`] sort avant l'appel si le comptoir est
-    /// vide, [`Self::depot_enu`] passe toujours exactement un hash.
+    /// vide, [`Self::depot_enu_texte`] passe toujours exactement un hash.
+    ///
+    /// Seul le verrou du comptoir de travail y refuse : toute greffe passe par
+    /// ici, c'est donc le filet des voies qui n'auraient pas gardé en amont.
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si
+    /// Retourne [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si le
+    /// comptoir de travail est ouvert. Retourne
+    /// [`ErreurFeuApplication::ScribeEnuRAttendue`] si
     /// `enu_racine_depot` n'est pas un répertoire, et
     /// [`ErreurFeuApplication::ScribeRacinePerimee`] si c'est une racine qui
     /// n'est plus la dernière, ou
@@ -721,6 +746,10 @@ impl Scribe {
         enu_racine_depot: &Enu,
         hashs_nouveaux_enfants: &[[u8; 32]],
     ) -> ResultFeuApplication<()> {
+        if self.comptoir_travail.is_some() {
+            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
+        }
+
         let mut nouvelle_carte = enu_racine_depot.carte().clone();
 
         for h in hashs_nouveaux_enfants {
@@ -770,33 +799,12 @@ impl Scribe {
     /// Dépose une ENU déjà signée sous `enu_racine_depot` : sauvegarde dans
     /// `~/.feu/enu/`, puis greffe via [`Self::greffe_enfants`].
     ///
-    /// Voie unitaire du dépôt, par opposition à celle du comptoir : une ENU à
-    /// la fois, quelle que soit sa carte. Elle ne signe rien — le foyer
-    /// signataire a été fixé par l'appelant en construisant l'enveloppe.
-    ///
-    /// # Errors
-    ///
-    /// Propage les erreurs de sauvegarde et celles de [`Self::greffe_enfants`].
-    fn depot_enu(
-        &self,
-        noyau: &FeuNoyau,
-        session: &SessionApplication,
-        enu_racine_depot: &Enu,
-        enu: &Enu,
-    ) -> ResultFeuApplication<()> {
-        enu.sauvegarder(&self.chemin_enu)?;
-
-        self.greffe_enfants(noyau, session, enu_racine_depot, &[enu.hash_carte()])?;
-
-        Ok(())
-    }
-
     /// Dépose un texte dans un foyer en l'accrochant sous `enu_racine_depot`,
     /// puis propage la nouvelle racine de dépôt jusqu'à la racine du nœud.
     ///
     /// Variante allégée de [`Self::fermeture_comptoir_depot`] : ni comptoir, ni
     /// blob, ni classeur. Le texte est embarqué dans une [`Carte::Texte`], bornée
-    /// et nommée, mise sous enveloppe signée puis confiée à [`Self::depot_enu`].
+    /// et nommée, mise sous enveloppe signée, sauvegardée puis greffée.
     ///
     /// Seule voie possible pour une `EnuT` : un texte n'existe pas comme fichier,
     /// il ne peut donc pas passer par un comptoir.
@@ -813,7 +821,10 @@ impl Scribe {
     ///
     /// # Errors
     ///
-    /// Propage [`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`] si le
+    /// Retourne [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si le
+    /// comptoir de travail est ouvert : il verrouille l'arborescence, et le refus
+    /// tombe avant toute écriture. Propage ensuite
+    /// [`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`] si le
     /// texte dépasse `MAX_TAILLE_TEXTE`, ou
     /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] si `nom` est refusé
     /// comme composant de chemin — les deux via [`Carte::new_texte`] —, ou
@@ -831,6 +842,9 @@ impl Scribe {
         nom: &str,
         contenu: &str,
     ) -> ResultFeuApplication<()> {
+        if self.comptoir_travail.is_some() {
+            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
+        }
         let Some(braise) = session.braise_foyer(index_foyer) else {
             return Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(index_foyer));
         };
@@ -840,7 +854,9 @@ impl Scribe {
 
         let enu_texte = Enu::new(Carte::new_texte(nom, contenu)?, noyau, session, braise)?;
 
-        self.depot_enu(noyau, session, &enu_racine_depot, &enu_texte)?;
+        enu_texte.sauvegarder(&self.chemin_enu)?;
+
+        self.greffe_enfants(noyau, session, &enu_racine_depot, &[enu_texte.hash_carte()])?;
 
         Ok(())
     }
