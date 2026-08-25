@@ -1202,3 +1202,117 @@ fn depot_dans_enur_perimee() -> ResultFeuApplication<()> {
 
     Ok(())
 }
+
+/// L'ouverture d'un comptoir de travail sort le sous-arbre et retient le
+/// dossier avec sa racine, que la session donne à lire.
+///
+/// La sortie elle-même n'est pas éprouvée ici : elle est celle du retrait, que
+/// [`cycle_depot_retrait_simple`] couvre avec du contenu.
+#[test]
+fn ouverture_comptoir_travail_normal() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+    let chemin_comptoir = tmp.path().join("comptoir");
+
+    let interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    let derniere_enu_racine = app.commande_derniere_enu_racine()?;
+
+    app.commande_ouverture_comptoir_travail(
+        &interface_test,
+        &chemin_comptoir,
+        &derniere_enu_racine,
+    )?;
+
+    assert!(chemin_comptoir.exists());
+
+    let (chemin, fiche) = app.session.comptoir_travail_ouvert().unwrap();
+
+    assert_eq!(chemin, &chemin_comptoir);
+    assert_eq!(fiche.hash_carte(), derniere_enu_racine.hash_carte());
+
+    app.commande_extinction_noeud(&interface_test)?;
+
+    Ok(())
+}
+
+/// Un comptoir de dépôt ouvert interdit l'ouverture du comptoir de travail.
+///
+/// La garde tombe avant le retrait : le dossier de travail n'est pas créé.
+#[test]
+fn ouverture_comptoir_travail_depot_deja_ouvert() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+    let chemin_comptoir_depot = tmp.path().join("comptoir_depot");
+    let chemin_comptoir_travail = tmp.path().join("comptoir_travail");
+
+    let interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    let derniere_enu_racine = app.commande_derniere_enu_racine()?;
+
+    app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot, 0, 0)?;
+
+    assert!(matches!(
+        app.commande_ouverture_comptoir_travail(
+            &interface_test,
+            &chemin_comptoir_travail,
+            &derniere_enu_racine,
+        ),
+        Err(ErreurFeuApplication::ScribeComptoirDepotOuvert)
+    ));
+
+    app.commande_extinction_noeud(&interface_test)?;
+
+    Ok(())
+}
+
+/// Comptoir de travail ouvert, plus rien ne s'ouvre : ni un second comptoir de
+/// travail, ni un comptoir de dépôt.
+#[test]
+fn exclusivite_comptoir_travail() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+    let chemin_comptoir_travail1 = tmp.path().join("comptoir_travail1");
+    let chemin_comptoir_travail2 = tmp.path().join("comptoir_travail2");
+    let chemin_comptoir_depot = tmp.path().join("comptoir_depot");
+
+    let interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    let derniere_enu_racine = app.commande_derniere_enu_racine()?;
+
+    app.commande_ouverture_comptoir_travail(
+        &interface_test,
+        &chemin_comptoir_travail1,
+        &derniere_enu_racine,
+    )?;
+
+    assert!(matches!(
+        app.commande_ouverture_comptoir_travail(
+            &interface_test,
+            &chemin_comptoir_travail2,
+            &derniere_enu_racine,
+        ),
+        Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
+    ));
+
+    assert!(matches!(
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot, 0, 0),
+        Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
+    ));
+
+    app.commande_extinction_noeud(&interface_test)?;
+
+    Ok(())
+}

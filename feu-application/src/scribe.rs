@@ -50,7 +50,7 @@ use crate::{
     ErreurFeuApplication, ResultFeuApplication, SessionApplication,
     fiche::Fiche,
     scribe::{
-        comptoir::ComptoirDepot,
+        comptoir::{ComptoirDepot, ComptoirTravail},
         enu::{Carte, Enu},
         iterateurs::{Descendants, RacinesAnterieures},
     },
@@ -83,6 +83,12 @@ pub(super) struct Scribe {
     /// Comptoirs de dépôt actifs, indexés par leur identifiant.
     comptoirs_depot: HashMap<usize, ComptoirDepot>,
 
+    /// Comptoir de travail ouvert, au plus un.
+    ///
+    /// Un [`Option`] plutôt qu'une table : exclusif de lui-même comme des
+    /// comptoirs de dépôt, il n'a pas d'identifiant à distribuer.
+    comptoir_travail: Option<ComptoirTravail>,
+
     /// Prochain identifiant disponible pour un nouveau comptoir.
     ///
     /// Jamais remis à zéro, pas même à l'extinction : un identifiant distribué
@@ -105,6 +111,7 @@ impl Scribe {
             chemin_enu: chemin_feu.join("enu/"),
             chemin_derniere_racine: chemin_feu.join("enu/").join(".DERNIERE_RACINE"),
             comptoirs_depot: HashMap::new(),
+            comptoir_travail: None,
             prochain_id: 0,
         }
     }
@@ -387,6 +394,9 @@ impl Scribe {
         index_foyer: usize,
         index_classeur: usize,
     ) -> ResultFeuApplication<usize> {
+        if self.comptoir_travail.is_some() {
+            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
+        }
         if index_foyer >= MAX_FOYERS {
             return Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(index_foyer));
         }
@@ -404,11 +414,59 @@ impl Scribe {
         self.comptoirs_depot.insert(self.prochain_id, comptoir);
         self.prochain_id += 1;
 
-        session
-            .mut_comptoirs_depot_ouverts()
-            .insert(self.prochain_id - 1, (index_foyer, index_classeur));
+        session.mut_comptoirs_depot_ouverts().insert(
+            self.prochain_id - 1,
+            (chemin.to_path_buf(), index_foyer, index_classeur),
+        );
 
         Ok(self.prochain_id - 1)
+    }
+
+    /// Ouvre le comptoir de travail : sort le sous-arbre de `fiche_racine` dans
+    /// `chemin`, puis retient l'un et l'autre.
+    ///
+    /// La sortie est celle de [`Self::retrait_lecture_seule`], gardes comprises.
+    /// Les deux exclusivités se vérifient avant elle, donc avant toute écriture.
+    ///
+    /// **L'enregistrement clôt l'ouverture, il ne l'amorce pas** : un comptoir
+    /// inscrit sur une sortie interrompue ferait passer les fichiers manquants
+    /// pour des suppressions voulues, là où un dossier à demi sorti n'est rien.
+    ///
+    /// `session` est mutable pour recevoir le miroir du comptoir, comme à
+    /// l'ouverture d'un dépôt.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeComptoirDepotOuvert`] si un dépôt
+    /// est ouvert, [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si un
+    /// comptoir de travail l'est déjà — rien n'est écrit dans les deux cas. Puis
+    /// propage les erreurs du retrait : foyers requis fermés, dossier de sortie
+    /// déjà existant, `fiche_racine` qui n'est pas un répertoire, nom absent ou
+    /// invalide, authentification, E/S et lecture de blob.
+    pub(super) fn ouverture_comptoir_travail(
+        &mut self,
+        noyau: &mut FeuNoyau,
+        session: &mut SessionApplication,
+        chemin: &Path,
+        fiche_racine: &Fiche,
+    ) -> ResultFeuApplication<()> {
+        if !self.comptoirs_depot.is_empty() {
+            return Err(ErreurFeuApplication::ScribeComptoirDepotOuvert);
+        }
+        if self.comptoir_travail.is_some() {
+            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
+        }
+
+        self.retrait_lecture_seule(noyau, session, chemin, fiche_racine)?;
+
+        self.comptoir_travail = Some(ComptoirTravail::new(
+            chemin.to_path_buf(),
+            fiche_racine.clone(),
+        ));
+
+        session.definit_comptoir_travail_ouvert(chemin.to_path_buf(), fiche_racine.clone());
+
+        Ok(())
     }
 
     /// Ferme un comptoir de dépôt : greffe son contenu sous `enu_racine_depot`,

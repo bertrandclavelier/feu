@@ -542,6 +542,46 @@ impl FeuApplication {
         Ok(())
     }
 
+    /// Ouvre le comptoir de travail : matérialise le sous-arbre de
+    /// `fiche_racine` dans `chemin`, que Feu retient jusqu'à sa fermeture.
+    ///
+    /// Le dossier est celui du retrait en lecture seule, aux mêmes conditions —
+    /// il ne doit pas exister, et tout foyer du sous-arbre doit être ouvert.
+    /// Ce qui s'y ajoute est la mémoire du comptoir, que la session rend lisible
+    /// à la présentation.
+    ///
+    /// **Un seul comptoir de travail**, et aucun comptoir de dépôt ouvert en
+    /// même temps.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint,
+    /// [`ErreurFeuApplication::ScribeComptoirDepotOuvert`] ou
+    /// [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si l'exclusivité
+    /// n'est pas tenue. Propage ensuite les erreurs du Scribe : foyers requis
+    /// fermés ([`ErreurFeuApplication::ScribeFoyersFermes`], avant toute
+    /// écriture), dossier déjà existant, `fiche_racine` qui ne désigne pas un
+    /// répertoire, nom absent ou invalide, authentification, E/S ou lecture de
+    /// blob. Aucun comptoir n'est retenu si la sortie échoue.
+    pub fn commande_ouverture_comptoir_travail(
+        &mut self,
+        interface_feu_application: &impl InterfaceFeuApplication,
+        chemin: &Path,
+        fiche_racine: &Fiche,
+    ) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_mut()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        self.scribe
+            .ouverture_comptoir_travail(noyau, &mut self.session, chemin, fiche_racine)?;
+
+        interface_feu_application.recevoir_session_application(Some(self.session.clone()));
+
+        Ok(())
+    }
+
     /// Matérialise l'arborescence d'une `EnuR` dans un dossier OS, en lecture
     /// seule — opération inverse du dépôt par comptoir.
     ///

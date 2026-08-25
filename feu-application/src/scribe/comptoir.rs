@@ -6,14 +6,17 @@
 // FeuApplication is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 // You should have received a copy of the GNU General Public License along with FeuApplication. If not, see <https://www.gnu.org/licenses/>.
 
-//! Comptoir de dépôt — point d'entrée unique pour injecter des données
-//! dans Feu via un dossier du système de fichiers.
+//! Comptoirs — les dossiers du système de fichiers par lesquels les données
+//! franchissent la frontière de Feu, dans un sens ou dans l'autre.
 //!
-//! Un [`ComptoirDepot`] est un dossier OS que le [`Scribe`](super::Scribe) ouvre puis
-//! referme. Chaque comptoir est associé à un foyer et un classeur de
-//! destination. L'OS est l'interface : l'utilisateur (ou un script, un
-//! agent IA) écrit librement dans le dossier, et Feu le parcourt à la
-//! fermeture pour tout ranger.
+//! L'OS est l'interface. Un [`ComptoirDepot`] fait entrer : l'utilisateur (ou
+//! un script, un agent IA) y écrit librement, et Feu parcourt le dossier à la
+//! fermeture pour le ranger sous un foyer et un classeur. Un
+//! [`ComptoirTravail`] fait ressortir : le sous-arbre d'une ENU est matérialisé
+//! sur le disque pour y être modifié, et le comptoir retient la racine sortie.
+//!
+//! Les deux sont ouverts puis refermés par le [`Scribe`](super::Scribe), à qui
+//! appartient tout ce qui touche au contenu du dossier.
 
 use std::{
     fs::{DirBuilder, remove_dir_all},
@@ -21,7 +24,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::{ErreurFeuApplication, ResultFeuApplication};
+use crate::{ErreurFeuApplication, ResultFeuApplication, fiche::Fiche};
 
 /// Dossier OS servant de point de dépôt.
 ///
@@ -104,23 +107,73 @@ impl ComptoirDepot {
     }
 }
 
+/// Dossier OS portant un sous-arbre d'ENU sorti pour être modifié.
+///
+/// Le [`Scribe`](super::Scribe) n'en tient qu'un. De l'état de départ, le
+/// comptoir ne retient que la racine : l'arbre entier se redescend depuis elle,
+/// et la fermeture aura de quoi le comparer au dossier.
+pub(super) struct ComptoirTravail {
+    /// Chemin du dossier sur le système de fichiers.
+    chemin: PathBuf,
+    /// ENU racine dont le sous-arbre a été sorti dans le dossier.
+    fiche_racine: Fiche,
+}
+
+impl ComptoirTravail {
+    /// Construit un [`ComptoirTravail`] sans toucher au système de fichiers.
+    ///
+    /// Aucun pendant de [`ComptoirDepot::ouvrir`] ici : le dossier est celui que
+    /// la sortie du sous-arbre vient de créer, il existe déjà.
+    pub(super) fn new(chemin: PathBuf, fiche_racine: Fiche) -> Self {
+        Self {
+            chemin,
+            fiche_racine,
+        }
+    }
+
+    /// Retourne le chemin du dossier physique.
+    pub(super) fn chemin(&self) -> &PathBuf {
+        &self.chemin
+    }
+
+    /// Retourne la fiche de la racine sortie.
+    pub(super) fn fiche_racine(&self) -> Fiche {
+        self.fiche_racine.clone()
+    }
+
+    /// Supprime le dossier physique du comptoir et tout son contenu résiduel.
+    ///
+    /// Récursive ([`remove_dir_all`]) : ce que l'utilisateur a laissé dans le
+    /// dossier disparaît avec lui.
+    ///
+    /// # Errors
+    ///
+    /// Propage [`ErreurFeuApplication::IoError`] si le dossier est absent ou si
+    /// la suppression échoue.
+    pub(super) fn supprimer(&self) -> ResultFeuApplication<()> {
+        remove_dir_all(&self.chemin)?;
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! Tests en ligne : ce qui se prouve sans monter de pile.
     //!
-    //! Un [`ComptoirDepot`] n'est qu'un dossier de l'OS et trois champs — il ne
+    //! Un comptoir n'est qu'un dossier de l'OS et quelques champs — il ne
     //! signe rien, ne chiffre rien, n'a besoin ni de noyau allumé ni de foyer
     //! ouvert. Un `TempDir` suffit, là où `src/scribe/tests.rs` monte une pile
     //! réelle pour éprouver l'enveloppe et sa signature.
     //!
     //! Le **rangement** du contenu d'un comptoir n'est pas ici : il appartient à
     //! [`Scribe::fermeture_comptoir_depot`](super::super::Scribe), donc au haut.
+    //!
+    //! [`ComptoirTravail`] n'a **pas** de test en ligne : ne créant pas son
+    //! dossier, il n'a ni refus d'écraser ni permissions à éprouver, et le reste
+    //! rendrait ses champs. Son ouverture est éprouvée par `src/tests.rs`.
 
-    use std::{
-        fs::{OpenOptions, metadata},
-        io::Write,
-        os::unix::fs::PermissionsExt,
-    };
+    use std::{fs::metadata, os::unix::fs::PermissionsExt};
 
     use tempfile::TempDir;
 
@@ -128,11 +181,11 @@ mod tests {
 
     use super::*;
 
-    /// Cycle de vie complet : construction sans dossier, ouverture, refus
-    /// d'écraser un dossier existant, dépôt de contenu, suppression, refus de
-    /// supprimer un dossier déjà absent.
+    /// Cycle de vie d'un [`ComptoirDepot`] : le dossier n'existe qu'entre
+    /// `ouvrir` et `supprimer`, en `0o700`, et ces deux-là refusent l'un le
+    /// chemin déjà pris, l'autre le dossier déjà absent.
     #[test]
-    fn cycle_vie_comptoir_depot() -> ResultFeuApplication<()> {
+    fn cycle_comptoir_depot() -> ResultFeuApplication<()> {
         let tmp = TempDir::new()?;
 
         // Création du chemin et du comptoir
@@ -141,11 +194,6 @@ mod tests {
 
         // Le dossier n'existe pas encore
         assert!(!comptoir.chemin().exists());
-
-        // Le comptoir existe bien
-        assert_eq!(comptoir.chemin(), &chemin);
-        assert_eq!(comptoir.index_foyer(), 2);
-        assert_eq!(comptoir.index_classeur(), 5);
 
         // Création du dossier
         comptoir.ouvrir()?;
@@ -160,22 +208,6 @@ mod tests {
             comptoir.ouvrir(),
             Err(ErreurFeuApplication::ScribeDossierDejaExistant(_))
         ));
-
-        // Création d'une petite arborescence dans le dossier du comptoir
-        let chemin2 = chemin.join("sous-dossier");
-        let chemin3 = chemin2.join("test.txt");
-
-        DirBuilder::new()
-            .mode(0o700)
-            .recursive(true)
-            .create(&chemin2)?;
-
-        let mut fichier = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(chemin3)?;
-
-        fichier.write_all("test".as_bytes())?;
 
         // Suppression du dossier
         comptoir.supprimer()?;

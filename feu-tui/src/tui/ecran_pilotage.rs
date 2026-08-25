@@ -406,7 +406,7 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
             Style::default().fg(COULEUR_ACCENT),
         )]);
 
-        for (rang, (index, (index_foyer, index_classeur))) in
+        for (rang, (index, (_, index_foyer, index_classeur))) in
             session.comptoirs_depot_ouverts().iter().take(5).enumerate()
         {
             if rang > 0 {

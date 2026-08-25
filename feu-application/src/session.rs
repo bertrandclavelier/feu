@@ -50,12 +50,15 @@
 //! couche qui la consomme, ni celle-ci la lui renvoyer aplatie de ses préfixes.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use feu_noyau::{BRAISE_VIDE, Braise};
 use feu_noyau::{
     MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
     MAX_TAILLE_SIGNATURE,
 };
+
+use crate::fiche::Fiche;
 
 /// État applicatif de la session courante.
 ///
@@ -91,18 +94,21 @@ pub struct SessionApplication {
     /// Clés publiques de chiffrement ML-KEM-1024 des foyers — reçues à l'ouverture.
     cle_publique_chif_foyers: [[u8; 1568]; MAX_FOYERS],
     /// Comptoirs de dépôt ouverts — miroir lisible de ceux que le Scribe
-    /// détient : identifiant, puis foyer et classeur de destination.
+    /// détient : identifiant, puis dossier, foyer et classeur de destination.
+    /// Le Scribe seul les connaît, et un identifiant nu n'apprendrait rien à la
+    /// présentation.
     ///
-    /// Une [`BTreeMap`] plutôt qu'un `Vec` de triplets : l'unicité de
-    /// l'identifiant est portée par le type plutôt que prouvée à chaque
-    /// insertion, et l'ordre trié suffit à rendre l'itération déterministe.
-    /// Comme les identifiants sont distribués par un compteur croissant, cet
-    /// ordre est celui des ouvertures, sans avoir à le maintenir.
+    /// Une [`BTreeMap`] porte l'unicité de l'identifiant par le type, et son
+    /// ordre trié est celui des ouvertures, les identifiants venant d'un
+    /// compteur croissant.
+    comptoirs_depot_ouverts: BTreeMap<usize, (PathBuf, usize, usize)>,
+
+    /// Comptoir de travail ouvert — miroir de celui que tient le Scribe.
     ///
-    /// La destination est stockée là parce que le Scribe seul la connaît, et
-    /// que la couche de présentation en a besoin pour dire vers où un comptoir
-    /// dépose — sans quoi un identifiant nu ne lui apprendrait rien.
-    comptoirs_depot_ouverts: BTreeMap<usize, (usize, usize)>,
+    /// Les éléments plutôt que le comptoir lui-même, qui reste interne : le
+    /// chemin dit où l'utilisateur travaille, la [`Fiche`] nomme la racine
+    /// sortie.
+    comptoir_travail_ouvert: Option<(PathBuf, Fiche)>,
 }
 
 impl SessionApplication {
@@ -130,6 +136,7 @@ impl SessionApplication {
             cle_publique_sig_foyers: [[0u8; 2592]; MAX_FOYERS],
             cle_publique_chif_foyers: [[0u8; 1568]; MAX_FOYERS],
             comptoirs_depot_ouverts: BTreeMap::new(),
+            comptoir_travail_ouvert: None,
         }
     }
 
@@ -257,14 +264,12 @@ impl SessionApplication {
 
     /// Retourne les comptoirs de dépôt ouverts, indexés par identifiant.
     ///
-    /// Par référence, sans clone : la couche de présentation reçoit déjà une
-    /// [`SessionApplication`] clonée entière après chaque commande mutante, elle
-    /// possède donc sa propre table. Rendre une copie de plus n'ajouterait
-    /// rien ; qui a besoin d'une valeur possédée la clone chez lui.
-    ///
-    /// Aucune [`Option`] ici, contrairement aux accesseurs indexés : la table
-    /// existe toujours, vide quand aucun comptoir n'est ouvert.
-    pub fn comptoirs_depot_ouverts(&self) -> &BTreeMap<usize, (usize, usize)> {
+    /// Par référence : la présentation reçoit déjà une [`SessionApplication`]
+    /// clonée entière après chaque commande mutante, une copie de plus
+    /// n'ajouterait rien. Aucune [`Option`] non plus, contrairement aux
+    /// accesseurs indexés — la table existe toujours, vide quand aucun comptoir
+    /// n'est ouvert.
+    pub fn comptoirs_depot_ouverts(&self) -> &BTreeMap<usize, (PathBuf, usize, usize)> {
         &self.comptoirs_depot_ouverts
     }
 
@@ -277,8 +282,23 @@ impl SessionApplication {
     /// Appelé par le Scribe seul, aux deux lignes où il ajoute et retire un
     /// comptoir de sa propre table. C'est ce voisinage qui tient le miroir :
     /// aucun chemin d'erreur ne passe entre les deux écritures.
-    pub(crate) fn mut_comptoirs_depot_ouverts(&mut self) -> &mut BTreeMap<usize, (usize, usize)> {
+    pub(crate) fn mut_comptoirs_depot_ouverts(
+        &mut self,
+    ) -> &mut BTreeMap<usize, (PathBuf, usize, usize)> {
         &mut self.comptoirs_depot_ouverts
+    }
+
+    /// Retourne le dossier du comptoir de travail et sa racine, s'il est ouvert.
+    pub fn comptoir_travail_ouvert(&self) -> Option<&(PathBuf, Fiche)> {
+        self.comptoir_travail_ouvert.as_ref()
+    }
+
+    /// Inscrit le comptoir de travail dans la session.
+    ///
+    /// Appelée par le Scribe à l'instant où il enregistre le sien — c'est ce
+    /// voisinage qui tient le miroir, comme pour les comptoirs de dépôt.
+    pub(crate) fn definit_comptoir_travail_ouvert(&mut self, chemin: PathBuf, fiche_racine: Fiche) {
+        self.comptoir_travail_ouvert = Some((chemin, fiche_racine));
     }
 }
 
