@@ -563,10 +563,11 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
 /// Aller-retour complet dépôt par comptoir → retrait, sur une arborescence à
 /// plusieurs niveaux : ce qui ressort est exactement ce qui est entré.
 ///
-/// Couvre dans l'ordre le comptoir vide, qui ne bouge pas la racine, le dépôt
-/// d'une arborescence à trois niveaux, le refus d'un retrait vers un dossier
-/// existant, le retrait nominal — comparé en ensembles, l'ordre de parcours
-/// n'étant pas garanti — et l'ENU répertoire passée à une commande blob.
+/// Couvre dans l'ordre le comptoir vide, qui ne bouge pas la racine et rend son
+/// identifiant au suivant, le dépôt d'une arborescence à trois niveaux, le refus
+/// d'un retrait vers un dossier existant, le retrait nominal — comparé en
+/// ensembles, l'ordre de parcours n'étant pas garanti — et l'ENU répertoire
+/// passée à une commande blob.
 ///
 /// **Ce dernier refus tient ici et nulle part ailleurs** : il lui faut une carte
 /// répertoire signée sous une **braise de foyer**, que seul un dépôt imbriqué
@@ -611,7 +612,7 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
 
     let index_comptoir2 =
         app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir2, 0, 0)?;
-    assert_eq!(index_comptoir2, 1);
+    assert_eq!(index_comptoir2, 0);
 
     remplir_dossier(&chemin_comptoir2)?;
 

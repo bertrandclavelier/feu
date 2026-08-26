@@ -65,11 +65,11 @@ fn cree_noyau_et_foyer_ouvert() -> (
     noyau.ouverture_foyer(&mut recepteur, 0).unwrap();
 
     // Après l'ouverture du foyer, et non avant comme en production : `recepteur`
-    // emprunte `session` en mutable, or `activation` en veut une référence
-    // partagée. L'emprunt n'est libéré qu'au dernier usage du récepteur, ici
-    // `ouverture_foyer`. L'ordre est sans effet — une racine est signée par le
-    // nœud, aucun foyer n'a besoin d'être ouvert.
-    scribe.activation(&noyau, &session).unwrap();
+    // emprunte `session` en mutable, et `activation` en veut une aussi — deux
+    // emprunts mutables ne coexistent pas. Celui du récepteur n'est libéré qu'à
+    // son dernier usage, ici `ouverture_foyer`. L'ordre est sans effet — une
+    // racine est signée par le nœud, aucun foyer n'a besoin d'être ouvert.
+    scribe.activation(&noyau, &mut session).unwrap();
 
     (
         tmp,
@@ -223,7 +223,7 @@ fn falsification_braise_avant_chargement_enu() {
 ///   éprouvé via un `charger` qui suit le lien vers la racine courante.
 #[test]
 fn cycle_racine() {
-    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, mut scribe, session) =
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, mut scribe, mut session) =
         cree_noyau_et_foyer_ouvert();
 
     // Test 1ère activation
@@ -243,7 +243,7 @@ fn cycle_racine() {
     // 2e activation
     scribe.desactivation();
     assert!(!scribe.est_actif);
-    scribe.activation(&noyau, &session).unwrap();
+    scribe.activation(&noyau, &mut session).unwrap();
     assert!(scribe.est_actif);
 
     let enu_racine_2 = Enu::charger_derniere_racine(&chemin_derniere_racine, &session).unwrap();

@@ -109,7 +109,7 @@ impl FeuApplication {
         // le Scribe est activé avant de ranger le noyau dans `self` : l'amorce
         // de l'arborescence (signature de la racine origine) a besoin d'une
         // référence au noyau, plus simple à prendre tant qu'il est local
-        self.scribe.activation(&feu_noyau, &self.session)?;
+        self.scribe.activation(&feu_noyau, &mut self.session)?;
 
         self.feu_noyau = Some(feu_noyau);
 
@@ -458,7 +458,8 @@ impl FeuApplication {
     /// ([`ErreurFeuApplication::ScribeIndexClasseurInvalide`]) hors bornes,
     /// dossier déjà existant
     /// ([`ErreurFeuApplication::ScribeDossierDejaExistant`]) ou impossible à
-    /// créer. Un échec ne laisse aucun identifiant dans la session, et rien
+    /// créer. Un échec ne laisse aucun identifiant dans la session — sauf celui
+    /// de l'écriture de `scribe.feu`, qui survient le comptoir déjà ouvert. Rien
     /// n'est notifié.
     pub fn commande_ouverture_comptoir_depot(
         &mut self,

@@ -15,8 +15,10 @@
 //! De quoi rouvrir un comptoir, rien de plus : un dépôt donne son identifiant,
 //! son dossier et sa destination, le comptoir de travail son dossier et le
 //! `hash_carte` de la racine sortie. L'arbre est adressé par contenu, ce hash
-//! suffit donc à recharger l'ENU et à en refaire une [`Fiche`](super::Fiche).
+//! suffit donc à relire l'ENU et à en refaire une [`Fiche`](super::Fiche) —
+//! sans vérifier sa signature, une restauration n'étant que du parcours.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::read_to_string;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -24,6 +26,9 @@ use std::path::{Path, PathBuf};
 
 use data_encoding::HEXLOWER;
 
+use crate::fiche::Fiche;
+use crate::scribe::enu::Enu;
+use crate::scribe::{ComptoirDepot, ComptoirTravail};
 use crate::{ErreurFeuApplication, ResultFeuApplication, Scribe, scribe::VERSION_CONFIGURATION};
 
 /// Miroir en mémoire du fichier de configuration du [`Scribe`].
@@ -34,7 +39,7 @@ use crate::{ErreurFeuApplication, ResultFeuApplication, Scribe, scribe::VERSION_
 ///
 /// `Debug` et `PartialEq` ne servent qu'aux assertions des tests.
 #[derive(Debug, PartialEq)]
-struct Configuration {
+pub(super) struct Configuration {
     /// Version du format du fichier, écrite en tête et relue au chargement.
     version: u32,
     /// Un comptoir de dépôt ouvert par entrée : identifiant, dossier, foyer et
@@ -75,6 +80,54 @@ impl Configuration {
             version: VERSION_CONFIGURATION,
             comptoirs_depot,
             comptoir_travail,
+        }
+    }
+
+    /// Refait les [`ComptoirDepot`] du miroir, indexés par leur identifiant.
+    ///
+    /// Aucun dossier n'est touché : ceux des comptoirs relus sont déjà sur le
+    /// disque, seul l'état en mémoire est à reconstruire.
+    pub(super) fn vers_comptoirs_depot(&self) -> HashMap<usize, ComptoirDepot> {
+        self.comptoirs_depot
+            .iter()
+            .map(|donnees| {
+                (
+                    donnees.0,
+                    ComptoirDepot::new(donnees.1.clone(), donnees.2, donnees.3),
+                )
+            })
+            .collect()
+    }
+
+    /// Refait le [`ComptoirTravail`] du miroir, s'il y en a un.
+    ///
+    /// La racine sortie est relue par
+    /// [`Enu::charger_sans_verification_signature`] : la [`Fiche`] restaurée
+    /// sert à afficher et à situer, jamais à décider. Les vérifications de
+    /// signature ont lieu à la fermeture du comptoir.
+    ///
+    /// # Errors
+    ///
+    /// Propage les erreurs de [`Enu::charger_sans_verification_signature`] :
+    /// ENU absente du disque, illisible ou non intègre. L'échec est fatal —
+    /// [`Scribe::activation`] le remonte, le Scribe reste inactif et Feu ne
+    /// démarre pas.
+    pub(super) fn vers_comptoir_travail(
+        &self,
+        chemin_enu: &Path,
+    ) -> ResultFeuApplication<Option<ComptoirTravail>> {
+        if let Some(comptoir_travail) = &self.comptoir_travail {
+            let fiche = Fiche::new(&Enu::charger_sans_verification_signature(
+                chemin_enu,
+                &comptoir_travail.1,
+            )?);
+
+            Ok(Some(ComptoirTravail::new(
+                comptoir_travail.0.clone(),
+                fiche,
+            )))
+        } else {
+            Ok(None)
         }
     }
 

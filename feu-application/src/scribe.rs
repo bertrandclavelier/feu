@@ -52,6 +52,7 @@ use crate::{
     fiche::Fiche,
     scribe::{
         comptoir::{ComptoirDepot, ComptoirTravail},
+        configuration::Configuration,
         enu::{Carte, Enu},
         iterateurs::{Descendants, RacinesAnterieures},
     },
@@ -100,14 +101,6 @@ pub(super) struct Scribe {
     /// Un [`Option`] plutôt qu'une table : exclusif de lui-même comme des
     /// comptoirs de dépôt, il n'a pas d'identifiant à distribuer.
     comptoir_travail: Option<ComptoirTravail>,
-
-    /// Prochain identifiant disponible pour un nouveau comptoir.
-    ///
-    /// Jamais remis à zéro, pas même à l'extinction : un identifiant distribué
-    /// avant elle ne peut ainsi désigner aucun comptoir neuf, il échoue en
-    /// [`ErreurFeuApplication::ScribeIndexComptoirInconnu`] au lieu d'en
-    /// atteindre un autre.
-    prochain_id: usize,
 }
 
 impl Scribe {
@@ -125,7 +118,6 @@ impl Scribe {
             chemin_configuration: chemin_feu.join(".config/").join(SCRIBE_CONFIGURATION),
             comptoirs_depot: HashMap::new(),
             comptoir_travail: None,
-            prochain_id: 0,
         }
     }
 
@@ -337,25 +329,28 @@ impl Scribe {
         Ok(noyau.informations_blob(index, &HEXLOWER.encode(&hash_donnees))?)
     }
 
-    /// Active le Scribe et, à la première activation, amorce l'arborescence.
+    /// Active le Scribe : amorce l'arborescence au tout premier allumage, puis
+    /// rouvre les comptoirs laissés par l'allumage précédent.
     ///
     /// `enu/` absent signifie tout premier allumage : le dossier est créé en
     /// `0o700` et la **racine origine** — répertoire vide signé par le nœud — est
     /// posée en sommet courant. Le noyau est requis pour cette signature de
-    /// genèse ; la session n'est que transmise, sans racine précédente à relire.
+    /// genèse, la session seulement transmise. Ensuite, l'amorce est sautée.
     ///
-    /// Aux allumages suivants, l'amorce est sautée. Ce qui devrait avoir lieu à
-    /// *chaque* allumage s'accrocherait hors du `if`.
+    /// `scribe.feu` présent, les comptoirs y sont relus : le Scribe les reprend
+    /// et la session en reçoit le miroir. Rien d'autre n'est à restaurer, les
+    /// identifiants se déduisant des comptoirs eux-mêmes.
     ///
     /// # Errors
     ///
     /// Retourne une erreur si la création du dossier, la signature de la racine
-    /// origine, sa sauvegarde ou la pose du symlink échoue. Le Scribe reste
-    /// alors inactif : le drapeau n'est posé qu'en sortie réussie.
+    /// origine, sa sauvegarde ou la pose du symlink échoue, et propage celles de
+    /// [`Configuration::charger`] comme de la relecture de la racine sortie. Le
+    /// Scribe reste alors inactif : le drapeau n'est posé qu'en sortie réussie.
     pub(super) fn activation(
         &mut self,
         feu_noyau: &FeuNoyau,
-        session: &SessionApplication,
+        session: &mut SessionApplication,
     ) -> ResultFeuApplication<()> {
         if !&self.chemin_enu.exists() {
             Self::creer_dossier_700(&self.chemin_enu)?;
@@ -369,20 +364,77 @@ impl Scribe {
             )?;
         }
 
+        if self.chemin_configuration.exists() {
+            let configuration = Configuration::charger(&self.chemin_configuration)?;
+
+            self.comptoirs_depot = configuration.vers_comptoirs_depot();
+
+            for (index, comptoir) in &self.comptoirs_depot {
+                session.mut_comptoirs_depot_ouverts().insert(
+                    *index,
+                    (
+                        comptoir.chemin().clone(),
+                        comptoir.index_foyer(),
+                        comptoir.index_classeur(),
+                    ),
+                );
+            }
+
+            self.comptoir_travail = configuration.vers_comptoir_travail(&self.chemin_enu)?;
+
+            if let Some(comptoir) = &self.comptoir_travail {
+                session.definit_comptoir_travail_ouvert(
+                    comptoir.chemin().clone(),
+                    comptoir.fiche_racine(),
+                );
+            }
+        }
+
         self.est_actif = true;
 
         Ok(())
     }
 
-    /// Désactive le Scribe et oublie les comptoirs de dépôt ouverts.
+    /// Écrit l'état courant des comptoirs dans `scribe.feu`.
+    ///
+    /// Appelée à chaque ouverture et à chaque fermeture de comptoir, une fois le
+    /// Scribe et le miroir de session à jour : le fichier suit la mémoire,
+    /// jamais l'inverse.
+    ///
+    /// # Errors
+    ///
+    /// Propage les erreurs de [`Configuration::sauvegarder`] : dossier
+    /// `.config/` absent, écriture ou renommage refusés.
+    fn sauvegarder_configuration(&self) -> ResultFeuApplication<()> {
+        let configuration = Configuration::new(self);
+        configuration.sauvegarder(&self.chemin_configuration)?;
+
+        Ok(())
+    }
+
+    /// Désactive le Scribe et oublie les comptoirs ouverts, dépôts et travail.
     ///
     /// Appelé par [`commande_extinction_noeud`](crate::FeuApplication::commande_extinction_noeud).
     /// Ne supprime rien sur le disque : ni `enu/`, dont les ENU survivent à
     /// l'extinction, ni les dossiers des comptoirs, qui portent des fichiers de
-    /// l'utilisateur jamais ingérés.
+    /// l'utilisateur jamais ingérés. `scribe.feu` n'est pas réécrit non plus :
+    /// la prochaine activation y retrouve les comptoirs et les rouvre.
     pub(super) fn desactivation(&mut self) {
         self.est_actif = false;
         self.comptoirs_depot.clear();
+        self.comptoir_travail = None;
+    }
+
+    /// Rend l'identifiant à donner au prochain comptoir de dépôt.
+    ///
+    /// Un cran au-dessus du plus grand identifiant ouvert : unique parmi eux,
+    /// sans compteur à tenir ni à relire au démarrage. Celui qu'une fermeture
+    /// libère peut donc resservir.
+    fn prochain_id_comptoir_depot(&self) -> usize {
+        self.comptoirs_depot
+            .keys()
+            .max()
+            .map_or(0, |index| index + 1)
     }
 
     /// Ouvre un comptoir de dépôt au chemin donné.
@@ -403,7 +455,8 @@ impl Scribe {
     /// [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] ou
     /// [`ErreurFeuApplication::ScribeIndexClasseurInvalide`] si l'index sort des
     /// bornes, et propage l'échec de création du dossier — notamment s'il existe
-    /// déjà.
+    /// déjà — comme celui de [`Self::sauvegarder_configuration`], qui survient
+    /// le comptoir déjà ouvert et inscrit.
     pub(super) fn ouverture_comptoir_depot(
         &mut self,
         session: &mut SessionApplication,
@@ -428,15 +481,18 @@ impl Scribe {
         // distribuerait un identifiant que la fermeture ne saurait pas honorer
         comptoir.ouvrir()?;
 
-        self.comptoirs_depot.insert(self.prochain_id, comptoir);
-        self.prochain_id += 1;
+        let index_comptoir = self.prochain_id_comptoir_depot();
+
+        self.comptoirs_depot.insert(index_comptoir, comptoir);
 
         session.mut_comptoirs_depot_ouverts().insert(
-            self.prochain_id - 1,
+            index_comptoir,
             (chemin.to_path_buf(), index_foyer, index_classeur),
         );
 
-        Ok(self.prochain_id - 1)
+        self.sauvegarder_configuration()?;
+
+        Ok(index_comptoir)
     }
 
     /// Ouvre le comptoir de travail : sort le sous-arbre de `fiche_racine` dans
@@ -459,7 +515,8 @@ impl Scribe {
     /// comptoir de travail l'est déjà — rien n'est écrit dans les deux cas. Puis
     /// propage les erreurs du retrait : foyers requis fermés, dossier de sortie
     /// déjà existant, `fiche_racine` qui n'est pas un répertoire, nom absent ou
-    /// invalide, authentification, E/S et lecture de blob.
+    /// invalide, authentification, E/S et lecture de blob. Puis l'échec de
+    /// [`Self::sauvegarder_configuration`], le comptoir déjà inscrit.
     pub(super) fn ouverture_comptoir_travail(
         &mut self,
         noyau: &mut FeuNoyau,
@@ -482,6 +539,8 @@ impl Scribe {
         ));
 
         session.definit_comptoir_travail_ouvert(chemin.to_path_buf(), fiche_racine.clone());
+
+        self.sauvegarder_configuration()?;
 
         Ok(())
     }
@@ -534,7 +593,9 @@ impl Scribe {
     /// y compris l'échec de signature si un foyer du chemin reconstruit par
     /// [`Enu::remplacer`] est fermé. Elles surviennent toutes après le retrait :
     /// le dossier reste sur le disque avec ce qui n'a pas été ingéré, à
-    /// l'utilisateur de le reprendre.
+    /// l'utilisateur de le reprendre. `scribe.feu`, réécrit en sortie réussie
+    /// seulement, y garde alors le comptoir : la prochaine activation le rouvre
+    /// sur ce dossier.
     pub(super) fn fermeture_comptoir_depot(
         &mut self,
         noyau: &mut FeuNoyau,
@@ -595,6 +656,8 @@ impl Scribe {
         if dir.count() == 0 {
             // comptoir vide : rien à greffer, le nœud est inchangé
             comptoir.supprimer()?;
+
+            self.sauvegarder_configuration()?;
 
             return Ok(());
         }
@@ -671,6 +734,8 @@ impl Scribe {
         self.greffe_enfants(noyau, session, &enu_racine_depot, &nouveaux_enfants)?;
 
         comptoir.supprimer()?;
+
+        self.sauvegarder_configuration()?;
 
         Ok(())
     }
