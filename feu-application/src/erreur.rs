@@ -71,6 +71,21 @@ pub enum ErreurFeuApplication {
     #[error("APP > Un comptoir de travail est ouvert")]
     ScribeComptoirTravailOuvert,
 
+    /// La ligne de `hash_carte` de `scribe.feu` décode en un nombre d'octets
+    /// autre que 32 : l'hexadécimal est valide, sa longueur non.
+    #[error("APP > Hash mal formé dans scribe.feu")]
+    ScribeConfigHashMalForme,
+
+    /// `scribe.feu` s'arrête avant d'avoir livré tous ses champs : version,
+    /// nombre de dépôts ou l'une des lignes d'un comptoir manque.
+    #[error("APP > Il manque au moins un élément dans scribe.feu")]
+    ScribeConfigManqueAuMoinsUnElement,
+
+    /// `scribe.feu` annonce une version que ce binaire ne sait pas lire — porte
+    /// la version trouvée. Aucune migration n'est écrite, le fichier est refusé.
+    #[error("APP > Version de scribe.feu incompatible : {0}")]
+    ScribeConfigVersionIncompatible(u32),
+
     /// Le chemin visé est déjà un dossier — ouverture de comptoir comme retrait
     /// créent le leur, jamais dans un dossier existant. Porté, jamais affiché.
     #[error("APP > Le dossier existe déjà")]
@@ -172,6 +187,11 @@ pub enum ErreurFeuApplication {
     /// l'erreur système au lieu de la traduire.
     #[error("APP > IoError > {0}")]
     IoError(#[from] std::io::Error),
+
+    /// Ligne de `scribe.feu` attendue en entier et qui n'en est pas un, remontée
+    /// telle quelle par `?` : la variante porte l'erreur au lieu de la traduire.
+    #[error("APP > ParseIntError > {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
 
     /// Champ texte de l'enveloppe qui n'est pas de l'UTF-8 valide, remonté tel
     /// quel par `?` : la variante porte l'erreur au lieu de la traduire.

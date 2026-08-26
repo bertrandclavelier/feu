@@ -18,13 +18,9 @@
 //! Les deux sont ouverts puis refermés par le [`Scribe`](super::Scribe), à qui
 //! appartient tout ce qui touche au contenu du dossier.
 
-use std::{
-    fs::{DirBuilder, remove_dir_all},
-    os::unix::fs::DirBuilderExt,
-    path::PathBuf,
-};
+use std::{fs::remove_dir_all, path::PathBuf};
 
-use crate::{ErreurFeuApplication, ResultFeuApplication, fiche::Fiche};
+use crate::{ErreurFeuApplication, ResultFeuApplication, Scribe, fiche::Fiche};
 
 /// Dossier OS servant de point de dépôt.
 ///
@@ -82,10 +78,7 @@ impl ComptoirDepot {
                 self.chemin.clone(),
             ));
         }
-        DirBuilder::new()
-            .mode(0o700)
-            .recursive(true)
-            .create(&self.chemin)?;
+        Scribe::creer_dossier_700(&self.chemin)?;
 
         Ok(())
     }

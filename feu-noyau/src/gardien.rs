@@ -37,8 +37,8 @@ use crate::gardien::carnet::Carnet;
 
 /// Version du format de `noyau.feu`, écrite en tête et relue à l'allumage.
 ///
-/// Aucune version n'a été déployée : un fichier d'une autre version est refusé,
-/// il n'y a pas de migration à écrire.
+/// Relue mais pas comparée : un fichier d'une autre version est chargé tel quel.
+/// Aucune version n'a été déployée, il n'y a donc pas de migration à écrire.
 const VERSION_CONFIGURATION: u32 = 1;
 
 /// Configuration globale du nœud — miroir de `noyau.feu` en mémoire.
@@ -82,7 +82,7 @@ impl Configuration {
     /// [`ErreurFeuNoyau::ParseIntError`] si `version` ou `prochain_index` ne sont
     /// pas des entiers, et [`ErreurFeuNoyau::GardienProblemeEncodageBraise`] si
     /// une ligne de braise est mal formée.
-    fn new_from_string(contenu: &str) -> ResultFeuNoyau<Self> {
+    fn importe_depuis_texte(contenu: &str) -> ResultFeuNoyau<Self> {
         let mut lignes: Vec<&str> = contenu.lines().collect();
         if lignes.len() < 2 + MAX_FOYERS {
             return Err(ErreurFeuNoyau::GardienConfigManqueAuMoinsUnElement);
@@ -164,7 +164,7 @@ impl Gardien {
             return Err(ErreurFeuNoyau::GardienArborescenceNoeudManquante);
         }
         Ok(Self {
-            configuration: Configuration::new_from_string(&carnet.ouvre_configuration()?)?,
+            configuration: Configuration::importe_depuis_texte(&carnet.ouvre_configuration()?)?,
             carnet,
         })
     }
@@ -449,7 +449,7 @@ impl Gardien {
             Err(_) => {
                 // Déjà traité par verifier_arborescence_noeud()
             }
-            Ok(valeur) => match Configuration::new_from_string(&valeur) {
+            Ok(valeur) => match Configuration::importe_depuis_texte(&valeur) {
                 Err(_) => resultat.push(Anomalie::ConfigurationIllisible),
 
                 Ok(configuration) => {
@@ -525,7 +525,7 @@ mod tests {
 
         let export = configuration.exporte_en_texte();
 
-        let configuration_relue = Configuration::new_from_string(&export)?;
+        let configuration_relue = Configuration::importe_depuis_texte(&export)?;
 
         assert_eq!(configuration, configuration_relue);
 

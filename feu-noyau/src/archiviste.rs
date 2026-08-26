@@ -100,11 +100,11 @@ impl Archiviste {
         let archiviste = Self { racine };
 
         if !&archiviste.donne_chemin_registre().exists() {
-            Self::cree_dossier(&archiviste.donne_chemin_registre())?;
+            Self::creer_dossier_700(&archiviste.donne_chemin_registre())?;
 
             for i in 0..MAX_CLASSEURS {
                 std::os::unix::fs::symlink("../", archiviste.donne_chemin_lien_classeur(i))?;
-                Self::cree_dossier(archiviste.donne_chemin_classeur(i).as_ref())?;
+                Self::creer_dossier_700(archiviste.donne_chemin_classeur(i).as_ref())?;
             }
         }
         Ok(archiviste)
@@ -314,7 +314,7 @@ impl Archiviste {
     /// # Errors
     ///
     /// Retourne une erreur si la création échoue.
-    fn cree_dossier(path: &Path) -> ResultFeuNoyau<()> {
+    fn creer_dossier_700(path: &Path) -> ResultFeuNoyau<()> {
         DirBuilder::new().mode(0o700).recursive(true).create(path)?;
         Ok(())
     }

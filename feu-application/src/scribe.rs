@@ -358,10 +358,7 @@ impl Scribe {
         session: &SessionApplication,
     ) -> ResultFeuApplication<()> {
         if !&self.chemin_enu.exists() {
-            DirBuilder::new()
-                .mode(0o700)
-                .recursive(true)
-                .create(&self.chemin_enu)?;
+            Self::creer_dossier_700(&self.chemin_enu)?;
 
             Enu::new_racine(
                 feu_noyau,
@@ -920,10 +917,7 @@ impl Scribe {
             return Err(ErreurFeuApplication::ScribeEnuRAttendue);
         };
 
-        DirBuilder::new()
-            .mode(0o700)
-            .recursive(true)
-            .create(chemin_retrait)?;
+        Self::creer_dossier_700(chemin_retrait)?;
 
         // la racine est le dossier de sortie : on matérialise ses enfants,
         // jamais elle — la récursion ne reçoit que des entrées nommées
@@ -1068,10 +1062,7 @@ impl Scribe {
                 hashs_enu,
             } => {
                 let chemin = Self::chemin_libre(chemin_courant, &nom_fichier);
-                DirBuilder::new()
-                    .mode(0o700)
-                    .recursive(true)
-                    .create(&chemin)?;
+                Self::creer_dossier_700(&chemin)?;
 
                 for h in hashs_enu {
                     let enu = Enu::charger(&self.chemin_enu, session, h)?;
@@ -1103,5 +1094,49 @@ impl Scribe {
         }
 
         chemin_candidat
+    }
+
+    /// Crée `path` et ses parents manquants en `rwx------` (0o700).
+    ///
+    /// Recopiée de `feu-noyau` plutôt que partagée : deux appelants ne valent
+    /// pas une crate commune, et un test relit les permissions de chaque côté.
+    ///
+    /// # Errors
+    ///
+    /// Propage [`ErreurFeuApplication::IoError`] si la création échoue.
+    pub(super) fn creer_dossier_700(path: &Path) -> ResultFeuApplication<()> {
+        DirBuilder::new().mode(0o700).recursive(true).create(path)?;
+        Ok(())
+    }
+
+    /// Écrit `contenu` dans `chemin` en `rw-------` (0o600).
+    ///
+    /// Passe par `<chemin>.tmp` puis renomme : le renommage est atomique sur
+    /// Unix et écrase la cible, donc jamais de fichier à moitié écrit. Un `.tmp`
+    /// laissé par un arrêt brutal est retiré d'abord, sans quoi `create_new`
+    /// refuserait toute sauvegarde ultérieure.
+    ///
+    /// Recopiée de `feu-noyau`, comme [`Self::creer_dossier_700`].
+    ///
+    /// # Errors
+    ///
+    /// Propage [`ErreurFeuApplication::IoError`] si l'écriture du fichier
+    /// temporaire échoue ou si le renommage vers la cible échoue.
+    pub(super) fn ecrire_fichier_600(chemin: &Path, contenu: &[u8]) -> ResultFeuApplication<()> {
+        let nouveau_chemin = chemin.with_added_extension("tmp");
+
+        let _ = std::fs::remove_file(&nouveau_chemin); // résidu d'un crash précédent
+
+        let mut fichier = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&nouveau_chemin)?;
+
+        fichier.write_all(contenu)?;
+
+        std::fs::rename(&nouveau_chemin, chemin)?; // rename écrase l'ancien fichier
+
+        Ok(())
     }
 }

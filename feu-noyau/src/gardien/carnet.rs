@@ -271,9 +271,9 @@ impl Carnet {
         &self,
         trousseau_public_complet: &TrousseauPublicComplet,
     ) -> ResultFeuNoyau<()> {
-        Self::creer_dossier(&self.chemin_feu)?;
-        Self::creer_dossier(&self.chemin_feu.join(FEU_DOSSIER_CONFIG))?;
-        Self::creer_dossier(&self.chemin_feu.join(".cles"))?;
+        Self::creer_dossier_700(&self.chemin_feu)?;
+        Self::creer_dossier_700(&self.chemin_feu.join(FEU_DOSSIER_CONFIG))?;
+        Self::creer_dossier_700(&self.chemin_feu.join(".cles"))?;
 
         // Écriture du sel
         Self::ecrire_fichier_600(
@@ -308,7 +308,7 @@ impl Carnet {
                 .join(foyer.donne_braise().to_string())
                 .join(".cles/");
 
-            Self::creer_dossier(chemin_foyer)?;
+            Self::creer_dossier_700(chemin_foyer)?;
 
             // Écriture de la clé symétrique du foyer
             Self::ecrire_fichier_600(
@@ -629,7 +629,7 @@ impl Carnet {
     pub(super) fn desarchive_tar_foyer(&self, braise: Braise) -> ResultFeuNoyau<()> {
         let mut archive = tar::Archive::new(self.ouvre_archive_tar_foyer_lecture(braise)?);
 
-        Self::creer_dossier(&self.donne_chemin_braise(braise))?;
+        Self::creer_dossier_700(&self.donne_chemin_braise(braise))?;
         archive.unpack(self.donne_chemin_braise(braise))?;
         Ok(())
     }
@@ -664,7 +664,7 @@ impl Carnet {
     ///
     /// Retourne une erreur si la création échoue — permissions
     /// insuffisantes, chemin invalide ou erreur d'entrée/sortie.
-    fn creer_dossier(path: &Path) -> ResultFeuNoyau<()> {
+    fn creer_dossier_700(path: &Path) -> ResultFeuNoyau<()> {
         DirBuilder::new().mode(0o700).recursive(true).create(path)?;
         Ok(())
     }
@@ -674,7 +674,9 @@ impl Carnet {
     /// Écrit d'abord dans un fichier temporaire `<chemin>.tmp`, puis le renomme
     /// sur la cible — le renommage est atomique sur Unix et écrase l'ancien
     /// fichier s'il existe. Fonctionne à l'initialisation (fichier absent)
-    /// comme au changement de mot de passe (fichier existant).
+    /// comme au changement de mot de passe (fichier existant). Un `.tmp` laissé
+    /// par un arrêt brutal est retiré d'abord, sans quoi `create_new` refuserait
+    /// toute écriture ultérieure.
     ///
     /// # Errors
     ///
@@ -682,6 +684,8 @@ impl Carnet {
     /// ou si le renommage vers la cible échoue.
     fn ecrire_fichier_600(chemin: &Path, contenu: &[u8]) -> ResultFeuNoyau<()> {
         let nouveau_chemin = chemin.with_added_extension("tmp");
+
+        let _ = std::fs::remove_file(&nouveau_chemin); // résidu d'un crash précédent
 
         let mut fichier = OpenOptions::new()
             .write(true)

@@ -79,16 +79,14 @@ use std::os::unix::fs::symlink;
 use std::str::from_utf8;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{OpenOptions, read, remove_file},
-    io::Write,
-    os::unix::fs::OpenOptionsExt,
+    fs::{read, remove_file},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use feu_noyau::{BRAISE_VIDE, Braise, FeuNoyau};
 
-use crate::{ErreurFeuApplication, ResultFeuApplication, SessionApplication};
+use crate::{ErreurFeuApplication, ResultFeuApplication, Scribe, SessionApplication};
 
 /// Plafond du contenu d'une [`Carte::Texte`], en octets UTF-8.
 ///
@@ -356,8 +354,10 @@ impl Enu {
     ///
     /// Le nom du fichier est l'empreinte hexadécimale de la carte
     /// (content-addressing) : une carte donnée vise toujours le même fichier,
-    /// indépendamment de l'enveloppe qui la transporte. Le fichier est créé en
-    /// mode `0o600` (lecture/écriture réservées au propriétaire).
+    /// indépendamment de l'enveloppe qui la transporte. L'écriture passe par
+    /// [`Scribe::ecrire_fichier_600`] : mode `0o600` et pose atomique, sans quoi
+    /// un arrêt brutal laisserait une ENU tronquée sous un nom de hash valide,
+    /// que l'idempotence ci-dessous ne réécrirait jamais.
     ///
     /// **Idempotent.** Si le fichier existe déjà, l'écriture est shuntée : le
     /// nom étant le hash de la carte, un fichier de même nom encode forcément la
@@ -379,13 +379,7 @@ impl Enu {
         let chemin = self.chemin(chemin_enu);
 
         if !chemin.exists() {
-            let mut fichier = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&chemin)?;
-
-            fichier.write_all(&self.vers_octets())?;
+            Scribe::ecrire_fichier_600(&chemin, &self.vers_octets())?;
         }
 
         Ok(chemin)
