@@ -21,7 +21,7 @@
 
 use feu_noyau::Braise;
 
-use crate::scribe::enu::{Carte, Enu};
+use crate::scribe::{carte::Carte, enu::Enu};
 
 /// Vue d'une `Enu` destinée à sortir de la crate.
 ///

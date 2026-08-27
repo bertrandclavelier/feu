@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use feu_noyau::{ErreurFeuNoyau, MAX_CLASSEURS, MAX_FOYERS};
 use thiserror::Error;
 
-use crate::scribe::enu::MAX_TAILLE_TEXTE;
+use crate::scribe::carte::MAX_TAILLE_TEXTE;
 
 /// Alias de [`Result`] utilisé par toutes les fonctions publiques de `feu-application`.
 pub type ResultFeuApplication<T> = Result<T, ErreurFeuApplication>;

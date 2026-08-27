@@ -26,9 +26,10 @@
 //! (voir [`Scribe::index_et_hash_blob`]) — pour que ses appelants ne désignent
 //! jamais une donnée autrement que par la [`Fiche`] de son ENU.
 
+pub(crate) mod carte;
 mod comptoir;
 mod configuration;
-pub mod enu;
+mod enu;
 pub mod fiche;
 pub mod iterateurs;
 
@@ -51,9 +52,10 @@ use crate::{
     ErreurFeuApplication, ResultFeuApplication, SessionApplication,
     fiche::Fiche,
     scribe::{
+        carte::Carte,
         comptoir::{ComptoirDepot, ComptoirTravail, Comptoirs},
         configuration::Configuration,
-        enu::{Carte, Enu},
+        enu::Enu,
         iterateurs::{Descendants, RacinesAnterieures},
     },
 };

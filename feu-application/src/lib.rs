@@ -62,7 +62,7 @@ use scribe::Scribe;
 /// champs, ce qui permet de descendre l'arborescence en lisant les `hashs_enu`
 /// d'une [`Carte::Repertoire`]. La confiance ne vient pas de l'encapsulation
 /// mais de la vérification de la signature à chaque chargement.
-pub use scribe::enu::Carte;
+pub use scribe::carte::Carte;
 pub use scribe::fiche;
 /// Parcours d'arborescence exposés à la couche de présentation.
 ///
