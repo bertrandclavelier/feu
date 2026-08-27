@@ -51,7 +51,7 @@ use crate::{
     ErreurFeuApplication, ResultFeuApplication, SessionApplication,
     fiche::Fiche,
     scribe::{
-        comptoir::{ComptoirDepot, ComptoirTravail},
+        comptoir::{ComptoirDepot, ComptoirTravail, Comptoirs},
         configuration::Configuration,
         enu::{Carte, Enu},
         iterateurs::{Descendants, RacinesAnterieures},
@@ -93,14 +93,11 @@ pub(super) struct Scribe {
     /// `feu-noyau` pose déjà sa propre configuration.
     chemin_configuration: PathBuf,
 
-    /// Comptoirs de dépôt actifs, indexés par leur identifiant.
-    comptoirs_depot: HashMap<usize, ComptoirDepot>,
-
-    /// Comptoir de travail ouvert, au plus un.
+    /// Comptoirs ouverts, dépôts et travail réunis sous un seul champ.
     ///
-    /// Un [`Option`] plutôt qu'une table : exclusif de lui-même comme des
-    /// comptoirs de dépôt, il n'a pas d'identifiant à distribuer.
-    comptoir_travail: Option<ComptoirTravail>,
+    /// Leur exclusivité tient au type et non à des gardes : [`Comptoirs`] ne sait
+    /// pas représenter les deux sortes en même temps.
+    comptoirs: Comptoirs,
 }
 
 impl Scribe {
@@ -116,8 +113,7 @@ impl Scribe {
             chemin_enu: chemin_feu.join("enu/"),
             chemin_derniere_racine: chemin_feu.join("enu/").join(".DERNIERE_RACINE"),
             chemin_configuration: chemin_feu.join(".config/").join(SCRIBE_CONFIGURATION),
-            comptoirs_depot: HashMap::new(),
-            comptoir_travail: None,
+            comptoirs: Comptoirs::Vide,
         }
     }
 
@@ -264,7 +260,7 @@ impl Scribe {
         session: &SessionApplication,
         fiche: &Fiche,
     ) -> ResultFeuApplication<()> {
-        if self.comptoir_travail.is_some() {
+        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
             return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
         }
         let (index, hash_donnees) = self.index_et_hash_blob(
@@ -345,8 +341,10 @@ impl Scribe {
     ///
     /// Retourne une erreur si la création du dossier, la signature de la racine
     /// origine, sa sauvegarde ou la pose du symlink échoue, et propage celles de
-    /// [`Configuration::charger`] comme de la relecture de la racine sortie. Le
-    /// Scribe reste alors inactif : le drapeau n'est posé qu'en sortie réussie.
+    /// [`Configuration::charger`] comme de [`Configuration::vers_comptoirs`] —
+    /// relecture de la racine sortie, et refus d'un `scribe.feu` portant des
+    /// dépôts et un travail à la fois. Le Scribe reste alors inactif : le
+    /// drapeau n'est posé qu'en sortie réussie.
     pub(super) fn activation(
         &mut self,
         feu_noyau: &FeuNoyau,
@@ -367,26 +365,30 @@ impl Scribe {
         if self.chemin_configuration.exists() {
             let configuration = Configuration::charger(&self.chemin_configuration)?;
 
-            self.comptoirs_depot = configuration.vers_comptoirs_depot();
+            self.comptoirs = configuration.vers_comptoirs(&self.chemin_enu)?;
 
-            for (index, comptoir) in &self.comptoirs_depot {
-                session.mut_comptoirs_depot_ouverts().insert(
-                    *index,
-                    (
-                        comptoir.chemin().clone(),
-                        comptoir.index_foyer(),
-                        comptoir.index_classeur(),
-                    ),
-                );
-            }
+            match &self.comptoirs {
+                Comptoirs::Vide => {}
 
-            self.comptoir_travail = configuration.vers_comptoir_travail(&self.chemin_enu)?;
+                Comptoirs::Depot(comptoirs_depot) => {
+                    for (index, comptoir) in comptoirs_depot {
+                        session.mut_comptoirs_depot_ouverts().insert(
+                            *index,
+                            (
+                                comptoir.chemin().clone(),
+                                comptoir.index_foyer(),
+                                comptoir.index_classeur(),
+                            ),
+                        );
+                    }
+                }
 
-            if let Some(comptoir) = &self.comptoir_travail {
-                session.definit_comptoir_travail_ouvert(
-                    comptoir.chemin().clone(),
-                    comptoir.fiche_racine(),
-                );
+                Comptoirs::Travail(comptoir_travail) => {
+                    session.definit_comptoir_travail_ouvert(
+                        comptoir_travail.chemin().clone(),
+                        comptoir_travail.fiche_racine(),
+                    );
+                }
             }
         }
 
@@ -421,28 +423,14 @@ impl Scribe {
     /// la prochaine activation y retrouve les comptoirs et les rouvre.
     pub(super) fn desactivation(&mut self) {
         self.est_actif = false;
-        self.comptoirs_depot.clear();
-        self.comptoir_travail = None;
-    }
-
-    /// Rend l'identifiant à donner au prochain comptoir de dépôt.
-    ///
-    /// Un cran au-dessus du plus grand identifiant ouvert : unique parmi eux,
-    /// sans compteur à tenir ni à relire au démarrage. Celui qu'une fermeture
-    /// libère peut donc resservir.
-    fn prochain_id_comptoir_depot(&self) -> usize {
-        self.comptoirs_depot
-            .keys()
-            .max()
-            .map_or(0, |index| index + 1)
+        self.comptoirs = Comptoirs::Vide;
     }
 
     /// Ouvre un comptoir de dépôt au chemin donné.
     ///
-    /// Crée le dossier, l'enregistre dans
-    /// [`comptoirs_depot`](Self::comptoirs_depot) et rend son identifiant. Les
-    /// deux index sont validés ici contre des bornes de compilation : le comptoir
-    /// les porte ensuite jusqu'à sa fermeture, qui n'a plus à en douter.
+    /// Crée le dossier, l'enregistre dans [`Comptoirs`] et rend son identifiant.
+    /// Les deux index sont validés ici contre des bornes de compilation : le
+    /// comptoir les porte ensuite jusqu'à sa fermeture, qui n'a plus à en douter.
     ///
     /// `session` est mutable pour recevoir le même identifiant à la ligne
     /// suivante, avec sa destination : le Scribe tient les comptoirs, la session
@@ -464,7 +452,7 @@ impl Scribe {
         index_foyer: usize,
         index_classeur: usize,
     ) -> ResultFeuApplication<usize> {
-        if self.comptoir_travail.is_some() {
+        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
             return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
         }
         if index_foyer >= MAX_FOYERS {
@@ -481,9 +469,7 @@ impl Scribe {
         // distribuerait un identifiant que la fermeture ne saurait pas honorer
         comptoir.ouvrir()?;
 
-        let index_comptoir = self.prochain_id_comptoir_depot();
-
-        self.comptoirs_depot.insert(index_comptoir, comptoir);
+        let index_comptoir = self.comptoirs.ajouter_comptoir_depot(comptoir)?;
 
         session.mut_comptoirs_depot_ouverts().insert(
             index_comptoir,
@@ -524,19 +510,20 @@ impl Scribe {
         chemin: &Path,
         fiche_racine: &Fiche,
     ) -> ResultFeuApplication<()> {
-        if !self.comptoirs_depot.is_empty() {
+        if matches!(self.comptoirs, Comptoirs::Depot(_)) {
             return Err(ErreurFeuApplication::ScribeComptoirDepotOuvert);
         }
-        if self.comptoir_travail.is_some() {
+        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
             return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
         }
 
         self.retrait_lecture_seule(noyau, session, chemin, fiche_racine)?;
 
-        self.comptoir_travail = Some(ComptoirTravail::new(
-            chemin.to_path_buf(),
-            fiche_racine.clone(),
-        ));
+        self.comptoirs
+            .ajouter_comptoir_travail(ComptoirTravail::new(
+                chemin.to_path_buf(),
+                fiche_racine.clone(),
+            ))?;
 
         session.definit_comptoir_travail_ouvert(chemin.to_path_buf(), fiche_racine.clone());
 
@@ -610,11 +597,7 @@ impl Scribe {
             return Err(ErreurFeuApplication::ScribeEnuRAttendue);
         }
 
-        let Some(comptoir) = self.comptoirs_depot.get(&index_comptoir) else {
-            return Err(ErreurFeuApplication::ScribeIndexComptoirInconnu(
-                index_comptoir,
-            ));
-        };
+        let comptoir = self.comptoirs.donne_comptoir_depot(index_comptoir)?;
 
         let Some(braise) = session.braise_foyer(comptoir.index_foyer()) else {
             return Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(
@@ -634,14 +617,8 @@ impl Scribe {
             return Err(ErreurFeuApplication::ScribeFoyerFerme(index));
         }
 
-        // `None` inatteignable : le `get` d'entrée a réussi et rien entre les
-        // deux ne touche à la map. Un refus plutôt qu'un `expect`, au cas où une
-        // garde future s'y glisserait.
-        let Some(comptoir) = self.comptoirs_depot.remove(&index_comptoir) else {
-            return Err(ErreurFeuApplication::ScribeIndexComptoirInconnu(
-                index_comptoir,
-            ));
-        };
+        let comptoir = self.comptoirs.retirer_comptoir_depot(index_comptoir)?;
+
         session
             .mut_comptoirs_depot_ouverts()
             .remove(&index_comptoir);
@@ -808,7 +785,7 @@ impl Scribe {
         enu_racine_depot: &Enu,
         hashs_nouveaux_enfants: &[[u8; 32]],
     ) -> ResultFeuApplication<()> {
-        if self.comptoir_travail.is_some() {
+        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
             return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
         }
 
@@ -904,7 +881,7 @@ impl Scribe {
         nom: &str,
         contenu: &str,
     ) -> ResultFeuApplication<()> {
-        if self.comptoir_travail.is_some() {
+        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
             return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
         }
         let Some(braise) = session.braise_foyer(index_foyer) else {

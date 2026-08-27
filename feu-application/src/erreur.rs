@@ -71,6 +71,11 @@ pub enum ErreurFeuApplication {
     #[error("APP > Un comptoir de travail est ouvert")]
     ScribeComptoirTravailOuvert,
 
+    /// `scribe.feu` porte à la fois des comptoirs de dépôt et un comptoir de
+    /// travail, que leur exclusivité interdit de rouvrir ensemble.
+    #[error("APP > Comptoirs incompatibles dans scribe.feu")]
+    ScribeConfigComptoirsIncompatibles,
+
     /// La ligne de `hash_carte` de `scribe.feu` décode en un nombre d'octets
     /// autre que 32 : l'hexadécimal est valide, sa longueur non.
     #[error("APP > Hash mal formé dans scribe.feu")]
@@ -155,6 +160,11 @@ pub enum ErreurFeuApplication {
     /// valant `.` / `..` : un `Path::join` en sortirait ou l'écraserait.
     #[error("APP > Nom de fichier invalide")]
     ScribeNomFichierInvalide,
+
+    /// Aucun comptoir de travail ouvert, là où l'opération en exige un : sa
+    /// fermeture a été demandée alors que rien n'est sorti sur le disque.
+    #[error("APP > Aucun comptoir de travail ouvert")]
+    ScribePasComptoirTravailOuvert,
 
     /// Racine d'accueil qui n'est plus la dernière : un dépôt s'y greffe sur une
     /// carte périmée, et la version qu'il produit ampute l'arbre de tout ce qui

@@ -28,14 +28,16 @@ use data_encoding::HEXLOWER;
 
 use crate::fiche::Fiche;
 use crate::scribe::enu::Enu;
-use crate::scribe::{ComptoirDepot, ComptoirTravail};
+use crate::scribe::{ComptoirDepot, ComptoirTravail, Comptoirs};
 use crate::{ErreurFeuApplication, ResultFeuApplication, Scribe, scribe::VERSION_CONFIGURATION};
 
 /// Miroir en mémoire du fichier de configuration du [`Scribe`].
 ///
 /// Les comptoirs y sont des tuples et non des types nommés, par symétrie avec
 /// le miroir de [`SessionApplication`](crate::SessionApplication), qui porte le
-/// même découpage.
+/// même découpage. Les deux sortes y cohabitent, là où [`Comptoirs`] les exclut :
+/// le fichier relu n'est pas maîtrisé, et [`Self::vers_comptoirs`] tranche à sa
+/// place — c'est la seule sortie vers l'état vivant.
 ///
 /// `Debug` et `PartialEq` ne servent qu'aux assertions des tests.
 #[derive(Debug, PartialEq)]
@@ -46,7 +48,7 @@ pub(super) struct Configuration {
     /// classeur de destination.
     comptoirs_depot: Vec<(usize, PathBuf, usize, usize)>,
     /// Dossier du comptoir de travail et `hash_carte` de la racine sortie, au
-    /// plus un — [`Option`] comme le champ du [`Scribe`] qu'il reflète.
+    /// plus un.
     comptoir_travail: Option<(PathBuf, [u8; 32])>,
 }
 
@@ -56,39 +58,67 @@ impl Configuration {
     /// L'ordre des dépôts suit celui de la `HashMap`, donc aucun : chaque
     /// entrée porte son identifiant, la relecture n'a pas à s'y fier.
     pub(super) fn new(scribe: &Scribe) -> Self {
-        let comptoirs_depot: Vec<_> = scribe
-            .comptoirs_depot
-            .iter()
-            .map(|(index, comptoir)| {
-                (
-                    *index,
-                    comptoir.chemin().clone(),
-                    comptoir.index_foyer(),
-                    comptoir.index_classeur(),
-                )
-            })
-            .collect();
+        match &scribe.comptoirs {
+            Comptoirs::Vide => Self {
+                version: VERSION_CONFIGURATION,
+                comptoirs_depot: Vec::new(),
+                comptoir_travail: None,
+            },
 
-        let comptoir_travail = scribe.comptoir_travail.as_ref().map(|comptoir| {
-            (
-                comptoir.chemin().clone(),
-                comptoir.fiche_racine().hash_carte(),
-            )
-        });
+            Comptoirs::Depot(comptoirs_depot) => {
+                let comptoirs_depot: Vec<_> = comptoirs_depot
+                    .iter()
+                    .map(|(index, comptoir)| {
+                        (
+                            *index,
+                            comptoir.chemin().clone(),
+                            comptoir.index_foyer(),
+                            comptoir.index_classeur(),
+                        )
+                    })
+                    .collect();
 
-        Self {
-            version: VERSION_CONFIGURATION,
-            comptoirs_depot,
-            comptoir_travail,
+                Self {
+                    version: VERSION_CONFIGURATION,
+                    comptoirs_depot,
+                    comptoir_travail: None,
+                }
+            }
+
+            Comptoirs::Travail(comptoir_travail) => {
+                let comptoir_travail = (
+                    comptoir_travail.chemin().clone(),
+                    comptoir_travail.fiche_racine().hash_carte(),
+                );
+
+                Self {
+                    version: VERSION_CONFIGURATION,
+                    comptoirs_depot: Vec::new(),
+                    comptoir_travail: Some(comptoir_travail),
+                }
+            }
         }
     }
 
-    /// Refait les [`ComptoirDepot`] du miroir, indexés par leur identifiant.
+    /// Refait les comptoirs du miroir, dans la variante que leur nombre impose.
     ///
     /// Aucun dossier n'est touché : ceux des comptoirs relus sont déjà sur le
-    /// disque, seul l'état en mémoire est à reconstruire.
-    pub(super) fn vers_comptoirs_depot(&self) -> HashMap<usize, ComptoirDepot> {
-        self.comptoirs_depot
+    /// disque, seul l'état en mémoire est à reconstruire. La racine sortie est
+    /// relue par [`Enu::charger_sans_verification_signature`] : la [`Fiche`]
+    /// restaurée sert à afficher et à situer, jamais à décider, les vérifications
+    /// de signature ayant lieu à la fermeture du comptoir.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeConfigComptoirsIncompatibles`] si
+    /// le miroir porte des dépôts et un travail à la fois, que [`Comptoirs`] ne
+    /// représente pas ensemble. Propage les erreurs de
+    /// [`Enu::charger_sans_verification_signature`] : ENU absente du disque,
+    /// illisible ou non intègre. L'échec est fatal — [`Scribe::activation`] le
+    /// remonte, le Scribe reste inactif et Feu ne démarre pas.
+    pub(super) fn vers_comptoirs(&self, chemin_enu: &Path) -> ResultFeuApplication<Comptoirs> {
+        let comptoirs_depot: HashMap<_, _> = self
+            .comptoirs_depot
             .iter()
             .map(|donnees| {
                 (
@@ -96,38 +126,26 @@ impl Configuration {
                     ComptoirDepot::new(donnees.1.clone(), donnees.2, donnees.3),
                 )
             })
-            .collect()
-    }
+            .collect();
 
-    /// Refait le [`ComptoirTravail`] du miroir, s'il y en a un.
-    ///
-    /// La racine sortie est relue par
-    /// [`Enu::charger_sans_verification_signature`] : la [`Fiche`] restaurée
-    /// sert à afficher et à situer, jamais à décider. Les vérifications de
-    /// signature ont lieu à la fermeture du comptoir.
-    ///
-    /// # Errors
-    ///
-    /// Propage les erreurs de [`Enu::charger_sans_verification_signature`] :
-    /// ENU absente du disque, illisible ou non intègre. L'échec est fatal —
-    /// [`Scribe::activation`] le remonte, le Scribe reste inactif et Feu ne
-    /// démarre pas.
-    pub(super) fn vers_comptoir_travail(
-        &self,
-        chemin_enu: &Path,
-    ) -> ResultFeuApplication<Option<ComptoirTravail>> {
-        if let Some(comptoir_travail) = &self.comptoir_travail {
+        let comptoir_travail = if let Some(comptoir_travail) = &self.comptoir_travail {
             let fiche = Fiche::new(&Enu::charger_sans_verification_signature(
                 chemin_enu,
                 &comptoir_travail.1,
             )?);
 
-            Ok(Some(ComptoirTravail::new(
-                comptoir_travail.0.clone(),
-                fiche,
-            )))
+            Some(ComptoirTravail::new(comptoir_travail.0.clone(), fiche))
         } else {
-            Ok(None)
+            None
+        };
+
+        match (comptoirs_depot, comptoir_travail) {
+            (comptoirs_depot, None) if comptoirs_depot.is_empty() => Ok(Comptoirs::Vide),
+            (comptoirs_depot, None) => Ok(Comptoirs::Depot(comptoirs_depot)),
+            (comptoirs_depot, Some(comptoir_travail)) if comptoirs_depot.is_empty() => {
+                Ok(Comptoirs::Travail(comptoir_travail))
+            }
+            _ => Err(ErreurFeuApplication::ScribeConfigComptoirsIncompatibles),
         }
     }
 
@@ -284,6 +302,11 @@ impl Configuration {
 
 #[cfg(test)]
 mod tests {
+    //! Tests en ligne : l'aller-retour entre le miroir et son texte.
+    //!
+    //! Le format est du texte ligne à ligne, sans dépendance au reste de Feu —
+    //! exporter puis réimporter suffit à l'éprouver, et un `TempDir` couvre le
+    //! passage par le disque.
 
     use std::{fs::metadata, os::unix::fs::PermissionsExt};
 
@@ -353,7 +376,9 @@ mod tests {
     }
 
     /// Dépôts et comptoir de travail réunis se relisent identiques : la fin des
-    /// dépôts ne déborde pas sur les lignes du comptoir de travail.
+    /// dépôts ne déborde pas sur les lignes du comptoir de travail. Le miroir
+    /// les porte ensemble ; leur refus appartient à
+    /// [`Configuration::vers_comptoirs`].
     #[test]
     fn cycle_config_texte_config_4() -> ResultFeuApplication<()> {
         let configuration = Configuration {
@@ -401,6 +426,8 @@ mod tests {
         Ok(())
     }
 
+    /// Le passage par le disque conserve la configuration et pose `scribe.feu`
+    /// en `0o600`.
     #[test]
     fn cycle_sauvegarde_chargement() -> ResultFeuApplication<()> {
         let tmp = TempDir::new()?;

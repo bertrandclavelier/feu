@@ -16,11 +16,174 @@
 //! sur le disque pour y être modifié, et le comptoir retient la racine sortie.
 //!
 //! Les deux sont ouverts puis refermés par le [`Scribe`](super::Scribe), à qui
-//! appartient tout ce qui touche au contenu du dossier.
+//! appartient tout ce qui touche au contenu du dossier. [`Comptoirs`] tient
+//! l'état de ce qui est ouvert et porte, à lui seul, les transitions.
 
-use std::{fs::remove_dir_all, path::PathBuf};
+use std::{collections::HashMap, fs::remove_dir_all, path::PathBuf};
 
 use crate::{ErreurFeuApplication, ResultFeuApplication, Scribe, fiche::Fiche};
+
+/// État des comptoirs ouverts : aucun, des dépôts, ou un travail.
+///
+/// Les trois cas s'excluent, et c'est le type qui l'impose : aucune variante ne
+/// porte un [`ComptoirDepot`] et un [`ComptoirTravail`] ensemble, si bien que
+/// l'exclusivité n'a pas de garde à écrire. [`Depot`](Comptoirs::Depot) n'est
+/// jamais vide — le dernier retrait ramène à [`Vide`](Comptoirs::Vide).
+pub(super) enum Comptoirs {
+    /// Aucun comptoir ouvert.
+    Vide,
+    /// Les comptoirs de dépôt ouverts, indexés par identifiant.
+    Depot(HashMap<usize, ComptoirDepot>),
+    /// L'unique comptoir de travail.
+    Travail(ComptoirTravail),
+}
+
+impl Comptoirs {
+    /// Rend le comptoir de dépôt portant `index_comptoir`.
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuApplication::ScribeIndexComptoirInconnu`] si l'identifiant est
+    /// absent, comme lorsque aucun comptoir de dépôt n'est ouvert : l'appelant
+    /// n'a rien à tirer de la distinction.
+    pub(super) fn donne_comptoir_depot(
+        &self,
+        index_comptoir: usize,
+    ) -> ResultFeuApplication<&ComptoirDepot> {
+        match self {
+            Self::Depot(comptoirs_depot) => comptoirs_depot.get(&index_comptoir),
+            Self::Vide | Self::Travail(_) => None,
+        }
+        .ok_or(ErreurFeuApplication::ScribeIndexComptoirInconnu(
+            index_comptoir,
+        ))
+    }
+
+    /// Enregistre `comptoir_depot` et rend l'identifiant qui lui est attribué.
+    ///
+    /// L'identifiant suit le plus grand déjà pris ; ceux des comptoirs refermés
+    /// redeviennent disponibles.
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si le comptoir de
+    /// travail occupe la place.
+    pub(super) fn ajouter_comptoir_depot(
+        &mut self,
+        comptoir_depot: ComptoirDepot,
+    ) -> ResultFeuApplication<usize> {
+        match self {
+            Self::Vide => {
+                let mut comptoirs_depot = HashMap::new();
+                comptoirs_depot.insert(0, comptoir_depot);
+                *self = Self::Depot(comptoirs_depot);
+
+                Ok(0)
+            }
+
+            Self::Depot(comptoirs_depot) => {
+                let prochain_id = comptoirs_depot.keys().max().map_or(0, |index| index + 1);
+                comptoirs_depot.insert(prochain_id, comptoir_depot);
+
+                Ok(prochain_id)
+            }
+
+            Self::Travail(_) => Err(ErreurFeuApplication::ScribeComptoirTravailOuvert),
+        }
+    }
+
+    /// Retire le comptoir de dépôt portant `index_comptoir` et le rend.
+    ///
+    /// Le dossier n'est pas touché : la valeur rendue porte de quoi le parcourir
+    /// puis le supprimer.
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuApplication::ScribeIndexComptoirInconnu`] si l'identifiant est
+    /// absent, comme lorsque aucun comptoir de dépôt n'est ouvert.
+    pub(super) fn retirer_comptoir_depot(
+        &mut self,
+        index_comptoir: usize,
+    ) -> ResultFeuApplication<ComptoirDepot> {
+        match self {
+            Self::Depot(comptoirs_depot) => {
+                let retire = comptoirs_depot.remove(&index_comptoir);
+                if comptoirs_depot.is_empty() {
+                    *self = Self::Vide;
+                }
+                retire
+            }
+
+            Self::Vide | Self::Travail(_) => None,
+        }
+        .ok_or(ErreurFeuApplication::ScribeIndexComptoirInconnu(
+            index_comptoir,
+        ))
+    }
+
+    /// Rend le comptoir de travail ouvert.
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuApplication::ScribePasComptoirTravailOuvert`] si aucun ne l'est
+    /// — des comptoirs de dépôt ouverts donnent la même réponse.
+    pub(super) fn donne_comptoir_travail(&self) -> ResultFeuApplication<&ComptoirTravail> {
+        match self {
+            Self::Travail(comptoir_travail) => Ok(comptoir_travail),
+            Self::Vide | Self::Depot(_) => {
+                Err(ErreurFeuApplication::ScribePasComptoirTravailOuvert)
+            }
+        }
+    }
+
+    /// Enregistre `comptoir_travail`, qui exige la place pour lui seul.
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuApplication::ScribeComptoirDepotOuvert`] si des comptoirs de
+    /// dépôt sont ouverts.
+    /// [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si un comptoir de
+    /// travail l'est déjà.
+    pub(super) fn ajouter_comptoir_travail(
+        &mut self,
+        comptoir_travail: ComptoirTravail,
+    ) -> ResultFeuApplication<()> {
+        match self {
+            Self::Vide => {
+                *self = Self::Travail(comptoir_travail);
+
+                Ok(())
+            }
+            Self::Depot(_) => Err(ErreurFeuApplication::ScribeComptoirDepotOuvert),
+
+            Self::Travail(_) => Err(ErreurFeuApplication::ScribeComptoirTravailOuvert),
+        }
+    }
+
+    /// Retire le comptoir de travail et le rend, ramenant à
+    /// [`Vide`](Comptoirs::Vide).
+    ///
+    /// Le dossier n'est pas touché : la valeur rendue porte de quoi le supprimer.
+    ///
+    /// # Errors
+    ///
+    /// [`ErreurFeuApplication::ScribePasComptoirTravailOuvert`] si aucun comptoir
+    /// de travail n'est ouvert.
+    pub(super) fn retirer_comptoir_travail(&mut self) -> ResultFeuApplication<ComptoirTravail> {
+        match self {
+            Self::Travail(comptoir_travail) => {
+                let comptoir = comptoir_travail.clone();
+                *self = Self::Vide;
+
+                Ok(comptoir)
+            }
+
+            Self::Vide | Self::Depot(_) => {
+                Err(ErreurFeuApplication::ScribePasComptoirTravailOuvert)
+            }
+        }
+    }
+}
 
 /// Dossier OS servant de point de dépôt.
 ///
@@ -105,6 +268,7 @@ impl ComptoirDepot {
 /// Le [`Scribe`](super::Scribe) n'en tient qu'un. De l'état de départ, le
 /// comptoir ne retient que la racine : l'arbre entier se redescend depuis elle,
 /// et la fermeture aura de quoi le comparer au dossier.
+#[derive(Clone)]
 pub(super) struct ComptoirTravail {
     /// Chemin du dossier sur le système de fichiers.
     chemin: PathBuf,
