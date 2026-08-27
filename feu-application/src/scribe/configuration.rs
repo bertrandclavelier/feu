@@ -15,8 +15,8 @@
 //! De quoi rouvrir un comptoir, rien de plus : un dépôt donne son identifiant,
 //! son dossier et sa destination, le comptoir de travail son dossier et le
 //! `hash_carte` de la racine sortie. L'arbre est adressé par contenu, ce hash
-//! suffit donc à relire l'ENU et à en refaire une [`Fiche`](super::Fiche) —
-//! sans vérifier sa signature, une restauration n'étant que du parcours.
+//! suffit donc à relire l'ENU et à en refaire une [`Fiche`] — sans vérifier sa
+//! signature, une restauration n'étant que du parcours.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -112,7 +112,9 @@ impl Configuration {
     ///
     /// Retourne [`ErreurFeuApplication::ScribeConfigComptoirsIncompatibles`] si
     /// le miroir porte des dépôts et un travail à la fois, que [`Comptoirs`] ne
-    /// représente pas ensemble. Propage les erreurs de
+    /// représente pas ensemble : le cas suppose un fichier corrompu, que
+    /// [`Configuration::new`] ne peut pas produire, et n'a donc pas de test
+    /// dédié. Propage les erreurs de
     /// [`Enu::charger_sans_verification_signature`] : ENU absente du disque,
     /// illisible ou non intègre. L'échec est fatal — [`Scribe::activation`] le
     /// remonte, le Scribe reste inactif et Feu ne démarre pas.

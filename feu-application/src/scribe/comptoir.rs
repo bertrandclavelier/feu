@@ -15,9 +15,9 @@
 //! [`ComptoirTravail`] fait ressortir : le sous-arbre d'une ENU est matérialisé
 //! sur le disque pour y être modifié, et le comptoir retient la racine sortie.
 //!
-//! Les deux sont ouverts puis refermés par le [`Scribe`](super::Scribe), à qui
-//! appartient tout ce qui touche au contenu du dossier. [`Comptoirs`] tient
-//! l'état de ce qui est ouvert et porte, à lui seul, les transitions.
+//! Les deux sont ouverts puis refermés par le [`Scribe`], à qui appartient tout
+//! ce qui touche au contenu du dossier. [`Comptoirs`] tient l'état de ce qui est
+//! ouvert et porte, à lui seul, les transitions.
 
 use std::{collections::HashMap, fs::remove_dir_all, path::PathBuf};
 
@@ -188,8 +188,12 @@ impl Comptoirs {
 /// Dossier OS servant de point de dépôt.
 ///
 /// Créé à l'ouverture par [`ouvrir`](ComptoirDepot::ouvrir), parcouru à la
-/// fermeture par le [`Scribe`](super::Scribe). Chaque comptoir est lié à un foyer et un
+/// fermeture par le [`Scribe`]. Chaque comptoir est lié à un foyer et un
 /// classeur de destination pour ses données.
+///
+/// `Clone` ne sert qu'aux tests, qui gardent la valeur donnée à
+/// [`Comptoirs::ajouter_comptoir_depot`] pour la comparer à celle qui revient.
+#[derive(Clone)]
 pub(super) struct ComptoirDepot {
     /// Chemin du dossier sur le système de fichiers.
     chemin: PathBuf,
@@ -248,7 +252,7 @@ impl ComptoirDepot {
 
     /// Supprime le dossier physique du comptoir et tout son contenu résiduel.
     ///
-    /// Appelée par le [`Scribe`](super::Scribe) à la fermeture, une fois les fichiers parcourus
+    /// Appelée par le [`Scribe`] à la fermeture, une fois les fichiers parcourus
     /// et déposés. Récursive ([`remove_dir_all`]) : le dossier disparaît avec ce
     /// qu'il reste dedans.
     ///
@@ -265,9 +269,9 @@ impl ComptoirDepot {
 
 /// Dossier OS portant un sous-arbre d'ENU sorti pour être modifié.
 ///
-/// Le [`Scribe`](super::Scribe) n'en tient qu'un. De l'état de départ, le
-/// comptoir ne retient que la racine : l'arbre entier se redescend depuis elle,
-/// et la fermeture aura de quoi le comparer au dossier.
+/// Le [`Scribe`] n'en tient qu'un. De l'état de départ, le comptoir ne retient
+/// que la racine : l'arbre entier se redescend depuis elle, et la fermeture aura
+/// de quoi le comparer au dossier.
 #[derive(Clone)]
 pub(super) struct ComptoirTravail {
     /// Chemin du dossier sur le système de fichiers.
