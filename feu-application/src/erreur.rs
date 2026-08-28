@@ -60,6 +60,12 @@ pub enum ErreurFeuApplication {
     #[error("APP > Carte mal formée : buffer trop court, discriminant inconnu ou octets résiduels")]
     ScribeCarteMalFormee,
 
+    /// Un comptoir de dépôt est déjà enregistré sur ce chemin. La garde porte
+    /// sur l'état, pas sur le disque : le dossier peut avoir été effacé par
+    /// l'utilisateur comptoir ouvert, et une seconde ouverture y réussirait.
+    #[error("APP > Un comptoir est déjà ajouté sur ce chemin")]
+    ScribeComptoirDejaAjoute,
+
     /// Au moins un comptoir de dépôt est ouvert : le comptoir de travail leur
     /// est exclusif, une entrée de données ne peut pas croiser une sortie
     /// destinée à revenir.

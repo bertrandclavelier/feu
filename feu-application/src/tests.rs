@@ -298,9 +298,10 @@ fn cycle_feu_application() -> ResultFeuApplication<()> {
 /// Un fichier déposé par comptoir se relit à l'identique après extinction et
 /// rallumage du nœud — nom et contenu.
 ///
-/// **Seul test qui rallume.** Tout le reste de la suite vit dans un unique
-/// allumage et ne prouve donc rien du disque. Ici l'instance est détruite entre
-/// les deux moitiés, et la seconde ne repart que de `chemin_feu`.
+/// **Seul test qui rallume sur des données déposées** — `persistance_comptoir_depot`
+/// et `persistance_comptoir_travail` rallument aussi, mais ne portent que sur
+/// l'état des comptoirs. Ici l'instance est détruite entre les deux moitiés, et
+/// la seconde ne repart que de `chemin_feu`.
 #[test]
 fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -1326,6 +1327,83 @@ fn exclusivite_comptoir_travail() -> ResultFeuApplication<()> {
         app.commande_suppression_blob(&derniere_enu_racine),
         Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
     ));
+
+    app.commande_extinction_noeud(&interface_test)?;
+
+    Ok(())
+}
+
+/// Les comptoirs de dépôt survivent à la perte de l'instance : `scribe.feu` les
+/// porte, et le rallumage sur une application neuve les rend au miroir de
+/// session avec leurs identifiants et leurs destinations.
+#[test]
+fn persistance_comptoir_depot() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+    let chemin_comptoir_depot1 = tmp.path().join("comptoir_depot1");
+    let chemin_comptoir_depot2 = tmp.path().join("comptoir_depot2");
+
+    let interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    let id1 =
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot1, 1, 0)?;
+    let id2 =
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot2, 0, 1)?;
+
+    drop(app);
+
+    let mut app = FeuApplication::new(&chemin_feu);
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    let comptoir1_relu = app.session.comptoirs_depot_ouverts().get(&id1).unwrap();
+    let comptoir2_relu = app.session.comptoirs_depot_ouverts().get(&id2).unwrap();
+
+    assert_eq!(comptoir1_relu.0, chemin_comptoir_depot1);
+    assert_eq!(comptoir2_relu.0, chemin_comptoir_depot2);
+    assert_eq!(comptoir1_relu.1, 1);
+    assert_eq!(comptoir2_relu.1, 0);
+    assert_eq!(comptoir1_relu.2, 0);
+    assert_eq!(comptoir2_relu.2, 1);
+
+    app.commande_extinction_noeud(&interface_test)?;
+
+    Ok(())
+}
+
+/// Le comptoir de travail survit à la perte de l'instance : `scribe.feu` retient
+/// son chemin et sa racine sortie, que le rallumage relit et rend au miroir de
+/// session, la fiche revenant égale à celle qui l'a ouvert.
+#[test]
+fn persistance_comptoir_travail() -> ResultFeuApplication<()> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_feu = tmp.path().join(".feu");
+    let chemin_comptoir_travail = tmp.path().join("comptoir_travail");
+
+    let interface_test = InterfaceTest::new("mot de passe");
+
+    let mut app = FeuApplication::new(&chemin_feu);
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    let derniere_enu_racine = app.commande_derniere_enu_racine()?;
+
+    app.commande_ouverture_comptoir_travail(
+        &interface_test,
+        &chemin_comptoir_travail,
+        &derniere_enu_racine,
+    )?;
+
+    drop(app);
+
+    let mut app = FeuApplication::new(&chemin_feu);
+    app.commande_allumage_noeud(&interface_test, None)?;
+
+    let comptoir_travail = app.session.comptoir_travail_ouvert().unwrap();
+
+    assert_eq!(comptoir_travail.0, chemin_comptoir_travail);
+    assert_eq!(comptoir_travail.1, derniere_enu_racine);
 
     app.commande_extinction_noeud(&interface_test)?;
 

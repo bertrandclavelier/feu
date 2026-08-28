@@ -217,7 +217,8 @@ fn falsification_braise_avant_chargement_enu() {
 ///   racine origine signée nœud, symlink `.DERNIERE_RACINE`), puis saut de
 ///   cette amorce à une réactivation — prouvé par l'égalité des deux racines
 ///   chargées : une nouvelle amorce donnerait une date différente.
-/// - `desactivation` : bascule `est_actif`.
+/// - `desactivation` : baisse `est_actif` et vide les comptoirs, un dépôt
+///   étant ajouté à la main juste avant pour qu'il y ait quelque chose à vider.
 /// - `new_racine` : les deux cas — genèse (`None`, répertoire vide + `_racine`)
 ///   et racine de suite (`Some(carte)`), avec repointage atomique du symlink
 ///   éprouvé via un `charger` qui suit le lien vers la racine courante.
@@ -240,9 +241,16 @@ fn cycle_racine() {
         Some((&"_racine".to_string(), &"".to_string()))
     );
 
+    scribe
+        .comptoirs
+        .ajouter_comptoir_depot(ComptoirDepot::new(chemin_enu.join("comptoir"), 1, 0))
+        .unwrap();
+
     // 2e activation
     scribe.desactivation();
     assert!(!scribe.est_actif);
+    assert!(matches!(scribe.comptoirs, Comptoirs::Vide));
+
     scribe.activation(&noyau, &mut session).unwrap();
     assert!(scribe.est_actif);
 

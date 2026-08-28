@@ -61,11 +61,13 @@ impl Comptoirs {
 
     /// Enregistre `comptoir_depot` et rend l'identifiant qui lui est attribué.
     ///
-    /// L'identifiant suit le plus grand déjà pris ; ceux des comptoirs refermés
-    /// redeviennent disponibles.
+    /// L'identifiant suit le plus grand déjà pris : celui d'un comptoir refermé
+    /// ne ressert que si rien de plus grand n'est resté ouvert.
     ///
     /// # Errors
     ///
+    /// [`ErreurFeuApplication::ScribeComptoirDejaAjoute`] si un comptoir de
+    /// dépôt occupe déjà ce chemin.
     /// [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si le comptoir de
     /// travail occupe la place.
     pub(super) fn ajouter_comptoir_depot(
@@ -82,6 +84,12 @@ impl Comptoirs {
             }
 
             Self::Depot(comptoirs_depot) => {
+                if comptoirs_depot
+                    .values()
+                    .any(|c| c.chemin() == comptoir_depot.chemin())
+                {
+                    return Err(ErreurFeuApplication::ScribeComptoirDejaAjoute);
+                }
                 let prochain_id = comptoirs_depot.keys().max().map_or(0, |index| index + 1);
                 comptoirs_depot.insert(prochain_id, comptoir_depot);
 
@@ -324,8 +332,9 @@ mod tests {
     //!
     //! Un comptoir n'est qu'un dossier de l'OS et quelques champs — il ne
     //! signe rien, ne chiffre rien, n'a besoin ni de noyau allumé ni de foyer
-    //! ouvert. Un `TempDir` suffit, là où `src/scribe/tests.rs` monte une pile
-    //! réelle pour éprouver l'enveloppe et sa signature.
+    //! ouvert. Un `TempDir` suffit quand le disque est en jeu, un chemin
+    //! fabriqué sinon, là où `src/scribe/tests.rs` monte une pile réelle pour
+    //! éprouver l'enveloppe et sa signature.
     //!
     //! Le **rangement** du contenu d'un comptoir n'est pas ici : il appartient à
     //! [`Scribe::fermeture_comptoir_depot`](super::super::Scribe), donc au haut.
@@ -350,7 +359,7 @@ mod tests {
         let tmp = TempDir::new()?;
 
         // Création du chemin et du comptoir
-        let chemin = tmp.path().to_path_buf().join("test_comptoir_depot");
+        let chemin = tmp.path().to_path_buf().join("comptoir_depot");
         let comptoir = ComptoirDepot::new(chemin.clone(), 2, 5);
 
         // Le dossier n'existe pas encore
@@ -378,6 +387,83 @@ mod tests {
 
         // Erreur quand on veut supprimer le comptoir déjà supprimé
         assert!(comptoir.supprimer().is_err());
+
+        Ok(())
+    }
+
+    /// Un identifiant libéré ne ressert que par le haut : retirer le plus grand
+    /// le rend disponible, retirer un autre laisse son numéro perdu, et le
+    /// dernier retrait, qui ramène à [`Vide`](Comptoirs::Vide), repart de 0.
+    #[test]
+    fn id_comptoir_depot() -> ResultFeuApplication<()> {
+        let chemin = PathBuf::from("chemin_test");
+
+        let chemin1 = chemin.join("comptoir_depot1");
+        let comptoir1 = ComptoirDepot::new(chemin1, 1, 2);
+        let chemin2 = chemin.join("comptoir_depot2");
+        let comptoir2 = ComptoirDepot::new(chemin2, 2, 1);
+        let chemin3 = chemin.join("comptoir_depot3");
+        let comptoir3 = ComptoirDepot::new(chemin3, 0, 1);
+        let chemin4 = chemin.join("comptoir_depot4");
+        let comptoir4 = ComptoirDepot::new(chemin4, 1, 0);
+        let chemin5 = chemin.join("comptoir_depot5");
+        let comptoir5 = ComptoirDepot::new(chemin5, 2, 1);
+
+        let mut comptoirs = Comptoirs::Vide;
+
+        // ajout id1
+        let id1 = comptoirs.ajouter_comptoir_depot(comptoir1)?;
+        assert_eq!(id1, 0);
+
+        // ajout id2
+        let id2 = comptoirs.ajouter_comptoir_depot(comptoir2)?;
+        assert_eq!(id2, 1);
+
+        // suppression id1
+        comptoirs.retirer_comptoir_depot(id1)?;
+
+        // ajout id3
+        let id3 = comptoirs.ajouter_comptoir_depot(comptoir3)?;
+        assert_eq!(id3, 2);
+
+        // suppression id3
+        comptoirs.retirer_comptoir_depot(id3)?;
+
+        // ajout id4
+        let id4 = comptoirs.ajouter_comptoir_depot(comptoir4)?;
+        assert_eq!(id4, 2);
+
+        // vide comptoirs
+        comptoirs.retirer_comptoir_depot(id2)?;
+        comptoirs.retirer_comptoir_depot(id4)?;
+
+        assert_eq!(comptoirs.ajouter_comptoir_depot(comptoir5)?, 0);
+
+        Ok(())
+    }
+
+    /// Deux comptoirs de dépôt ne partagent pas un chemin, sans qu'aucun dossier
+    /// existe : la garde porte sur l'état, pas sur le disque.
+    #[test]
+    fn ajout_comptoir_meme_chemin() -> ResultFeuApplication<()> {
+        let chemin = PathBuf::from("chemin_test");
+
+        let chemin1 = chemin.join("comptoir_depot1");
+        let comptoir1 = ComptoirDepot::new(chemin1.clone(), 1, 2);
+        let comptoir1bis = ComptoirDepot::new(chemin1, 0, 1);
+        let chemin2 = chemin.join("comptoir_depot2");
+        let comptoir2 = ComptoirDepot::new(chemin2, 2, 1);
+
+        let mut comptoirs = Comptoirs::Vide;
+
+        comptoirs.ajouter_comptoir_depot(comptoir1)?;
+
+        assert!(matches!(
+            comptoirs.ajouter_comptoir_depot(comptoir1bis),
+            Err(ErreurFeuApplication::ScribeComptoirDejaAjoute)
+        ));
+
+        assert_eq!(comptoirs.ajouter_comptoir_depot(comptoir2)?, 1);
 
         Ok(())
     }
