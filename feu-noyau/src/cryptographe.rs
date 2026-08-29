@@ -41,22 +41,23 @@
 mod trousseau;
 pub(crate) mod trousseaux_publics;
 
+use std::io::{Read, Write};
+
 use bip39::{Language, Mnemonic};
 use data_encoding::HEXLOWER;
 use hkdf::Hkdf;
 use ml_dsa::{MlDsa87, Signature, Verifier, VerifyingKey};
-use ml_kem::ml_kem_1024::Ciphertext as Ciphertext1024;
-use ml_kem::{Encapsulate, EncapsulationKey1024};
+use ml_kem::{Encapsulate, EncapsulationKey1024, ml_kem_1024::Ciphertext as Ciphertext1024};
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use sha3::{Digest, Sha3_256};
-use std::io::{Read, Write};
 
-use crate::cryptographe::trousseau::Trousseau;
-use crate::cryptographe::trousseaux_publics::{
-    TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
+use crate::{
+    ErreurFeuNoyau, InterfaceFeuNoyau, MAX_FOYERS, ResultFeuNoyau,
+    cryptographe::{
+        trousseau::Trousseau,
+        trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud},
+    },
 };
-use crate::{ErreurFeuNoyau, MAX_FOYERS};
-use crate::{InterfaceFeuNoyau, ResultFeuNoyau};
 
 /// Longueur de la phrase mnémonique BIP39 — 24 mots, soit 256 bits d'entropie.
 const NOMBRE_MOTS_SEED: usize = 24;
@@ -734,6 +735,8 @@ impl Cryptographe {
 //   délèguent au chiffrement par chunks de `Trousseau`.
 //
 // Tous relèvent des tests d'intégration.
+/// Tests en ligne : les cycles de signature et de chiffrement asymétrique,
+/// sur un cryptographe monté à la main.
 #[cfg(test)]
 mod tests {
     use super::*;

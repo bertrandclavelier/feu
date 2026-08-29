@@ -51,13 +51,12 @@ use ratatui::{
     widgets::{Block, Tabs},
 };
 
+use super::{Ecran, EtatTui};
 use crate::tui::{
     ecran_arborescence_disque::dessiner_ecran_arborescence_disque,
     ecran_arborescence_enu::dessiner_ecran_arborescence_enu,
     ecran_pilotage::dessiner_ecran_pilotage,
 };
-
-use super::{Ecran, EtatTui};
 
 /// Dimensions du carré commun aux écrans de travail.
 ///

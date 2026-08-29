@@ -20,20 +20,19 @@
 
 mod carnet;
 
-use std::fs::File;
-use std::path::Path;
-use std::path::PathBuf;
-
-use crate::Anomalie;
-use crate::Braise;
-use crate::ErreurFeuNoyau;
-use crate::MAX_FOYERS;
-use crate::ResultFeuNoyau;
-use crate::braise::BRAISE_VIDE;
-use crate::cryptographe::trousseaux_publics::{
-    TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
 };
-use crate::gardien::carnet::Carnet;
+
+use crate::{
+    Anomalie, Braise, ErreurFeuNoyau, MAX_FOYERS, ResultFeuNoyau,
+    braise::BRAISE_VIDE,
+    cryptographe::trousseaux_publics::{
+        TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
+    },
+    gardien::carnet::Carnet,
+};
 
 /// Version du format de `noyau.feu`, écrite en tête et relue à l'allumage.
 ///
@@ -495,6 +494,8 @@ impl Gardien {
     }
 }
 
+/// Tests en ligne : l'aller-retour de la [`Configuration`] par son format
+/// texte, ordre des adresses `.braise` compris.
 #[cfg(test)]
 mod tests {
     use super::*;

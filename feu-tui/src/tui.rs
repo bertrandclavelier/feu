@@ -75,6 +75,7 @@ use feu_application::{SessionApplication, fiche::Fiche};
 use ratatui::DefaultTerminal;
 use secrecy::SecretString;
 
+use self::commandes::{Commande, CommandesActives};
 use crate::{
     connecteurs::{ConnecteurVersCoeur, MessageCoeurTui, MessageTuiCoeur},
     erreur::{ErreurFeuTui, ResultFeuTui},
@@ -83,7 +84,6 @@ use crate::{
         ecran_arborescence_enu::EtatArborescenceEnu, ecran_pilotage::EtatPilotage,
     },
 };
-use commandes::{Commande, CommandesActives};
 
 /// Axe de rendu : quel écran de travail est dessiné à chaque frame.
 ///

@@ -18,18 +18,21 @@
 //! suffit donc à relire l'ENU et à en refaire une [`Fiche`] — sans vérifier sa
 //! signature, une restauration n'étant que du parcours.
 
-use std::collections::HashMap;
-use std::ffi::OsString;
-use std::fs::read_to_string;
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    ffi::OsString,
+    fs::read_to_string,
+    os::unix::ffi::{OsStrExt, OsStringExt},
+    path::{Path, PathBuf},
+};
 
 use data_encoding::HEXLOWER;
 
-use crate::fiche::Fiche;
-use crate::scribe::enu::Enu;
-use crate::scribe::{ComptoirDepot, ComptoirTravail, Comptoirs};
-use crate::{ErreurFeuApplication, ResultFeuApplication, Scribe, scribe::VERSION_CONFIGURATION};
+use crate::{
+    ErreurFeuApplication, ResultFeuApplication, Scribe,
+    fiche::Fiche,
+    scribe::{ComptoirDepot, ComptoirTravail, Comptoirs, VERSION_CONFIGURATION, enu::Enu},
+};
 
 /// Miroir en mémoire du fichier de configuration du [`Scribe`].
 ///
@@ -302,14 +305,13 @@ impl Configuration {
     }
 }
 
+/// Tests en ligne : l'aller-retour entre le miroir et son texte.
+///
+/// Le format est du texte ligne à ligne, sans dépendance au reste de Feu —
+/// exporter puis réimporter suffit à l'éprouver, et un `TempDir` couvre le
+/// passage par le disque.
 #[cfg(test)]
 mod tests {
-    //! Tests en ligne : l'aller-retour entre le miroir et son texte.
-    //!
-    //! Le format est du texte ligne à ligne, sans dépendance au reste de Feu —
-    //! exporter puis réimporter suffit à l'éprouver, et un `TempDir` couvre le
-    //! passage par le disque.
-
     use std::{fs::metadata, os::unix::fs::PermissionsExt};
 
     use tempfile::TempDir;

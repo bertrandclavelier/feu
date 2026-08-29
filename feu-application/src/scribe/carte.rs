@@ -583,18 +583,17 @@ pub(super) fn prendre_octets(buf: &[u8], n: usize) -> ResultFeuApplication<(&[u8
     Ok((&buf[0..n], &buf[n..]))
 }
 
+/// Tests en ligne : ce qui se prouve sans monter de pile.
+///
+/// Une carte n'est que des octets et des collections ordonnées : la forger
+/// à la main suffit, rien ici ne signe ni ne chiffre. L'aller-retour par le
+/// format canonique et les gardes de construction — taille du texte, nom de
+/// fichier — s'éprouvent donc au plus près du code qui les tient.
+///
+/// Mettre une carte sous enveloppe signée demande au contraire un noyau
+/// allumé et un foyer ouvert : ces tests-là sont dans `src/scribe/tests.rs`.
 #[cfg(test)]
 mod tests {
-    //! Tests en ligne : ce qui se prouve sans monter de pile.
-    //!
-    //! Une carte n'est que des octets et des collections ordonnées : la forger
-    //! à la main suffit, rien ici ne signe ni ne chiffre. L'aller-retour par le
-    //! format canonique et les gardes de construction — taille du texte, nom de
-    //! fichier — s'éprouvent donc au plus près du code qui les tient.
-    //!
-    //! Mettre une carte sous enveloppe signée demande au contraire un noyau
-    //! allumé et un foyer ouvert : ces tests-là sont dans `src/scribe/tests.rs`.
-
     use super::*;
 
     // --- prendre_octets ---

@@ -334,30 +334,26 @@ impl ComptoirTravail {
     }
 }
 
+/// Tests en ligne : ce qui se prouve sans monter de pile.
+///
+/// Un comptoir n'est qu'un dossier de l'OS et quelques champs : il ne signe ni
+/// ne chiffre, un `TempDir` suffit là où `src/scribe/tests.rs` doit monter une
+/// pile réelle.
+///
+/// Le **rangement** du contenu d'un comptoir n'est pas ici : il appartient à
+/// [`Scribe::fermeture_comptoir_depot`](super::Scribe::fermeture_comptoir_depot).
+///
+/// [`ComptoirTravail`] n'a **pas** de test en ligne : ne créant pas son
+/// dossier, il n'a ni refus d'écraser ni permissions à éprouver, et le reste
+/// rendrait ses champs. Son ouverture est éprouvée par `src/tests.rs`.
 #[cfg(test)]
 mod tests {
-    //! Tests en ligne : ce qui se prouve sans monter de pile.
-    //!
-    //! Un comptoir n'est qu'un dossier de l'OS et quelques champs — il ne
-    //! signe rien, ne chiffre rien, n'a besoin ni de noyau allumé ni de foyer
-    //! ouvert. Un `TempDir` suffit quand le disque est en jeu, un chemin
-    //! fabriqué sinon, là où `src/scribe/tests.rs` monte une pile réelle pour
-    //! éprouver l'enveloppe et sa signature.
-    //!
-    //! Le **rangement** du contenu d'un comptoir n'est pas ici : il appartient à
-    //! [`Scribe::fermeture_comptoir_depot`](super::super::Scribe), donc au haut.
-    //!
-    //! [`ComptoirTravail`] n'a **pas** de test en ligne : ne créant pas son
-    //! dossier, il n'a ni refus d'écraser ni permissions à éprouver, et le reste
-    //! rendrait ses champs. Son ouverture est éprouvée par `src/tests.rs`.
-
     use std::{fs::metadata, os::unix::fs::PermissionsExt};
 
     use tempfile::TempDir;
 
-    use crate::ResultFeuApplication;
-
     use super::*;
+    use crate::ResultFeuApplication;
 
     /// Cycle de vie d'un [`ComptoirDepot`] : le dossier n'existe qu'entre
     /// `ouvrir` et `supprimer`, en `0o700`, et ces deux-là refusent l'un le

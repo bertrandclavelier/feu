@@ -23,13 +23,14 @@
 
 use std::path::PathBuf;
 
+use data_encoding::DecodePartial;
+use hkdf::InvalidLength;
+use thiserror::Error;
+
 use crate::{
     MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
     MAX_TAILLE_SIGNATURE,
 };
-use data_encoding::DecodePartial;
-use hkdf::InvalidLength;
-use thiserror::Error;
 
 /// Alias de [`Result`] utilisé par toutes les fonctions publiques de `feu-noyau`.
 pub type ResultFeuNoyau<T> = Result<T, ErreurFeuNoyau>;

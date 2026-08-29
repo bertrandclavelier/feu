@@ -49,13 +49,11 @@
 //! La session ne peut donc pas faire remonter d'erreur applicative dans une
 //! couche qui la consomme, ni celle-ci la lui renvoyer aplatie de ses préfixes.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
-use feu_noyau::{BRAISE_VIDE, Braise};
 use feu_noyau::{
-    MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
-    MAX_TAILLE_SIGNATURE,
+    BRAISE_VIDE, Braise, MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB,
+    MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE, MAX_TAILLE_SIGNATURE,
 };
 
 use crate::fiche::Fiche;
@@ -317,18 +315,17 @@ impl Default for SessionApplication {
     }
 }
 
+/// Tests en ligne : ce qui se prouve sans monter de pile.
+///
+/// Troisième emplacement de la crate, après `src/tests.rs` (la crate par ses
+/// `commande_*`) et `src/scribe/tests.rs` (le Scribe en direct). Ces deux-là
+/// montent un noyau réel dans un `TempDir` ; ici, [`SessionApplication`] est
+/// un porteur d'état pur — une session neuve et deux setters suffisent.
+///
+/// Ce qui touche à la session **à travers une commande** relève du haut, pas
+/// d'ici : ce fichier n'éprouve que le comptage et les bornes.
 #[cfg(test)]
 mod tests {
-    //! Tests en ligne : ce qui se prouve sans monter de pile.
-    //!
-    //! Troisième emplacement de la crate, après `src/tests.rs` (la crate par ses
-    //! `commande_*`) et `src/scribe/tests.rs` (le Scribe en direct). Ces deux-là
-    //! montent un noyau réel dans un `TempDir` ; ici, [`SessionApplication`] est
-    //! un porteur d'état pur — une session neuve et deux setters suffisent.
-    //!
-    //! Ce qui touche à la session **à travers une commande** relève du haut, pas
-    //! d'ici : ce fichier n'éprouve que le comptage et les bornes.
-
     use super::*;
 
     /// Deux foyers ouverts sur trois, lus par les deux accesseurs.

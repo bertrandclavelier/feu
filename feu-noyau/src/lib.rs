@@ -40,17 +40,17 @@ mod gardien;
 #[cfg(test)]
 mod tests;
 
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::{
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
+pub use braise::{BRAISE_VIDE, Braise};
 use secrecy::SecretString;
 
-use crate::archiviste::Archiviste;
-use crate::cryptographe::Cryptographe;
 pub use crate::erreur::{ErreurFeuNoyau, ResultFeuNoyau};
-use crate::gardien::Gardien;
-pub use braise::{BRAISE_VIDE, Braise};
+use crate::{archiviste::Archiviste, cryptographe::Cryptographe, gardien::Gardien};
 
 /// Nombre maximum de foyers dans le nœud.
 pub const MAX_FOYERS: usize = 3;

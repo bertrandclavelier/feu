@@ -46,11 +46,12 @@
 
 use std::path::{Path, PathBuf};
 
-use secrecy::SecretString;
-
 pub use erreur::{ErreurFeuApplication, ResultFeuApplication};
 use feu_noyau::{Braise, FeuNoyau, InterfaceFeuNoyau};
-use scribe::Scribe;
+use secrecy::SecretString;
+pub use session::SessionApplication;
+
+use self::scribe::Scribe;
 /// Ce que la couche ENU laisse voir au dehors : la carte, jamais l'enveloppe.
 ///
 /// `Enu` reste privée au crate. Les crates consommatrices reçoivent des
@@ -62,19 +63,18 @@ use scribe::Scribe;
 /// champs, ce qui permet de descendre l'arborescence en lisant les `hashs_enu`
 /// d'une [`Carte::Repertoire`]. La confiance ne vient pas de l'encapsulation
 /// mais de la vérification de la signature à chaque chargement.
-pub use scribe::carte::Carte;
-pub use scribe::fiche;
+pub use self::scribe::carte::Carte;
+pub use self::scribe::fiche;
 /// Parcours d'arborescence exposés à la couche de présentation.
 ///
 /// Les deux types sont publics parce qu'ils apparaissent dans la signature des
 /// commandes qui les rendent. Ni l'un ni l'autre ne se construit de l'extérieur :
 /// leurs `new` sont `pub(crate)` et réclament le chemin du dossier `enu/`, que
 /// le Scribe ne laisse pas sortir.
-pub use scribe::iterateurs::{Descendants, RacinesAnterieures};
-pub use session::SessionApplication;
+pub use self::scribe::iterateurs::{Descendants, RacinesAnterieures};
 
-mod commandes;
 pub mod erreur;
+mod lib_commandes;
 mod scribe;
 mod session;
 #[cfg(test)]

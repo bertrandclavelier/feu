@@ -29,8 +29,9 @@ use std::path::Path;
 use data_encoding::HEXLOWER;
 use feu_noyau::BRAISE_VIDE;
 
-use crate::scribe::enu::Enu;
-use crate::{ErreurFeuApplication, ResultFeuApplication, SessionApplication, fiche::Fiche};
+use crate::{
+    ErreurFeuApplication, ResultFeuApplication, SessionApplication, fiche::Fiche, scribe::enu::Enu,
+};
 
 /// Descend une arborescence ENU depuis une racine donnée, en profondeur d'abord.
 ///

@@ -23,12 +23,13 @@
 //! Aucun état n'est partagé entre les deux threads — toute communication
 //! transite par ces canaux typés.
 
-use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender};
-use std::thread::{JoinHandle, spawn};
+use std::{
+    path::{Path, PathBuf},
+    sync::mpsc::{Receiver, Sender},
+    thread::{JoinHandle, spawn},
+};
 
-use feu_application::fiche::Fiche;
-use feu_application::{FeuApplication, InterfaceFeuApplication, SessionApplication};
+use feu_application::{FeuApplication, InterfaceFeuApplication, SessionApplication, fiche::Fiche};
 use secrecy::SecretString;
 
 /// Messages envoyés du thread cœur vers le thread TUI.

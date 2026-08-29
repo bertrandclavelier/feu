@@ -68,32 +68,29 @@
 //!   dans `Option<SecretBox<[u8; 32]>>` — présente uniquement le temps du
 //!   chiffrement des clés, effacée dès que le trousseau persistable est constitué.
 
-use crate::Braise;
-use crate::ErreurFeuNoyau;
-use crate::MAX_CLASSEURS;
-use crate::MAX_FOYERS;
-use crate::ResultFeuNoyau;
-
-use super::trousseaux_publics::{
-    TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
-};
+use std::io::{Read, Write};
 
 use aead::stream::{DecryptorBE32, EncryptorBE32};
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
+use aes_gcm::{
+    Aes256Gcm, Key, Nonce,
+    aead::{Aead, KeyInit},
+};
 use argon2::Argon2;
 use data_encoding::BASE32_NOPAD;
 use hkdf::Hkdf;
 use ml_dsa::{Keypair, MlDsa87, Signer, SigningKey, VerifyingKey};
-use ml_kem::Decapsulate;
-use ml_kem::ml_kem_1024::Ciphertext as Ciphertext1024;
-use ml_kem::{DecapsulationKey1024, EncapsulationKey1024, KeyExport, Seed};
-use rand::RngCore;
-use rand::rngs::OsRng;
-use secrecy::SecretString;
-use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
+use ml_kem::{
+    Decapsulate, DecapsulationKey1024, EncapsulationKey1024, KeyExport, Seed,
+    ml_kem_1024::Ciphertext as Ciphertext1024,
+};
+use rand::{RngCore, rngs::OsRng};
+use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use sha3::{Digest, Sha3_256};
-use std::io::{Read, Write};
+
+use super::trousseaux_publics::{
+    TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
+};
+use crate::{Braise, ErreurFeuNoyau, MAX_CLASSEURS, MAX_FOYERS, ResultFeuNoyau};
 
 // ── Labels de dérivation HKDF ────────────────────────────────────────────────
 //
@@ -1317,13 +1314,14 @@ impl Trousseau {
 //   et les `trousseau_public_*_vers_*`).
 //
 // Ces deux mécanismes relèvent des tests d'intégration.
+/// Tests en ligne : le déterminisme de la dérivation depuis une graine, le
+/// cycle de chiffrement générique et le refus d'un mauvais mot de passe.
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
 
-    use crate::ResultFeuNoyau;
-
     use super::*;
+    use crate::ResultFeuNoyau;
 
     /// Vérifie qu'une même seed redonne toujours exactement le même matériau.
     ///

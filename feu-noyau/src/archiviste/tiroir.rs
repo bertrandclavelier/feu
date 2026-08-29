@@ -16,12 +16,11 @@
 //! Le blob en clair est zéroïsé dès qu'il est remplacé par le blob chiffré —
 //! aucun octet sensible ne subsiste en mémoire après chiffrement.
 
-use crate::ErreurFeuNoyau;
-use crate::MAX_TAILLE_BLOB;
-use crate::ResultFeuNoyau;
-use crate::TAILLE_CHUNK;
 use std::io::{Read, Write};
+
 use zeroize::Zeroize;
+
+use crate::{ErreurFeuNoyau, MAX_TAILLE_BLOB, ResultFeuNoyau, TAILLE_CHUNK};
 
 /// Objet de transfert éphémère entre l'Archiviste et le Cryptographe.
 ///

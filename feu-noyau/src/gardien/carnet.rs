@@ -23,20 +23,18 @@
 //! d'un fichier « absent ou illisible » désignent ce cas. Ne sont nommées que
 //! les variantes propres au carnet, quand il constate lui-même l'anomalie.
 
-use std::fs;
-use std::fs::DirBuilder;
-use std::fs::File;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::os::unix::fs::DirBuilderExt;
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    fs::{DirBuilder, File, OpenOptions},
+    io::Write,
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
+    path::{Path, PathBuf},
+};
 
-use crate::Braise;
-use crate::ErreurFeuNoyau;
-use crate::ResultFeuNoyau;
-use crate::cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer};
-use crate::{Anomalie, MAX_CLASSEURS, MAX_FOYERS};
+use crate::{
+    Anomalie, Braise, ErreurFeuNoyau, MAX_CLASSEURS, MAX_FOYERS, ResultFeuNoyau,
+    cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer},
+};
 
 /// Dossier des fichiers de configuration, sous `~/.feu/`.
 const FEU_DOSSIER_CONFIG: &str = ".config";

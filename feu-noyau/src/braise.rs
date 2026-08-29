@@ -103,6 +103,8 @@ impl Debug for Braise {
     }
 }
 
+/// Tests en ligne : la réciprocité de `try_from` et `Display`, et les chaînes
+/// que la conversion refuse.
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,5 @@
+# Un seul `use` par crate, imbriqué : std, puis les crates externes, puis crate.
+# Les deux options sont instables — `cargo +nightly fmt --all` les applique,
+# `cargo fmt` en stable les ignore avec un avertissement, sans rien défaire.
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"

@@ -50,21 +50,22 @@
 //! d'un parcours n'engage donc rien tant qu'il n'a pas repassé
 //! [`Enu::authentique`], barrière de toute action sur un blob.
 
-use data_encoding::HEXLOWER;
-use std::fs::rename;
-use std::os::unix::fs::symlink;
-use std::str::from_utf8;
 use std::{
     collections::BTreeSet,
-    fs::{read, remove_file},
+    fs::{read, remove_file, rename},
+    os::unix::fs::symlink,
     path::{Path, PathBuf},
+    str::from_utf8,
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use data_encoding::HEXLOWER;
 use feu_noyau::{BRAISE_VIDE, Braise, FeuNoyau};
 
-use crate::scribe::carte::{Carte, prendre_octets};
-use crate::{ErreurFeuApplication, ResultFeuApplication, Scribe, SessionApplication};
+use crate::{
+    ErreurFeuApplication, ResultFeuApplication, Scribe, SessionApplication,
+    scribe::carte::{Carte, prendre_octets},
+};
 
 /// Enveloppe Numérique Universelle.
 ///
@@ -347,15 +348,13 @@ impl Enu {
     /// Le nom du fichier est l'empreinte hexadécimale de la carte
     /// (content-addressing) : une carte donnée vise toujours le même fichier,
     /// indépendamment de l'enveloppe qui la transporte. L'écriture passe par
-    /// [`Scribe::ecrire_fichier_600`] : mode `0o600` et pose atomique, sans quoi
-    /// un arrêt brutal laisserait une ENU tronquée sous un nom de hash valide,
-    /// que l'idempotence ci-dessous ne réécrirait jamais.
+    /// [`Scribe::ecrire_fichier_600`] — `0o600` et pose atomique, sans quoi un
+    /// arrêt brutal laisserait une ENU tronquée sous un nom de hash valide, que
+    /// l'idempotence ci-dessous ne réécrirait jamais.
     ///
-    /// **Idempotent.** Si le fichier existe déjà, l'écriture est shuntée : le
-    /// nom étant le hash de la carte, un fichier de même nom encode forcément la
-    /// même carte. Une `date` ou une `signature` différentes sont sans
-    /// incidence — elles ne participent ni au hash ni au nom. D'où une
-    /// déduplication à l'échelle du nœud.
+    /// **Idempotent.** Si le fichier existe déjà, l'écriture est shuntée : le nom
+    /// étant le hash de la carte, un même nom encode la même carte, que `date` et
+    /// `signature` ne touchent pas — d'où une déduplication à l'échelle du nœud.
     ///
     /// # Retour
     ///
@@ -719,25 +718,23 @@ impl Enu {
     }
 }
 
+/// Tests en ligne : ce qui se prouve sans monter de pile.
+///
+/// Une seule chose relève d'ici : l'aller-retour de l'enveloppe par son
+/// format canonique, sur une ENU forgée à la main. La désérialisation ne
+/// vérifiant ni le hash ni la signature, des octets quelconques suffisent
+/// à l'éprouver. Le format de la carte transportée se teste dans le module
+/// `carte`, qui le tient.
+///
+/// Tout ce qui signe ou authentifie ([`Enu::new`], [`Enu::charger`],
+/// [`Enu::remplacer`]) est dans `src/scribe/tests.rs`, qui monte un noyau
+/// allumé et un foyer ouvert.
 #[cfg(test)]
 mod tests {
-    //! Tests en ligne : ce qui se prouve sans monter de pile.
-    //!
-    //! Une seule chose relève d'ici : l'aller-retour de l'enveloppe par son
-    //! format canonique, sur une ENU forgée à la main. La désérialisation ne
-    //! vérifiant ni le hash ni la signature, des octets quelconques suffisent
-    //! à l'éprouver. Le format de la carte transportée se teste dans le module
-    //! `carte`, qui le tient.
-    //!
-    //! Tout ce qui signe ou authentifie ([`Enu::new`], [`Enu::charger`],
-    //! [`Enu::remplacer`]) est dans `src/scribe/tests.rs`, qui monte un noyau
-    //! allumé et un foyer ouvert.
-
     use std::collections::BTreeMap;
 
-    use crate::ResultFeuApplication;
-
     use super::*;
+    use crate::ResultFeuApplication;
 
     /// Round-trip complet : Enu → octets → Enu, tous champs identiques.
     #[test]

@@ -54,19 +54,17 @@
 
 pub(crate) mod tiroir;
 
-use std::fs;
-use std::fs::DirBuilder;
-use std::fs::OpenOptions;
-use std::os::unix::fs::DirBuilderExt;
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    fs::{DirBuilder, OpenOptions},
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt},
+    path::{Path, PathBuf},
+};
 
-use crate::Anomalie;
-use crate::DonneesBlob;
-use crate::ErreurFeuNoyau;
-use crate::MAX_CLASSEURS;
-use crate::ResultFeuNoyau;
-use crate::archiviste::tiroir::Tiroir;
+use crate::{
+    Anomalie, DonneesBlob, ErreurFeuNoyau, MAX_CLASSEURS, ResultFeuNoyau,
+    archiviste::tiroir::Tiroir,
+};
 
 /// Sous-dossier du foyer qui tient le registre des blobs.
 const REGISTRE: &str = "registre";

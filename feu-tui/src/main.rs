@@ -28,16 +28,15 @@ mod connecteurs;
 mod erreur;
 mod tui;
 
-use std::env;
-use std::io::Error;
-use std::path::PathBuf;
-use std::sync::mpsc::channel;
+use std::{env, io::Error, path::PathBuf, sync::mpsc::channel};
 
-use crate::connecteurs::{
-    ConnecteurVersCoeur, ConnecteurVersTui, MessageCoeurTui, MessageTuiCoeur,
+use crate::{
+    connecteurs::{ConnecteurVersCoeur, ConnecteurVersTui, MessageCoeurTui, MessageTuiCoeur},
+    tui::Tui,
 };
-use crate::tui::Tui;
 
+/// Point d'entrée : résout les deux chemins, ouvre les canaux entre TUI et
+/// cœur, lance les deux threads et échoue si le cœur a paniqué.
 fn main() -> Result<(), Error> {
     // Unique point de lecture de l'environnement dans tout Feu : les deux
     // chemins sont résolus ici, au bord du programme, puis injectés — le nœud

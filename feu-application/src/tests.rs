@@ -44,9 +44,8 @@ use rand::{Rng, distributions::Alphanumeric};
 use tempfile::TempDir;
 use walkdir::WalkDir;
 
-use crate::fiche::Fiche;
-
 use super::*;
+use crate::fiche::Fiche;
 
 /// Implémentation d'[`InterfaceFeuApplication`] pour les tests.
 ///

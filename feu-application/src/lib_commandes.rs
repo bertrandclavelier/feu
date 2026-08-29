@@ -61,12 +61,11 @@ use std::io::Write;
 
 use feu_noyau::{Anomalie, DonneesBlob, FeuNoyau};
 
+use super::*;
 use crate::{
     fiche::Fiche,
     scribe::iterateurs::{Descendants, RacinesAnterieures},
 };
-
-use super::*;
 
 impl FeuApplication {
     //
