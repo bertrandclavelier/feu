@@ -177,6 +177,12 @@ pub enum ErreurFeuApplication {
     #[error("APP > Aucun comptoir de travail ouvert")]
     ScribePasComptoirTravailOuvert,
 
+    /// Racine du nœud passée en racine de comptoir de travail : signée par le
+    /// nœud, elle ne peut pas être re-signée par la fermeture, qui ne sait
+    /// s'adresser qu'à un foyer.
+    #[error("APP > La racine du nœud ne peut pas être ouverte en comptoir de travail")]
+    ScribeRacineNoeudInterdite,
+
     /// Racine d'accueil qui n'est plus la dernière : un dépôt s'y greffe sur une
     /// carte périmée, et la version qu'il produit ampute l'arbre de tout ce qui
     /// a été déposé depuis.

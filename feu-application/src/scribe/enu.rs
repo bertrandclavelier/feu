@@ -755,12 +755,12 @@ mod tests {
             (String::from("clé2"), String::from("valeur2")),
         ]);
         let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
-        let hash_donnee: [u8; 32] = std::array::from_fn(|i| i as u8);
+        let hash_blob: [u8; 32] = std::array::from_fn(|i| i as u8);
 
         let carte = Carte::Donnee {
             metas,
             tags,
-            hash_donnee,
+            hash_blob,
         };
 
         let enu = Enu {

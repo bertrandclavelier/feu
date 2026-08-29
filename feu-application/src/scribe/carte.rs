@@ -55,7 +55,7 @@ pub enum Carte {
         /// Tags libres.
         tags: BTreeSet<String>,
         /// Hash SHA3-256 du blob (également le nom du fichier `.dat`).
-        hash_donnee: [u8; 32],
+        hash_blob: [u8; 32],
     },
 
     /// CaT — texte brut embarqué directement dans la carte. Sa taille est
@@ -84,11 +84,11 @@ pub enum Carte {
 impl Carte {
     /// Construit une [`Carte::Donnee`] — référence un blob dans un
     /// classeur.
-    pub(super) fn new_donnee(hash_donnee: [u8; 32]) -> Self {
+    pub(super) fn new_donnee(hash_blob: [u8; 32]) -> Self {
         Self::Donnee {
             metas: BTreeMap::new(),
             tags: BTreeSet::new(),
-            hash_donnee,
+            hash_blob,
         }
     }
 
@@ -101,7 +101,7 @@ impl Carte {
             Self::Donnee {
                 metas,
                 tags: _,
-                hash_donnee: _,
+                hash_blob: _,
             } => metas,
             Self::Texte {
                 metas,
@@ -131,7 +131,7 @@ impl Carte {
             Self::Donnee {
                 metas: _,
                 tags: _,
-                hash_donnee: _,
+                hash_blob: _,
             } => None,
             Self::Texte {
                 metas: _,
@@ -155,7 +155,7 @@ impl Carte {
             Self::Donnee {
                 metas: _,
                 tags,
-                hash_donnee: _,
+                hash_blob: _,
             } => tags,
             Self::Texte {
                 metas: _,
@@ -271,7 +271,7 @@ impl Carte {
             Self::Donnee {
                 metas,
                 tags: _,
-                hash_donnee: _,
+                hash_blob: _,
             } => {
                 metas.insert(cle, valeur);
             }
@@ -302,7 +302,7 @@ impl Carte {
             Self::Donnee {
                 metas: _,
                 tags,
-                hash_donnee: _,
+                hash_blob: _,
             } => {
                 tags.insert(tag);
             }
@@ -359,12 +359,12 @@ impl Carte {
             Carte::Donnee {
                 metas,
                 tags,
-                hash_donnee,
+                hash_blob,
             } => {
                 resultat.push(0x00);
                 metas_vers_octets(&mut resultat, metas);
                 tags_vers_octets(&mut resultat, tags);
-                resultat.extend(hash_donnee);
+                resultat.extend(hash_blob);
             }
             Carte::Texte {
                 metas,
@@ -416,7 +416,7 @@ impl Carte {
         match octets[0] {
             0 => {
                 let (hash, reste) = prendre_octets(reste, 32)?;
-                let hash_donnee: [u8; 32] = hash.try_into().unwrap(); // pas d'erreur possible
+                let hash_blob: [u8; 32] = hash.try_into().unwrap(); // pas d'erreur possible
 
                 if !reste.is_empty() {
                     return Err(ErreurFeuApplication::ScribeCarteMalFormee);
@@ -425,7 +425,7 @@ impl Carte {
                 Ok(Carte::Donnee {
                     metas,
                     tags,
-                    hash_donnee,
+                    hash_blob,
                 })
             }
             1 => {
@@ -753,12 +753,12 @@ mod tests {
             (String::from("clé2"), String::from("valeur2")),
         ]);
         let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
-        let hash_donnee: [u8; 32] = std::array::from_fn(|i| i as u8);
+        let hash_blob: [u8; 32] = std::array::from_fn(|i| i as u8);
 
         let carte = Carte::Donnee {
             metas,
             tags,
-            hash_donnee,
+            hash_blob,
         };
 
         let octets = carte.vers_octets();
@@ -825,21 +825,21 @@ mod tests {
     /// puis relus via les accesseurs communs.
     #[test]
     fn carte_donnee() -> ResultFeuApplication<()> {
-        let hash_donnee = [0u8; 32];
-        let mut carte = Carte::new_donnee(hash_donnee);
+        let hash_blob = [0u8; 32];
+        let mut carte = Carte::new_donnee(hash_blob);
 
         assert!(matches!(
-            carte.ajout_hash_enu(&hash_donnee),
+            carte.ajout_hash_enu(&hash_blob),
             Err(ErreurFeuApplication::ScribeEnuRAttendue)
         ));
 
         if let Carte::Donnee {
             metas: _,
             tags: _,
-            hash_donnee: h,
+            hash_blob: h,
         } = &carte
         {
-            assert_eq!(h, &hash_donnee);
+            assert_eq!(h, &hash_blob);
         }
 
         assert!(carte.tags().is_empty() && carte.metas().is_empty());
@@ -865,11 +865,11 @@ mod tests {
     /// tags et metas insérés puis relus via les accesseurs communs.
     #[test]
     fn carte_texte() -> ResultFeuApplication<()> {
-        let hash_donnee = [0u8; 32];
+        let hash_blob = [0u8; 32];
         let mut carte = Carte::new_texte("Test", "Contenu court de test")?;
 
         assert!(matches!(
-            carte.ajout_hash_enu(&hash_donnee),
+            carte.ajout_hash_enu(&hash_blob),
             Err(ErreurFeuApplication::ScribeEnuRAttendue)
         ));
 
@@ -934,8 +934,8 @@ mod tests {
     /// accesseurs communs.
     #[test]
     fn carte_repertoire() -> ResultFeuApplication<()> {
-        let hash_donnee1 = [0u8; 32];
-        let hash_donnee2 = [1u8; 32];
+        let hash_blob1 = [0u8; 32];
+        let hash_blob2 = [1u8; 32];
         let mut carte = Carte::new_repertoire(BTreeSet::new());
 
         if let Carte::Repertoire {
@@ -947,8 +947,8 @@ mod tests {
             assert!(h.is_empty());
         }
 
-        carte.ajout_hash_enu(&hash_donnee1)?;
-        carte.ajout_hash_enu(&hash_donnee2)?;
+        carte.ajout_hash_enu(&hash_blob1)?;
+        carte.ajout_hash_enu(&hash_blob2)?;
 
         if let Carte::Repertoire {
             metas: _,
@@ -988,9 +988,9 @@ mod tests {
     /// pas seulement l'absence d'erreur : la garde ne doit rien réécrire.
     #[test]
     fn nom_fichier() -> ResultFeuApplication<()> {
-        let hash_donnee = [0u8; 32];
+        let hash_blob = [0u8; 32];
 
-        let mut carte = Carte::new_donnee(hash_donnee);
+        let mut carte = Carte::new_donnee(hash_blob);
 
         // Pas de meta nom
         assert!(matches!(

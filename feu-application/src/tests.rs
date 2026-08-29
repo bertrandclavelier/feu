@@ -184,6 +184,47 @@ fn remplir_dossier(chemin: &Path) -> ResultFeuApplication<()> {
     Ok(())
 }
 
+/// Dépose un dossier vide `documents` sous la racine du nœud et rend sa
+/// [`Fiche`], en laissant le foyer 0 ouvert.
+///
+/// Seule voie par les commandes pour obtenir une EnuR : rien ne forge un
+/// répertoire à la main, il naît d'un dossier réel importé par un comptoir de
+/// dépôt. Or la racine du nœud ne peut pas servir de racine à un comptoir de
+/// travail, qui exige donc ce préalable.
+///
+/// Le foyer reste ouvert : l'ouverture d'un comptoir de travail sort le
+/// sous-arbre, ce qu'un foyer fermé refuse. À l'appelant de le fermer avant
+/// l'extinction du nœud.
+fn deposer_repertoire_sous_racine(
+    app: &mut FeuApplication,
+    interface_test: &InterfaceTest,
+) -> ResultFeuApplication<Fiche> {
+    let tmp = TempDir::new().unwrap();
+    let chemin_comptoir_depot = tmp.path().join("comptoir_depot");
+
+    let fiche_racine = Fiche::new(&app.scribe.derniere_enu_racine(&app.session)?);
+
+    app.commande_ouverture_foyer(interface_test, 0)?;
+
+    let index_comptoir =
+        app.commande_ouverture_comptoir_depot(interface_test, &chemin_comptoir_depot, 0, 0)?;
+
+    let chemin = chemin_comptoir_depot.join("documents");
+    create_dir(&chemin)?;
+
+    app.commande_fermeture_comptoir_depot(interface_test, index_comptoir, &fiche_racine)?;
+
+    // le dossier vide est devenu l'unique EnuR enfant de la nouvelle racine
+    let racine = app.commande_derniere_enu_racine()?;
+    for h in racine.carte().hashs_enu().into_iter().flatten() {
+        let fiche = app.commande_chargement_enu(h)?.unwrap();
+        if fiche.carte().metas()["nom"] == "documents" {
+            return Ok(fiche);
+        }
+    }
+    panic!("le dossier déposé est introuvable sous la racine")
+}
+
 /// Relit récursivement `chemin` en un ensemble `(chemin relatif, contenu)`,
 /// un par fichier — les dossiers n'ont pas d'entrée propre, leur chemin relatif
 /// dans celui de leurs fichiers suffit à les distinguer.
@@ -698,9 +739,8 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
 /// distinguent le foyer du texte de celui du répertoire d'accueil.
 ///
 /// **Le suffixe est posé au dépôt, pas au retrait** : le second texte porte
-/// déjà `test_1` en méta, et le retrait ne fait que joindre les deux noms. Rien
-/// ne dit lequel des deux hashs sort en premier, d'où la comparaison par
-/// ensembles.
+/// déjà `test_1` en méta. Rien ne dit lequel des deux hashs sort en premier,
+/// d'où la comparaison par ensembles.
 ///
 /// Couvre aussi la carte texte, branche du retrait jamais atteinte ailleurs.
 #[test]
@@ -1228,21 +1268,18 @@ fn ouverture_comptoir_travail_normal() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    let derniere_enu_racine = app.commande_derniere_enu_racine()?;
+    let fiche_racine = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
 
-    app.commande_ouverture_comptoir_travail(
-        &interface_test,
-        &chemin_comptoir,
-        &derniere_enu_racine,
-    )?;
+    app.commande_ouverture_comptoir_travail(&interface_test, &chemin_comptoir, &fiche_racine)?;
 
     assert!(chemin_comptoir.exists());
 
     let (chemin, fiche) = app.session.comptoir_travail_ouvert().unwrap();
 
     assert_eq!(chemin, &chemin_comptoir);
-    assert_eq!(fiche.hash_carte(), derniere_enu_racine.hash_carte());
+    assert_eq!(fiche.hash_carte(), fiche_racine.hash_carte());
 
+    app.commande_fermeture_foyer(&interface_test, 0)?;
     app.commande_extinction_noeud(&interface_test)?;
 
     Ok(())
@@ -1264,7 +1301,7 @@ fn ouverture_comptoir_travail_depot_deja_ouvert() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    let derniere_enu_racine = app.commande_derniere_enu_racine()?;
+    let fiche_racine = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
 
     app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot, 0, 0)?;
 
@@ -1272,11 +1309,12 @@ fn ouverture_comptoir_travail_depot_deja_ouvert() -> ResultFeuApplication<()> {
         app.commande_ouverture_comptoir_travail(
             &interface_test,
             &chemin_comptoir_travail,
-            &derniere_enu_racine,
+            &fiche_racine,
         ),
         Err(ErreurFeuApplication::ScribeComptoirDepotOuvert)
     ));
 
+    app.commande_fermeture_foyer(&interface_test, 0)?;
     app.commande_extinction_noeud(&interface_test)?;
 
     Ok(())
@@ -1302,19 +1340,19 @@ fn exclusivite_comptoir_travail() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    let derniere_enu_racine = app.commande_derniere_enu_racine()?;
+    let fiche_racine = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
 
     app.commande_ouverture_comptoir_travail(
         &interface_test,
         &chemin_comptoir_travail1,
-        &derniere_enu_racine,
+        &fiche_racine,
     )?;
 
     assert!(matches!(
         app.commande_ouverture_comptoir_travail(
             &interface_test,
             &chemin_comptoir_travail2,
-            &derniere_enu_racine,
+            &fiche_racine,
         ),
         Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
     ));
@@ -1325,15 +1363,16 @@ fn exclusivite_comptoir_travail() -> ResultFeuApplication<()> {
     ));
 
     assert!(matches!(
-        app.commande_depot_enu_texte(&derniere_enu_racine, 0, "test", "contenu de test"),
+        app.commande_depot_enu_texte(&fiche_racine, 0, "test", "contenu de test"),
         Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
     ));
 
     assert!(matches!(
-        app.commande_suppression_blob(&derniere_enu_racine),
+        app.commande_suppression_blob(&fiche_racine),
         Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
     ));
 
+    app.commande_fermeture_foyer(&interface_test, 0)?;
     app.commande_extinction_noeud(&interface_test)?;
 
     Ok(())
@@ -1393,14 +1432,15 @@ fn persistance_comptoir_travail() -> ResultFeuApplication<()> {
     let mut app = FeuApplication::new(&chemin_feu);
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    let derniere_enu_racine = app.commande_derniere_enu_racine()?;
+    let fiche_racine = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
 
     app.commande_ouverture_comptoir_travail(
         &interface_test,
         &chemin_comptoir_travail,
-        &derniere_enu_racine,
+        &fiche_racine,
     )?;
 
+    app.commande_fermeture_foyer(&interface_test, 0)?;
     drop(app);
 
     let mut app = FeuApplication::new(&chemin_feu);
@@ -1409,7 +1449,7 @@ fn persistance_comptoir_travail() -> ResultFeuApplication<()> {
     let comptoir_travail = app.session.comptoir_travail_ouvert().unwrap();
 
     assert_eq!(comptoir_travail.0, chemin_comptoir_travail);
-    assert_eq!(comptoir_travail.1, derniere_enu_racine);
+    assert_eq!(comptoir_travail.1, fiche_racine);
 
     app.commande_extinction_noeud(&interface_test)?;
 

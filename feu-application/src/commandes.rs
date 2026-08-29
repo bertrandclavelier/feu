@@ -585,6 +585,43 @@ impl FeuApplication {
         Ok(())
     }
 
+    /// Ferme le comptoir de travail ouvert : le sous-arbre est reconstruit
+    /// depuis le dossier, qui fait autorité, puis remplace l'ancien.
+    ///
+    /// Ce qui n'a pas changé sur le disque est réemployé tel quel — même ENU,
+    /// même braise, mêmes tags. Une entrée effacée disparaît de l'arbre, une
+    /// entrée nouvelle rejoint le foyer de son répertoire d'accueil.
+    ///
+    /// Le dossier de travail est supprimé une fois le remplacement passé ; un
+    /// échec en chemin laisse comptoir et dossier en place.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint,
+    /// [`ErreurFeuApplication::ScribePasComptoirTravailOuvert`] si aucun
+    /// comptoir de travail n'est ouvert,
+    /// [`ErreurFeuApplication::ScribeDossierTravailIntrouvable`] si son dossier
+    /// a disparu et [`ErreurFeuApplication::ScribeFoyersFermes`] si un foyer du
+    /// sous-arbre est fermé — les trois avant toute écriture. Propage ensuite
+    /// les erreurs du Scribe : E/S, dépôt de blob, signature, texte édité trop
+    /// grand ou non UTF-8.
+    pub fn commande_fermeture_comptoir_travail(
+        &mut self,
+        interface_feu_application: &impl InterfaceFeuApplication,
+    ) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_mut()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        self.scribe
+            .fermeture_comptoir_travail(noyau, &mut self.session)?;
+
+        interface_feu_application.recevoir_session_application(Some(self.session.clone()));
+
+        Ok(())
+    }
+
     /// Matérialise l'arborescence d'une `EnuR` dans un dossier OS, en lecture
     /// seule — opération inverse du dépôt par comptoir.
     ///

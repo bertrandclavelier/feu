@@ -21,7 +21,7 @@
 //! les **blobs** — les contenus chiffrés rangés dans les classeurs des foyers.
 //!
 //! Le Scribe ne descend pas jusqu'au blob : trouver le `.dat` correspondant à un
-//! `hash_donnee`, le déchiffrer, le supprimer sont l'affaire du noyau. Il fait
+//! `hash_blob`, le déchiffrer, le supprimer sont l'affaire du noyau. Il fait
 //! la charnière — traduire une ENU en index de foyer et en empreinte de blob
 //! (voir [`Scribe::index_et_hash_blob`]) — pour que ses appelants ne désignent
 //! jamais une donnée autrement que par la [`Fiche`] de son ENU.
@@ -38,14 +38,15 @@ mod tests;
 
 use data_encoding::HEXLOWER;
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs::{DirBuilder, OpenOptions, read, read_dir},
     io::Write,
     os::unix::fs::{DirBuilderExt, OpenOptionsExt},
     path::{Path, PathBuf},
+    str::from_utf8,
 };
 
-use feu_noyau::{BRAISE_VIDE, DonneesBlob, FeuNoyau, MAX_CLASSEURS, MAX_FOYERS};
+use feu_noyau::{BRAISE_VIDE, Braise, DonneesBlob, FeuNoyau, MAX_CLASSEURS, MAX_FOYERS};
 use walkdir::WalkDir;
 
 use crate::{
@@ -53,7 +54,7 @@ use crate::{
     fiche::Fiche,
     scribe::{
         carte::Carte,
-        comptoir::{ComptoirDepot, ComptoirTravail, Comptoirs},
+        comptoir::{CLASSEUR_DEFAUT_COMPTOIR_TRAVAIL, ComptoirDepot, ComptoirTravail, Comptoirs},
         configuration::Configuration,
         enu::Enu,
         iterateurs::{Descendants, RacinesAnterieures},
@@ -202,13 +203,13 @@ impl Scribe {
         let Carte::Donnee {
             metas: _,
             tags: _,
-            hash_donnee,
+            hash_blob,
         } = enu.carte()
         else {
             return Err(ErreurFeuApplication::ScribeEnuDAttendue);
         };
 
-        Ok((index, *hash_donnee))
+        Ok((index, *hash_blob))
     }
 
     /// Déchiffre le blob référencé par `fiche` et écrit le clair dans
@@ -231,12 +232,12 @@ impl Scribe {
         fiche: &Fiche,
         destination: impl Write,
     ) -> ResultFeuApplication<()> {
-        let (index, hash_donnees) = self.index_et_hash_blob(
+        let (index, hash_blobs) = self.index_et_hash_blob(
             session,
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
 
-        noyau.lecture_blob(index, &HEXLOWER.encode(&hash_donnees), destination)?;
+        noyau.lecture_blob(index, &HEXLOWER.encode(&hash_blobs), destination)?;
 
         Ok(())
     }
@@ -265,12 +266,12 @@ impl Scribe {
         if matches!(self.comptoirs, Comptoirs::Travail(_)) {
             return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
         }
-        let (index, hash_donnees) = self.index_et_hash_blob(
+        let (index, hash_blobs) = self.index_et_hash_blob(
             session,
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
 
-        noyau.suppression_blob(index, &HEXLOWER.encode(&hash_donnees))?;
+        noyau.suppression_blob(index, &HEXLOWER.encode(&hash_blobs))?;
 
         Ok(())
     }
@@ -294,12 +295,12 @@ impl Scribe {
         session: &SessionApplication,
         fiche: &Fiche,
     ) -> ResultFeuApplication<bool> {
-        let (index, hash_donnees) = self.index_et_hash_blob(
+        let (index, hash_blobs) = self.index_et_hash_blob(
             session,
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
 
-        Ok(noyau.existence_blob(index, &HEXLOWER.encode(&hash_donnees))?)
+        Ok(noyau.existence_blob(index, &HEXLOWER.encode(&hash_blobs))?)
     }
 
     /// Retourne les métadonnées système du blob référencé par `fiche` — taille,
@@ -319,12 +320,12 @@ impl Scribe {
         session: &SessionApplication,
         fiche: &Fiche,
     ) -> ResultFeuApplication<DonneesBlob> {
-        let (index, hash_donnees) = self.index_et_hash_blob(
+        let (index, hash_blobs) = self.index_et_hash_blob(
             session,
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
 
-        Ok(noyau.informations_blob(index, &HEXLOWER.encode(&hash_donnees))?)
+        Ok(noyau.informations_blob(index, &HEXLOWER.encode(&hash_blobs))?)
     }
 
     /// Active le Scribe : amorce l'arborescence au tout premier allumage, puis
@@ -483,57 +484,6 @@ impl Scribe {
         Ok(index_comptoir)
     }
 
-    /// Ouvre le comptoir de travail : sort le sous-arbre de `fiche_racine` dans
-    /// `chemin`, puis retient l'un et l'autre.
-    ///
-    /// La sortie est celle de [`Self::retrait_lecture_seule`], gardes comprises.
-    /// Les deux exclusivités se vérifient avant elle, donc avant toute écriture.
-    ///
-    /// **L'enregistrement clôt l'ouverture, il ne l'amorce pas** : un comptoir
-    /// inscrit sur une sortie interrompue ferait passer les fichiers manquants
-    /// pour des suppressions voulues, là où un dossier à demi sorti n'est rien.
-    ///
-    /// `session` est mutable pour recevoir le miroir du comptoir, comme à
-    /// l'ouverture d'un dépôt.
-    ///
-    /// # Errors
-    ///
-    /// Retourne [`ErreurFeuApplication::ScribeComptoirDepotOuvert`] si un dépôt
-    /// est ouvert, [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si un
-    /// comptoir de travail l'est déjà — rien n'est écrit dans les deux cas. Puis
-    /// propage les erreurs du retrait : foyers requis fermés, dossier de sortie
-    /// déjà existant, `fiche_racine` qui n'est pas un répertoire, nom absent ou
-    /// invalide, authentification, E/S et lecture de blob. Puis l'échec de
-    /// [`Self::sauvegarder_configuration`], le comptoir déjà inscrit.
-    pub(super) fn ouverture_comptoir_travail(
-        &mut self,
-        noyau: &mut FeuNoyau,
-        session: &mut SessionApplication,
-        chemin: &Path,
-        fiche_racine: &Fiche,
-    ) -> ResultFeuApplication<()> {
-        if matches!(self.comptoirs, Comptoirs::Depot(_)) {
-            return Err(ErreurFeuApplication::ScribeComptoirDepotOuvert);
-        }
-        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
-            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
-        }
-
-        self.retrait_lecture_seule(noyau, session, chemin, fiche_racine)?;
-
-        self.comptoirs
-            .ajouter_comptoir_travail(ComptoirTravail::new(
-                chemin.to_path_buf(),
-                fiche_racine.clone(),
-            ))?;
-
-        session.definit_comptoir_travail_ouvert(chemin.to_path_buf(), fiche_racine.clone());
-
-        self.sauvegarder_configuration()?;
-
-        Ok(())
-    }
-
     /// Ferme un comptoir de dépôt : greffe son contenu sous `enu_racine_depot`,
     /// puis propage la nouvelle racine de dépôt jusqu'à la racine du nœud.
     ///
@@ -658,7 +608,7 @@ impl Scribe {
             if entree.file_type().is_file() {
                 let contenu = read(&chemin_entree)?;
 
-                let (hash_fichier, _) = noyau.depot_blob(
+                let (hash_blob, _) = noyau.depot_blob(
                     comptoir.index_foyer(),
                     comptoir.index_classeur(),
                     &contenu[..],
@@ -666,12 +616,12 @@ impl Scribe {
 
                 // le noyau nomme ses blobs par l'hexadécimal d'un SHA3-256 :
                 // 32 octets une fois décodés, la conversion ne peut pas échouer
-                let hash_fichier: [u8; 32] = HEXLOWER
-                    .decode(hash_fichier.as_bytes())?
+                let hash_blob: [u8; 32] = HEXLOWER
+                    .decode(hash_blob.as_bytes())?
                     .try_into()
                     .unwrap();
 
-                let mut carte = Carte::new_donnee(hash_fichier);
+                let mut carte = Carte::new_donnee(hash_blob);
                 carte.ajout_meta("nom", entree.file_name().to_string_lossy().as_ref());
 
                 let enu = Enu::new(carte, noyau, session, braise)?;
@@ -717,6 +667,353 @@ impl Scribe {
         self.sauvegarder_configuration()?;
 
         Ok(())
+    }
+
+    /// Ouvre le comptoir de travail : sort le sous-arbre de `fiche_racine` dans
+    /// `chemin`, puis retient l'un et l'autre.
+    ///
+    /// La sortie est celle de [`Self::retrait_lecture_seule`], gardes comprises.
+    /// Les deux exclusivités se vérifient avant elle, donc avant toute écriture.
+    ///
+    /// **L'enregistrement clôt l'ouverture, il ne l'amorce pas** : un comptoir
+    /// inscrit sur une sortie interrompue ferait passer les fichiers manquants
+    /// pour des suppressions voulues, là où un dossier à demi sorti n'est rien.
+    ///
+    /// `session` est mutable pour recevoir le miroir du comptoir, comme à
+    /// l'ouverture d'un dépôt.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeComptoirDepotOuvert`] si un dépôt
+    /// est ouvert, [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si un
+    /// comptoir de travail l'est déjà — rien n'est écrit dans les deux cas. Puis
+    /// propage les erreurs du retrait : foyers requis fermés, dossier de sortie
+    /// déjà existant, `fiche_racine` qui n'est pas un répertoire, nom absent ou
+    /// invalide, authentification, E/S et lecture de blob. Puis l'échec de
+    /// [`Self::sauvegarder_configuration`], le comptoir déjà inscrit.
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeRacineNoeudInterdite`] si
+    /// `fiche_racine` est la racine du nœud : signée par le nœud, elle ne peut
+    /// pas être re-signée à la fermeture.
+    pub(super) fn ouverture_comptoir_travail(
+        &mut self,
+        noyau: &mut FeuNoyau,
+        session: &mut SessionApplication,
+        chemin: &Path,
+        fiche_racine: &Fiche,
+    ) -> ResultFeuApplication<()> {
+        if fiche_racine.braise() == BRAISE_VIDE {
+            return Err(ErreurFeuApplication::ScribeRacineNoeudInterdite);
+        }
+        if matches!(self.comptoirs, Comptoirs::Depot(_)) {
+            return Err(ErreurFeuApplication::ScribeComptoirDepotOuvert);
+        }
+        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
+            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
+        }
+
+        self.retrait_lecture_seule(noyau, session, chemin, fiche_racine)?;
+
+        self.comptoirs
+            .ajouter_comptoir_travail(ComptoirTravail::new(
+                chemin.to_path_buf(),
+                fiche_racine.clone(),
+            ))?;
+
+        session.definit_comptoir_travail_ouvert(chemin.to_path_buf(), fiche_racine.clone());
+
+        self.sauvegarder_configuration()?;
+
+        Ok(())
+    }
+
+    /// Ferme le comptoir de travail : reconstruit le sous-arbre depuis le
+    /// dossier, puis substitue la racine obtenue à l'ancienne.
+    ///
+    /// Le disque fait autorité, l'ancien sous-arbre sert de référence : ce qui
+    /// n'a pas bougé est réemployé tel quel, braise, métas et tags compris, et
+    /// un sous-arbre inchangé de bout en bout ne signe rien.
+    ///
+    /// Tout est vérifié avant la moindre écriture — dossier présent, foyers
+    /// ouverts, racine authentifiée, seule authentification de la descente. Le
+    /// dossier n'est supprimé qu'une fois la substitution passée : un échec en
+    /// chemin laisse comptoir et travail en place.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribePasComptoirTravailOuvert`] si aucun
+    /// comptoir de travail n'est ouvert,
+    /// [`ErreurFeuApplication::ScribeDossierTravailIntrouvable`] si son dossier
+    /// a disparu, et [`ErreurFeuApplication::ScribeFoyersFermes`] si un foyer du
+    /// sous-arbre est fermé. Propage les erreurs de la descente, de
+    /// [`Enu::remplacer`] et de la sauvegarde de la configuration.
+    pub(super) fn fermeture_comptoir_travail(
+        &mut self,
+        noyau: &mut FeuNoyau,
+        session: &mut SessionApplication,
+    ) -> ResultFeuApplication<()> {
+        let comptoir = self.comptoirs.donne_comptoir_travail()?;
+        let chemin = comptoir.chemin();
+        let fiche_racine = comptoir.fiche_racine();
+
+        if !chemin.exists() {
+            return Err(ErreurFeuApplication::ScribeDossierTravailIntrouvable(
+                chemin.to_path_buf(),
+            ));
+        }
+
+        let foyers_fermes: Vec<usize> = self
+            .foyers_requis(session, &fiche_racine.hash_carte())?
+            .into_iter()
+            .filter(|index| !session.etat_foyers()[*index])
+            .collect();
+
+        if !foyers_fermes.is_empty() {
+            return Err(ErreurFeuApplication::ScribeFoyersFermes(foyers_fermes));
+        }
+
+        let enu_racine = Enu::charger(&self.chemin_enu, session, &fiche_racine.hash_carte())?;
+
+        let enu_rendue =
+            self.fermeture_comptoir_travail_recursif(noyau, session, chemin, &enu_racine)?;
+
+        if enu_rendue.hash_carte() != fiche_racine.hash_carte() {
+            Enu::remplacer(
+                &self.chemin_enu,
+                &self.chemin_derniere_racine,
+                &fiche_racine.hash_carte(),
+                &enu_rendue,
+                noyau,
+                session,
+            )?;
+        }
+
+        comptoir.supprimer()?;
+
+        self.comptoirs.retirer_comptoir_travail()?;
+        session.ferme_comptoir_travail();
+
+        self.sauvegarder_configuration()?;
+
+        Ok(())
+    }
+
+    /// Cœur récursif de [`Self::fermeture_comptoir_travail`] : rend l'EnuR que
+    /// `chemin_courant` décrit, `enu_courante` clonée si rien n'a bougé.
+    ///
+    /// Les enfants sont appariés par nom, sans ambiguïté grâce à l'unicité que
+    /// pose [`Self::greffe_enfants`]. Celui qu'aucune entrée du disque ne
+    /// réclame n'est pas référencé : ne rien faire **est** la suppression.
+    ///
+    /// Une entrée modifiée est re-signée sous la braise de l'ENU qu'elle
+    /// remplace, une entrée nouvelle sous celle de son accueil : un sous-arbre
+    /// multi-foyers garde sa répartition.
+    ///
+    /// Leur signature n'est pas vérifiée : leur hash étant inscrit dans une
+    /// carte signée, l'intégrité suffit tant que la racine l'a été.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si `enu_courante`
+    /// n'est pas un répertoire — la reconstruction en ferait sinon un répertoire
+    /// en perdant sa donnée. Retourne
+    /// [`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`] ou
+    /// [`ErreurFeuApplication::Utf8Error`] si un texte édité déborde ou n'est
+    /// plus de l'UTF-8 : il est refusé, jamais basculé en donnée. Propage les
+    /// erreurs d'E/S, de dépôt de blob et de signature.
+    fn fermeture_comptoir_travail_recursif(
+        &self,
+        noyau: &mut FeuNoyau,
+        session: &SessionApplication,
+        chemin_courant: &Path,
+        enu_courante: &Enu,
+    ) -> ResultFeuApplication<Enu> {
+        if !matches!(enu_courante.carte(), Carte::Repertoire { .. }) {
+            return Err(ErreurFeuApplication::ScribeEnuRAttendue);
+        }
+
+        let mut noms_enu = BTreeMap::new();
+        for h in enu_courante.carte().hashs_enu().into_iter().flatten() {
+            let enu = Enu::charger_sans_verification_signature(&self.chemin_enu, h)?;
+
+            noms_enu.insert(enu.carte().nom_fichier()?, enu);
+        }
+
+        let mut hashs_retenus: BTreeSet<[u8; 32]> = BTreeSet::new();
+        for entree in read_dir(chemin_courant)? {
+            let entree = entree?;
+            let nom_entree = entree.file_name().to_string_lossy().into_owned();
+
+            match noms_enu.get(&nom_entree) {
+                None => {
+                    let enu_creee = self.disque_vers_enu(
+                        noyau,
+                        session,
+                        &entree.path(),
+                        &nom_entree,
+                        enu_courante.braise(),
+                        CLASSEUR_DEFAUT_COMPTOIR_TRAVAIL,
+                    )?;
+                    hashs_retenus.insert(enu_creee.hash_carte());
+                }
+                Some(enu) => match (entree.file_type()?.is_dir(), enu.carte()) {
+                    (true, Carte::Repertoire { .. }) => {
+                        let enu_retournee = self.fermeture_comptoir_travail_recursif(
+                            noyau,
+                            session,
+                            &entree.path(),
+                            enu,
+                        )?;
+                        hashs_retenus.insert(enu_retournee.hash_carte());
+                    }
+                    (false, Carte::Donnee { hash_blob, .. }) => {
+                        let contenu = read(entree.path())?;
+
+                        if FeuNoyau::creation_empreinte(&contenu) == *hash_blob {
+                            hashs_retenus.insert(enu.hash_carte());
+                        } else {
+                            let (nouveau_hash_blob, _) = noyau.depot_blob(
+                                session
+                                    .braise_vers_index(enu.braise())
+                                    .ok_or(ErreurFeuApplication::ScribeBraiseInconnue)?,
+                                CLASSEUR_DEFAUT_COMPTOIR_TRAVAIL,
+                                &contenu[..],
+                            )?;
+
+                            // le noyau nomme ses blobs par l'hexadécimal d'un SHA3-256 :
+                            // 32 octets une fois décodés, la conversion ne peut pas échouer
+                            let nouveau_hash_blob: [u8; 32] = HEXLOWER
+                                .decode(nouveau_hash_blob.as_bytes())?
+                                .try_into()
+                                .unwrap();
+
+                            let mut nouvelle_carte = enu.carte().clone();
+                            if let Carte::Donnee { hash_blob, .. } = &mut nouvelle_carte {
+                                *hash_blob = nouveau_hash_blob;
+                            }
+
+                            let nouvelle_enu =
+                                Enu::new(nouvelle_carte, noyau, session, enu.braise())?;
+                            nouvelle_enu.sauvegarder(&self.chemin_enu)?;
+
+                            hashs_retenus.insert(nouvelle_enu.hash_carte());
+                        }
+                    }
+                    (false, Carte::Texte { contenu, .. }) => {
+                        let octets = read(entree.path())?;
+
+                        if octets == contenu.as_bytes() {
+                            hashs_retenus.insert(enu.hash_carte());
+                        } else {
+                            // un binaire déposé sous le nom d'un texte est refusé, pas converti
+                            let texte = from_utf8(&octets)?;
+                            let mut nouvelle_carte = Carte::new_texte(&nom_entree, texte)?;
+
+                            for (cle, valeur) in enu.carte().metas() {
+                                nouvelle_carte.ajout_meta(cle, valeur);
+                            }
+                            for tag in enu.carte().tags() {
+                                nouvelle_carte.ajout_tag(tag);
+                            }
+
+                            let nouvelle_enu =
+                                Enu::new(nouvelle_carte, noyau, session, enu.braise())?;
+                            nouvelle_enu.sauvegarder(&self.chemin_enu)?;
+                            hashs_retenus.insert(nouvelle_enu.hash_carte());
+                        }
+                    }
+                    _ => {
+                        let enu_creee = self.disque_vers_enu(
+                            noyau,
+                            session,
+                            &entree.path(),
+                            &nom_entree,
+                            enu_courante.braise(),
+                            CLASSEUR_DEFAUT_COMPTOIR_TRAVAIL,
+                        )?;
+                        hashs_retenus.insert(enu_creee.hash_carte());
+                    }
+                },
+            }
+        }
+
+        if Some(&hashs_retenus) == enu_courante.carte().hashs_enu() {
+            Ok(enu_courante.clone())
+        } else {
+            let mut nouvelle_carte = enu_courante.carte().clone();
+            if let Carte::Repertoire { hashs_enu, .. } = &mut nouvelle_carte {
+                *hashs_enu = hashs_retenus;
+            }
+
+            let nouvelle_enu = Enu::new(nouvelle_carte, noyau, session, enu_courante.braise())?;
+            nouvelle_enu.sauvegarder(&self.chemin_enu)?;
+
+            Ok(nouvelle_enu)
+        }
+    }
+
+    /// Fabrique l'ENU d'une entrée du disque qu'aucune ENU ne décrit encore,
+    /// sous-arbre compris s'il s'agit d'un dossier.
+    ///
+    /// Un fichier devient une [`Carte::Donnee`] — jamais un texte, rien sur le
+    /// disque ne disant qu'il devrait en être un. Un dossier part d'une EnuR
+    /// vide que [`Self::fermeture_comptoir_travail_recursif`] remplit : tout y
+    /// est nouveau, la descente s'y réduit à de la création.
+    ///
+    /// L'ENU rendue est sauvegardée ici plutôt que par la descente, qui ne le
+    /// fait que lorsqu'elle a signé — un dossier vide sur le disque resterait
+    /// sinon sans fichier.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si `braise`
+    /// n'identifie aucun foyer de la session. Propage les erreurs de lecture,
+    /// de dépôt de blob, de signature et de sauvegarde.
+    fn disque_vers_enu(
+        &self,
+        noyau: &mut FeuNoyau,
+        session: &SessionApplication,
+        chemin: &Path,
+        nom: &str,
+        braise: Braise,
+        index_classeur: usize,
+    ) -> ResultFeuApplication<Enu> {
+        let est_dossier = chemin.is_dir();
+
+        let mut carte = if est_dossier {
+            Carte::new_repertoire(BTreeSet::new())
+        } else {
+            let index_foyer = session
+                .braise_vers_index(braise)
+                .ok_or(ErreurFeuApplication::ScribeBraiseInconnue)?;
+
+            let contenu = read(chemin)?;
+
+            let (hash_blob, _) = noyau.depot_blob(index_foyer, index_classeur, &contenu[..])?;
+
+            let hash_blob: [u8; 32] = HEXLOWER
+                .decode(hash_blob.as_bytes())?
+                .try_into()
+                .unwrap();
+
+            Carte::new_donnee(hash_blob)
+        };
+
+        carte.ajout_meta("nom", nom);
+
+        let enu = Enu::new(carte, noyau, session, braise)?;
+
+        // dossier : la récursion contre une EnuR vide crée tout son contenu, et
+        // rend l'ENU reçue telle quelle s'il est vide — d'où la sauvegarde après
+        let enu = if est_dossier {
+            self.fermeture_comptoir_travail_recursif(noyau, session, chemin, &enu)?
+        } else {
+            enu
+        };
+
+        enu.sauvegarder(&self.chemin_enu)?;
+
+        Ok(enu)
     }
 
     /// Accroche des ENU déjà signées sous `enu_racine_depot`, puis remonte
@@ -1116,7 +1413,7 @@ impl Scribe {
             Carte::Donnee {
                 metas: _,
                 tags: _,
-                hash_donnee,
+                hash_blob,
             } => {
                 // seule la lecture du blob exige un foyer : résolution ici,
                 // pas en tête — un répertoire n'en a pas besoin
@@ -1132,7 +1429,7 @@ impl Scribe {
 
                 // le noyau écrit le clair directement dans le fichier, qui est
                 // consommé — fermé au drop, aucun suivi ensuite
-                noyau.lecture_blob(index_foyer, &HEXLOWER.encode(hash_donnee), fichier)?;
+                noyau.lecture_blob(index_foyer, &HEXLOWER.encode(hash_blob), fichier)?;
             }
             Carte::Texte {
                 metas: _,

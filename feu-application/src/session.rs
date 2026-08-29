@@ -300,6 +300,14 @@ impl SessionApplication {
     pub(crate) fn definit_comptoir_travail_ouvert(&mut self, chemin: PathBuf, fiche_racine: Fiche) {
         self.comptoir_travail_ouvert = Some((chemin, fiche_racine));
     }
+
+    /// Efface le comptoir de travail du miroir.
+    ///
+    /// Appelée par le Scribe à l'instant où il retire le sien, comme
+    /// [`Self::definit_comptoir_travail_ouvert`] à l'ouverture.
+    pub(crate) fn ferme_comptoir_travail(&mut self) {
+        self.comptoir_travail_ouvert = None;
+    }
 }
 
 impl Default for SessionApplication {

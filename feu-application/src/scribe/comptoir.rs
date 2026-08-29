@@ -23,6 +23,14 @@ use std::{collections::HashMap, fs::remove_dir_all, path::PathBuf};
 
 use crate::{ErreurFeuApplication, ResultFeuApplication, Scribe, fiche::Fiche};
 
+/// Classeur où sont rangés les blobs recréés à la fermeture d'un comptoir de
+/// travail.
+///
+/// Un choix arbitraire, et sans portée : une ENU désigne sa donnée par le couple
+/// `(foyer, hash)`, jamais par un classeur, que le noyau retrouve en balayant.
+/// Le comptoir n'a donc pas à en mémoriser un à l'ouverture.
+pub(super) const CLASSEUR_DEFAUT_COMPTOIR_TRAVAIL: usize = 0;
+
 /// État des comptoirs ouverts : aucun, des dépôts, ou un travail.
 ///
 /// Les trois cas s'excluent, et c'est le type qui l'impose : aucune variante ne
