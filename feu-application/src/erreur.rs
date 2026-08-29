@@ -107,6 +107,11 @@ pub enum ErreurFeuApplication {
     #[error("APP > Dossier du dépôt introuvable")]
     ScribeDossierDepotIntrouvable(PathBuf),
 
+    /// Dossier du comptoir de travail disparu du disque, constaté avant le
+    /// parcours de fermeture. Chemin porté, jamais affiché.
+    #[error("APP > Dossier du comptoir de travail introuvable")]
+    ScribeDossierTravailIntrouvable(PathBuf),
+
     /// La carte n'est pas une `Carte::Donnee` : elle ne référence aucun blob,
     /// il n'y a donc rien à charger ni à décrire.
     #[error("APP > Ce doit être une EnuD")]

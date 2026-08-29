@@ -96,13 +96,17 @@ fn fermer_foyer(mut noyau: FeuNoyau, mut session: SessionApplication) {
 ///
 /// Carte Donnée minimale : le contenu est indifférent aux comportements
 /// éprouvés ici (enveloppe, signature), agnostiques à la variante de carte.
+/// Le marqueur remplit le hash **et** nomme l'ENU, deux appels distincts
+/// donnant deux noms distincts — que la greffe laisse donc intacts.
 fn creer_enu_donnee(
     chemin_enu: &Path,
     noyau: &FeuNoyau,
     session: &SessionApplication,
     marqueur: u8,
 ) -> Enu {
-    let carte = Carte::new_donnee([marqueur; 32]);
+    let mut carte = Carte::new_donnee([marqueur; 32]);
+
+    carte.ajout_meta("nom", &format!("donnee_{marqueur}"));
 
     let enu = Enu::new(carte, noyau, session, session.braise_foyer(0).unwrap()).unwrap();
     enu.sauvegarder(chemin_enu).unwrap();
@@ -115,13 +119,20 @@ fn creer_enu_donnee(
 /// Signée sous une braise de foyer, et non sous celle du nœud : c'est ce qui
 /// l'oriente vers la branche non triviale de `Scribe::greffe_enfants`, celle qui
 /// re-signe et remonte le chemin. Une racine, elle, porte `BRAISE_VIDE`.
+///
+/// `nom_dossier` est explicite au point d'appel : deux EnuR greffées sous le
+/// même parent sous le même nom verraient la seconde renommée, donc son hash
+/// changer sous les assertions.
 fn creer_enu_repertoire(
     chemin_enu: &Path,
     noyau: &FeuNoyau,
     session: &SessionApplication,
+    nom_dossier: &str,
     enfants: &[&Enu],
 ) -> Enu {
-    let carte = Carte::new_repertoire(enfants.iter().map(|e| e.hash_carte()).collect());
+    let mut carte = Carte::new_repertoire(enfants.iter().map(|e| e.hash_carte()).collect());
+
+    carte.ajout_meta("nom", nom_dossier);
 
     let enu = Enu::new(carte, noyau, session, session.braise_foyer(0).unwrap()).unwrap();
     enu.sauvegarder(chemin_enu).unwrap();
@@ -318,11 +329,23 @@ fn cycle_remplacements() {
 
     // Première arborescence : deux niveaux de répertoires foyer (enur_1 → enur_2
     // → enur_3), avec des feuilles à chaque étage.
-    let enur_3 = creer_enu_repertoire(&chemin_enu, &noyau, &session, &[]);
+    let enur_3 = creer_enu_repertoire(&chemin_enu, &noyau, &session, "dossier_3", &[]);
     let enud_2 = creer_enu_donnee(&chemin_enu, &noyau, &session, 2u8);
-    let enur_2 = creer_enu_repertoire(&chemin_enu, &noyau, &session, &[&enud_2, &enur_3]);
+    let enur_2 = creer_enu_repertoire(
+        &chemin_enu,
+        &noyau,
+        &session,
+        "dossier_2",
+        &[&enud_2, &enur_3],
+    );
     let enud_1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
-    let enur_1 = creer_enu_repertoire(&chemin_enu, &noyau, &session, &[&enur_2, &enud_1]);
+    let enur_1 = creer_enu_repertoire(
+        &chemin_enu,
+        &noyau,
+        &session,
+        "dossier_1",
+        &[&enur_2, &enud_1],
+    );
 
     // cible = la racine (vide) : cas de base, la carte de enur_1 devient le sommet
     Enu::remplacer(
@@ -372,7 +395,13 @@ fn cycle_remplacements() {
     // Greffe en profondeur : enur_3 (niveau 2, sous enur_2) est remplacé par
     // enu_depot. La récursion doit reconstruire et re-signer enur_2 au-dessus.
     let derniere_enu = creer_enu_donnee(&chemin_enu, &noyau, &session, 9u8);
-    let enu_depot = creer_enu_repertoire(&chemin_enu, &noyau, &session, &[&derniere_enu]);
+    let enu_depot = creer_enu_repertoire(
+        &chemin_enu,
+        &noyau,
+        &session,
+        "dossier_depot",
+        &[&derniere_enu],
+    );
 
     Enu::remplacer(
         &chemin_enu,
@@ -552,7 +581,13 @@ fn greffe_enfants() -> ResultFeuApplication<()> {
     let enu2 = creer_enu_donnee(&chemin_enu, &noyau, &session, 2u8);
     let enu3 = creer_enu_donnee(&chemin_enu, &noyau, &session, 3u8);
 
-    let enur = creer_enu_repertoire(&chemin_enu, &noyau, &session, &[&enu1, &enu2, &enu3]);
+    let enur = creer_enu_repertoire(
+        &chemin_enu,
+        &noyau,
+        &session,
+        "dossier",
+        &[&enu1, &enu2, &enu3],
+    );
 
     // décor : accroche l'EnuR sous le sommet, faute de quoi `remplacer` ne la
     // trouverait pas en descendant depuis `.DERNIERE_RACINE`. Voie déjà éprouvée
@@ -681,28 +716,34 @@ fn greffe_enfants_doublon() -> ResultFeuApplication<()> {
     Ok(())
 }
 
-/// Deux appels successifs pour le même nom dans le même dossier : le premier
-/// obtient le nom nu, chaque appel suivant un suffixe incrémental — tant que
-/// le chemin retourné reste occupé par l'appelant entre deux appels.
+/// Appels successifs pour le même nom : le premier rend le nom nu, chacun des
+/// suivants un suffixe incrémental — l'appelant nourrissant le jeu de noms
+/// entre deux appels, puisque la fonction n'y insère rien.
+///
+/// Dernier cas : un nom déjà suffixé se suffixe à son tour (`photo.jpg_1_1`),
+/// le compteur ne repartant pas de celui qu'il porte.
 #[test]
-fn chemin_libre_suffixe_les_homonymes() {
-    let tmp = TempDir::new().unwrap();
+fn nom_libre_suffixe_les_homonymes() {
+    let mut noms_existants: BTreeSet<String> = BTreeSet::new();
 
-    // rien n'existe : le nom nu
-    let chemin1 = Scribe::chemin_libre(tmp.path(), "photo.jpg");
-    assert_eq!(chemin1, tmp.path().join("photo.jpg"));
+    let nom1 = Scribe::nom_libre(&noms_existants, "photo.jpg");
 
-    write(&chemin1, "premier").unwrap();
+    assert_eq!(nom1.as_str(), "photo.jpg");
+    noms_existants.insert(nom1);
 
-    // le nom nu est pris : suffixe _1
-    let chemin2 = Scribe::chemin_libre(tmp.path(), "photo.jpg");
-    assert_eq!(chemin2, tmp.path().join("photo.jpg_1"));
+    let nom2 = Scribe::nom_libre(&noms_existants, "photo.jpg");
 
-    write(&chemin2, "second").unwrap();
+    assert_eq!(nom2.as_str(), "photo.jpg_1");
+    noms_existants.insert(nom2);
 
-    // les deux pris : suffixe _2
-    let chemin3 = Scribe::chemin_libre(tmp.path(), "photo.jpg");
-    assert_eq!(chemin3, tmp.path().join("photo.jpg_2"));
+    let nom3 = Scribe::nom_libre(&noms_existants, "photo.jpg");
+
+    assert_eq!(nom3.as_str(), "photo.jpg_2");
+    noms_existants.insert(nom3);
+
+    let nom4 = Scribe::nom_libre(&noms_existants, "photo.jpg_1");
+
+    assert_eq!(nom4.as_str(), "photo.jpg_1_1");
 }
 
 /// Un [`Scribe`] sans comptoir donne un miroir qui se sauvegarde, et qui

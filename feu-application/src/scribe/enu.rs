@@ -135,6 +135,32 @@ impl Enu {
         })
     }
 
+    /// Rend une copie de l'ENU portant `nom` en méta `"nom"`, re-signée.
+    ///
+    /// La carte est clonée et sa méta écrasée : le sous-arbre d'un répertoire
+    /// renommé reste intact, seuls le `hash_carte` et la signature changent. La
+    /// braise est conservée, donc le foyer d'origine doit être ouvert.
+    ///
+    /// Ne sauvegarde ni ne greffe, comme [`Self::new`] : c'est à l'appelant de
+    /// sauvegarder la copie et de raccrocher son hash.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la braise
+    /// n'identifie aucun foyer de la session — cas d'une racine du nœud, qui
+    /// porte [`BRAISE_VIDE`]. Propage toute erreur de signature du noyau.
+    pub(super) fn renommer(
+        &self,
+        nom: &str,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+    ) -> ResultFeuApplication<Enu> {
+        let mut carte = self.carte().clone();
+        carte.ajout_meta("nom", nom);
+
+        Enu::new(carte, noyau, session, self.braise)
+    }
+
     /// Forge une racine du nœud, la sauvegarde et repointe le sommet courant.
     ///
     /// Signée par le **nœud**, non par un foyer : sa braise vaut [`BRAISE_VIDE`],

@@ -747,13 +747,27 @@ impl Scribe {
     /// identique n'ajouterait qu'un maillon mort à la lignée des `_racine`. Le
     /// cas se présente réellement lorsqu'un même fichier est redéposé par le
     /// comptoir : contenu et nom inchangés donnent la même carte, donc le même
-    /// `hash_carte`.
+    /// `hash_carte` — écarté d'entrée, sans quoi son nom entrerait en collision
+    /// avec lui-même et le ferait renommer.
     ///
     /// L'appelant ne peut pas distinguer ce cas d'une greffe effective. Aucun
     /// n'en a besoin aujourd'hui ; le jour où l'un d'eux le demandera, ce sera
     /// au type de retour de le dire.
     ///
     /// # Invariants
+    ///
+    /// **Deux enfants d'un même répertoire ne portent jamais le même nom.** La
+    /// garantie tient ici, seul endroit où une ENU devient enfant : un nouveau
+    /// venu dont le nom est déjà pris est greffé sous une copie renommée
+    /// ([`Self::nom_libre`]), l'occupant restant intact — son foyer peut être
+    /// fermé, et l'original devient orphelin comme toute version remplacée. Plus
+    /// bas dans l'arbre, l'unicité vient du système de fichiers qui a nommé le
+    /// comptoir. Toute ENU a donc un chemin unique, ce dont dépend
+    /// [`Self::retrait_lecture_seule_recursif`].
+    ///
+    /// Un enfant sans nom est refusé plutôt que greffé en silence : aucune voie
+    /// de dépôt n'en produit, mais le refus rappelle l'obligation à qui forge une
+    /// ENU à la main.
     ///
     /// Cette méthode intervient **en fin de chaîne** — les blobs sont déposés,
     /// les ENU signées et sauvegardées. Refuser à ce stade invaliderait un
@@ -777,7 +791,10 @@ impl Scribe {
     /// [`ErreurFeuApplication::ScribeRacinePerimee`] si c'est une racine qui
     /// n'est plus la dernière, ou
     /// [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si c'est un
-    /// répertoire absent de l'arbre courant. Propage toute erreur d'E/S,
+    /// répertoire absent de l'arbre courant. Retourne
+    /// [`ErreurFeuApplication::ScribeMetaNomAbsente`] ou
+    /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] si un enfant, en place
+    /// ou greffé, n'a pas de nom exploitable. Propage toute erreur d'E/S,
     /// d'authentification ou de signature — notamment un foyer fermé sur le
     /// chemin remonté.
     fn greffe_enfants(
@@ -793,8 +810,39 @@ impl Scribe {
 
         let mut nouvelle_carte = enu_racine_depot.carte().clone();
 
+        // les noms déjà portés par les enfants de l'accueil, seuls à pouvoir
+        // entrer en collision avec un nouveau venu
+        let mut nom_enfants = BTreeSet::new();
+        for h in enu_racine_depot.carte().hashs_enu().into_iter().flatten() {
+            let enu = Enu::charger_sans_verification_signature(&self.chemin_enu, h)?;
+            nom_enfants.insert(enu.carte().nom_fichier()?);
+        }
+
         for h in hashs_nouveaux_enfants {
-            nouvelle_carte.ajout_hash_enu(h)?;
+            // une ENU déjà enfant entrerait en collision avec son propre nom :
+            // l'écarter ici garde le redépôt à l'identique sans effet
+            if enu_racine_depot
+                .carte()
+                .hashs_enu()
+                .is_some_and(|h_enu| h_enu.contains(h))
+            {
+                continue;
+            }
+
+            let enu = Enu::charger_sans_verification_signature(&self.chemin_enu, h)?;
+            let nom = enu.carte().nom_fichier()?;
+
+            // nom libre : l'ENU se greffe telle quelle. Sinon c'est une copie
+            // renommée qui se greffe, l'occupant n'étant jamais touché.
+            if nom_enfants.insert(nom.clone()) {
+                nouvelle_carte.ajout_hash_enu(h)?;
+            } else {
+                let nom = Self::nom_libre(&nom_enfants, &nom);
+                let enu_renommee = enu.renommer(&nom, noyau, session)?;
+                enu_renommee.sauvegarder(&self.chemin_enu)?;
+                nom_enfants.insert(nom);
+                nouvelle_carte.ajout_hash_enu(&enu_renommee.hash_carte())?;
+            }
         }
 
         // Si contenu identique
@@ -1037,7 +1085,9 @@ impl Scribe {
     ///
     /// Invariant d'entrée : `enu_courante` est un enfant, jamais la racine, et
     /// porte donc une méta `"nom"` — validée comme composant de chemin avant tout
-    /// `join`. Deux homonymes coexistent par suffixage.
+    /// `join`. Aucun test de collision : l'unicité des noms au sein d'un
+    /// répertoire est tenue à la greffe ([`Self::greffe_enfants`]), le retrait
+    /// joint le nom sans sonder le dossier de sortie.
     ///
     /// Seule [`Carte::Donnee`] passe par le noyau, qui écrit le clair directement
     /// dans le fichier de sortie — le `File` est consommé par l'appel.
@@ -1060,6 +1110,8 @@ impl Scribe {
         // faire écrire hors du dossier de retrait, quelle que soit la variante
         let nom_fichier = enu_courante.carte().nom_fichier()?;
 
+        let chemin = chemin_courant.join(&nom_fichier);
+
         match enu_courante.carte() {
             Carte::Donnee {
                 metas: _,
@@ -1071,8 +1123,6 @@ impl Scribe {
                 let index_foyer = session
                     .braise_vers_index(enu_courante.braise())
                     .expect("Braise déjà validée avant d'atteindre ce point : Enu::authentique sur la racine du retrait, Enu::charger sur chaque enfant");
-
-                let chemin = Self::chemin_libre(chemin_courant, &nom_fichier);
 
                 let fichier = OpenOptions::new()
                     .write(true)
@@ -1089,8 +1139,6 @@ impl Scribe {
                 tags: _,
                 contenu,
             } => {
-                let chemin = Self::chemin_libre(chemin_courant, &nom_fichier);
-
                 let mut fichier = OpenOptions::new()
                     .write(true)
                     .create_new(true)
@@ -1105,7 +1153,6 @@ impl Scribe {
                 tags: _,
                 hashs_enu,
             } => {
-                let chemin = Self::chemin_libre(chemin_courant, &nom_fichier);
                 Self::creer_dossier_700(&chemin)?;
 
                 for h in hashs_enu {
@@ -1117,27 +1164,23 @@ impl Scribe {
         Ok(())
     }
 
-    /// Retourne un chemin encore libre pour `nom` dans `parent` : le chemin nu,
-    /// ou suffixé `nom_1`, `nom_2`… si déjà pris.
+    /// Rend un nom absent de `noms_existants` : `nom` tel quel, ou suffixé
+    /// `nom_1`, `nom_2`… s'il est déjà pris.
     ///
-    /// Deux enfants d'un même répertoire peuvent porter la même méta `"nom"`
-    /// (les hashs sont uniques, pas les noms) : sans suffixage, le second
-    /// fichier échouerait sur `create_new` et deux dossiers homonymes
-    /// **fusionneraient silencieusement** (`DirBuilder` récursif ne signale pas
-    /// l'existant). Le suffixe s'ajoute en fin de nom, après l'extension —
-    /// simplicité assumée.
+    /// Les hashs d'un répertoire sont uniques, pas les noms de ses enfants :
+    /// [`Self::greffe_enfants`] s'en sert pour les départager. Le suffixe
+    /// s'ajoute en fin de nom, après l'extension — simplicité assumée.
     ///
-    /// Pas de course possible entre le test et la création : le retrait est la
-    /// seule écriture dans ce dossier, qu'il vient de créer.
-    fn chemin_libre(parent: &Path, nom: &str) -> PathBuf {
-        let mut chemin_candidat = parent.join(nom);
+    /// N'insère rien : l'appelant tient le jeu de noms et l'alimente.
+    fn nom_libre(noms_existants: &BTreeSet<String>, nom: &str) -> String {
+        let mut nom_candidat = String::from(nom);
         let mut i = 1;
-        while chemin_candidat.exists() {
-            chemin_candidat = parent.join(format!("{nom}_{i}"));
+        while noms_existants.contains(&nom_candidat) {
+            nom_candidat = format!("{nom}_{i}");
             i += 1;
         }
 
-        chemin_candidat
+        nom_candidat
     }
 
     /// Crée `path` et ses parents manquants en `rwx------` (0o700).

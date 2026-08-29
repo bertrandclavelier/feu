@@ -697,8 +697,12 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
 /// **Foyer 1 sous une racine signée par le nœud** : les deux braises relevées
 /// distinguent le foyer du texte de celui du répertoire d'accueil.
 ///
-/// Couvre les deux branches jamais atteintes jusqu'ici du retrait — la carte
-/// texte, et le suffixage des homonymes, qui sortent en `test` et `test_1`.
+/// **Le suffixe est posé au dépôt, pas au retrait** : le second texte porte
+/// déjà `test_1` en méta, et le retrait ne fait que joindre les deux noms. Rien
+/// ne dit lequel des deux hashs sort en premier, d'où la comparaison par
+/// ensembles.
+///
+/// Couvre aussi la carte texte, branche du retrait jamais atteinte ailleurs.
 #[test]
 fn cycle_enu_texte() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -745,8 +749,10 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
     else {
         panic!()
     };
-    assert_eq!(metas1["nom"], "test");
-    assert_eq!(metas2["nom"], "test");
+
+    let noms = HashSet::from([metas1["nom"].as_str(), metas2["nom"].as_str()]);
+    assert_eq!(noms, HashSet::from(["test", "test_1"]));
+
     // Les deux textes portent la braise du foyer 1, pas celle de leur racine.
     assert_eq!(enu1.braise(), app.session.braise_foyer(1).unwrap());
     assert_eq!(enu2.braise(), app.session.braise_foyer(1).unwrap());
