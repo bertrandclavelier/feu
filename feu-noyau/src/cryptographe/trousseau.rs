@@ -70,7 +70,7 @@
 
 use std::io::{Read, Write};
 
-use aead::stream::{DecryptorBE32, EncryptorBE32};
+use aead_stream::{DecryptorBE32, EncryptorBE32};
 use aes_gcm::{
     Aes256Gcm, Key, Nonce,
     aead::{Aead, KeyInit},
@@ -857,7 +857,7 @@ impl Trousseau {
         contenu: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
         // Conversion de la clé de chiffrement brute en Key<Aes256Gcm>
-        let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
+        let key = <&Key<Aes256Gcm>>::from(cle_chiffrement);
 
         // Création du cipher à partir de key
         let cipher = Aes256Gcm::new(key);
@@ -867,7 +867,7 @@ impl Trousseau {
         OsRng.fill_bytes(&mut nonce);
 
         // Chiffrement du contenu
-        let contenu_chiffre = cipher.encrypt(Nonce::from_slice(&nonce), contenu.as_ref())?;
+        let contenu_chiffre = cipher.encrypt(&Nonce::from(nonce), contenu.as_ref())?;
 
         // Création du résultat
         let mut resultat = Vec::new();
@@ -891,14 +891,15 @@ impl Trousseau {
         contenu: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
         // Conversion de la clé éphémère brute en Key<Aes256Gcm>
-        let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
+        let key = <&Key<Aes256Gcm>>::from(cle_chiffrement);
 
         // Création du cipher à partir de key
         let cipher = Aes256Gcm::new(key);
 
         // Déchiffrement de la clé
-        let contenu_dechiffre =
-            cipher.decrypt(Nonce::from_slice(&contenu[0..12]), &contenu[12..])?;
+        let mut nonce = [0u8; 12];
+        nonce.copy_from_slice(&contenu[0..12]);
+        let contenu_dechiffre = cipher.decrypt(&Nonce::from(nonce), &contenu[12..])?;
 
         Ok(contenu_dechiffre)
     }
@@ -1213,9 +1214,9 @@ impl Trousseau {
         OsRng.fill_bytes(&mut nonce);
 
         // Création du StreamEncryptor
-        let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
+        let key = <&Key<Aes256Gcm>>::from(cle_chiffrement);
         let cipher = Aes256Gcm::new(key);
-        let mut encryptor = EncryptorBE32::from_aead(cipher, nonce.as_slice().into());
+        let mut encryptor = EncryptorBE32::from_aead(cipher, (&nonce).into());
 
         // Écriture du nonce en tête du fichier
         destination.write_all(&nonce)?;
@@ -1271,9 +1272,9 @@ impl Trousseau {
         source.read_exact(&mut nonce)?;
 
         // Création du StreamDecryptor
-        let key = Key::<Aes256Gcm>::from_slice(cle_chiffrement);
+        let key = <&Key<Aes256Gcm>>::from(cle_chiffrement);
         let cipher = Aes256Gcm::new(key);
-        let mut decryptor = DecryptorBE32::from_aead(cipher, nonce.as_slice().into());
+        let mut decryptor = DecryptorBE32::from_aead(cipher, (&nonce).into());
 
         let mut buffer1 = [0u8; CHUNK_SIZE + 16];
         let mut buffer2 = [0u8; CHUNK_SIZE + 16];
