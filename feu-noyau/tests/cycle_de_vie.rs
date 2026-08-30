@@ -8,6 +8,10 @@
 
 //! Tests de bout en bout du noyau.
 //!
+//! Crate de test externe : le noyau n'y est atteignable que par son API
+//! publique. L'invariant d'inaccessibilité des composants internes est donc
+//! tenu par le compilateur, et non par la seule discipline d'écriture.
+//!
 //! Une pile réelle est montée dans un `TempDir` — seed neuve, dérivation des
 //! clés post-quantiques, arborescence sur disque, chiffrement effectif — plutôt
 //! que des composants isolés. Seule une pile complète permet d'éprouver ce qui
@@ -29,11 +33,12 @@ use std::{
     },
     mem::forget,
     os::unix::fs::PermissionsExt,
+    path::Path,
 };
 
+use feu_noyau::*;
+use secrecy::SecretString;
 use tempfile::TempDir;
-
-use super::*;
 
 /// Implémentation d'[`InterfaceFeuNoyau`] qui enregistre tout ce qu'elle reçoit.
 ///
@@ -154,7 +159,7 @@ fn verifie_permissions(racine: &Path) {
 /// retrouvées à partir du seul mot de passe, et s'efface ensuite sans trace.
 ///
 /// Établit au passage l'unicité d'un blob dans un foyer, la relecture d'un
-/// contenu dépassant [`TAILLE_CHUNK`], et les permissions aux trois états
+/// contenu dépassant `TAILLE_CHUNK`, et les permissions aux trois états
 /// stables du nœud.
 #[test]
 fn cycle_vie_noyau() -> ResultFeuNoyau<()> {

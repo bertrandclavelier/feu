@@ -37,9 +37,6 @@ mod cryptographe;
 mod erreur;
 mod gardien;
 
-#[cfg(test)]
-mod tests;
-
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},

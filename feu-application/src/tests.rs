@@ -6,7 +6,7 @@
 // FeuApplication is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 // You should have received a copy of the GNU General Public License along with FeuApplication. If not, see <https://www.gnu.org/licenses/>.
 
-//! Tests d'intégration de la crate, du point de vue de qui la consomme.
+//! Tests de la crate, du point de vue de qui la consomme.
 //!
 //! Ces tests pilotent [`FeuApplication`] par ses seules `commande_*`, comme le
 //! fait `feu-tui` : rien n'est appelé en direct sur le noyau, la session ou le

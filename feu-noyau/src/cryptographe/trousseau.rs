@@ -1314,7 +1314,8 @@ impl Trousseau {
 // - la persistance des trousseaux publics (`genere_trousseau_public_complet`
 //   et les `trousseau_public_*_vers_*`).
 //
-// Ces deux mécanismes relèvent des tests d'intégration.
+// Ces deux mécanismes relèvent des tests de bout en bout de
+// `tests/cycle_de_vie.rs`.
 /// Tests en ligne : le déterminisme de la dérivation depuis une graine, le
 /// cycle de chiffrement générique et le refus d'un mauvais mot de passe.
 #[cfg(test)]

@@ -734,7 +734,7 @@ impl Cryptographe {
 // - les flux de chiffrement des archives de foyer (`donne_flux_*`), qui
 //   délèguent au chiffrement par chunks de `Trousseau`.
 //
-// Tous relèvent des tests d'intégration.
+// Tous relèvent des tests de bout en bout de `tests/cycle_de_vie.rs`.
 /// Tests en ligne : les cycles de signature et de chiffrement asymétrique,
 /// sur un cryptographe monté à la main.
 #[cfg(test)]

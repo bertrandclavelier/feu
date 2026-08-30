@@ -6,8 +6,8 @@
 // FeuApplication is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 // You should have received a copy of the GNU General Public License along with FeuApplication. If not, see <https://www.gnu.org/licenses/>.
 
-//! Tests d'intégration du Scribe : cycle de vie disque des ENU, barrière de
-//! confiance de `charger`, tenue de l'arborescence et état des comptoirs.
+//! Tests du Scribe : cycle de vie disque des ENU, barrière de confiance de
+//! `charger`, tenue de l'arborescence et état des comptoirs.
 //!
 //! Le Scribe y est consommé par appels directs, sur des composants montés à la
 //! main — pendant de `src/tests.rs`, qui éprouve la crate par son contrat
