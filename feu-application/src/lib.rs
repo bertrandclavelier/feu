@@ -77,8 +77,6 @@ pub mod erreur;
 mod lib_commandes;
 mod scribe;
 mod session;
-#[cfg(test)]
-mod tests;
 
 /// Contrat entre [`FeuApplication`] et la couche de présentation.
 ///
@@ -265,5 +263,167 @@ impl FeuApplication {
             session: SessionApplication::new(),
             scribe: Scribe::new(chemin_feu),
         }
+    }
+}
+
+/// Tests que `tests/application.rs` ne peut pas porter : ils constatent des
+/// champs privés, sur un état que la couche de présentation ne reçoit jamais.
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use feu_noyau::BRAISE_VIDE;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    /// Implémentation d'[`InterfaceFeuApplication`] pour les tests.
+    ///
+    /// Répond par des valeurs fixes — aucune interaction réelle n'est possible sous
+    /// test. Enveloppée dans un [`RecepteurNoyau`] réel, elle laisse le vrai pont
+    /// remplir la [`SessionApplication`] exactement comme en production.
+    ///
+    /// Retient la dernière session notifiée. C'est le seul moyen d'observer
+    /// [`recevoir_session_application`](InterfaceFeuApplication::recevoir_session_application)
+    /// depuis un test : là où `feu-tui` pousse le payload sur un canal et le stocke
+    /// dans le thread d'en face, un test n'a pas de second thread et doit le garder
+    /// sur place.
+    ///
+    /// `pub(crate)` — partagée avec `scribe/tests.rs`.
+    pub(crate) struct InterfaceTest {
+        /// Servi à chaque `demander_mdp`. Ouverture et fermeture d'un foyer doivent
+        /// voir le même, sinon le déchiffrement échoue.
+        mot_de_passe: SecretString,
+
+        /// Dernière session notifiée. `RefCell` parce que le trait notifie sous
+        /// `&self` : l'écriture ne peut venir que d'une mutabilité intérieure.
+        session_application: RefCell<Option<SessionApplication>>,
+    }
+
+    impl InterfaceTest {
+        /// Construit l'interface avec le mot de passe qu'elle servira.
+        pub(crate) fn new(mot_de_passe: &str) -> Self {
+            Self {
+                mot_de_passe: SecretString::from(mot_de_passe),
+                session_application: RefCell::new(None),
+            }
+        }
+
+        /// Clone de la dernière session notifiée — `None` tant que rien n'a été
+        /// notifié, et de nouveau `None` après extinction.
+        pub(crate) fn session_application(&self) -> Option<SessionApplication> {
+            self.session_application.borrow().clone()
+        }
+    }
+
+    impl InterfaceFeuApplication for InterfaceTest {
+        /// Sert toujours le même mot de passe : ouverture et fermeture d'un foyer
+        /// doivent le voir identique, sinon le déchiffrement échoue.
+        fn demander_mdp(&self) -> Option<SecretString> {
+            Some(self.mot_de_passe.clone())
+        }
+
+        /// Jetée : aucun test n'a besoin de relire la seed. La retenir demanderait
+        /// un second champ que rien ne consulterait.
+        fn recevoir_seed(&self, _mots: &[&str]) {}
+
+        /// Confirme toujours — sans quoi l'initialisation du noyau s'interromprait.
+        fn confirmer_enregistrement_seed(&self) -> bool {
+            true
+        }
+
+        /// Retient la session notifiée, seul état que l'interface conserve : c'est
+        /// par elle que les tests constatent ce qu'une commande a publié.
+        fn recevoir_session_application(&self, session_application: Option<SessionApplication>) {
+            *self.session_application.borrow_mut() = session_application;
+        }
+    }
+
+    /// Cycle de vie complet du nœud par les commandes — du refus avant allumage
+    /// au teardown après extinction.
+    ///
+    /// L'état est constaté sur la session **reçue par [`InterfaceTest`]** tant
+    /// qu'elle existe : une assertion qui passe prouve alors que la commande a
+    /// notifié, et que le payload portait l'état d'après. Le teardown fait
+    /// exception — l'extinction notifie `None`, il ne reste que les champs.
+    ///
+    /// Un comptoir est laissé ouvert à l'extinction, qui passe outre et l'annule.
+    #[test]
+    fn cycle_feu_application() -> ResultFeuApplication<()> {
+        let tmp = TempDir::new().unwrap();
+        let chemin_feu = tmp.path().join(".feu");
+        let chemin_depot = tmp.path().join("depot");
+
+        let interface_test = InterfaceTest::new("mot de passe");
+
+        let mut app = FeuApplication::new(&chemin_feu);
+        assert!(interface_test.session_application().is_none());
+
+        // Nœud éteint : toute commande qui le suppose allumé se refuse d'emblée.
+        assert!(matches!(
+            app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0),
+            Err(ErreurFeuApplication::NoeudEteint)
+        ));
+        assert!(matches!(
+            app.commande_derniere_enu_racine(),
+            Err(ErreurFeuApplication::NoeudEteint)
+        ));
+        assert!(matches!(
+            app.commande_chargement_enu(&[0u8; 32]),
+            Err(ErreurFeuApplication::NoeudEteint)
+        ));
+
+        app.commande_allumage_noeud(&interface_test, None)?;
+        assert_ne!(
+            interface_test
+                .session_application()
+                .unwrap()
+                .braise_foyer(0)
+                .unwrap(),
+            BRAISE_VIDE
+        );
+
+        app.commande_ouverture_foyer(&interface_test, 0)?;
+        assert!(
+            interface_test
+                .session_application()
+                .unwrap()
+                .etat_foyer(0)
+                .unwrap(),
+        );
+
+        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0)?;
+
+        // L'extinction bute d'abord sur le foyer 0, encore ouvert.
+        assert!(matches!(
+            app.commande_extinction_noeud(&interface_test),
+            Err(ErreurFeuApplication::AuMoinsUnFoyerOuvert)
+        ));
+
+        app.commande_fermeture_foyer(&interface_test, 0)?;
+        assert!(
+            !interface_test
+                .session_application()
+                .unwrap()
+                .etat_foyer(0)
+                .unwrap(),
+        );
+
+        assert!(app.commande_extinction_noeud(&interface_test).is_ok());
+        assert!(interface_test.session_application().is_none());
+        assert!(matches!(
+            app.commande_chargement_enu(&[0u8; 32]),
+            Err(ErreurFeuApplication::NoeudEteint)
+        ));
+
+        // Plus rien à tirer de la session notifiée, désormais `None` : le teardown
+        // ne se constate que sur les champs.
+        assert_eq!(app.session.braise_foyer(0).unwrap(), BRAISE_VIDE);
+        assert_eq!(app.session.cle_publique_sig_noeud(), [0u8; 2592]);
+        assert_eq!(app.session.cle_publique_sig_foyer(0).unwrap(), [0u8; 2592]);
+        assert!(app.session.foyers_fermes());
+        assert!(!app.scribe.est_actif());
+
+        Ok(())
     }
 }

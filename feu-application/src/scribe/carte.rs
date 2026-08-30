@@ -126,7 +126,7 @@ impl Carte {
     ///
     /// Rend une référence : le parcours traverse tous les répertoires de l'arbre,
     /// un clone par pas serait payé pour rien.
-    pub(crate) fn hashs_enu(&self) -> Option<&BTreeSet<[u8; 32]>> {
+    pub fn hashs_enu(&self) -> Option<&BTreeSet<[u8; 32]>> {
         match self {
             Self::Donnee {
                 metas: _,

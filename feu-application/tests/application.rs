@@ -36,16 +36,18 @@ use std::{
     collections::HashSet,
     fs::{File, create_dir, read_to_string, remove_dir, write},
     mem::forget,
+    path::{Path, PathBuf},
 };
 
 use data_encoding::HEXLOWER;
-use feu_noyau::{BRAISE_VIDE, MAX_CLASSEURS, MAX_FOYERS};
+use feu_application::{fiche::Fiche, *};
+use feu_noyau::{MAX_CLASSEURS, MAX_FOYERS};
 use rand::{Rng, distributions::Alphanumeric};
+use secrecy::SecretString;
 use tempfile::TempDir;
 use walkdir::WalkDir;
 
-use super::*;
-use crate::fiche::Fiche;
+mod comptoirs;
 
 /// Implémentation d'[`InterfaceFeuApplication`] pour les tests.
 ///
@@ -183,47 +185,6 @@ fn remplir_dossier(chemin: &Path) -> ResultFeuApplication<()> {
     Ok(())
 }
 
-/// Dépose un dossier vide `documents` sous la racine du nœud et rend sa
-/// [`Fiche`], en laissant le foyer 0 ouvert.
-///
-/// Seule voie par les commandes pour obtenir une EnuR : rien ne forge un
-/// répertoire à la main, il naît d'un dossier réel importé par un comptoir de
-/// dépôt. Or la racine du nœud ne peut pas servir de racine à un comptoir de
-/// travail, qui exige donc ce préalable.
-///
-/// Le foyer reste ouvert : l'ouverture d'un comptoir de travail sort le
-/// sous-arbre, ce qu'un foyer fermé refuse. À l'appelant de le fermer avant
-/// l'extinction du nœud.
-fn deposer_repertoire_sous_racine(
-    app: &mut FeuApplication,
-    interface_test: &InterfaceTest,
-) -> ResultFeuApplication<Fiche> {
-    let tmp = TempDir::new().unwrap();
-    let chemin_comptoir_depot = tmp.path().join("comptoir_depot");
-
-    let fiche_racine = Fiche::new(&app.scribe.derniere_enu_racine(&app.session)?);
-
-    app.commande_ouverture_foyer(interface_test, 0)?;
-
-    let index_comptoir =
-        app.commande_ouverture_comptoir_depot(interface_test, &chemin_comptoir_depot, 0, 0)?;
-
-    let chemin = chemin_comptoir_depot.join("documents");
-    create_dir(&chemin)?;
-
-    app.commande_fermeture_comptoir_depot(interface_test, index_comptoir, &fiche_racine)?;
-
-    // le dossier vide est devenu l'unique EnuR enfant de la nouvelle racine
-    let racine = app.commande_derniere_enu_racine()?;
-    for h in racine.carte().hashs_enu().into_iter().flatten() {
-        let fiche = app.commande_chargement_enu(h)?.unwrap();
-        if fiche.carte().metas()["nom"] == "documents" {
-            return Ok(fiche);
-        }
-    }
-    panic!("le dossier déposé est introuvable sous la racine")
-}
-
 /// Relit récursivement `chemin` en un ensemble `(chemin relatif, contenu)`,
 /// un par fichier — les dossiers n'ont pas d'entrée propre, leur chemin relatif
 /// dans celui de leurs fichiers suffit à les distinguer.
@@ -246,93 +207,6 @@ fn lire_arborescence(chemin: &Path) -> ResultFeuApplication<HashSet<(PathBuf, St
     }
 
     Ok(resultat)
-}
-
-/// Cycle de vie complet du nœud par les commandes — du refus avant allumage
-/// au teardown après extinction.
-///
-/// L'état est constaté sur la session **reçue par [`InterfaceTest`]**, jamais
-/// sur celle de [`FeuApplication`] : une assertion qui passe prouve alors que la
-/// commande a notifié, et que le payload portait l'état d'après.
-///
-/// Un comptoir est laissé ouvert à l'extinction, qui passe outre et l'annule.
-#[test]
-fn cycle_feu_application() -> ResultFeuApplication<()> {
-    let tmp = TempDir::new().unwrap();
-    let chemin_feu = tmp.path().join(".feu");
-    let chemin_depot = tmp.path().join("depot");
-
-    let interface_test = InterfaceTest::new("mot de passe");
-
-    let mut app = FeuApplication::new(&chemin_feu);
-    assert!(interface_test.session_application().is_none());
-
-    // Nœud éteint : toute commande qui le suppose allumé se refuse d'emblée.
-    assert!(matches!(
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0),
-        Err(ErreurFeuApplication::NoeudEteint)
-    ));
-    assert!(matches!(
-        app.commande_derniere_enu_racine(),
-        Err(ErreurFeuApplication::NoeudEteint)
-    ));
-    assert!(matches!(
-        app.commande_chargement_enu(&[0u8; 32]),
-        Err(ErreurFeuApplication::NoeudEteint)
-    ));
-
-    app.commande_allumage_noeud(&interface_test, None)?;
-    assert_ne!(
-        interface_test
-            .session_application()
-            .unwrap()
-            .braise_foyer(0)
-            .unwrap(),
-        BRAISE_VIDE
-    );
-
-    app.commande_ouverture_foyer(&interface_test, 0)?;
-    assert!(
-        interface_test
-            .session_application()
-            .unwrap()
-            .etat_foyer(0)
-            .unwrap(),
-    );
-
-    app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0)?;
-
-    // L'extinction bute d'abord sur le foyer 0, encore ouvert.
-    assert!(matches!(
-        app.commande_extinction_noeud(&interface_test),
-        Err(ErreurFeuApplication::AuMoinsUnFoyerOuvert)
-    ));
-
-    app.commande_fermeture_foyer(&interface_test, 0)?;
-    assert!(
-        !interface_test
-            .session_application()
-            .unwrap()
-            .etat_foyer(0)
-            .unwrap(),
-    );
-
-    assert!(app.commande_extinction_noeud(&interface_test).is_ok());
-    assert!(interface_test.session_application().is_none());
-    assert!(matches!(
-        app.commande_chargement_enu(&[0u8; 32]),
-        Err(ErreurFeuApplication::NoeudEteint)
-    ));
-
-    // Plus rien à tirer de la session notifiée, désormais `None` : le teardown
-    // ne se constate que sur les champs.
-    assert_eq!(app.session.braise_foyer(0).unwrap(), BRAISE_VIDE);
-    assert_eq!(app.session.cle_publique_sig_noeud(), [0u8; 2592]);
-    assert_eq!(app.session.cle_publique_sig_foyer(0).unwrap(), [0u8; 2592]);
-    assert!(app.session.foyers_fermes());
-    assert!(!app.scribe.est_actif());
-
-    Ok(())
 }
 
 /// Un fichier déposé par comptoir se relit à l'identique après extinction et
@@ -554,7 +428,9 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
         app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir1, 0, 0)?;
     assert_eq!(index_comptoir, 0);
     assert!(
-        app.session
+        interface_test
+            .session_application()
+            .unwrap()
             .comptoirs_depot_ouverts()
             .contains_key(&index_comptoir)
     );
@@ -568,7 +444,9 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
     // le foyer fermé tombe avant le retrait : l'identifiant reste des deux côtés, sans
     // quoi la retentative qui suit n'aurait plus rien à désigner
     assert!(
-        app.session
+        interface_test
+            .session_application()
+            .unwrap()
             .comptoirs_depot_ouverts()
             .contains_key(&index_comptoir)
     );
@@ -588,15 +466,20 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
         app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine),
         Err(ErreurFeuApplication::ScribeDossierDepotIntrouvable(_))
     ));
-    // le dossier disparu est constaté après le retrait : le Scribe a lâché le comptoir, la
-    // session l'a lâché avec lui, sur un chemin qui rend pourtant une erreur
-    assert!(app.session.comptoirs_depot_ouverts().is_empty());
 
     app.commande_fermeture_foyer(&interface_test, 0)?;
 
-    app.commande_extinction_noeud(&interface_test)?;
+    // L'erreur à commande_fermeture_comptoir_depot empêche l'envoie de la nouvelle session
+    // il faut attendre une nouvelle commande réussie qui refait un envoi de session
+    assert!(
+        interface_test
+            .session_application()
+            .unwrap()
+            .comptoirs_depot_ouverts()
+            .is_empty()
+    );
 
-    assert!(app.session.comptoirs_depot_ouverts().is_empty());
+    app.commande_extinction_noeud(&interface_test)?;
 
     Ok(())
 }
@@ -793,8 +676,22 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
     assert_eq!(noms, HashSet::from(["test", "test_1"]));
 
     // Les deux textes portent la braise du foyer 1, pas celle de leur racine.
-    assert_eq!(enu1.braise(), app.session.braise_foyer(1).unwrap());
-    assert_eq!(enu2.braise(), app.session.braise_foyer(1).unwrap());
+    assert_eq!(
+        enu1.braise(),
+        interface_test
+            .session_application()
+            .unwrap()
+            .braise_foyer(1)
+            .unwrap()
+    );
+    assert_eq!(
+        enu2.braise(),
+        interface_test
+            .session_application()
+            .unwrap()
+            .braise_foyer(1)
+            .unwrap()
+    );
 
     let contenus = HashSet::from([contenu1.as_str(), contenu2.as_str()]);
     assert_eq!(contenus, HashSet::from(["enu test 1", "enu test 2"]));
@@ -1244,211 +1141,6 @@ fn depot_dans_enur_perimee() -> ResultFeuApplication<()> {
     assert_eq!(enu_racine3.hash_carte(), enu_racine4.hash_carte());
 
     app.commande_fermeture_foyer(&interface_test, 0)?;
-
-    app.commande_extinction_noeud(&interface_test)?;
-
-    Ok(())
-}
-
-/// L'ouverture d'un comptoir de travail sort le sous-arbre et retient le
-/// dossier avec sa racine, que la session donne à lire.
-///
-/// La sortie elle-même n'est pas éprouvée ici : elle est celle du retrait, que
-/// [`cycle_depot_retrait_simple`] couvre avec du contenu.
-#[test]
-fn ouverture_comptoir_travail_normal() -> ResultFeuApplication<()> {
-    let tmp = TempDir::new().unwrap();
-    let chemin_feu = tmp.path().join(".feu");
-    let chemin_comptoir = tmp.path().join("comptoir");
-
-    let interface_test = InterfaceTest::new("mot de passe");
-
-    let mut app = FeuApplication::new(&chemin_feu);
-
-    app.commande_allumage_noeud(&interface_test, None)?;
-
-    let fiche_racine = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
-
-    app.commande_ouverture_comptoir_travail(&interface_test, &chemin_comptoir, &fiche_racine)?;
-
-    assert!(chemin_comptoir.exists());
-
-    let (chemin, fiche) = app.session.comptoir_travail_ouvert().unwrap();
-
-    assert_eq!(chemin, &chemin_comptoir);
-    assert_eq!(fiche.hash_carte(), fiche_racine.hash_carte());
-
-    app.commande_fermeture_foyer(&interface_test, 0)?;
-    app.commande_extinction_noeud(&interface_test)?;
-
-    Ok(())
-}
-
-/// Un comptoir de dépôt ouvert interdit l'ouverture du comptoir de travail.
-///
-/// La garde tombe avant le retrait : le dossier de travail n'est pas créé.
-#[test]
-fn ouverture_comptoir_travail_depot_deja_ouvert() -> ResultFeuApplication<()> {
-    let tmp = TempDir::new().unwrap();
-    let chemin_feu = tmp.path().join(".feu");
-    let chemin_comptoir_depot = tmp.path().join("comptoir_depot");
-    let chemin_comptoir_travail = tmp.path().join("comptoir_travail");
-
-    let interface_test = InterfaceTest::new("mot de passe");
-
-    let mut app = FeuApplication::new(&chemin_feu);
-
-    app.commande_allumage_noeud(&interface_test, None)?;
-
-    let fiche_racine = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
-
-    app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot, 0, 0)?;
-
-    assert!(matches!(
-        app.commande_ouverture_comptoir_travail(
-            &interface_test,
-            &chemin_comptoir_travail,
-            &fiche_racine,
-        ),
-        Err(ErreurFeuApplication::ScribeComptoirDepotOuvert)
-    ));
-
-    app.commande_fermeture_foyer(&interface_test, 0)?;
-    app.commande_extinction_noeud(&interface_test)?;
-
-    Ok(())
-}
-
-/// Comptoir de travail ouvert, plus rien ne s'ouvre — ni un second comptoir de
-/// travail, ni un comptoir de dépôt — et plus rien ne s'écrit : dépôt de texte
-/// et suppression de blob sont refusés eux aussi.
-///
-/// La suppression vise la racine, qui n'a pas de blob : c'est le refus du verrou
-/// qui remonte, donc il tombe avant la résolution de la cible.
-#[test]
-fn exclusivite_comptoir_travail() -> ResultFeuApplication<()> {
-    let tmp = TempDir::new().unwrap();
-    let chemin_feu = tmp.path().join(".feu");
-    let chemin_comptoir_travail1 = tmp.path().join("comptoir_travail1");
-    let chemin_comptoir_travail2 = tmp.path().join("comptoir_travail2");
-    let chemin_comptoir_depot = tmp.path().join("comptoir_depot");
-
-    let interface_test = InterfaceTest::new("mot de passe");
-
-    let mut app = FeuApplication::new(&chemin_feu);
-
-    app.commande_allumage_noeud(&interface_test, None)?;
-
-    let fiche_racine = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
-
-    app.commande_ouverture_comptoir_travail(
-        &interface_test,
-        &chemin_comptoir_travail1,
-        &fiche_racine,
-    )?;
-
-    assert!(matches!(
-        app.commande_ouverture_comptoir_travail(
-            &interface_test,
-            &chemin_comptoir_travail2,
-            &fiche_racine,
-        ),
-        Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
-    ));
-
-    assert!(matches!(
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot, 0, 0),
-        Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
-    ));
-
-    assert!(matches!(
-        app.commande_depot_enu_texte(&fiche_racine, 0, "test", "contenu de test"),
-        Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
-    ));
-
-    assert!(matches!(
-        app.commande_suppression_blob(&fiche_racine),
-        Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
-    ));
-
-    app.commande_fermeture_foyer(&interface_test, 0)?;
-    app.commande_extinction_noeud(&interface_test)?;
-
-    Ok(())
-}
-
-/// Les comptoirs de dépôt survivent à la perte de l'instance : `scribe.feu` les
-/// porte, et le rallumage sur une application neuve les rend au miroir de
-/// session avec leurs identifiants et leurs destinations.
-#[test]
-fn persistance_comptoir_depot() -> ResultFeuApplication<()> {
-    let tmp = TempDir::new().unwrap();
-    let chemin_feu = tmp.path().join(".feu");
-    let chemin_comptoir_depot1 = tmp.path().join("comptoir_depot1");
-    let chemin_comptoir_depot2 = tmp.path().join("comptoir_depot2");
-
-    let interface_test = InterfaceTest::new("mot de passe");
-
-    let mut app = FeuApplication::new(&chemin_feu);
-    app.commande_allumage_noeud(&interface_test, None)?;
-
-    let id1 =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot1, 1, 0)?;
-    let id2 =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot2, 0, 1)?;
-
-    drop(app);
-
-    let mut app = FeuApplication::new(&chemin_feu);
-    app.commande_allumage_noeud(&interface_test, None)?;
-
-    let comptoir1_relu = app.session.comptoirs_depot_ouverts().get(&id1).unwrap();
-    let comptoir2_relu = app.session.comptoirs_depot_ouverts().get(&id2).unwrap();
-
-    assert_eq!(comptoir1_relu.0, chemin_comptoir_depot1);
-    assert_eq!(comptoir2_relu.0, chemin_comptoir_depot2);
-    assert_eq!(comptoir1_relu.1, 1);
-    assert_eq!(comptoir2_relu.1, 0);
-    assert_eq!(comptoir1_relu.2, 0);
-    assert_eq!(comptoir2_relu.2, 1);
-
-    app.commande_extinction_noeud(&interface_test)?;
-
-    Ok(())
-}
-
-/// Le comptoir de travail survit à la perte de l'instance : `scribe.feu` retient
-/// son chemin et sa racine sortie, que le rallumage relit et rend au miroir de
-/// session, la fiche revenant égale à celle qui l'a ouvert.
-#[test]
-fn persistance_comptoir_travail() -> ResultFeuApplication<()> {
-    let tmp = TempDir::new().unwrap();
-    let chemin_feu = tmp.path().join(".feu");
-    let chemin_comptoir_travail = tmp.path().join("comptoir_travail");
-
-    let interface_test = InterfaceTest::new("mot de passe");
-
-    let mut app = FeuApplication::new(&chemin_feu);
-    app.commande_allumage_noeud(&interface_test, None)?;
-
-    let fiche_racine = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
-
-    app.commande_ouverture_comptoir_travail(
-        &interface_test,
-        &chemin_comptoir_travail,
-        &fiche_racine,
-    )?;
-
-    app.commande_fermeture_foyer(&interface_test, 0)?;
-    drop(app);
-
-    let mut app = FeuApplication::new(&chemin_feu);
-    app.commande_allumage_noeud(&interface_test, None)?;
-
-    let comptoir_travail = app.session.comptoir_travail_ouvert().unwrap();
-
-    assert_eq!(comptoir_travail.0, chemin_comptoir_travail);
-    assert_eq!(comptoir_travail.1, fiche_racine);
 
     app.commande_extinction_noeud(&interface_test)?;
 
