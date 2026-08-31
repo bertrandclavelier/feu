@@ -18,10 +18,9 @@
 //! **Ce fichier prend ce qui y tombe sans montage supplémentaire** : un test
 //! écrit ici prouve le comportement **et** son câblage.
 //!
-//! Les constats, eux, lisent les champs privés — noyau libéré, session remise à
-//! zéro, Scribe désactivé n'ont pas d'accesseur public et n'ont pas à en avoir.
-//! D'où un `mod` interne : on agit par l'API publique, on constate par
-//! l'intérieur.
+//! Les constats passent par le même contrat : la [`SessionApplication`] que
+//! l'interface reçoit à chaque notification, les accesseurs qu'elle expose, et
+//! le retour des commandes.
 //!
 //! # Non testé, délibérément
 //!
@@ -32,190 +31,24 @@
 //! publiques, dont `feu-noyau` éprouve déjà le comportement.
 
 use std::{
-    cell::RefCell,
     collections::HashSet,
-    fs::{File, create_dir, read_to_string, remove_dir, write},
+    fs::{File, create_dir, read_to_string},
     mem::forget,
-    path::{Path, PathBuf},
 };
 
 use data_encoding::HEXLOWER;
 use feu_application::{fiche::Fiche, *};
-use feu_noyau::{MAX_CLASSEURS, MAX_FOYERS};
-use rand::{Rng, distributions::Alphanumeric};
-use secrecy::SecretString;
 use tempfile::TempDir;
-use walkdir::WalkDir;
 
-mod comptoirs;
+use crate::commun::{InterfaceTest, donne_fiche_descendant, nouveau_fichier, remplir_dossier};
 
-/// Implémentation d'[`InterfaceFeuApplication`] pour les tests.
-///
-/// Répond par des valeurs fixes — aucune interaction réelle n'est possible sous
-/// test. Enveloppée dans un [`RecepteurNoyau`] réel, elle laisse le vrai pont
-/// remplir la [`SessionApplication`] exactement comme en production.
-///
-/// Retient la dernière session notifiée. C'est le seul moyen d'observer
-/// [`recevoir_session_application`](InterfaceFeuApplication::recevoir_session_application)
-/// depuis un test : là où `feu-tui` pousse le payload sur un canal et le stocke
-/// dans le thread d'en face, un test n'a pas de second thread et doit le garder
-/// sur place.
-///
-/// `pub(crate)` — partagée avec `scribe/tests.rs`.
-pub(crate) struct InterfaceTest {
-    /// Servi à chaque `demander_mdp`. Ouverture et fermeture d'un foyer doivent
-    /// voir le même, sinon le déchiffrement échoue.
-    mot_de_passe: SecretString,
-
-    /// Dernière session notifiée. `RefCell` parce que le trait notifie sous
-    /// `&self` : l'écriture ne peut venir que d'une mutabilité intérieure.
-    session_application: RefCell<Option<SessionApplication>>,
-}
-
-impl InterfaceTest {
-    /// Construit l'interface avec le mot de passe qu'elle servira.
-    pub(crate) fn new(mot_de_passe: &str) -> Self {
-        Self {
-            mot_de_passe: SecretString::from(mot_de_passe),
-            session_application: RefCell::new(None),
-        }
-    }
-
-    /// Clone de la dernière session notifiée — `None` tant que rien n'a été
-    /// notifié, et de nouveau `None` après extinction.
-    pub(crate) fn session_application(&self) -> Option<SessionApplication> {
-        self.session_application.borrow().clone()
-    }
-}
-
-impl InterfaceFeuApplication for InterfaceTest {
-    /// Sert toujours le même mot de passe : ouverture et fermeture d'un foyer
-    /// doivent le voir identique, sinon le déchiffrement échoue.
-    fn demander_mdp(&self) -> Option<SecretString> {
-        Some(self.mot_de_passe.clone())
-    }
-
-    /// Jetée : aucun test n'a besoin de relire la seed. La retenir demanderait
-    /// un second champ que rien ne consulterait.
-    fn recevoir_seed(&self, _mots: &[&str]) {}
-
-    /// Confirme toujours — sans quoi l'initialisation du noyau s'interromprait.
-    fn confirmer_enregistrement_seed(&self) -> bool {
-        true
-    }
-
-    /// Retient la session notifiée, seul état que l'interface conserve : c'est
-    /// par elle que les tests constatent ce qu'une commande a publié.
-    fn recevoir_session_application(&self, session_application: Option<SessionApplication>) {
-        *self.session_application.borrow_mut() = session_application;
-    }
-}
-
-/// Chaîne alphanumérique aléatoire de `n` caractères, pour nommer et remplir
-/// les fichiers de test.
-///
-/// `pub(crate)` — partagée avec `scribe/tests.rs`.
-fn chaine_aleatoire(n: usize) -> String {
-    rand::thread_rng()
-        .sample_iter(Alphanumeric)
-        .take(n)
-        .map(char::from)
-        .collect()
-}
-
-/// Écrit dans `destination` un fichier au nom et au contenu aléatoires, et
-/// rend les deux.
-///
-/// Les rendre tous les deux est ce qui permet de retrouver le fichier après
-/// coup sans rien relire du disque : le nom se compare à la méta `nom` de
-/// l'ENU, le contenu au clair déchiffré du blob.
-fn nouveau_fichier(destination: &Path, nombre_caracteres: usize) -> (String, String) {
-    let nom_fichier = chaine_aleatoire(10);
-    let contenu = chaine_aleatoire(nombre_caracteres);
-
-    write(destination.join(&nom_fichier), contenu.clone()).unwrap();
-
-    (nom_fichier, contenu)
-}
-
-/// Crée dans `destination` un dossier au nom aléatoire et rend son chemin.
-///
-/// Pendant de [`nouveau_fichier`], qui rend nom et contenu : ici le chemin
-/// suffit — un dossier n'a rien à comparer après coup, il n'est qu'un endroit
-/// où continuer à écrire.
-fn nouveau_dossier(destination: &Path) -> PathBuf {
-    let chemin = destination.join(chaine_aleatoire(10));
-
-    create_dir(&chemin).unwrap();
-
-    chemin
-}
-
-/// Peuple `chemin` d'une arborescence à trois niveaux : un fichier et un
-/// dossier à la racine, ce dossier contenant lui-même un fichier et un
-/// dossier, jusqu'à un troisième niveau ne contenant qu'un fichier.
-///
-/// Le Scribe traite différemment les enfants directs du comptoir (`depth == 1`)
-/// et les sous-arbres plus profonds : la structure exerce les deux. Le
-/// sous-dossier sert une seconde fois, sans rapport avec la profondeur — il est
-/// la seule source d'`EnuR` signée sous une braise de foyer, la racine du nœud
-/// portant `BRAISE_VIDE`.
-///
-/// Noms et contenus aléatoires : deux appels dans un même test ne se marchent
-/// pas dessus.
-fn remplir_dossier(chemin: &Path) -> ResultFeuApplication<()> {
-    // Niveau 1
-    // fichier 1
-    nouveau_fichier(chemin, 100);
-
-    // Dossier 1
-    let chemin_dossier1 = nouveau_dossier(chemin);
-
-    // Niveau 2
-    // fichier 2
-    nouveau_fichier(&chemin_dossier1, 100);
-
-    // dossier 2
-    let chemin_dossier2 = nouveau_dossier(&chemin_dossier1);
-
-    // Niveau 3
-    // fichier 3
-    nouveau_fichier(&chemin_dossier2, 100);
-
-    Ok(())
-}
-
-/// Relit récursivement `chemin` en un ensemble `(chemin relatif, contenu)`,
-/// un par fichier — les dossiers n'ont pas d'entrée propre, leur chemin relatif
-/// dans celui de leurs fichiers suffit à les distinguer.
-///
-/// Sert à comparer deux arborescences sans dépendre de l'ordre de parcours,
-/// notamment le contenu d'un comptoir avant fermeture face à celui d'un
-/// retrait après coup — l'ordre des enfants dans l'arbre ENU suit les hashs,
-/// pas les noms.
-fn lire_arborescence(chemin: &Path) -> ResultFeuApplication<HashSet<(PathBuf, String)>> {
-    let mut resultat = HashSet::new();
-
-    for entree in WalkDir::new(chemin).min_depth(1) {
-        let entree = entree.unwrap();
-
-        if entree.file_type().is_file() {
-            let chemin_relatif = entree.path().strip_prefix(chemin).unwrap().to_path_buf();
-            let contenu = read_to_string(entree.path()).unwrap();
-            resultat.insert((chemin_relatif, contenu));
-        }
-    }
-
-    Ok(resultat)
-}
+mod commun;
 
 /// Un fichier déposé par comptoir se relit à l'identique après extinction et
-/// rallumage du nœud — nom et contenu.
+/// rallumage : le nom par la méta, le contenu par le blob.
 ///
-/// **Seul test qui rallume sur des données déposées** — `persistance_comptoir_depot`
-/// et `persistance_comptoir_travail` rallument aussi, mais ne portent que sur
-/// l'état des comptoirs. Ici l'instance est détruite entre les deux moitiés, et
-/// la seconde ne repart que de `chemin_feu`.
+/// Seul test dont l'instance est détruite entre les deux moitiés, la seconde ne
+/// repartant que de `chemin_feu`.
 #[test]
 fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -234,7 +67,7 @@ fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
         app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0)?;
     assert_eq!(index_comptoir, 0);
 
-    let (nom_fichier, contenu) = nouveau_fichier(&chemin_depot, 100);
+    let contenu = nouveau_fichier(&chemin_depot, "fichier", 100);
 
     let enu_racine = app.commande_derniere_enu_racine()?;
 
@@ -261,28 +94,15 @@ fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
     assert_ne!(nouvelle_racine, enu_racine);
     assert_eq!(nouvelle_racine.carte().hashs_enu().unwrap().len(), 1);
 
-    let enu_rechargee = app
-        .commande_chargement_enu(
-            nouvelle_racine
-                .carte()
-                .hashs_enu()
-                .unwrap()
-                .first()
-                .unwrap(),
-        )?
-        .unwrap();
-
-    assert_eq!(
-        enu_rechargee.carte().metas().get("nom").unwrap(),
-        &nom_fichier
-    );
+    let fiche_rechargee =
+        donne_fiche_descendant(app.commande_descendants(&nouvelle_racine)?, "fichier").unwrap();
 
     // `create` et non `open` : la destination n'existe pas encore et doit être
     // ouverte en écriture, `commande_chargement_blob` réclamant un `Write`
     let chemin_relecture = tmp.path().join("relecture");
     let fichier = File::create(&chemin_relecture).unwrap();
 
-    app.commande_chargement_blob(&enu_rechargee, &fichier)?;
+    app.commande_chargement_blob(&fiche_rechargee, &fichier)?;
 
     let contenu_relu = read_to_string(&chemin_relecture).unwrap();
 
@@ -296,14 +116,10 @@ fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
 }
 
 /// Cycle de vie d'un blob désigné par sa seule ENU — présence, informations,
-/// suppression — et ce qu'il advient de l'ENU quand le blob n'est plus là.
+/// suppression.
 ///
-/// **Le sujet est la fin** : `existence_blob` faux et `chargement_enu` encore
-/// `Some` sur le même hash — le blob est parti, l'arborescence est intacte.
-/// C'est leur simultanéité qui prouve le décalage.
-///
-/// Éprouve au passage la braise inconnue, qu'une racine seule peut produire sans
-/// forger d'ENU, et la taille du chiffré, strictement supérieure au clair.
+/// Le sujet est la fin : `existence_blob` faux et `chargement_enu` encore `Some`
+/// sur le même hash, le blob parti et l'arborescence intacte.
 #[test]
 fn cycle_vie_blob() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -322,7 +138,7 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
         app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0)?;
     assert_eq!(index_comptoir, 0);
 
-    nouveau_fichier(&chemin_depot, 100);
+    nouveau_fichier(&chemin_depot, "fichier", 100);
 
     let enu_racine = app.commande_derniere_enu_racine()?;
 
@@ -330,21 +146,13 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
 
     let nouvelle_racine = app.commande_derniere_enu_racine()?;
 
-    let enu_rechargee = app
-        .commande_chargement_enu(
-            nouvelle_racine
-                .carte()
-                .hashs_enu()
-                .unwrap()
-                .first()
-                .unwrap(),
-        )?
-        .unwrap();
+    let fiche_rechargee =
+        donne_fiche_descendant(app.commande_descendants(&nouvelle_racine)?, "fichier").unwrap();
 
-    assert!(app.commande_existence_blob(&enu_rechargee)?);
+    assert!(app.commande_existence_blob(&fiche_rechargee)?);
 
     let taille_blob = app
-        .commande_informations_blob(&enu_rechargee)?
+        .commande_informations_blob(&fiche_rechargee)?
         .donne_taille();
 
     // Le chiffré pèse plus que les cent caractères déposés.
@@ -360,12 +168,12 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
     ));
 
     // Le blob part, sa carte reste : c'est ce décalage que le test vise.
-    app.commande_suppression_blob(&enu_rechargee)?;
+    app.commande_suppression_blob(&fiche_rechargee)?;
 
-    assert!(!app.commande_existence_blob(&enu_rechargee)?);
+    assert!(!app.commande_existence_blob(&fiche_rechargee)?);
 
     assert!(
-        app.commande_chargement_enu(&enu_rechargee.hash_carte())?
+        app.commande_chargement_enu(&fiche_rechargee.hash_carte())?
             .is_some()
     );
 
@@ -376,255 +184,11 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
     Ok(())
 }
 
-/// Les gardes du comptoir de dépôt, dans l'ordre où elles se posent.
+/// Aller-retour de deux `EnuT` homonymes déposées à la racine du nœud — dépôt,
+/// relecture des cartes, puis matérialisation sur disque.
 ///
-/// Les index sont validés à l'ouverture, qui les fige ; la fermeture oppose
-/// trois refus, dont le seul rattrapable — foyer refermé entre-temps.
-///
-/// Établit aussi que le **miroir de session suit le Scribe** sur chacun de ces
-/// chemins : présent tant que le comptoir l'est, parti dès qu'il l'a lâché.
-#[test]
-fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
-    let tmp = TempDir::new().unwrap();
-    let chemin_feu = tmp.path().join(".feu");
-
-    let interface_test = InterfaceTest::new("mot de passe");
-
-    let mut app = FeuApplication::new(&chemin_feu);
-
-    app.commande_allumage_noeud(&interface_test, None)?;
-
-    app.commande_ouverture_foyer(&interface_test, 0)?;
-
-    let dossier_temporaire = TempDir::new().unwrap();
-
-    let enu_racine = app.commande_derniere_enu_racine()?;
-
-    //
-    // Premier dépôt vide
-    //
-    let chemin_comptoir1 = dossier_temporaire.path().join("comptoir_depot1");
-
-    assert!(matches!(
-        app.commande_ouverture_comptoir_depot(
-            &interface_test,
-            &chemin_comptoir1,
-            MAX_FOYERS + 1,
-            0
-        ),
-        Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(_))
-    ));
-    assert!(matches!(
-        app.commande_ouverture_comptoir_depot(
-            &interface_test,
-            &chemin_comptoir1,
-            0,
-            MAX_CLASSEURS + 1
-        ),
-        Err(ErreurFeuApplication::ScribeIndexClasseurInvalide(_))
-    ));
-
-    let index_comptoir =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir1, 0, 0)?;
-    assert_eq!(index_comptoir, 0);
-    assert!(
-        interface_test
-            .session_application()
-            .unwrap()
-            .comptoirs_depot_ouverts()
-            .contains_key(&index_comptoir)
-    );
-
-    app.commande_fermeture_foyer(&interface_test, 0)?;
-
-    assert!(matches!(
-        app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine),
-        Err(ErreurFeuApplication::ScribeFoyerFerme(_))
-    ));
-    // le foyer fermé tombe avant le retrait : l'identifiant reste des deux côtés, sans
-    // quoi la retentative qui suit n'aurait plus rien à désigner
-    assert!(
-        interface_test
-            .session_application()
-            .unwrap()
-            .comptoirs_depot_ouverts()
-            .contains_key(&index_comptoir)
-    );
-
-    app.commande_ouverture_foyer(&interface_test, 0)?;
-
-    // L'index 1 n'a jamais été attribué : le Scribe ne connaît que le zéro.
-    assert!(matches!(
-        app.commande_fermeture_comptoir_depot(&interface_test, 1, &enu_racine),
-        Err(ErreurFeuApplication::ScribeIndexComptoirInconnu(_))
-    ));
-
-    // Le dossier du comptoir est effacé sous les pieds du Scribe.
-    remove_dir(&chemin_comptoir1).unwrap();
-
-    assert!(matches!(
-        app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine),
-        Err(ErreurFeuApplication::ScribeDossierDepotIntrouvable(_))
-    ));
-
-    app.commande_fermeture_foyer(&interface_test, 0)?;
-
-    // L'erreur à commande_fermeture_comptoir_depot empêche l'envoie de la nouvelle session
-    // il faut attendre une nouvelle commande réussie qui refait un envoi de session
-    assert!(
-        interface_test
-            .session_application()
-            .unwrap()
-            .comptoirs_depot_ouverts()
-            .is_empty()
-    );
-
-    app.commande_extinction_noeud(&interface_test)?;
-
-    Ok(())
-}
-
-/// Aller-retour complet dépôt par comptoir → retrait, sur une arborescence à
-/// plusieurs niveaux : ce qui ressort est exactement ce qui est entré.
-///
-/// Couvre dans l'ordre le comptoir vide, qui ne bouge pas la racine et rend son
-/// identifiant au suivant, le dépôt d'une arborescence à trois niveaux, le refus
-/// d'un retrait vers un dossier existant, le retrait nominal — comparé en
-/// ensembles, l'ordre de parcours n'étant pas garanti — et l'ENU répertoire
-/// passée à une commande blob.
-///
-/// **Ce dernier refus tient ici et nulle part ailleurs** : il lui faut une carte
-/// répertoire signée sous une **braise de foyer**, que seul un dépôt imbriqué
-/// produit — la racine, elle, tombe plus tôt sur sa braise inconnue.
-#[test]
-fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
-    let tmp = TempDir::new().unwrap();
-    let chemin_feu = tmp.path().join(".feu");
-
-    let interface_test = InterfaceTest::new("mot de passe");
-
-    let mut app = FeuApplication::new(&chemin_feu);
-
-    app.commande_allumage_noeud(&interface_test, None)?;
-
-    app.commande_ouverture_foyer(&interface_test, 0)?;
-
-    let dossier_temporaire = TempDir::new().unwrap();
-
-    let enu_racine = app.commande_derniere_enu_racine()?;
-
-    //
-    // Premier dépôt vide
-    //
-    let chemin_comptoir1 = dossier_temporaire.path().join("comptoir_depot1");
-
-    let index_comptoir1 =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir1, 0, 0)?;
-
-    // Fermeture comptoir vide
-    app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir1, &enu_racine)?;
-
-    let deuxieme_enu_racine = app.commande_derniere_enu_racine()?;
-
-    // Pas de nouvelle racine
-    assert_eq!(enu_racine, deuxieme_enu_racine);
-
-    //
-    // Deuxième dépôt non vide
-    //
-    let chemin_comptoir2 = dossier_temporaire.path().join("comptoir_depot2");
-
-    let index_comptoir2 =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir2, 0, 0)?;
-    assert_eq!(index_comptoir2, 0);
-
-    remplir_dossier(&chemin_comptoir2)?;
-
-    let arborescence_origine = lire_arborescence(&chemin_comptoir2)?;
-
-    app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir2, &enu_racine)?;
-
-    let deuxieme_enu_racine = app.commande_derniere_enu_racine()?;
-
-    assert_eq!(
-        deuxieme_enu_racine.carte().metas().get("_racine"),
-        Some(&HEXLOWER.encode(&enu_racine.hash_carte()))
-    );
-
-    //
-    // Premier retrait avec un chemin déjà existant
-    //
-    let dossier_temporaire2 = TempDir::new().unwrap();
-
-    assert!(matches!(
-        app.commande_retrait_lecture_seule(dossier_temporaire2.path(), &deuxieme_enu_racine),
-        Err(ErreurFeuApplication::ScribeDossierDejaExistant(_))
-    ));
-
-    //
-    // Deuxième retrait avec un chemin correct
-    //
-    let chemin_retrait = dossier_temporaire.path().join("retrait");
-
-    app.commande_retrait_lecture_seule(&chemin_retrait, &deuxieme_enu_racine)?;
-
-    let arborescence_relue = lire_arborescence(&chemin_retrait)?;
-
-    // Les deux arborescences doivent être identiques
-    assert_eq!(arborescence_origine, arborescence_relue);
-
-    // Récupération de l'EnuR sous la racine
-    let hashs = &mut deuxieme_enu_racine.carte().hashs_enu().unwrap().clone();
-    assert_eq!(hashs.len(), 2);
-
-    let enu1 = app
-        .commande_chargement_enu(&hashs.pop_first().unwrap())?
-        .unwrap();
-    let enu2 = app
-        .commande_chargement_enu(&hashs.pop_first().unwrap())?
-        .unwrap();
-
-    // Des deux ENU sous la racine, l'EnuR est celle dont la carte est répertoire.
-    let enur = if matches!(
-        enu1.carte(),
-        Carte::Repertoire {
-            metas: _,
-            tags: _,
-            hashs_enu: _
-        }
-    ) {
-        enu1
-    } else {
-        enu2
-    };
-
-    // Une commande blob refuse une carte répertoire.
-    assert!(matches!(
-        app.commande_existence_blob(&enur),
-        Err(ErreurFeuApplication::ScribeEnuDAttendue)
-    ));
-
-    app.commande_fermeture_foyer(&interface_test, 0)?;
-
-    app.commande_extinction_noeud(&interface_test)?;
-
-    Ok(())
-}
-
-/// Aller-retour de deux `EnuT` **homonymes** déposées à la racine du nœud —
-/// dépôt, relecture des cartes, puis matérialisation sur disque.
-///
-/// **Deux dépôts, trois racines** : le second part de la racine rendue *après*
-/// le premier, faute de quoi le premier texte finirait orphelin.
-///
-/// **Foyer 1 sous une racine signée par le nœud** : les deux braises relevées
-/// distinguent le foyer du texte de celui du répertoire d'accueil.
-///
-/// **Le suffixe est posé au dépôt, pas au retrait** : le second texte porte
-/// déjà `test_1` en méta. Rien ne dit lequel des deux hashs sort en premier,
-/// d'où la comparaison par ensembles.
-///
-/// Couvre aussi la carte texte, branche du retrait jamais atteinte ailleurs.
+/// Le suffixe est posé au dépôt, pas au retrait : le second texte porte déjà
+/// `test_1` en méta. Rien ne dit lequel sort en premier, d'où les ensembles.
 #[test]
 fn cycle_enu_texte() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -722,17 +286,11 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
 }
 
 /// Le parcours descendant rend tout le sous-arbre, sa forme et ses profondeurs,
-/// **foyer fermé**.
+/// foyer fermé — le nœud est même rallumé, la clé publique survivant à une
+/// simple fermeture.
 ///
-/// Le nœud est éteint et rallumé avant le moindre parcours : refermer le foyer
-/// n'aurait pas suffi, sa clé publique survivant à la fermeture.
-///
-/// La forme de l'arbre est établie en relançant un parcours sur chaque ENU
-/// rendue — la suite triée des tailles de sous-arbres vaut `[1, 1, 1, 2, 4, 6]`,
-/// une seule forme derrière. Les profondeurs triées valent `[0, 1, 1, 2, 2, 3]`.
-///
-/// **N'établit pas l'ordre du parcours** : l'arbre est une chaîne, où un parcours
-/// en largeur produirait la même séquence.
+/// N'établit pas l'ordre du parcours : sur cette chaîne, un parcours en largeur
+/// donnerait la même séquence.
 #[test]
 fn descendants() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -764,7 +322,7 @@ fn descendants() -> ResultFeuApplication<()> {
     let index_comptoir =
         app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir, 1, 0)?;
 
-    remplir_dossier(&chemin_comptoir)?;
+    remplir_dossier(&chemin_comptoir);
 
     app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine)?;
 
@@ -813,12 +371,8 @@ fn descendants() -> ResultFeuApplication<()> {
 
 /// Le parcours remontant suit la chaîne des racines jusqu'à la genèse.
 ///
-/// Sur un nœud neuf, un seul item — la genèse, qui prouve la terminaison. Après
-/// dix dépôts, onze racines, chaînées paire à paire par leur méta `_racine` :
-/// c'est ce chaînage qui distingue le parcours d'une lecture du dossier `enu/`.
-///
-/// **Le nombre d'enfants décroît de dix à zéro**, ce qui établit le sens de la
-/// remontée pour bien moins cher qu'un descendant par racine.
+/// C'est le chaînage par la méta `_racine` qui le distingue d'une lecture du
+/// dossier `enu/`, et le nombre d'enfants décroissant qui en donne le sens.
 #[test]
 fn racines_anterieures() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -884,9 +438,7 @@ fn racines_anterieures() -> ResultFeuApplication<()> {
 /// ensuite.
 ///
 /// L'état instable est monté par [`forget`](std::mem::forget), qui reproduit ce
-/// que laisse un processus tué. Un second foyer, sain, reste utilisable pendant
-/// ce temps. Chaque constat lit la session notifiée : le secours doit la publier
-/// comme n'importe quelle commande.
+/// que laisse un processus tué. Un second foyer, sain, reste utilisable.
 #[test]
 fn secours_fermeture_foyer() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -955,12 +507,8 @@ fn secours_fermeture_foyer() -> ResultFeuApplication<()> {
 /// La garde du retrait refuse tant qu'un foyer du sous-arbre est fermé, et rend
 /// la main sans avoir rien écrit.
 ///
-/// Deux foyers alimentent le même arbre : la liste rendue nomme exactement ceux
-/// qui manquent, et se réduit à mesure qu'on les rouvre.
-///
-/// **Seul test dont le sous-arbre mêle plusieurs braises.** Partout ailleurs
-/// tout est ouvert, et la pré-passe passerait même si elle ne regardait que la
-/// racine.
+/// Seul test dont le sous-arbre mêle plusieurs braises : la liste rendue nomme
+/// exactement ceux qui manquent, et se réduit à mesure qu'on les rouvre.
 #[test]
 fn retrait_foyer_ferme() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -985,7 +533,7 @@ fn retrait_foyer_ferme() -> ResultFeuApplication<()> {
     let index_comptoir =
         app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir, 0, 0)?;
 
-    remplir_dossier(&chemin_comptoir)?;
+    remplir_dossier(&chemin_comptoir);
 
     app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine)?;
 
@@ -997,7 +545,7 @@ fn retrait_foyer_ferme() -> ResultFeuApplication<()> {
     let index_comptoir2 =
         app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir2, 1, 0)?;
 
-    remplir_dossier(&chemin_comptoir2)?;
+    remplir_dossier(&chemin_comptoir2);
 
     app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir2, &deuxieme_enu_racine)?;
 
@@ -1089,9 +637,8 @@ fn depot_dans_racine_perimee() -> ResultFeuApplication<()> {
 /// Déposer sous un répertoire de foyer sorti de l'arbre courant est refusé, et
 /// ne produit aucune version.
 ///
-/// L'autre voie de `greffe_enfants`, celle qui passe par [`Enu::remplacer`] :
-/// la cible absente laissait forger une racine identique à la précédente, un
-/// maillon mort dans la lignée des `_racine`.
+/// L'autre voie de `greffe_enfants`, par [`Enu::remplacer`] : la cible absente
+/// laissait forger une racine identique à la précédente.
 #[test]
 fn depot_dans_enur_perimee() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -1121,10 +668,7 @@ fn depot_dans_enur_perimee() -> ResultFeuApplication<()> {
 
     let enu_racine2 = app.commande_derniere_enu_racine()?;
 
-    let fiche = app
-        .commande_chargement_enu(enu_racine2.carte().hashs_enu().unwrap().first().unwrap())
-        .unwrap()
-        .unwrap();
+    let fiche = donne_fiche_descendant(app.commande_descendants(&enu_racine2)?, "test").unwrap();
 
     // Ce dépôt remplace le répertoire : la fiche en main sort de l'arbre.
     app.commande_depot_enu_texte(&fiche, 0, "enu texte 1", "test")?;

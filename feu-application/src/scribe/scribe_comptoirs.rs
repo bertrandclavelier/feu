@@ -991,11 +991,8 @@ impl Scribe {
     }
 }
 
-/// Tests en ligne : ce qui se prouve sans monter de pile.
-///
-/// Le nommage des entrées est du calcul sur des chaînes : ni disque, ni
-/// foyer, ni signature. Tout ce qui exige une pile réelle — greffe,
-/// comptoirs ouverts et refermés — est éprouvé dans `src/scribe/tests.rs`.
+/// Tests des méthodes déclarées ici, y compris les privées qu'aucun autre
+/// module ne voit.
 #[cfg(test)]
 mod tests {
     use super::*;
