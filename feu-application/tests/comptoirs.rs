@@ -8,7 +8,7 @@
 
 //! Tests des comptoirs, pilotés par les seules `commande_*`.
 //!
-//! Le harnais vient de `commun`, module que chaque cible déclare pour
+//! Ce qui sert aux deux cibles vit dans `commun`, que chacune déclare pour
 //! elle-même.
 
 use std::fs::{File, create_dir, read_to_string, remove_dir, remove_dir_all, write};

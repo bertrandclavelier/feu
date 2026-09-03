@@ -52,8 +52,8 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use feu_noyau::{
-    BRAISE_VIDE, Braise, MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB,
-    MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE, MAX_TAILLE_SIGNATURE,
+    Braise, MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
+    MAX_TAILLE_SIGNATURE,
 };
 
 use crate::fiche::Fiche;
@@ -119,7 +119,7 @@ impl SessionApplication {
     /// jamais des valeurs de travail.
     ///
     /// Une clé à zéro n'est donc pas une clé, et `braise_foyers` rempli de
-    /// [`BRAISE_VIDE`] ne désigne aucun foyer — l'état d'une session neuve se
+    /// [`Braise::VIDE`] ne désigne aucun foyer — l'état d'une session neuve se
     /// distingue par ce que le noyau n'y a pas encore écrit.
     pub fn new() -> Self {
         Self {
@@ -128,7 +128,7 @@ impl SessionApplication {
             max_taille_blob: MAX_TAILLE_BLOB,
             max_taille_chiffrement_asymetrique: MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
             max_taille_signature: MAX_TAILLE_SIGNATURE,
-            braise_foyers: [BRAISE_VIDE; MAX_FOYERS],
+            braise_foyers: [Braise::VIDE; MAX_FOYERS],
             etat_foyers: [false; MAX_FOYERS],
             cle_publique_sig_noeud: [0u8; 2592],
             cle_publique_sig_foyers: [[0u8; 2592]; MAX_FOYERS],

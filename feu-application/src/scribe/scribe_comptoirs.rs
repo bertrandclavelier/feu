@@ -26,7 +26,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use feu_noyau::{BRAISE_VIDE, Braise, FeuNoyau, MAX_CLASSEURS, MAX_FOYERS};
+use feu_noyau::{Braise, FeuNoyau, MAX_CLASSEURS, MAX_FOYERS};
 use walkdir::WalkDir;
 
 use crate::{
@@ -309,7 +309,7 @@ impl Scribe {
         chemin: &Path,
         fiche_racine: &Fiche,
     ) -> ResultFeuApplication<()> {
-        if fiche_racine.braise() == BRAISE_VIDE {
+        if fiche_racine.braise() == Braise::VIDE {
             return Err(ErreurFeuApplication::ScribeRacineNoeudInterdite);
         }
         if matches!(self.comptoirs, Comptoirs::Depot(_)) {
@@ -751,8 +751,8 @@ impl Scribe {
             return Ok(());
         }
 
-        // Si dépôt à la racine — seule une racine du nœud porte BRAISE_VIDE
-        if enu_racine_depot.braise() == BRAISE_VIDE {
+        // Si dépôt à la racine — seule une racine du nœud porte `Braise::VIDE`
+        if enu_racine_depot.braise() == Braise::VIDE {
             // Si la racine est périmée — repartir d'une ancienne amputerait
             // l'arbre de tout ce qui a été déposé depuis
             let derniere_racine = self.derniere_enu_racine(session)?;

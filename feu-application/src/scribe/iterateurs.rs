@@ -27,7 +27,7 @@
 use std::path::Path;
 
 use data_encoding::HEXLOWER;
-use feu_noyau::BRAISE_VIDE;
+use feu_noyau::Braise;
 
 use crate::{
     ErreurFeuApplication, ResultFeuApplication, SessionApplication, fiche::Fiche, scribe::enu::Enu,
@@ -196,7 +196,7 @@ impl<'a> RacinesAnterieures<'a> {
     fn charge_et_avance(&mut self, hash: &[u8; 32]) -> ResultFeuApplication<Fiche> {
         let enu = Enu::charger(self.chemin_enu, self.session, hash)?;
 
-        if enu.braise() != BRAISE_VIDE {
+        if enu.braise() != Braise::VIDE {
             return Err(ErreurFeuApplication::ScribeEnuRacineAttendue);
         }
         let Some(hash_string) = enu.carte().metas().get("_racine") else {

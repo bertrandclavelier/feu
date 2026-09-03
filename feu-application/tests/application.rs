@@ -161,7 +161,7 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
     // Un hash inconnu rend une absence, pas une erreur.
     assert!(matches!(app.commande_chargement_enu(&[0u8; 32]), Ok(None)));
 
-    // La racine du nœud porte `BRAISE_VIDE`, qu'aucun foyer ne résout.
+    // La racine du nœud porte `Braise::VIDE`, qu'aucun foyer ne résout.
     assert!(matches!(
         app.commande_existence_blob(&enu_racine),
         Err(ErreurFeuApplication::ScribeBraiseInconnue)
@@ -596,7 +596,7 @@ fn retrait_foyer_ferme() -> ResultFeuApplication<()> {
 /// Déposer sous une racine qui n'est plus la dernière est refusé, et ne produit
 /// aucune version.
 ///
-/// La voie `BRAISE_VIDE` de `greffe_enfants` : sans le refus, la nouvelle racine
+/// La voie `Braise::VIDE` de `greffe_enfants` : sans le refus, la nouvelle racine
 /// repartirait d'une carte périmée et perdrait tout ce qui a été déposé depuis.
 #[test]
 fn depot_dans_racine_perimee() -> ResultFeuApplication<()> {

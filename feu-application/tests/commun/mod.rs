@@ -6,7 +6,7 @@
 // FeuApplication is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 // You should have received a copy of the GNU General Public License along with FeuApplication. If not, see <https://www.gnu.org/licenses/>.
 
-//! Harnais partagé par les cibles de test de la crate.
+//! Ce que les deux cibles de test de la crate ont en commun.
 //!
 //! Chaque cible le déclare par un `mod commun;` et en compile sa propre copie.
 //! Aucune n'en consomme la totalité, d'où le `#![allow(dead_code)]`.

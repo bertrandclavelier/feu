@@ -32,10 +32,10 @@
 compile_error!("feu-noyau only supports Linux and macOS.");
 
 mod archiviste;
-mod braise;
 mod cryptographe;
 mod erreur;
 mod gardien;
+mod types;
 
 use std::{
     io::{Read, Write},
@@ -43,8 +43,8 @@ use std::{
     time::SystemTime,
 };
 
-pub use braise::{BRAISE_VIDE, Braise};
 use secrecy::SecretString;
+pub use types::{Braise, IndexClasseur, IndexFoyer};
 
 pub use crate::erreur::{ErreurFeuNoyau, ResultFeuNoyau};
 use crate::{archiviste::Archiviste, cryptographe::Cryptographe, gardien::Gardien};
@@ -268,7 +268,7 @@ impl SessionFoyers {
     fn new() -> Self {
         Self {
             foyers: std::array::from_fn(|_| Foyer {
-                braise: BRAISE_VIDE,
+                braise: Braise::VIDE,
                 est_ouvert: false,
             }),
         }

@@ -12,7 +12,7 @@
 //! le contenu métier (voir [`super::carte`]). L'enveloppe ajoute l'identité
 //! (hash), l'authenticité (signature ML-DSA-87) et la braise du signataire.
 //! Deux signataires possibles : un **foyer** (ENU de contenu, braise du foyer)
-//! ou le **nœud** lui-même (racines de l'arborescence, [`BRAISE_VIDE`] — voir
+//! ou le **nœud** lui-même (racines de l'arborescence, [`Braise::VIDE`] — voir
 //! [`Enu::new_racine`]).
 //!
 //! Les ENU sont **content-addressed** : le hash de la carte sert de nom de
@@ -60,7 +60,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use feu_noyau::{BRAISE_VIDE, Braise, FeuNoyau};
+use feu_noyau::{Braise, FeuNoyau};
 
 use crate::{
     ErreurFeuApplication, ResultFeuApplication, Scribe, SessionApplication,
@@ -73,11 +73,11 @@ use crate::{
 /// dans `~/.feu/enu/`. La `signature_carte` (ML-DSA-87) couvre la carte
 /// sérialisée directement. La `date` est le timestamp Unix de mise sous
 /// enveloppe. La `braise` identifie le signataire pour la vérification :
-/// l'adresse d'un foyer, ou [`BRAISE_VIDE`] quand le signataire est le nœud
+/// l'adresse d'un foyer, ou [`Braise::VIDE`] quand le signataire est le nœud
 /// (racines de l'arborescence).
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Enu {
-    /// Adresse `.braise` du signataire — un foyer, ou [`BRAISE_VIDE`] pour une
+    /// Adresse `.braise` du signataire — un foyer, ou [`Braise::VIDE`] pour une
     /// racine signée par le nœud (non couverte par le hash ni la signature —
     /// métadonnée de routage).
     braise: Braise,
@@ -149,7 +149,7 @@ impl Enu {
     ///
     /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la braise
     /// n'identifie aucun foyer de la session — cas d'une racine du nœud, qui
-    /// porte [`BRAISE_VIDE`]. Propage toute erreur de signature du noyau.
+    /// porte [`Braise::VIDE`]. Propage toute erreur de signature du noyau.
     pub(super) fn renommer(
         &self,
         nom: &str,
@@ -164,7 +164,7 @@ impl Enu {
 
     /// Forge une racine du nœud, la sauvegarde et repointe le sommet courant.
     ///
-    /// Signée par le **nœud**, non par un foyer : sa braise vaut [`BRAISE_VIDE`],
+    /// Signée par le **nœud**, non par un foyer : sa braise vaut [`Braise::VIDE`],
     /// ce qui oriente [`Enu::charger`] vers la clé du nœud.
     ///
     /// `carte` à `None` forge la **genèse**, dont la méta `_racine` vaut `""` :
@@ -208,7 +208,7 @@ impl Enu {
         let octets_carte = carte.vers_octets();
 
         let enu_racine = Self {
-            braise: BRAISE_VIDE,
+            braise: Braise::VIDE,
             hash_carte: FeuNoyau::creation_empreinte(&octets_carte),
             signature_carte: feu_noyau.signature_noeud(&octets_carte)?,
             date: SystemTime::now()
@@ -262,7 +262,7 @@ impl Enu {
     }
 
     /// Retourne l'adresse `.braise` du signataire — un foyer, ou
-    /// [`BRAISE_VIDE`] pour une racine signée par le nœud.
+    /// [`Braise::VIDE`] pour une racine signée par le nœud.
     ///
     /// Métadonnée de routage, hors hash et hors signature : sa valeur n'est pas
     /// authentifiée (voir le modèle de confiance du module).
@@ -304,7 +304,7 @@ impl Enu {
 
     /// Vérifie la signature de la carte contre la clé publique de son signataire.
     ///
-    /// La `braise` route vers cette clé : [`BRAISE_VIDE`] plus la méta `_racine`
+    /// La `braise` route vers cette clé : [`Braise::VIDE`] plus la méta `_racine`
     /// désignent le nœud, toute autre valeur un foyer connu de la session. Hors
     /// signature, elle ne peut que router vers la mauvaise clé et faire échouer
     /// la vérification — jamais faire accepter une ENU.
@@ -321,7 +321,7 @@ impl Enu {
     /// aucune clé, et propage l'erreur cryptographique du noyau. Une signature
     /// simplement invalide est un `Ok(false)`, à l'appelant d'en faire un refus.
     pub(crate) fn authentique(&self, session: &SessionApplication) -> ResultFeuApplication<bool> {
-        if self.braise == BRAISE_VIDE && self.carte.metas().contains_key("_racine") {
+        if self.braise == Braise::VIDE && self.carte.metas().contains_key("_racine") {
             Ok(FeuNoyau::verification_signature(
                 session.cle_publique_sig_noeud(),
                 self.signature_carte,
@@ -462,7 +462,7 @@ impl Enu {
     /// Entrée distincte de [`Self::charger`], qui localise par `hash_carte` : ici
     /// ce hash est précisément ce qu'on ignore, seul le symlink désigne la cible.
     ///
-    /// Volontairement **plus stricte** : braise [`BRAISE_VIDE`] et méta `_racine`
+    /// Volontairement **plus stricte** : braise [`Braise::VIDE`] et méta `_racine`
     /// sont exigées, quand [`Self::authentique`] s'en sert seulement pour router
     /// vers la clé du nœud.
     ///
@@ -484,7 +484,7 @@ impl Enu {
     ) -> ResultFeuApplication<Enu> {
         let enu = Self::octets_vers_enu(&read(chemin_derniere_racine)?)?;
 
-        if enu.braise != BRAISE_VIDE || !enu.carte.metas().contains_key("_racine") {
+        if enu.braise != Braise::VIDE || !enu.carte.metas().contains_key("_racine") {
             return Err(ErreurFeuApplication::ScribeEnuRacineAttendue);
         }
         if !enu.integre(&enu.hash_carte()) {
@@ -698,7 +698,7 @@ impl Enu {
                 // ENU temporaire : seule sa carte est à jour, hash et signature
                 // périmés → ne jamais la sauvegarder ni la faire sortir de
                 // `remplacer`.
-                if racine.braise() == BRAISE_VIDE {
+                if racine.braise() == Braise::VIDE {
                     let mut enu_temp = racine.clone();
                     enu_temp.carte = carte;
                     return Ok(enu_temp);

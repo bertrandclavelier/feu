@@ -122,7 +122,7 @@ fn creer_enu_donnee(
 ///
 /// Signée sous une braise de foyer, et non sous celle du nœud : c'est ce qui
 /// l'oriente vers la branche non triviale de `Scribe::greffe_enfants`, celle qui
-/// re-signe et remonte le chemin. Une racine, elle, porte `BRAISE_VIDE`.
+/// re-signe et remonte le chemin. Une racine, elle, porte `Braise::VIDE`.
 ///
 /// `nom_dossier` est explicite au point d'appel : deux EnuR greffées sous le
 /// même parent sous le même nom verraient la seconde renommée, donc son hash
@@ -447,7 +447,7 @@ fn cycle_remplacements() {
     fermer_foyer(noyau, session);
 }
 
-/// Greffe à même le sommet du nœud — la branche `BRAISE_VIDE` de
+/// Greffe à même le sommet du nœud — la branche `Braise::VIDE` de
 /// `Scribe::greffe_enfants`, qui forge une nouvelle racine par `Enu::new_racine`
 /// au lieu de reconstruire un chemin sous un foyer.
 ///

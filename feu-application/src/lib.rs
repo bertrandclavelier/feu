@@ -272,7 +272,7 @@ impl FeuApplication {
 mod tests {
     use std::cell::RefCell;
 
-    use feu_noyau::BRAISE_VIDE;
+    use feu_noyau::Braise;
     use tempfile::TempDir;
 
     use super::*;
@@ -380,7 +380,7 @@ mod tests {
                 .unwrap()
                 .braise_foyer(0)
                 .unwrap(),
-            BRAISE_VIDE
+            Braise::VIDE
         );
 
         app.commande_ouverture_foyer(&interface_test, 0)?;
@@ -418,7 +418,7 @@ mod tests {
 
         // Plus rien à tirer de la session notifiée, désormais `None` : le teardown
         // ne se constate que sur les champs.
-        assert_eq!(app.session.braise_foyer(0).unwrap(), BRAISE_VIDE);
+        assert_eq!(app.session.braise_foyer(0).unwrap(), Braise::VIDE);
         assert_eq!(app.session.cle_publique_sig_noeud(), [0u8; 2592]);
         assert_eq!(app.session.cle_publique_sig_foyer(0).unwrap(), [0u8; 2592]);
         assert!(app.session.foyers_fermes());

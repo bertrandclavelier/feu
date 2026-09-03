@@ -65,7 +65,7 @@ struct InterfaceTest {
 impl InterfaceTest {
     /// Construit une interface vierge, dans l'état d'avant tout rappel.
     ///
-    /// Les valeurs neutres — [`BRAISE_VIDE`], foyers fermés, clés absentes — ne
+    /// Les valeurs neutres — [`Braise::VIDE`], foyers fermés, clés absentes — ne
     /// sont pas de simples valeurs par défaut : elles permettent de distinguer
     /// un rappel reçu d'un rappel jamais émis, ce dont le test se sert pour
     /// situer chaque notification dans le cycle de vie du noyau.
@@ -73,7 +73,7 @@ impl InterfaceTest {
         Self {
             mot_de_passe: String::from(mot_de_passe),
             seed: Vec::new(),
-            braises: [BRAISE_VIDE; MAX_FOYERS],
+            braises: [Braise::VIDE; MAX_FOYERS],
             etats: [false; MAX_FOYERS],
             cle_publique_noeud: None,
             cles_pub_sig: [None; MAX_FOYERS],
@@ -184,7 +184,7 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
 
     for i in 0..MAX_FOYERS {
         assert!(!interface.etats[i]);
-        assert!(interface.braises[i] != BRAISE_VIDE);
+        assert!(interface.braises[i] != Braise::VIDE);
 
         noyau.ouverture_foyer(&mut interface, i)?;
 

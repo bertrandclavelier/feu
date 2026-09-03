@@ -137,13 +137,11 @@ const CHUNK_SIZE: usize = 4096;
 
 /// Paire de clés ML-DSA-87 de signature d'un foyer.
 ///
-/// `privee` est protégée par `ZeroizeOnDrop` (ml-dsa, feature `zeroize`) —
-/// `SigningKey` n'implémente pas `Zeroize`, `SecretBox` est donc inutilisable.
-/// La zéroïsation est garantie à la destruction, mais ne peut pas être déclenchée manuellement.
+/// `privee` est protégée par `ZeroizeOnDrop` (ml-dsa, feature `zeroize`) : la
+/// zéroïsation est garantie à la destruction, sans pouvoir être déclenchée
+/// manuellement. `SigningKey` n'implémentant pas `Zeroize`, `SecretBox` lui est
+/// inapplicable — sans conséquence, l'effacement étant déjà couvert.
 struct PaireClesSignature {
-    // SigningKey n'implémente pas Zeroize (contrainte de ml-dsa) —
-    // SecretBox impossible. La mémoire est zéroïsée à la destruction via
-    // ZeroizeOnDrop, garanti par ml-dsa avec le feature "zeroize".
     /// Signe une carte d'ENU ou un message.
     privee: SigningKey<MlDsa87>,
     /// Publiée en clair : elle vérifie une signature sans ouvrir le foyer.
@@ -152,13 +150,14 @@ struct PaireClesSignature {
 
 /// Paire de clés ML-KEM-1024 d'un foyer — chiffrement réseau asymétrique post-quantique.
 ///
-/// `privee` est protégée par `ZeroizeOnDrop` (ml-kem, feature `zeroize`) —
-/// `DecapsulationKey` n'implémente pas `Zeroize`, `SecretBox` est donc inutilisable.
-/// La zéroïsation est garantie à la destruction, mais ne peut pas être déclenchée manuellement.
+/// `privee` est protégée par `ZeroizeOnDrop` (ml-kem, feature `zeroize`) : la
+/// zéroïsation est garantie à la destruction, sans pouvoir être déclenchée
+/// manuellement. `DecapsulationKey` n'implémentant pas `Zeroize`, `SecretBox`
+/// lui est inapplicable — sans conséquence, l'effacement étant déjà couvert.
+///
+/// Au stockage, `privee` sort sous forme de seed de 64 octets, sérialisation
+/// recommandée par la crate.
 struct PaireClesChiffrement {
-    // DecapsulationKey n'implémente que ZeroizeOnDrop (ml-kem feature "zeroize") —
-    // SecretBox impossible, comme pour SigningKey. La clé privée ML-KEM-1024 est
-    // stockée sous forme de seed 64 o (sérialisation recommandée par la crate).
     /// Décapsule le secret partagé d'un message reçu.
     privee: DecapsulationKey1024,
     /// Publiée en clair : c'est elle qu'un tiers encapsule pour écrire au foyer.

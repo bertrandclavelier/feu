@@ -27,7 +27,6 @@ use std::{
 
 use crate::{
     Anomalie, Braise, ErreurFeuNoyau, MAX_FOYERS, ResultFeuNoyau,
-    braise::BRAISE_VIDE,
     cryptographe::trousseaux_publics::{
         TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
     },
@@ -65,7 +64,7 @@ impl Configuration {
         Self {
             version: VERSION_CONFIGURATION,
             prochain_index: 1,
-            adresses_braise: [BRAISE_VIDE; MAX_FOYERS],
+            adresses_braise: [Braise::VIDE; MAX_FOYERS],
         }
     }
 
@@ -89,7 +88,7 @@ impl Configuration {
         let version = lignes.remove(0).parse::<u32>()?;
         let prochain_index = lignes.remove(0).parse::<u32>()?;
 
-        let mut tableau = [BRAISE_VIDE; MAX_FOYERS];
+        let mut tableau = [Braise::VIDE; MAX_FOYERS];
         for e in tableau.iter_mut() {
             *e = Braise::try_from(String::from(lignes.remove(0)).as_str())
                 .map_err(|_| ErreurFeuNoyau::GardienProblemeEncodageBraise)?;
@@ -180,7 +179,7 @@ impl Gardien {
     /// Retourne un tableau de `MAX_FOYERS` tuples `(false, adresse_braise)` —
     /// tous les foyers sont marqués fermés à l'allumage du nœud.
     pub(super) fn creation_tableau_session_foyers(&self) -> [(bool, Braise); MAX_FOYERS] {
-        let mut t: [(bool, Braise); MAX_FOYERS] = std::array::from_fn(|_| (false, BRAISE_VIDE));
+        let mut t: [(bool, Braise); MAX_FOYERS] = std::array::from_fn(|_| (false, Braise::VIDE));
 
         for (i, e) in t.iter_mut().enumerate() {
             *e = (false, self.configuration.adresses_braise[i]);
@@ -499,7 +498,7 @@ impl Gardien {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ResultFeuNoyau, braise::LONGUEUR_BRAISE};
+    use crate::{Braise, ResultFeuNoyau};
 
     /// Une configuration sérialisée puis reparsée redonne les mêmes valeurs,
     /// adresses `.braise` comprises et dans le même ordre.
@@ -507,10 +506,11 @@ mod tests {
     fn cycle_configuration() -> ResultFeuNoyau<()> {
         // Des braises toutes égales laisseraient passer une lecture qui mélange
         // l'ordre des lignes. Chaque corps dérive donc de l'indice, écrit en
-        // binaire sur `LONGUEUR_BRAISE` caractères puis traduit `0`/`1` en
+        // binaire sur `Braise::LONGUEUR` caractères puis traduit `0`/`1` en
         // `b`/`c` — l'alphabet BASE32 n'a ni `0` ni `1`.
         let adresses_braise = std::array::from_fn(|i| {
-            let corps: String = format!("{i:0>LONGUEUR_BRAISE$b}")
+            let longueur_braise = Braise::LONGUEUR;
+            let corps: String = format!("{i:0>longueur_braise$b}")
                 .chars()
                 .map(|c| if c == '0' { 'b' } else { 'c' })
                 .collect();
