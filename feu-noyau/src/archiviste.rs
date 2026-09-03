@@ -61,6 +61,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use data_encoding::HEXLOWER;
+
 use crate::{
     Anomalie, DonneesBlob, ErreurFeuNoyau, IndexClasseur, ResultFeuNoyau,
     archiviste::tiroir::Tiroir,
@@ -134,7 +136,7 @@ impl Archiviste {
     pub(super) fn donne_tiroir_plein(
         &self,
         index_classeur: IndexClasseur,
-        hash: &str,
+        hash: &[u8; 32],
     ) -> ResultFeuNoyau<Tiroir> {
         let chemin = self.donne_chemin_blob(index_classeur, hash);
 
@@ -192,7 +194,7 @@ impl Archiviste {
     pub(super) fn supprime_blob(
         &self,
         index_classeur: IndexClasseur,
-        hash: &str,
+        hash: &[u8; 32],
     ) -> ResultFeuNoyau<()> {
         let chemin = self.donne_chemin_blob(index_classeur, hash);
         if !chemin.exists() {
@@ -204,14 +206,15 @@ impl Archiviste {
     /// Indique si un blob identifié par `hash` est présent dans le classeur à `index_classeur`.
     ///
     /// Retourne `true` si `classeurN/<hash>.dat` existe sur le disque, `false` sinon.
-    pub(super) fn existe_blob(&self, index_classeur: IndexClasseur, hash: &str) -> bool {
+    pub(super) fn existe_blob(&self, index_classeur: IndexClasseur, hash: &[u8; 32]) -> bool {
         self.donne_chemin_blob(index_classeur, hash).exists()
     }
 
     /// Retourne la liste des hashes de tous les blobs présents dans le classeur à `index_classeur`.
     ///
-    /// Parcourt le dossier `classeurN/` et collecte le nom de chaque fichier `.dat`
-    /// sans son extension — c'est-à-dire le hash SHA3-256 en hexadécimal minuscule.
+    /// Parcourt le dossier `classeurN/` et décode le nom de chaque fichier, qui
+    /// porte le hash SHA3-256 du clair en hexadécimal minuscule. Une entrée dont
+    /// le nom ne redonne pas 32 octets n'est pas un blob et n'est pas listée.
     ///
     /// L'ordre des entrées n'est pas garanti — il dépend du système de fichiers.
     ///
@@ -221,11 +224,14 @@ impl Archiviste {
     pub(super) fn donne_liste_blobs(
         &self,
         index_classeur: IndexClasseur,
-    ) -> ResultFeuNoyau<Vec<String>> {
+    ) -> ResultFeuNoyau<Vec<[u8; 32]>> {
         let mut liste = Vec::new();
         for element in std::fs::read_dir(self.donne_chemin_classeur(index_classeur))? {
-            if let Some(nom) = element?.path().file_stem() {
-                liste.push(nom.to_string_lossy().to_string());
+            if let Some(nom) = element?.path().file_stem()
+                && let Ok(octets) = HEXLOWER.decode(nom.as_encoded_bytes())
+                && let Ok(hash) = <[u8; 32]>::try_from(octets)
+            {
+                liste.push(hash);
             }
         }
         Ok(liste)
@@ -242,7 +248,7 @@ impl Archiviste {
     pub(super) fn donne_informations_blob(
         &self,
         index_classeur: IndexClasseur,
-        hash: &str,
+        hash: &[u8; 32],
     ) -> ResultFeuNoyau<DonneesBlob> {
         let metadata = std::fs::metadata(self.donne_chemin_blob(index_classeur, hash))?;
         let created = metadata.created().ok();
@@ -311,9 +317,12 @@ impl Archiviste {
     }
 
     /// Retourne le chemin complet du blob `<hash>.dat` dans le classeur à `index_classeur`.
-    fn donne_chemin_blob(&self, index_classeur: IndexClasseur, hash: &str) -> PathBuf {
+    ///
+    /// Seul endroit où un hash prend sa forme hexadécimale : elle ne sert qu'à
+    /// nommer le fichier, et ne remonte pas dans les signatures.
+    fn donne_chemin_blob(&self, index_classeur: IndexClasseur, hash: &[u8; 32]) -> PathBuf {
         self.donne_chemin_classeur(index_classeur)
-            .join(format!("{}.dat", hash))
+            .join(format!("{}.dat", HEXLOWER.encode(hash)))
     }
 
     /// Crée un dossier avec les permissions `rwx------` (0o700).

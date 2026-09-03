@@ -44,8 +44,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use data_encoding::HEXLOWER;
-use feu_noyau::{DonneesBlob, FeuNoyau, IndexFoyer};
+use feu_noyau::{DonneesBlob, FeuNoyau, IndexClasseur, IndexFoyer};
 
 use crate::{
     ErreurFeuApplication, ResultFeuApplication, SessionApplication,
@@ -235,7 +234,7 @@ impl Scribe {
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
 
-        noyau.lecture_blob(index, &HEXLOWER.encode(&hash_blobs), destination)?;
+        noyau.lecture_blob(index, &hash_blobs, destination)?;
 
         Ok(())
     }
@@ -269,15 +268,15 @@ impl Scribe {
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
 
-        noyau.suppression_blob(index, &HEXLOWER.encode(&hash_blobs))?;
+        noyau.suppression_blob(index, &hash_blobs)?;
 
         Ok(())
     }
 
-    /// Indique si le blob référencé par `fiche` est présent dans son foyer.
+    /// Rend le classeur qui détient le blob référencé par `fiche`.
     ///
     /// Même résolution de cible que [`charge_blob`](Self::charge_blob), sans
-    /// rien ouvrir : la question porte sur la présence du `.dat`, pas sur son
+    /// rien ouvrir : la question porte sur l'emplacement du `.dat`, pas sur son
     /// contenu. Une ENU peut survivre à son blob (voir
     /// [`supprime_blob`](Self::supprime_blob)) — c'est ce que cette méthode
     /// permet de détecter.
@@ -286,19 +285,19 @@ impl Scribe {
     ///
     /// Propage les refus du chargement de l'ENU (lecture, authentification) et
     /// les deux de [`index_et_hash_blob`](Self::index_et_hash_blob), puis les erreurs du
-    /// noyau : foyer fermé. Un blob absent est un `Ok(false)`.
+    /// noyau : foyer fermé. Un blob absent est un `Ok(None)`.
     pub(crate) fn existence_blob(
         &self,
         noyau: &FeuNoyau,
         session: &SessionApplication,
         fiche: &Fiche,
-    ) -> ResultFeuApplication<bool> {
+    ) -> ResultFeuApplication<Option<IndexClasseur>> {
         let (index, hash_blobs) = self.index_et_hash_blob(
             session,
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
 
-        Ok(noyau.existence_blob(index, &HEXLOWER.encode(&hash_blobs))?)
+        Ok(noyau.existence_blob(index, &hash_blobs)?)
     }
 
     /// Retourne les métadonnées système du blob référencé par `fiche` — taille,
@@ -323,7 +322,7 @@ impl Scribe {
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
 
-        Ok(noyau.informations_blob(index, &HEXLOWER.encode(&hash_blobs))?)
+        Ok(noyau.informations_blob(index, &hash_blobs)?)
     }
 
     /// Active le Scribe : amorce l'arborescence au tout premier allumage, puis

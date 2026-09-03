@@ -123,8 +123,8 @@ fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
 /// Cycle de vie d'un blob désigné par sa seule ENU — présence, informations,
 /// suppression.
 ///
-/// Le sujet est la fin : `existence_blob` faux et `chargement_enu` encore `Some`
-/// sur le même hash, le blob parti et l'arborescence intacte.
+/// Le sujet est la fin : `existence_blob` sans classeur et `chargement_enu`
+/// encore `Some` sur le même hash, le blob parti et l'arborescence intacte.
 #[test]
 fn cycle_vie_blob() -> ResultFeuApplication<()> {
     let tmp = TempDir::new().unwrap();
@@ -158,7 +158,7 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
     let fiche_rechargee =
         donne_fiche_descendant(app.commande_descendants(&nouvelle_racine)?, "fichier").unwrap();
 
-    assert!(app.commande_existence_blob(&fiche_rechargee)?);
+    assert!(app.commande_existence_blob(&fiche_rechargee)?.is_some());
 
     let taille_blob = app
         .commande_informations_blob(&fiche_rechargee)?
@@ -179,7 +179,7 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
     // Le blob part, sa carte reste : c'est ce décalage que le test vise.
     app.commande_suppression_blob(&fiche_rechargee)?;
 
-    assert!(!app.commande_existence_blob(&fiche_rechargee)?);
+    assert!(app.commande_existence_blob(&fiche_rechargee)?.is_none());
 
     assert!(
         app.commande_chargement_enu(&fiche_rechargee.hash_carte())?

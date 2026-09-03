@@ -44,7 +44,6 @@ pub(crate) mod trousseaux_publics;
 use std::io::{Read, Write};
 
 use bip39::{Language, Mnemonic};
-use data_encoding::HEXLOWER;
 use hkdf::Hkdf;
 use ml_dsa::{MlDsa87, Signature, Verifier, VerifyingKey};
 use ml_kem::{Encapsulate, EncapsulationKey1024, ml_kem_1024::Ciphertext as Ciphertext1024};
@@ -425,12 +424,12 @@ impl Cryptographe {
         index_foyer: IndexFoyer,
         index_classeur: IndexClasseur,
         blob: &[u8],
-    ) -> ResultFeuNoyau<(Vec<u8>, String)> {
+    ) -> ResultFeuNoyau<(Vec<u8>, [u8; 32])> {
         let hash: [u8; 32] = Sha3_256::digest(blob).into();
         Ok((
             self.trousseau
                 .chiffre_blob(index_foyer, index_classeur, blob)?,
-            HEXLOWER.encode(&hash),
+            hash,
         ))
     }
 
@@ -458,7 +457,7 @@ impl Cryptographe {
         &self,
         index_foyer: IndexFoyer,
         index_classeur: IndexClasseur,
-        hash: &str,
+        hash: &[u8; 32],
         blob: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
         let blob_dechiffre = self
@@ -467,9 +466,7 @@ impl Cryptographe {
 
         let nouveau_hash: [u8; 32] = Sha3_256::digest(&blob_dechiffre).into();
 
-        let mut hash_decode = [0u8; 32];
-        HEXLOWER.decode_mut(hash.as_bytes(), &mut hash_decode)?;
-        if nouveau_hash != hash_decode {
+        if nouveau_hash != *hash {
             return Err(ErreurFeuNoyau::CryptographeHashBlobDiscordant);
         }
 

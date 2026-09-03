@@ -745,7 +745,10 @@ impl FeuApplication {
     /// ([`ErreurFeuApplication::ScribeBraiseInconnue`]), carte qui n'est pas une
     /// [`Carte::Donnee`] ([`ErreurFeuApplication::ScribeEnuDAttendue`]), foyer
     /// fermé.
-    pub fn commande_existence_blob(&self, fiche: &Fiche) -> ResultFeuApplication<bool> {
+    pub fn commande_existence_blob(
+        &self,
+        fiche: &Fiche,
+    ) -> ResultFeuApplication<Option<IndexClasseur>> {
         let noyau = self
             .feu_noyau
             .as_ref()

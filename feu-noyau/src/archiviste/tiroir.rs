@@ -52,7 +52,7 @@ pub(crate) struct Tiroir {
     /// pas les deux, c'est l'étape du cycle qui le dit.
     blob: Vec<u8>,
     /// Hash du clair, `None` tant que le Cryptographe ne l'a pas posé.
-    hash: Option<String>,
+    hash: Option<[u8; 32]>,
 }
 
 impl Tiroir {
@@ -131,8 +131,8 @@ impl Tiroir {
     ///
     /// Doit être appelé après chiffrement, avant [`ecrit_blob`](super::Archiviste::ecrit_blob).
     /// Le hash est calculé sur le clair — il sert de nom de fichier dans le classeur.
-    pub(crate) fn definit_hash(&mut self, hash: &str) {
-        self.hash = Some(String::from(hash));
+    pub(crate) fn definit_hash(&mut self, hash: &[u8; 32]) {
+        self.hash = Some(*hash);
     }
 
     /// Retourne le hash SHA3-256 du blob en clair.
@@ -140,11 +140,12 @@ impl Tiroir {
     /// # Errors
     ///
     /// Retourne une erreur si [`definit_hash`](Self::definit_hash) n'a pas encore été appelé.
-    pub(crate) fn lire_hash(&self) -> ResultFeuNoyau<String> {
+    pub(crate) fn lire_hash(&self) -> ResultFeuNoyau<[u8; 32]> {
         let Some(hash) = &self.hash else {
             return Err(ErreurFeuNoyau::ArchivisteTiroirSansHash);
         };
-        Ok(hash.clone())
+
+        Ok(*hash)
     }
 
     /// Retourne l'index du classeur de destination.

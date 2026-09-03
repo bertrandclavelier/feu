@@ -25,7 +25,6 @@ use std::{
     str::from_utf8,
 };
 
-use data_encoding::HEXLOWER;
 use feu_noyau::{Braise, FeuNoyau, IndexClasseur, IndexFoyer};
 use walkdir::WalkDir;
 
@@ -204,11 +203,6 @@ impl Scribe {
                     comptoir.index_classeur(),
                     &contenu[..],
                 )?;
-
-                // le noyau nomme ses blobs par l'hexadécimal d'un SHA3-256 :
-                // 32 octets une fois décodés, la conversion ne peut pas échouer
-                let hash_blob: [u8; 32] =
-                    HEXLOWER.decode(hash_blob.as_bytes())?.try_into().unwrap();
 
                 let mut carte = Carte::new_donnee(hash_blob);
                 carte.ajout_meta("nom", entree.file_name().to_string_lossy().as_ref());
@@ -470,13 +464,6 @@ impl Scribe {
                                 &contenu[..],
                             )?;
 
-                            // le noyau nomme ses blobs par l'hexadécimal d'un SHA3-256 :
-                            // 32 octets une fois décodés, la conversion ne peut pas échouer
-                            let nouveau_hash_blob: [u8; 32] = HEXLOWER
-                                .decode(nouveau_hash_blob.as_bytes())?
-                                .try_into()
-                                .unwrap();
-
                             let mut nouvelle_carte = enu.carte().clone();
                             if let Carte::Donnee { hash_blob, .. } = &mut nouvelle_carte {
                                 *hash_blob = nouveau_hash_blob;
@@ -580,8 +567,6 @@ impl Scribe {
             let contenu = read(chemin)?;
 
             let (hash_blob, _) = noyau.depot_blob(index_foyer, index_classeur, &contenu[..])?;
-
-            let hash_blob: [u8; 32] = HEXLOWER.decode(hash_blob.as_bytes())?.try_into().unwrap();
 
             Carte::new_donnee(hash_blob)
         };
@@ -912,7 +897,7 @@ impl Scribe {
 
                 // le noyau écrit le clair directement dans le fichier, qui est
                 // consommé — fermé au drop, aucun suivi ensuite
-                noyau.lecture_blob(index_foyer, &HEXLOWER.encode(hash_blob), fichier)?;
+                noyau.lecture_blob(index_foyer, hash_blob, fichier)?;
             }
             Carte::Texte {
                 metas: _,

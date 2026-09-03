@@ -889,7 +889,7 @@ impl FeuNoyau {
         index_foyer: IndexFoyer,
         index_classeur: IndexClasseur,
         source: impl Read,
-    ) -> ResultFeuNoyau<(String, IndexClasseur)> {
+    ) -> ResultFeuNoyau<([u8; 32], IndexClasseur)> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
         let mut tiroir = archiviste.donne_tiroir_vide(index_classeur);
@@ -938,7 +938,7 @@ impl FeuNoyau {
     pub fn lecture_blob(
         &mut self,
         index_foyer: IndexFoyer,
-        hash: &str,
+        hash: &[u8; 32],
         destination: impl Write,
     ) -> ResultFeuNoyau<()> {
         // Valide le foyer (bornes, ouverture, archiviste) et remonte la cause
@@ -985,7 +985,7 @@ impl FeuNoyau {
     /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]) — avant le balayage, dont
     /// l'échec donne [`ErreurFeuNoyau::BlobIntrouvable`]. Propage enfin l'échec
     /// de la suppression disque.
-    pub fn suppression_blob(&self, index_foyer: IndexFoyer, hash: &str) -> ResultFeuNoyau<()> {
+    pub fn suppression_blob(&self, index_foyer: IndexFoyer, hash: &[u8; 32]) -> ResultFeuNoyau<()> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
         let index_classeur = IndexClasseur::tous()
@@ -1000,7 +1000,8 @@ impl FeuNoyau {
     /// Retourne la liste des hashes des blobs présents dans un classeur d'un foyer ouvert.
     ///
     /// Délègue à l'Archiviste du foyer, qui parcourt le dossier `classeurN/` et
-    /// collecte les noms de fichiers sans extension `.dat`.
+    /// décode le nom de chaque fichier `.dat`, en écartant ce qui n'est pas un
+    /// hash de 32 octets.
     ///
     /// L'ordre des hashes retournés n'est pas garanti.
     ///
@@ -1014,20 +1015,22 @@ impl FeuNoyau {
         &self,
         index_foyer: IndexFoyer,
         index_classeur: IndexClasseur,
-    ) -> ResultFeuNoyau<Vec<String>> {
+    ) -> ResultFeuNoyau<Vec<[u8; 32]>> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
         archiviste.donne_liste_blobs(index_classeur)
     }
 
-    /// Indique si un blob est présent dans un foyer ouvert, quel qu'en soit le
-    /// classeur.
+    /// Rend le classeur d'un foyer ouvert qui détient le blob identifié par
+    /// `hash`.
     ///
-    /// Permet aux couches supérieures d'interroger l'existence d'un blob sans
-    /// avoir à le lire — donc sans déchiffrement.
+    /// Permet aux couches supérieures de situer un blob sans avoir à le lire —
+    /// donc sans déchiffrement. Le balayage est celui de
+    /// [`lecture_blob`](Self::lecture_blob) : un blob ne résidant jamais dans
+    /// deux classeurs d'un même foyer, le premier trouvé est le bon.
     ///
-    /// L'absence est un `Ok(false)`, jamais une erreur : la question posée
-    /// admet « non » pour réponse. Les erreurs sont réservées à ce qui empêche
+    /// L'absence est un `Ok(None)`, jamais une erreur : la question posée admet
+    /// « nulle part » pour réponse. Les erreurs sont réservées à ce qui empêche
     /// de répondre — foyer fermé, Archiviste manquant.
     ///
     /// # Errors
@@ -1035,13 +1038,15 @@ impl FeuNoyau {
     /// Délègue à `archiviste_foyer_ouvert` le foyer fermé
     /// ([`ErreurFeuNoyau::FoyerFerme`]) et l'Archiviste manquant
     /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]).
-    pub fn existence_blob(&self, index_foyer: IndexFoyer, hash: &str) -> ResultFeuNoyau<bool> {
+    pub fn existence_blob(
+        &self,
+        index_foyer: IndexFoyer,
+        hash: &[u8; 32],
+    ) -> ResultFeuNoyau<Option<IndexClasseur>> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
-        Ok(
-            IndexClasseur::tous()
-                .any(|index_classeur| archiviste.existe_blob(index_classeur, hash)),
-        )
+        Ok(IndexClasseur::tous()
+            .find(|index_classeur| archiviste.existe_blob(*index_classeur, hash)))
     }
 
     /// Retourne les métadonnées système d'un blob, sans en connaître le
@@ -1052,8 +1057,8 @@ impl FeuNoyau {
     /// [`lecture_blob`](Self::lecture_blob).
     ///
     /// Contrairement à [`existence_blob`](Self::existence_blob), l'absence est
-    /// ici une erreur : on a demandé les métadonnées d'un blob, pas s'il en
-    /// avait.
+    /// ici une erreur : on a demandé les métadonnées d'un blob, pas s'il s'en
+    /// trouvait un.
     ///
     /// # Errors
     ///
@@ -1063,7 +1068,7 @@ impl FeuNoyau {
     pub fn informations_blob(
         &self,
         index_foyer: IndexFoyer,
-        hash: &str,
+        hash: &[u8; 32],
     ) -> ResultFeuNoyau<DonneesBlob> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 

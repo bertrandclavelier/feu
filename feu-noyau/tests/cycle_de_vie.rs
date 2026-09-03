@@ -174,7 +174,7 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
         .collect();
 
     write(&chemin_donnees, &contenu).unwrap();
-    let mut hash_blob = String::new();
+    let mut hash_blob = [0u8; 32];
 
     let mut interface = InterfaceTest::new("mot de passe");
 
@@ -263,7 +263,7 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
         // laissé le blob.
         noyau2.suppression_blob(index_foyer, &hash_blob)?;
 
-        assert!(!noyau2.existence_blob(index_foyer, &hash_blob)?);
+        assert!(noyau2.existence_blob(index_foyer, &hash_blob)?.is_none());
         assert!(matches!(
             noyau2.lecture_blob(index_foyer, &hash_blob, &fichier_recuperation),
             Err(ErreurFeuNoyau::BlobIntrouvable(_))
@@ -461,10 +461,9 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
         Err(ErreurFeuNoyau::AuMoinsUnFoyerFerme)
     ));
 
-    // Hash bien formé — 64 caractères, la longueur d'un SHA3-256 en hexadécimal
-    // — mais qu'aucun classeur ne détient. Le foyer doit rester ouvert : la
-    // garde d'état passe avant le balayage, et le refuserait en premier.
-    let hash = "1".repeat(64);
+    // Hash qu'aucun classeur ne détient. Le foyer doit rester ouvert : la garde
+    // d'état passe avant le balayage, et le refuserait en premier.
+    let hash = [0x11u8; 32];
 
     let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
 
