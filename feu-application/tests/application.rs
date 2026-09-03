@@ -38,6 +38,7 @@ use std::{
 
 use data_encoding::HEXLOWER;
 use feu_application::{fiche::Fiche, *};
+use feu_noyau::{IndexClasseur, IndexFoyer};
 use tempfile::TempDir;
 
 use crate::commun::{InterfaceTest, donne_fiche_descendant, nouveau_fichier, remplir_dossier};
@@ -61,10 +62,14 @@ fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
-    let index_comptoir =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0)?;
+    let index_comptoir = app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_depot,
+        IndexFoyer::ZERO,
+        IndexClasseur::ZERO,
+    )?;
     assert_eq!(index_comptoir, 0);
 
     let contenu = nouveau_fichier(&chemin_depot, "fichier", 100);
@@ -76,7 +81,7 @@ fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
     // le dossier physique du comptoir disparaît avec son rangement
     assert!(!chemin_depot.exists());
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     app.commande_extinction_noeud(&interface_test)?;
 
@@ -87,7 +92,7 @@ fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     let nouvelle_racine = app.commande_derniere_enu_racine()?;
 
@@ -108,7 +113,7 @@ fn cycle_depot_extinction_rallumage() -> ResultFeuApplication<()> {
 
     assert_eq!(contenu, contenu_relu);
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     app.commande_extinction_noeud(&interface_test)?;
 
@@ -132,10 +137,14 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
-    let index_comptoir =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0)?;
+    let index_comptoir = app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_depot,
+        IndexFoyer::ZERO,
+        IndexClasseur::ZERO,
+    )?;
     assert_eq!(index_comptoir, 0);
 
     nouveau_fichier(&chemin_depot, "fichier", 100);
@@ -177,7 +186,7 @@ fn cycle_vie_blob() -> ResultFeuApplication<()> {
             .is_some()
     );
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     app.commande_extinction_noeud(&interface_test)?;
 
@@ -200,13 +209,18 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 1)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
     let enu_racine = app.commande_derniere_enu_racine()?;
 
-    app.commande_depot_enu_texte(&enu_racine, 1, "test", "enu test 1")?;
+    app.commande_depot_enu_texte(&enu_racine, IndexFoyer::try_from(1)?, "test", "enu test 1")?;
     let deuxieme_enu_racine = app.commande_derniere_enu_racine()?;
-    app.commande_depot_enu_texte(&deuxieme_enu_racine, 1, "test", "enu test 2")?;
+    app.commande_depot_enu_texte(
+        &deuxieme_enu_racine,
+        IndexFoyer::try_from(1)?,
+        "test",
+        "enu test 2",
+    )?;
     let troisieme_enu_racine = app.commande_derniere_enu_racine()?;
 
     let hashs = &mut troisieme_enu_racine.carte().hashs_enu().unwrap().clone();
@@ -245,16 +259,14 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
         interface_test
             .session_application()
             .unwrap()
-            .braise_foyer(1)
-            .unwrap()
+            .braise_foyer(IndexFoyer::try_from(1)?)
     );
     assert_eq!(
         enu2.braise(),
         interface_test
             .session_application()
             .unwrap()
-            .braise_foyer(1)
-            .unwrap()
+            .braise_foyer(IndexFoyer::try_from(1)?)
     );
 
     let contenus = HashSet::from([contenu1.as_str(), contenu2.as_str()]);
@@ -262,7 +274,7 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
 
     // Un dépôt sous une `EnuT` est refusé : l'accueil est réservé aux racines.
     assert!(matches!(
-        app.commande_depot_enu_texte(&enu1, 1, "test", "enu test 3"),
+        app.commande_depot_enu_texte(&enu1, IndexFoyer::try_from(1)?, "test", "enu test 3"),
         Err(ErreurFeuApplication::ScribeEnuRAttendue)
     ));
 
@@ -278,7 +290,7 @@ fn cycle_enu_texte() -> ResultFeuApplication<()> {
 
     assert_eq!(contenus, ["enu test 1", "enu test 2"]);
 
-    app.commande_fermeture_foyer(&interface_test, 1)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
     app.commande_extinction_noeud(&interface_test)?;
 
@@ -313,14 +325,18 @@ fn descendants() -> ResultFeuApplication<()> {
 
     assert_eq!(fiche.hash_carte(), enu_racine.hash_carte());
 
-    app.commande_ouverture_foyer(&interface_test, 1)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
     let dossier_temporaire = TempDir::new().unwrap();
 
     let chemin_comptoir = dossier_temporaire.path().join("comptoir_depot");
 
-    let index_comptoir =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir, 1, 0)?;
+    let index_comptoir = app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_comptoir,
+        IndexFoyer::try_from(1)?,
+        IndexClasseur::ZERO,
+    )?;
 
     remplir_dossier(&chemin_comptoir);
 
@@ -328,7 +344,7 @@ fn descendants() -> ResultFeuApplication<()> {
 
     // Extinction plutôt que simple fermeture : la session repart vierge, sans la
     // clé publique du foyer qu'une fermeture aurait laissée en place.
-    app.commande_fermeture_foyer(&interface_test, 1)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
     app.commande_extinction_noeud(&interface_test)?;
     app.commande_allumage_noeud(&interface_test, None)?;
     let deuxieme_enu_racine = app.commande_derniere_enu_racine()?;
@@ -393,15 +409,20 @@ fn racines_anterieures() -> ResultFeuApplication<()> {
     let enu = racines[0].as_ref().unwrap();
     assert_eq!(enu, &enu_racine);
 
-    app.commande_ouverture_foyer(&interface_test, 1)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
     // Chaque dépôt remplace la racine du nœud et allonge la chaîne d'un maillon.
     for i in 0..10 {
         let enu_racine = app.commande_derniere_enu_racine()?;
-        app.commande_depot_enu_texte(&enu_racine, 1, &format!("fichier{}", i), "contenu")?;
+        app.commande_depot_enu_texte(
+            &enu_racine,
+            IndexFoyer::try_from(1)?,
+            &format!("fichier{}", i),
+            "contenu",
+        )?;
     }
 
-    app.commande_fermeture_foyer(&interface_test, 1)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
     let enu_racine = app.commande_derniere_enu_racine()?;
     let racines: Vec<Fiche> = app
@@ -450,7 +471,7 @@ fn secours_fermeture_foyer() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 1)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
     // Terminaison brutale : aucun `Drop` ne passe, le dossier clair survit.
     forget(app);
@@ -460,45 +481,42 @@ fn secours_fermeture_foyer() -> ResultFeuApplication<()> {
     app.commande_allumage_noeud(&interface_test, None)?;
 
     // Le foyer 0, intact, s'ouvre malgré le foyer 1 resté en vrac.
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     assert!(
         !interface_test
             .session_application()
             .unwrap()
-            .etat_foyer(1)
-            .unwrap(),
+            .etat_foyer(IndexFoyer::try_from(1)?),
     );
 
     // L'archive `.feu`, consommée à la première ouverture, ne peut plus se rouvrir.
     assert!(matches!(
-        app.commande_ouverture_foyer(&interface_test, 1),
+        app.commande_ouverture_foyer(&interface_test, IndexFoyer::try_from(1)?),
         Err(ErreurFeuApplication::FeuNoyau(_))
     ));
 
-    app.commande_secours_fermeture_foyer(&interface_test, 1)?;
+    app.commande_secours_fermeture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
     assert!(
         !interface_test
             .session_application()
             .unwrap()
-            .etat_foyer(1)
-            .unwrap(),
+            .etat_foyer(IndexFoyer::try_from(1)?),
     );
 
     // La réparation se prouve ici : le foyer 1 s'ouvre de nouveau.
-    app.commande_ouverture_foyer(&interface_test, 1)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
     assert!(
         interface_test
             .session_application()
             .unwrap()
-            .etat_foyer(1)
-            .unwrap(),
+            .etat_foyer(IndexFoyer::try_from(1)?),
     );
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
-    app.commande_fermeture_foyer(&interface_test, 1)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
     app.commande_extinction_noeud(&interface_test)?;
 
     Ok(())
@@ -520,8 +538,8 @@ fn retrait_foyer_ferme() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
-    app.commande_ouverture_foyer(&interface_test, 1)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
     let dossier_temporaire = TempDir::new().unwrap();
 
@@ -530,8 +548,12 @@ fn retrait_foyer_ferme() -> ResultFeuApplication<()> {
     // Le premier dépôt est signé sous le foyer 0.
     let chemin_comptoir = dossier_temporaire.path().join("comptoir_depot");
 
-    let index_comptoir =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir, 0, 0)?;
+    let index_comptoir = app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_comptoir,
+        IndexFoyer::ZERO,
+        IndexClasseur::ZERO,
+    )?;
 
     remplir_dossier(&chemin_comptoir);
 
@@ -542,8 +564,12 @@ fn retrait_foyer_ferme() -> ResultFeuApplication<()> {
     // Le second est signé sous le foyer 1, greffé sur la racine rendue par le premier.
     let chemin_comptoir2 = dossier_temporaire.path().join("comptoir_depot2");
 
-    let index_comptoir2 =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir2, 1, 0)?;
+    let index_comptoir2 = app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_comptoir2,
+        IndexFoyer::try_from(1)?,
+        IndexClasseur::ZERO,
+    )?;
 
     remplir_dossier(&chemin_comptoir2);
 
@@ -552,8 +578,8 @@ fn retrait_foyer_ferme() -> ResultFeuApplication<()> {
     let troisieme_enu_racine = app.commande_derniere_enu_racine()?;
 
     // Les deux foyers refermés : plus une braise du sous-arbre ne se résout.
-    app.commande_fermeture_foyer(&interface_test, 0)?;
-    app.commande_fermeture_foyer(&interface_test, 1)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
     // Chemin encore inexistant : le dossier ne doit naître que d'un retrait abouti.
     let dossier_temporaire2 = TempDir::new().unwrap();
@@ -569,7 +595,7 @@ fn retrait_foyer_ferme() -> ResultFeuApplication<()> {
     assert!(!chemin_retrait.exists());
 
     // Un seul foyer rouvert : la liste se réduit à celui qui manque encore.
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     let Err(ErreurFeuApplication::ScribeFoyersFermes(liste_fermes)) =
         app.commande_retrait_lecture_seule(&chemin_retrait, &troisieme_enu_racine)
@@ -581,12 +607,12 @@ fn retrait_foyer_ferme() -> ResultFeuApplication<()> {
     assert!(!chemin_retrait.exists());
 
     // Les deux foyers ouverts, le retrait passe : la garde ne refuse pas à tort.
-    app.commande_ouverture_foyer(&interface_test, 1)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
     app.commande_retrait_lecture_seule(&chemin_retrait, &troisieme_enu_racine)?;
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
-    app.commande_fermeture_foyer(&interface_test, 1)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
     app.commande_extinction_noeud(&interface_test)?;
 
@@ -609,17 +635,17 @@ fn depot_dans_racine_perimee() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     let enu_racine1 = app.commande_derniere_enu_racine()?;
 
     // Ce dépôt fait de enu_racine1 une racine périmée.
-    app.commande_depot_enu_texte(&enu_racine1, 0, "enu texte 1", "test")?;
+    app.commande_depot_enu_texte(&enu_racine1, IndexFoyer::ZERO, "enu texte 1", "test")?;
 
     let enu_racine2 = app.commande_derniere_enu_racine()?;
 
     assert!(matches!(
-        app.commande_depot_enu_texte(&enu_racine1, 0, "enu texte 2", "test"),
+        app.commande_depot_enu_texte(&enu_racine1, IndexFoyer::ZERO, "enu texte 2", "test"),
         Err(ErreurFeuApplication::ScribeRacinePerimee)
     ));
 
@@ -627,7 +653,7 @@ fn depot_dans_racine_perimee() -> ResultFeuApplication<()> {
 
     assert_eq!(enu_racine3.hash_carte(), enu_racine2.hash_carte());
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     app.commande_extinction_noeud(&interface_test)?;
 
@@ -650,15 +676,19 @@ fn depot_dans_enur_perimee() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     let enu_racine1 = app.commande_derniere_enu_racine()?;
 
     let dossier_temporaire = TempDir::new().unwrap();
     let chemin_comptoir = dossier_temporaire.path().join("comptoir_depot");
 
-    let index_comptoir =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir, 0, 0)?;
+    let index_comptoir = app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_comptoir,
+        IndexFoyer::ZERO,
+        IndexClasseur::ZERO,
+    )?;
 
     // Un dossier et rien d'autre : la racine n'aura qu'un enfant, le répertoire
     // de foyer que le test vise.
@@ -671,12 +701,12 @@ fn depot_dans_enur_perimee() -> ResultFeuApplication<()> {
     let fiche = donne_fiche_descendant(app.commande_descendants(&enu_racine2)?, "test").unwrap();
 
     // Ce dépôt remplace le répertoire : la fiche en main sort de l'arbre.
-    app.commande_depot_enu_texte(&fiche, 0, "enu texte 1", "test")?;
+    app.commande_depot_enu_texte(&fiche, IndexFoyer::ZERO, "enu texte 1", "test")?;
 
     let enu_racine3 = app.commande_derniere_enu_racine()?;
 
     assert!(matches!(
-        app.commande_depot_enu_texte(&fiche, 0, "enu texte 2", "test"),
+        app.commande_depot_enu_texte(&fiche, IndexFoyer::ZERO, "enu texte 2", "test"),
         Err(ErreurFeuApplication::ScribeRemplacementSansEffet)
     ));
 
@@ -684,7 +714,7 @@ fn depot_dans_enur_perimee() -> ResultFeuApplication<()> {
 
     assert_eq!(enu_racine3.hash_carte(), enu_racine4.hash_carte());
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     app.commande_extinction_noeud(&interface_test)?;
 

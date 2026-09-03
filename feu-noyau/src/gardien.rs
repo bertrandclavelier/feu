@@ -26,7 +26,7 @@ use std::{
 };
 
 use crate::{
-    Anomalie, Braise, ErreurFeuNoyau, MAX_FOYERS, ResultFeuNoyau,
+    Anomalie, Braise, ErreurFeuNoyau, IndexFoyer, ResultFeuNoyau,
     cryptographe::trousseaux_publics::{
         TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
     },
@@ -42,7 +42,7 @@ const VERSION_CONFIGURATION: u32 = 1;
 /// Configuration globale du nœud — miroir de `noyau.feu` en mémoire.
 ///
 /// Contient la version du format de fichier, le prochain index de dérivation
-/// et les adresses `.braise` des `MAX_FOYERS` foyers du nœud.
+/// et les adresses `.braise` des foyers du nœud.
 #[derive(Debug, PartialEq)]
 struct Configuration {
     /// Version du format de `noyau.feu` — incrémentée à chaque changement
@@ -50,8 +50,8 @@ struct Configuration {
     version: u32,
     /// Prochain index de dérivation à attribuer au prochain foyer créé.
     prochain_index: u32,
-    /// Adresses `.braise` des foyers — tableau de taille fixe `MAX_FOYERS`.
-    adresses_braise: [Braise; MAX_FOYERS],
+    /// Adresses `.braise` des foyers — un emplacement par foyer.
+    adresses_braise: [Braise; IndexFoyer::NOMBRE],
 }
 
 impl Configuration {
@@ -64,31 +64,31 @@ impl Configuration {
         Self {
             version: VERSION_CONFIGURATION,
             prochain_index: 1,
-            adresses_braise: [Braise::VIDE; MAX_FOYERS],
+            adresses_braise: [Braise::VIDE; IndexFoyer::NOMBRE],
         }
     }
 
     /// Reconstruit la configuration depuis le contenu textuel de `noyau.feu`.
     ///
-    /// Attend exactement `2 + MAX_FOYERS` lignes : version, prochain_index,
+    /// Attend exactement `2 + IndexFoyer::NOMBRE` lignes : version, prochain_index,
     /// puis une adresse `.braise` par foyer.
     ///
     /// # Errors
     ///
     /// Retourne [`ErreurFeuNoyau::GardienConfigManqueAuMoinsUnElement`] si le
-    /// fichier compte moins de `2 + MAX_FOYERS` lignes,
+    /// fichier compte moins de `2 + IndexFoyer::NOMBRE` lignes,
     /// [`ErreurFeuNoyau::ParseIntError`] si `version` ou `prochain_index` ne sont
     /// pas des entiers, et [`ErreurFeuNoyau::GardienProblemeEncodageBraise`] si
     /// une ligne de braise est mal formée.
     fn importe_depuis_texte(contenu: &str) -> ResultFeuNoyau<Self> {
         let mut lignes: Vec<&str> = contenu.lines().collect();
-        if lignes.len() < 2 + MAX_FOYERS {
+        if lignes.len() < 2 + IndexFoyer::NOMBRE {
             return Err(ErreurFeuNoyau::GardienConfigManqueAuMoinsUnElement);
         }
         let version = lignes.remove(0).parse::<u32>()?;
         let prochain_index = lignes.remove(0).parse::<u32>()?;
 
-        let mut tableau = [Braise::VIDE; MAX_FOYERS];
+        let mut tableau = [Braise::VIDE; IndexFoyer::NOMBRE];
         for e in tableau.iter_mut() {
             *e = Braise::try_from(String::from(lignes.remove(0)).as_str())
                 .map_err(|_| ErreurFeuNoyau::GardienProblemeEncodageBraise)?;
@@ -176,10 +176,11 @@ impl Gardien {
 
     /// Construit le tableau de session des foyers depuis la configuration en mémoire.
     ///
-    /// Retourne un tableau de `MAX_FOYERS` tuples `(false, adresse_braise)` —
-    /// tous les foyers sont marqués fermés à l'allumage du nœud.
-    pub(super) fn creation_tableau_session_foyers(&self) -> [(bool, Braise); MAX_FOYERS] {
-        let mut t: [(bool, Braise); MAX_FOYERS] = std::array::from_fn(|_| (false, Braise::VIDE));
+    /// Retourne un tuple `(false, adresse_braise)` par foyer — tous sont marqués
+    /// fermés à l'allumage du nœud.
+    pub(super) fn creation_tableau_session_foyers(&self) -> [(bool, Braise); IndexFoyer::NOMBRE] {
+        let mut t: [(bool, Braise); IndexFoyer::NOMBRE] =
+            std::array::from_fn(|_| (false, Braise::VIDE));
 
         for (i, e) in t.iter_mut().enumerate() {
             *e = (false, self.configuration.adresses_braise[i]);
@@ -265,9 +266,9 @@ impl Gardien {
     pub(super) fn ajout_nouveau_foyer_dans_configuration(
         &mut self,
         braise: Braise,
-        position: usize,
+        index_foyer: IndexFoyer,
     ) {
-        self.configuration.adresses_braise[position] = braise;
+        self.configuration.adresses_braise[index_foyer.valeur()] = braise;
         self.configuration.prochain_index += 1;
     }
 

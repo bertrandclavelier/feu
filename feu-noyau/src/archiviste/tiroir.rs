@@ -20,7 +20,7 @@ use std::io::{Read, Write};
 
 use zeroize::Zeroize;
 
-use crate::{ErreurFeuNoyau, MAX_TAILLE_BLOB, ResultFeuNoyau, TAILLE_CHUNK};
+use crate::{ErreurFeuNoyau, IndexClasseur, MAX_TAILLE_BLOB, ResultFeuNoyau, TAILLE_CHUNK};
 
 /// Objet de transfert éphémère entre l'Archiviste et le Cryptographe.
 ///
@@ -47,7 +47,7 @@ use crate::{ErreurFeuNoyau, MAX_TAILLE_BLOB, ResultFeuNoyau, TAILLE_CHUNK};
 /// - `lire_hash` retourne une erreur si le hash n'a pas encore été défini.
 pub(crate) struct Tiroir {
     /// Le classeur de destination, fixé à la construction.
-    index_classeur: usize,
+    index_classeur: IndexClasseur,
     /// Le contenu, clair à l'aller, chiffré au retour — le tiroir ne distingue
     /// pas les deux, c'est l'étape du cycle qui le dit.
     blob: Vec<u8>,
@@ -59,7 +59,7 @@ impl Tiroir {
     /// Crée un [`Tiroir`] vide pour le classeur à `index_classeur`.
     ///
     /// Le blob est vide et le hash absent — prêt à être rempli via [`remplir`](Self::remplir).
-    pub(super) fn new(index_classeur: usize) -> Self {
+    pub(super) fn new(index_classeur: IndexClasseur) -> Self {
         Self {
             index_classeur,
             blob: Vec::new(),
@@ -148,7 +148,7 @@ impl Tiroir {
     }
 
     /// Retourne l'index du classeur de destination.
-    pub(crate) fn lire_index_classeur(&self) -> usize {
+    pub(crate) fn lire_index_classeur(&self) -> IndexClasseur {
         self.index_classeur
     }
 }

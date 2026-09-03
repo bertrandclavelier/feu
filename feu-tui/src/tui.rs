@@ -71,7 +71,7 @@ use std::{
 };
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use feu_application::{SessionApplication, fiche::Fiche};
+use feu_application::{IndexFoyer, SessionApplication, fiche::Fiche};
 use ratatui::DefaultTerminal;
 use secrecy::SecretString;
 
@@ -165,17 +165,18 @@ enum ValidationBufferSaisie {
     /// [`crate::connecteurs::MessageTuiCoeur::OuvertureFoyer`].
     ///
     /// Posé par [`Tui::saisie_mode_normal`] sur dispatch de
-    /// [`Commande::PilotageOuvrirFoyer`]. À la validation, seul le format entier
-    /// est vérifié ; la validité de l'index est tranchée par le noyau.
+    /// [`Commande::PilotageOuvrirFoyer`]. À la validation, le format entier et
+    /// la borne sont vérifiés ici — `IndexFoyer` n'accepte rien d'autre ; l'état
+    /// du foyer est tranché par le noyau.
     OuvertureFoyer,
 
     /// Le buffer est interprété comme un numéro de foyer et envoyé via
     /// [`crate::connecteurs::MessageTuiCoeur::SecoursFermetureFoyer`].
     ///
     /// Posé par [`Tui::saisie_mode_normal`] sur dispatch de
-    /// [`Commande::PilotageSecoursFermetureFoyer`]. À la validation, seul le
-    /// format entier est vérifié ; l'index et l'état du foyer sont tranchés par
-    /// le noyau.
+    /// [`Commande::PilotageSecoursFermetureFoyer`]. À la validation, le format
+    /// entier et la borne sont vérifiés ici ; l'état du foyer est tranché par le
+    /// noyau.
     SecoursFermetureFoyer,
 }
 
@@ -695,7 +696,11 @@ impl Tui {
                     };
                     self.connecteur_vers_coeur.envoyer_message_tui_coeur(
                         MessageTuiCoeur::OuvertureComptoir(
-                            chemin.join(format!("f{index_foyer}.c{index_classeur}_depot_feu")),
+                            chemin.join(format!(
+                                "f{}.c{}_depot_feu",
+                                index_foyer.valeur(),
+                                index_classeur.valeur()
+                            )),
                             *index_foyer,
                             *index_classeur,
                         ),
@@ -765,6 +770,7 @@ impl Tui {
     /// [`ErreurFeuTui::TuiNoeudEteint`] si la commande demande une session absente.
     /// [`ErreurFeuTui::TuiEntreeNonEntier`] si la saisie n'est pas un entier.
     /// [`ErreurFeuTui::TuiIndexComptoirInvalide`] si aucun comptoir de dépôt ne porte cet index.
+    /// [`ErreurFeuTui::TuiIndexFoyerInvalide`] si aucun foyer n'occupe la position saisie.
     fn saisie_mode_insertion(&mut self) -> ResultFeuTui<()> {
         match Self::lire_touche()? {
             Some((KeyCode::Char(c), KeyModifiers::NONE)) => {
@@ -817,8 +823,12 @@ impl Tui {
                         let Ok(index) = saisie.trim().parse() else {
                             return Err(ErreurFeuTui::TuiEntreeNonEntier);
                         };
-                        self.connecteur_vers_coeur
-                            .envoyer_message_tui_coeur(MessageTuiCoeur::OuvertureFoyer(index));
+                        let Ok(index_foyer) = IndexFoyer::try_from(index) else {
+                            return Err(ErreurFeuTui::TuiIndexFoyerInvalide(index));
+                        };
+                        self.connecteur_vers_coeur.envoyer_message_tui_coeur(
+                            MessageTuiCoeur::OuvertureFoyer(index_foyer),
+                        );
                     }
 
                     ValidationBufferSaisie::Rien => {}
@@ -827,9 +837,12 @@ impl Tui {
                         let Ok(index) = saisie.trim().parse() else {
                             return Err(ErreurFeuTui::TuiEntreeNonEntier);
                         };
+                        let Ok(index_foyer) = IndexFoyer::try_from(index) else {
+                            return Err(ErreurFeuTui::TuiIndexFoyerInvalide(index));
+                        };
 
                         self.connecteur_vers_coeur.envoyer_message_tui_coeur(
-                            MessageTuiCoeur::SecoursFermetureFoyer(index),
+                            MessageTuiCoeur::SecoursFermetureFoyer(index_foyer),
                         );
                     }
                 }

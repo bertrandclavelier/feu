@@ -16,7 +16,7 @@
 //! et les clés publiques (ML-DSA-87, ML-KEM-1024) apparaissent sans chiffrement.
 //! Ces structures sont destinées à être écrites sur le disque par le gardien.
 
-use crate::{Braise, ErreurFeuNoyau, MAX_CLASSEURS, MAX_FOYERS, ResultFeuNoyau};
+use crate::{Braise, ErreurFeuNoyau, IndexClasseur, IndexFoyer, ResultFeuNoyau};
 
 /// Représentation persistable des clés d'un foyer Feu.
 ///
@@ -43,7 +43,7 @@ pub(crate) struct TrousseauPublicFoyer {
 
     /// Une clé AES-256 chiffrée par classeur, `None` tant que le classeur n'a
     /// pas servi.
-    cles_chiffrement_classeurs: [Option<[u8; 60]>; MAX_CLASSEURS], // chiffrées
+    cles_chiffrement_classeurs: [Option<[u8; 60]>; IndexClasseur::NOMBRE], // chiffrées
 }
 
 impl TrousseauPublicFoyer {
@@ -66,7 +66,7 @@ impl TrousseauPublicFoyer {
             cle_sig_pub,
             cle_chiff_privee,
             cle_chiff_pub,
-            cles_chiffrement_classeurs: [None; MAX_CLASSEURS],
+            cles_chiffrement_classeurs: [None; IndexClasseur::NOMBRE],
         }
     }
 
@@ -100,42 +100,35 @@ impl TrousseauPublicFoyer {
         self.cle_chiff_pub
     }
 
-    /// Retourne la clé de chiffrement AES-256-GCM du classeur à l'`index` donné — chiffrée, 60 octets.
+    /// Retourne la clé AES-256-GCM du classeur `index_classeur` — chiffrée, 60 octets.
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si aucune clé n'est présente à cet index.
+    /// [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente`] si
+    /// l'emplacement est vide, aucune clé n'y ayant été insérée.
     pub(crate) fn donne_cle_chiffrement_classeur(
         &self,
-        index_classeur: usize,
+        index_classeur: IndexClasseur,
     ) -> ResultFeuNoyau<&[u8; 60]> {
-        if index_classeur >= MAX_CLASSEURS {
-            return Err(ErreurFeuNoyau::IndexClasseurInvalide(index_classeur));
-        }
-        if let Some(cle) = &self.cles_chiffrement_classeurs[index_classeur] {
+        if let Some(cle) = &self.cles_chiffrement_classeurs[index_classeur.valeur()] {
             Ok(cle)
         } else {
             Err(ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente(
-                index_classeur,
+                index_classeur.valeur(),
             ))
         }
     }
 
-    /// Insère la clé de chiffrement d'un classeur à l'`index` donné — chiffrée, 60 octets.
+    /// Insère la clé AES-256-GCM du classeur `index_classeur` — chiffrée, 60 octets.
     ///
-    /// # Errors
-    ///
-    /// Retourne une erreur si `index >= MAX_CLASSEURS`.
+    /// Écriture directe et infaillible : [`IndexClasseur`] borne l'index par
+    /// construction, il n'y a plus de dépassement à contrôler.
     pub(crate) fn ajoute_cle_chiffrement_classeur(
         &mut self,
         cle: [u8; 60],
-        index_classeur: usize,
-    ) -> ResultFeuNoyau<()> {
-        if index_classeur >= MAX_CLASSEURS {
-            return Err(ErreurFeuNoyau::IndexClasseurInvalide(index_classeur));
-        }
-        self.cles_chiffrement_classeurs[index_classeur] = Some(cle);
-        Ok(())
+        index_classeur: IndexClasseur,
+    ) {
+        self.cles_chiffrement_classeurs[index_classeur.valeur()] = Some(cle);
     }
 }
 
@@ -190,7 +183,7 @@ pub(crate) struct TrousseauPublicComplet {
     trousseau_public_noeud: TrousseauPublicNoeud,
     /// Un emplacement par foyer, rempli au fur et à mesure de la construction ;
     /// les trois foyers sont dérivés à la genèse, donc tous présents ensuite.
-    trousseaux_publics_foyers: [Option<TrousseauPublicFoyer>; MAX_FOYERS],
+    trousseaux_publics_foyers: [Option<TrousseauPublicFoyer>; IndexFoyer::NOMBRE],
 }
 
 impl TrousseauPublicComplet {
@@ -210,38 +203,34 @@ impl TrousseauPublicComplet {
         &self.trousseau_public_noeud
     }
 
-    /// Retourne une référence au [`TrousseauPublicFoyer`] à l'`index` donné.
+    /// Retourne une référence au [`TrousseauPublicFoyer`] du foyer `index_foyer`.
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si aucun foyer n'est présent à cet index.
+    /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si l'emplacement est
+    /// vide, le foyer n'y ayant pas été inséré.
     pub(crate) fn donne_trousseau_public_foyer(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuNoyau<&TrousseauPublicFoyer> {
-        if let Some(trousseau) = &self.trousseaux_publics_foyers[index_foyer] {
+        if let Some(trousseau) = &self.trousseaux_publics_foyers[index_foyer.valeur()] {
             Ok(trousseau)
         } else {
             Err(ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent(
-                index_foyer,
+                index_foyer.valeur(),
             ))
         }
     }
 
-    /// Insère un [`TrousseauPublicFoyer`] à l'`index` donné.
+    /// Insère un [`TrousseauPublicFoyer`] à la position `index_foyer`.
     ///
-    /// # Errors
-    ///
-    /// Retourne une erreur si `index >= MAX_FOYERS`.
+    /// Écriture directe et infaillible : [`IndexFoyer`] borne l'index par
+    /// construction, il n'y a plus de dépassement à contrôler.
     pub(crate) fn ajoute_trousseau_foyer_public(
         &mut self,
         trousseau_public_foyer: TrousseauPublicFoyer,
-        index_foyer: usize,
-    ) -> ResultFeuNoyau<()> {
-        if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));
-        }
-        self.trousseaux_publics_foyers[index_foyer] = Some(trousseau_public_foyer);
-        Ok(())
+        index_foyer: IndexFoyer,
+    ) {
+        self.trousseaux_publics_foyers[index_foyer.valeur()] = Some(trousseau_public_foyer);
     }
 }

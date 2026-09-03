@@ -50,13 +50,21 @@ fn cycle_configuration_comptoirs_depot() -> ResultFeuApplication<()> {
     assert!(matches!(scribe.comptoirs, Comptoirs::Vide));
 
     let chemin1 = tmp.path().join("comptoir1");
-    let comptoir1 = ComptoirDepot::new(chemin1, 1, 2);
+    let comptoir1 = ComptoirDepot::new(
+        chemin1,
+        IndexFoyer::try_from(1)?,
+        IndexClasseur::try_from(2)?,
+    );
     let index1 = scribe.comptoirs.ajouter_comptoir_depot(comptoir1.clone())?;
 
     assert!(matches!(scribe.comptoirs, Comptoirs::Depot(_)));
 
     let chemin2 = tmp.path().join("comptoir2");
-    let comptoir2 = ComptoirDepot::new(chemin2, 3, 4);
+    let comptoir2 = ComptoirDepot::new(
+        chemin2,
+        IndexFoyer::try_from(2)?,
+        IndexClasseur::try_from(4)?,
+    );
     let index2 = scribe.comptoirs.ajouter_comptoir_depot(comptoir2.clone())?;
 
     let configuration = Configuration::new(&scribe);
@@ -142,7 +150,11 @@ fn transition_comptoirs() -> ResultFeuApplication<()> {
     assert!(matches!(scribe.comptoirs, Comptoirs::Vide));
 
     let chemin1 = tmp.path().join("comptoir1");
-    let comptoir_depot = ComptoirDepot::new(chemin1, 1, 2);
+    let comptoir_depot = ComptoirDepot::new(
+        chemin1,
+        IndexFoyer::try_from(1)?,
+        IndexClasseur::try_from(2)?,
+    );
     let index_comptoir = scribe
         .comptoirs
         .ajouter_comptoir_depot(comptoir_depot.clone())?;

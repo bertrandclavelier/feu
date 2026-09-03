@@ -49,16 +49,19 @@ pub use types::{Braise, IndexClasseur, IndexFoyer};
 pub use crate::erreur::{ErreurFeuNoyau, ResultFeuNoyau};
 use crate::{archiviste::Archiviste, cryptographe::Cryptographe, gardien::Gardien};
 
-/// Nombre maximum de foyers dans le nœud.
-pub const MAX_FOYERS: usize = 3;
-/// Nombre maximum de classeurs par foyer.
-pub const MAX_CLASSEURS: usize = 5;
+/// Nombre de foyers d'un nœud — exposé au dehors par [`IndexFoyer::NOMBRE`].
+const NOMBRE_FOYERS: usize = 3;
+
+/// Nombre de classeurs d'un foyer — exposé au dehors par [`IndexClasseur::NOMBRE`].
+const NOMBRE_CLASSEURS: usize = 5;
+
 /// Taille maximum d'un blob — 512 Mio.
 ///
 /// **Borne incluse**, comme les deux `MAX_TAILLE_*` qui suivent : un blob de
 /// cette taille exacte passe, la garde est un `>` strict. Une taille est une
-/// quantité, pas un cardinal d'index — le `>=` de [`MAX_FOYERS`] et
-/// [`MAX_CLASSEURS`], où l'index valide s'arrête à MAX-1, ne s'applique pas ici.
+/// quantité, pas un cardinal d'index — le `>=` de [`IndexFoyer::NOMBRE`] et
+/// [`IndexClasseur::NOMBRE`], où l'index valide s'arrête à `NOMBRE - 1`, ne
+/// s'applique pas ici.
 pub const MAX_TAILLE_BLOB: usize = 512 * 1024 * 1024;
 
 /// Taille maximum d'un message à chiffrer via ML-KEM-1024 + AES-256-GCM — 1 Mio.
@@ -125,7 +128,7 @@ pub trait InterfaceFeuNoyau {
     /// `noyau.feu`, et à l'initialisation pour chaque foyer créé. Permet à
     /// l'interface de construire un index stable `index_foyer → braise` sans
     /// avoir à inspecter la configuration elle-même.
-    fn recevoir_braise_foyer(&mut self, index_foyer: usize, braise: Braise);
+    fn recevoir_braise_foyer(&mut self, index_foyer: IndexFoyer, braise: Braise);
 
     /// Notifie l'interface d'un changement d'état d'ouverture d'un foyer.
     ///
@@ -133,7 +136,7 @@ pub trait InterfaceFeuNoyau {
     /// est `true` quand le foyer vient d'être ouvert, `false` quand il vient
     /// d'être fermé. L'interface peut ainsi refléter en temps réel l'état
     /// d'ouverture sans interroger le noyau.
-    fn recevoir_etat_foyer(&mut self, index_foyer: usize, etat: bool);
+    fn recevoir_etat_foyer(&mut self, index_foyer: IndexFoyer, etat: bool);
 
     /// Notifie l'interface de la clé publique de signature du nœud.
     ///
@@ -150,7 +153,7 @@ pub trait InterfaceFeuNoyau {
     /// - `cle_publique_chif` — clé de chiffrement ML-KEM-1024 du foyer.
     fn recevoir_cles_publiques_foyer(
         &mut self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         cle_publique_sig: [u8; 2592],
         cle_publique_chif: [u8; 1568],
     );
@@ -260,7 +263,7 @@ impl Foyer {
 /// état d'ouverture.
 struct SessionFoyers {
     /// État et adresse de chaque foyer.
-    foyers: [Foyer; MAX_FOYERS],
+    foyers: [Foyer; IndexFoyer::NOMBRE],
 }
 
 impl SessionFoyers {
@@ -301,45 +304,35 @@ impl SessionFoyers {
     fn definition_foyers(
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
-        t: [(bool, Braise); MAX_FOYERS],
+        t: [(bool, Braise); IndexFoyer::NOMBRE],
     ) {
-        for (i, foyer) in self.foyers.iter_mut().enumerate() {
-            interface.recevoir_braise_foyer(i, t[i].1);
-            *foyer = Foyer::new(t[i].1, t[i].0);
+        for index_foyer in IndexFoyer::tous() {
+            interface.recevoir_braise_foyer(index_foyer, t[index_foyer.valeur()].1);
+            self.foyers[index_foyer.valeur()] =
+                Foyer::new(t[index_foyer.valeur()].1, t[index_foyer.valeur()].0);
         }
     }
 
-    /// Retourne l'adresse `.braise` du foyer à la position `index`.
-    ///
-    /// # Errors
-    ///
-    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si `index_foyer` est hors
-    /// bornes.
-    fn index_vers_braise(&self, index_foyer: usize) -> ResultFeuNoyau<Braise> {
-        if index_foyer >= MAX_FOYERS {
-            Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer))
-        } else {
-            Ok(self.foyers[index_foyer].braise)
-        }
+    /// Retourne l'adresse `.braise` du foyer à la position `index_foyer`.
+    fn index_vers_braise(&self, index_foyer: IndexFoyer) -> Braise {
+        self.foyers[index_foyer.valeur()].braise
     }
 
     /// Indique si le foyer à la position `index_foyer` est ouvert.
     ///
-    /// L'index n'est pas contrôlé ici : les méthodes publiques valident la borne
-    /// `< MAX_FOYERS` en tête d'appel. Un index hors borne provoque une panique.
-    fn est_ouvert(&self, index_foyer: usize) -> ResultFeuNoyau<bool> {
-        Ok(self.foyers[index_foyer].est_ouvert)
+    /// L'accès est direct et sans garde : [`IndexFoyer`] borne la position par
+    /// construction.
+    fn est_ouvert(&self, index_foyer: IndexFoyer) -> bool {
+        self.foyers[index_foyer.valeur()].est_ouvert
     }
 
     /// Marque le foyer à la position `index_foyer` comme ouvert (`true`) ou
     /// fermé (`false`).
     ///
-    /// Même contrat d'index que [`est_ouvert`](Self::est_ouvert) : la borne est
-    /// supposée déjà validée par l'appelant.
-    fn change_statut(&mut self, index_foyer: usize, valeur: bool) -> ResultFeuNoyau<()> {
-        self.foyers[index_foyer].est_ouvert = valeur;
-
-        Ok(())
+    /// Même accès direct que [`est_ouvert`](Self::est_ouvert), la borne étant
+    /// tenue par le type.
+    fn change_statut(&mut self, index_foyer: IndexFoyer, valeur: bool) {
+        self.foyers[index_foyer.valeur()].est_ouvert = valeur;
     }
 }
 
@@ -363,7 +356,7 @@ pub struct FeuNoyau {
 
     /// Un Archiviste par foyer ouvert — `None` si le foyer est fermé.
     /// Instancié à l'ouverture du foyer, détruit à la fermeture.
-    archivistes: [Option<Archiviste>; MAX_FOYERS],
+    archivistes: [Option<Archiviste>; IndexFoyer::NOMBRE],
 }
 
 impl Drop for FeuNoyau {
@@ -481,14 +474,14 @@ impl FeuNoyau {
 
             let mut session = SessionFoyers::new();
 
-            // Ajout des MAX_FOYERS foyers dans la configuration
-            for i in 0..MAX_FOYERS {
+            // Ajout de chaque foyer dans la configuration
+            for index_foyer in IndexFoyer::tous() {
                 let braise = trousseau_public_complet
-                    .donne_trousseau_public_foyer(i)?
+                    .donne_trousseau_public_foyer(index_foyer)?
                     .donne_braise();
-                gardien.ajout_nouveau_foyer_dans_configuration(braise, i);
-                session.foyers[i] = Foyer::new(braise, true);
-                interface_feu_noyau.recevoir_braise_foyer(i, braise);
+                gardien.ajout_nouveau_foyer_dans_configuration(braise, index_foyer);
+                session.foyers[index_foyer.valeur()] = Foyer::new(braise, true);
+                interface_feu_noyau.recevoir_braise_foyer(index_foyer, braise);
             }
 
             // Enregistrement de noyau.feu
@@ -502,8 +495,8 @@ impl FeuNoyau {
             };
 
             // Fermeture des foyers
-            for i in 0..MAX_FOYERS {
-                noyau.fermeture_foyer(interface_feu_noyau, i)?;
+            for index_foyer in IndexFoyer::tous() {
+                noyau.fermeture_foyer(interface_feu_noyau, index_foyer)?;
             }
 
             Ok(noyau)
@@ -553,13 +546,13 @@ impl FeuNoyau {
 
         let mut session = SessionFoyers::new();
 
-        // Ajout des MAX_FOYERS foyers dans la configuration
-        for i in 0..MAX_FOYERS {
+        // Ajout de chaque foyer dans la configuration
+        for index_foyer in IndexFoyer::tous() {
             let braise = trousseau_public_complet
-                .donne_trousseau_public_foyer(i)?
+                .donne_trousseau_public_foyer(index_foyer)?
                 .donne_braise();
-            gardien.ajout_nouveau_foyer_dans_configuration(braise, i);
-            session.foyers[i] = Foyer::new(braise, false);
+            gardien.ajout_nouveau_foyer_dans_configuration(braise, index_foyer);
+            session.foyers[index_foyer.valeur()] = Foyer::new(braise, false);
         }
 
         // Enregistrement de noyau.feu
@@ -579,8 +572,8 @@ impl FeuNoyau {
             .gardien
             .ecriture_trousseau_public_complet(&trousseau_public_complet);
 
-        for i in 0..MAX_FOYERS {
-            noyau.ouverture_foyer(interface_feu_noyau, i)?;
+        for index_foyer in IndexFoyer::tous() {
+            noyau.ouverture_foyer(interface_feu_noyau, index_foyer)?;
         }
 
         noyau
@@ -588,8 +581,8 @@ impl FeuNoyau {
             .ecriture_trousseau_public_complet(&trousseau_public_complet)?;
 
         // Fermeture des foyers
-        for i in 0..MAX_FOYERS {
-            noyau.fermeture_foyer(interface_feu_noyau, i)?;
+        for index_foyer in IndexFoyer::tous() {
+            noyau.fermeture_foyer(interface_feu_noyau, index_foyer)?;
         }
 
         Ok(())
@@ -650,8 +643,7 @@ impl FeuNoyau {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
-    /// [`ErreurFeuNoyau::FoyerDejaOuvert`] si le foyer l'est déjà,
+    /// Retourne [`ErreurFeuNoyau::FoyerDejaOuvert`] si le foyer l'est déjà,
     /// [`ErreurFeuNoyau::AesGcm`] si le mot de passe est incorrect — l'auth tag
     /// ne valide pas —, ou propage l'échec d'une opération disque.
     ///
@@ -671,15 +663,12 @@ impl FeuNoyau {
     pub fn ouverture_foyer(
         &mut self,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuNoyau<()> {
-        if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));
-        }
-        let braise = self.session.index_vers_braise(index_foyer)?;
+        let braise = self.session.index_vers_braise(index_foyer);
 
-        if self.session.est_ouvert(index_foyer)? {
-            return Err(ErreurFeuNoyau::FoyerDejaOuvert(index_foyer));
+        if self.session.est_ouvert(index_foyer) {
+            return Err(ErreurFeuNoyau::FoyerDejaOuvert(index_foyer.valeur()));
         }
 
         let (cle, mut source, mut destination) = self
@@ -717,10 +706,10 @@ impl FeuNoyau {
 
         // Instanciation de l'archiviste — crée l'arborescence classeurs/registre
         // à la première ouverture, ne fait rien lors des ouvertures suivantes.
-        self.archivistes[index_foyer] =
+        self.archivistes[index_foyer.valeur()] =
             Some(Archiviste::new(self.gardien.donne_chemin_braise(braise))?);
 
-        self.session.change_statut(index_foyer, true)?;
+        self.session.change_statut(index_foyer, true);
         interface_feu_noyau.recevoir_etat_foyer(index_foyer, true);
         Ok(())
     }
@@ -755,21 +744,17 @@ impl FeuNoyau {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
-    /// [`ErreurFeuNoyau::FoyerFerme`] si le foyer l'est déjà, ou propage l'échec
-    /// du chiffrement et des opérations disque.
+    /// Retourne [`ErreurFeuNoyau::FoyerFerme`] si le foyer l'est déjà, ou propage
+    /// l'échec du chiffrement et des opérations disque.
     pub fn fermeture_foyer(
         &mut self,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuNoyau<()> {
-        if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));
-        }
-        let braise = self.session.index_vers_braise(index_foyer)?;
+        let braise = self.session.index_vers_braise(index_foyer);
 
-        if !self.session.est_ouvert(index_foyer)? {
-            return Err(ErreurFeuNoyau::FoyerFerme(index_foyer));
+        if !self.session.est_ouvert(index_foyer) {
+            return Err(ErreurFeuNoyau::FoyerFerme(index_foyer.valeur()));
         }
 
         let (mut source, mut destination) =
@@ -798,9 +783,9 @@ impl FeuNoyau {
         self.gardien.suppression_dossier_braise(braise)?;
 
         // Destruction de l'archiviste — le dossier du foyer est déjà supprimé.
-        self.archivistes[index_foyer] = None;
+        self.archivistes[index_foyer.valeur()] = None;
 
-        self.session.change_statut(index_foyer, false)?;
+        self.session.change_statut(index_foyer, false);
         interface_feu_noyau.recevoir_etat_foyer(index_foyer, false);
 
         Ok(())
@@ -827,23 +812,17 @@ impl FeuNoyau {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
-    /// [`ErreurFeuNoyau::FermetureSecoursFoyerImpossible`] si le foyer est marqué
+    /// Retourne [`ErreurFeuNoyau::FermetureSecoursFoyerImpossible`] si le foyer est marqué
     /// ouvert ou si le diagnostic préalable relève une anomalie,
     /// [`ErreurFeuNoyau::AesGcm`] si le mot de passe est incorrect, ou propage
     /// l'échec d'une opération disque.
     pub fn secours_fermeture_foyer(
         &mut self,
         interface_feu_noyau: &mut impl InterfaceFeuNoyau,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuNoyau<()> {
-        if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));
-        }
-
-        let braise = self.session.index_vers_braise(index_foyer)?;
-        if self.session.est_ouvert(index_foyer)?
-            || !self.gardien.diagnostic_foyer(braise).is_empty()
+        let braise = self.session.index_vers_braise(index_foyer);
+        if self.session.est_ouvert(index_foyer) || !self.gardien.diagnostic_foyer(braise).is_empty()
         {
             return Err(ErreurFeuNoyau::FermetureSecoursFoyerImpossible);
         }
@@ -854,7 +833,7 @@ impl FeuNoyau {
             interface_feu_noyau,
         )?;
 
-        self.session.change_statut(index_foyer, true)?;
+        self.session.change_statut(index_foyer, true);
         self.fermeture_foyer(interface_feu_noyau, index_foyer)?;
 
         Ok(())
@@ -900,22 +879,17 @@ impl FeuNoyau {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuNoyau::IndexClasseurInvalide`] si `index_classeur` est
-    /// hors bornes, puis délègue à `archiviste_foyer_ouvert` l'index de foyer
-    /// ([`ErreurFeuNoyau::IndexFoyerInvalide`]), le foyer fermé
+    /// Délègue à `archiviste_foyer_ouvert` le foyer fermé
     /// ([`ErreurFeuNoyau::FoyerFerme`]) et l'Archiviste manquant
     /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]). Vient ensuite
     /// [`ErreurFeuNoyau::TailleMaxDepasseeBlob`] si `source` dépasse
     /// [`MAX_TAILLE_BLOB`]. Propage enfin l'échec du chiffrement et de l'écriture.
     pub fn depot_blob(
         &mut self,
-        index_foyer: usize,
-        index_classeur: usize,
+        index_foyer: IndexFoyer,
+        index_classeur: IndexClasseur,
         source: impl Read,
-    ) -> ResultFeuNoyau<(String, usize)> {
-        if index_classeur >= MAX_CLASSEURS {
-            return Err(ErreurFeuNoyau::IndexClasseurInvalide(index_classeur));
-        }
+    ) -> ResultFeuNoyau<(String, IndexClasseur)> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
         let mut tiroir = archiviste.donne_tiroir_vide(index_classeur);
@@ -924,8 +898,10 @@ impl FeuNoyau {
             self.cryptographe
                 .chiffrement_blob(index_foyer, index_classeur, tiroir.lire_blob())?;
 
-        if let Some(classeur) = (0..MAX_CLASSEURS).find(|&c| archiviste.existe_blob(c, &hash)) {
-            return Ok((hash, classeur));
+        if let Some(index_classeur) = IndexClasseur::tous()
+            .find(|&index_classeur| archiviste.existe_blob(index_classeur, &hash))
+        {
+            return Ok((hash, index_classeur));
         }
 
         tiroir.remplace_blob(blob_chiffre);
@@ -952,8 +928,7 @@ impl FeuNoyau {
     /// # Errors
     ///
     /// La validation du foyer est déléguée à `archiviste_foyer_ouvert`, appelé en
-    /// tête : c'est lui qui teste les bornes de `index_foyer`
-    /// ([`ErreurFeuNoyau::IndexFoyerInvalide`]), le foyer fermé
+    /// tête : c'est lui qui teste le foyer fermé
     /// ([`ErreurFeuNoyau::FoyerFerme`]) et l'Archiviste manquant
     /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]) — tout cela **avant** le
     /// balayage. Vient ensuite [`ErreurFeuNoyau::BlobIntrouvable`] si aucun
@@ -962,7 +937,7 @@ impl FeuNoyau {
     /// l'échec d'écriture dans `destination`.
     pub fn lecture_blob(
         &mut self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         hash: &str,
         destination: impl Write,
     ) -> ResultFeuNoyau<()> {
@@ -974,9 +949,9 @@ impl FeuNoyau {
         // le foyer. `unwrap_or(false)` est ici sans conséquence — le foyer étant
         // déjà validé, `existence_blob` ne peut plus échouer sur ces index ;
         // l'absence réelle du blob dans tous les classeurs donne BlobIntrouvable.
-        let index_classeur = (0..MAX_CLASSEURS)
-            .find(|&c| archiviste.existe_blob(c, hash))
-            .ok_or(ErreurFeuNoyau::BlobIntrouvable(index_foyer))?;
+        let index_classeur = IndexClasseur::tous()
+            .find(|&index_classeur| archiviste.existe_blob(index_classeur, hash))
+            .ok_or(ErreurFeuNoyau::BlobIntrouvable(index_foyer.valeur()))?;
 
         let mut tiroir = archiviste.donne_tiroir_plein(index_classeur, hash)?;
 
@@ -1005,22 +980,17 @@ impl FeuNoyau {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si `index_foyer` est hors
-    /// bornes, puis délègue à `archiviste_foyer_ouvert` le foyer fermé
+    /// Délègue à `archiviste_foyer_ouvert` le foyer fermé
     /// ([`ErreurFeuNoyau::FoyerFerme`]) et l'Archiviste manquant
     /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]) — avant le balayage, dont
     /// l'échec donne [`ErreurFeuNoyau::BlobIntrouvable`]. Propage enfin l'échec
     /// de la suppression disque.
-    pub fn suppression_blob(&self, index_foyer: usize, hash: &str) -> ResultFeuNoyau<()> {
-        if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));
-        }
-
+    pub fn suppression_blob(&self, index_foyer: IndexFoyer, hash: &str) -> ResultFeuNoyau<()> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
-        let index_classeur = (0..MAX_CLASSEURS)
-            .find(|&c| archiviste.existe_blob(c, hash))
-            .ok_or(ErreurFeuNoyau::BlobIntrouvable(index_foyer))?;
+        let index_classeur = IndexClasseur::tous()
+            .find(|&index_classeur| archiviste.existe_blob(index_classeur, hash))
+            .ok_or(ErreurFeuNoyau::BlobIntrouvable(index_foyer.valeur()))?;
 
         archiviste.supprime_blob(index_classeur, hash)?;
 
@@ -1036,20 +1006,15 @@ impl FeuNoyau {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuNoyau::IndexClasseurInvalide`] si `index_classeur` est
-    /// hors bornes, puis délègue à `archiviste_foyer_ouvert` l'index de foyer
-    /// ([`ErreurFeuNoyau::IndexFoyerInvalide`]), le foyer fermé
+    /// Délègue à `archiviste_foyer_ouvert` le foyer fermé
     /// ([`ErreurFeuNoyau::FoyerFerme`]) et l'Archiviste manquant
     /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]). Propage enfin l'échec de la
     /// lecture du dossier.
     pub fn liste_blobs(
         &self,
-        index_foyer: usize,
-        index_classeur: usize,
+        index_foyer: IndexFoyer,
+        index_classeur: IndexClasseur,
     ) -> ResultFeuNoyau<Vec<String>> {
-        if index_classeur >= MAX_CLASSEURS {
-            return Err(ErreurFeuNoyau::IndexClasseurInvalide(index_classeur));
-        }
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
         archiviste.donne_liste_blobs(index_classeur)
@@ -1063,21 +1028,20 @@ impl FeuNoyau {
     ///
     /// L'absence est un `Ok(false)`, jamais une erreur : la question posée
     /// admet « non » pour réponse. Les erreurs sont réservées à ce qui empêche
-    /// de répondre — index hors bornes, foyer fermé.
+    /// de répondre — foyer fermé, Archiviste manquant.
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si `index_foyer` est hors
-    /// bornes, puis délègue à `archiviste_foyer_ouvert` le foyer fermé
+    /// Délègue à `archiviste_foyer_ouvert` le foyer fermé
     /// ([`ErreurFeuNoyau::FoyerFerme`]) et l'Archiviste manquant
     /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]).
-    pub fn existence_blob(&self, index_foyer: usize, hash: &str) -> ResultFeuNoyau<bool> {
-        if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));
-        }
+    pub fn existence_blob(&self, index_foyer: IndexFoyer, hash: &str) -> ResultFeuNoyau<bool> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
-        Ok((0..MAX_CLASSEURS).any(|c| archiviste.existe_blob(c, hash)))
+        Ok(
+            IndexClasseur::tous()
+                .any(|index_classeur| archiviste.existe_blob(index_classeur, hash)),
+        )
     }
 
     /// Retourne les métadonnées système d'un blob, sans en connaître le
@@ -1093,20 +1057,19 @@ impl FeuNoyau {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si `index_foyer` est hors
-    /// bornes, puis délègue à `archiviste_foyer_ouvert` le foyer fermé et
-    /// l'Archiviste manquant. Retourne [`ErreurFeuNoyau::BlobIntrouvable`] si
+    /// Délègue à `archiviste_foyer_ouvert` le foyer fermé et l'Archiviste
+    /// manquant. Retourne [`ErreurFeuNoyau::BlobIntrouvable`] si
     /// aucun classeur ne détient `hash`.
-    pub fn informations_blob(&self, index_foyer: usize, hash: &str) -> ResultFeuNoyau<DonneesBlob> {
-        if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));
-        }
-
+    pub fn informations_blob(
+        &self,
+        index_foyer: IndexFoyer,
+        hash: &str,
+    ) -> ResultFeuNoyau<DonneesBlob> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
-        let index_classeur = (0..MAX_CLASSEURS)
-            .find(|&c| archiviste.existe_blob(c, hash))
-            .ok_or(ErreurFeuNoyau::BlobIntrouvable(index_foyer))?;
+        let index_classeur = IndexClasseur::tous()
+            .find(|&index_classeur| archiviste.existe_blob(index_classeur, hash))
+            .ok_or(ErreurFeuNoyau::BlobIntrouvable(index_foyer.valeur()))?;
 
         archiviste.donne_informations_blob(index_classeur, hash)
     }
@@ -1160,20 +1123,16 @@ impl FeuNoyau {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
-    /// [`ErreurFeuNoyau::FoyerFerme`] si le foyer n'est pas ouvert,
+    /// Retourne [`ErreurFeuNoyau::FoyerFerme`] si le foyer n'est pas ouvert,
     /// [`ErreurFeuNoyau::TailleMaxDepasseeDechiffrementAsymetrique`] si la taille
     /// dépasse la limite, ou propage l'échec du déchiffrement.
     pub fn dechiffrement_asymetrique(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         octets_a_dechiffrer: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
-        if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));
-        }
-        if !self.session.foyers[index_foyer].est_ouvert {
-            return Err(ErreurFeuNoyau::FoyerFerme(index_foyer));
+        if !self.session.foyers[index_foyer.valeur()].est_ouvert {
+            return Err(ErreurFeuNoyau::FoyerFerme(index_foyer.valeur()));
         }
         if octets_a_dechiffrer.len() > MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE + 1596 {
             return Err(ErreurFeuNoyau::TailleMaxDepasseeDechiffrementAsymetrique(
@@ -1223,20 +1182,16 @@ impl FeuNoyau {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
-    /// [`ErreurFeuNoyau::FoyerFerme`] si le foyer n'est pas ouvert,
+    /// Retourne [`ErreurFeuNoyau::FoyerFerme`] si le foyer n'est pas ouvert,
     /// [`ErreurFeuNoyau::TailleMaxDepasseeSignature`] si la taille dépasse
     /// [`MAX_TAILLE_SIGNATURE`], ou propage l'échec de la signature.
     pub fn signature_foyer(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         octets_a_signer: &[u8],
     ) -> ResultFeuNoyau<[u8; 4627]> {
-        if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));
-        }
-        if !self.session.foyers[index_foyer].est_ouvert {
-            return Err(ErreurFeuNoyau::FoyerFerme(index_foyer));
+        if !self.session.foyers[index_foyer.valeur()].est_ouvert {
+            return Err(ErreurFeuNoyau::FoyerFerme(index_foyer.valeur()));
         }
         if octets_a_signer.len() > MAX_TAILLE_SIGNATURE {
             return Err(ErreurFeuNoyau::TailleMaxDepasseeSignature(
@@ -1322,16 +1277,15 @@ impl FeuNoyau {
     /// # Errors
     ///
     /// La validation du foyer est déléguée à `archiviste_foyer_ouvert`, appelé en
-    /// tête : index hors bornes ([`ErreurFeuNoyau::IndexFoyerInvalide`]), foyer
-    /// fermé ([`ErreurFeuNoyau::FoyerFerme`]) et Archiviste manquant
+    /// tête : foyer fermé ([`ErreurFeuNoyau::FoyerFerme`]) et Archiviste manquant
     /// ([`ErreurFeuNoyau::ArchivisteIndisponible`]). Propage ensuite l'échec des
     /// opérations disque.
-    pub fn diagnostic_foyer(&self, index_foyer: usize) -> ResultFeuNoyau<Vec<Anomalie>> {
+    pub fn diagnostic_foyer(&self, index_foyer: IndexFoyer) -> ResultFeuNoyau<Vec<Anomalie>> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
         let mut resultat = self
             .gardien
-            .diagnostic_foyer(self.session.index_vers_braise(index_foyer)?);
+            .diagnostic_foyer(self.session.index_vers_braise(index_foyer));
 
         resultat.extend(archiviste.verifier_arborescence_classeurs()?);
 
@@ -1345,19 +1299,15 @@ impl FeuNoyau {
     ///
     /// # Errors
     ///
-    /// [`ErreurFeuNoyau::IndexFoyerInvalide`] si l'index est hors bornes,
     /// [`ErreurFeuNoyau::FoyerFerme`] si le foyer l'est, et
     /// [`ErreurFeuNoyau::ArchivisteIndisponible`] si le foyer est marqué ouvert
     /// sans Archiviste — état qui ne devrait pas survenir.
-    fn archiviste_foyer_ouvert(&self, index_foyer: usize) -> ResultFeuNoyau<&Archiviste> {
-        if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuNoyau::IndexFoyerInvalide(index_foyer));
+    fn archiviste_foyer_ouvert(&self, index_foyer: IndexFoyer) -> ResultFeuNoyau<&Archiviste> {
+        if !self.session.foyers[index_foyer.valeur()].est_ouvert {
+            return Err(ErreurFeuNoyau::FoyerFerme(index_foyer.valeur()));
         }
-        if !self.session.foyers[index_foyer].est_ouvert {
-            return Err(ErreurFeuNoyau::FoyerFerme(index_foyer));
-        }
-        let Some(archiviste) = &self.archivistes[index_foyer] else {
-            return Err(ErreurFeuNoyau::ArchivisteIndisponible(index_foyer));
+        let Some(archiviste) = &self.archivistes[index_foyer.valeur()] else {
+            return Err(ErreurFeuNoyau::ArchivisteIndisponible(index_foyer.valeur()));
         };
         Ok(archiviste)
     }

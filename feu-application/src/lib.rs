@@ -48,6 +48,7 @@ use std::path::{Path, PathBuf};
 
 pub use erreur::{ErreurFeuApplication, ResultFeuApplication};
 use feu_noyau::{Braise, FeuNoyau, InterfaceFeuNoyau};
+pub use feu_noyau::{IndexClasseur, IndexFoyer};
 use secrecy::SecretString;
 pub use session::SessionApplication;
 
@@ -181,7 +182,7 @@ impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
     ///
     /// Appelée par le noyau à l'allumage pour chaque foyer connu, et à
     /// l'initialisation pour chaque foyer créé.
-    fn recevoir_braise_foyer(&mut self, index_foyer: usize, braise: Braise) {
+    fn recevoir_braise_foyer(&mut self, index_foyer: IndexFoyer, braise: Braise) {
         self.session_application
             .definit_braise_foyer(index_foyer, braise);
     }
@@ -189,7 +190,7 @@ impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
     /// Met à jour l'état d'ouverture d'un foyer dans la session applicative.
     ///
     /// Appelée par le noyau à la fin d'une ouverture ou d'une fermeture réussie.
-    fn recevoir_etat_foyer(&mut self, index_foyer: usize, etat: bool) {
+    fn recevoir_etat_foyer(&mut self, index_foyer: IndexFoyer, etat: bool) {
         self.session_application
             .definit_etat_foyer(index_foyer, etat);
     }
@@ -207,7 +208,7 @@ impl InterfaceFeuNoyau for RecepteurNoyau<'_, '_> {
     /// Appelée par le noyau à l'ouverture du foyer, après lecture du trousseau public.
     fn recevoir_cles_publiques_foyer(
         &mut self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         cle_publique_sig: [u8; 2592],
         cle_publique_chif: [u8; 1568],
     ) {
@@ -272,7 +273,7 @@ impl FeuApplication {
 mod tests {
     use std::cell::RefCell;
 
-    use feu_noyau::Braise;
+    use feu_noyau::{Braise, IndexClasseur};
     use tempfile::TempDir;
 
     use super::*;
@@ -361,7 +362,12 @@ mod tests {
 
         // Nœud éteint : toute commande qui le suppose allumé se refuse d'emblée.
         assert!(matches!(
-            app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0),
+            app.commande_ouverture_comptoir_depot(
+                &interface_test,
+                &chemin_depot,
+                IndexFoyer::ZERO,
+                IndexClasseur::ZERO
+            ),
             Err(ErreurFeuApplication::NoeudEteint)
         ));
         assert!(matches!(
@@ -374,25 +380,29 @@ mod tests {
         ));
 
         app.commande_allumage_noeud(&interface_test, None)?;
+
         assert_ne!(
             interface_test
                 .session_application()
                 .unwrap()
-                .braise_foyer(0)
-                .unwrap(),
+                .braise_foyer(IndexFoyer::ZERO),
             Braise::VIDE
         );
 
-        app.commande_ouverture_foyer(&interface_test, 0)?;
+        app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
         assert!(
             interface_test
                 .session_application()
                 .unwrap()
-                .etat_foyer(0)
-                .unwrap(),
+                .etat_foyer(IndexFoyer::ZERO)
         );
 
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_depot, 0, 0)?;
+        app.commande_ouverture_comptoir_depot(
+            &interface_test,
+            &chemin_depot,
+            IndexFoyer::ZERO,
+            IndexClasseur::ZERO,
+        )?;
 
         // L'extinction bute d'abord sur le foyer 0, encore ouvert.
         assert!(matches!(
@@ -400,13 +410,12 @@ mod tests {
             Err(ErreurFeuApplication::AuMoinsUnFoyerOuvert)
         ));
 
-        app.commande_fermeture_foyer(&interface_test, 0)?;
+        app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
         assert!(
             !interface_test
                 .session_application()
                 .unwrap()
-                .etat_foyer(0)
-                .unwrap(),
+                .etat_foyer(IndexFoyer::ZERO)
         );
 
         assert!(app.commande_extinction_noeud(&interface_test).is_ok());
@@ -418,9 +427,12 @@ mod tests {
 
         // Plus rien à tirer de la session notifiée, désormais `None` : le teardown
         // ne se constate que sur les champs.
-        assert_eq!(app.session.braise_foyer(0).unwrap(), Braise::VIDE);
+        assert_eq!(app.session.braise_foyer(IndexFoyer::ZERO), Braise::VIDE);
         assert_eq!(app.session.cle_publique_sig_noeud(), [0u8; 2592]);
-        assert_eq!(app.session.cle_publique_sig_foyer(0).unwrap(), [0u8; 2592]);
+        assert_eq!(
+            app.session.cle_publique_sig_foyer(IndexFoyer::ZERO),
+            [0u8; 2592]
+        );
         assert!(app.session.foyers_fermes());
         assert!(!app.scribe.est_actif());
 

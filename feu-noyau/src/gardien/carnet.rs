@@ -32,7 +32,7 @@ use std::{
 };
 
 use crate::{
-    Anomalie, Braise, ErreurFeuNoyau, MAX_CLASSEURS, MAX_FOYERS, ResultFeuNoyau,
+    Anomalie, Braise, ErreurFeuNoyau, IndexClasseur, IndexFoyer, ResultFeuNoyau,
     cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer},
 };
 
@@ -175,7 +175,7 @@ impl Carnet {
     /// Vérifie la présence des fichiers de clés d'un foyer.
     ///
     /// Contrôle `.cles/`, les paires de signature et de chiffrement,
-    /// et les `MAX_CLASSEURS` clés de classeurs.
+    /// et les clés de classeurs.
     /// N'inspecte pas le contenu des classeurs eux-mêmes — seules les clés sont vérifiées.
     pub(super) fn verifier_arborescence_foyer(&self, braise: Braise) -> Vec<Anomalie> {
         let mut resultat: Vec<Anomalie> = Vec::new();
@@ -205,8 +205,9 @@ impl Carnet {
         }
 
         // Pour chaque classeur
-        for j in 0..MAX_CLASSEURS {
-            let chemin_cle_classeur = chemin_cles.join(format!("classeur{j}.cle"));
+        for index_classeur in IndexClasseur::tous() {
+            let chemin_cle_classeur =
+                chemin_cles.join(format!("classeur{}.cle", index_classeur.valeur()));
 
             if !chemin_cle_classeur.exists() {
                 resultat.push(Anomalie::ElementAbsent(chemin_cle_classeur));
@@ -298,8 +299,8 @@ impl Carnet {
         )?;
 
         // Pour chaque foyer
-        for i in 0..MAX_FOYERS {
-            let foyer = trousseau_public_complet.donne_trousseau_public_foyer(i)?;
+        for index_foyer in IndexFoyer::tous() {
+            let foyer = trousseau_public_complet.donne_trousseau_public_foyer(index_foyer)?;
 
             let chemin_foyer = &self
                 .chemin_feu
@@ -338,16 +339,19 @@ impl Carnet {
             )?;
 
             // Pour chaque classeur
-            for j in 0..MAX_CLASSEURS {
-                let cle_chiffree = match foyer.donne_cle_chiffrement_classeur(j) {
+            for index_classeur in IndexClasseur::tous() {
+                let cle_chiffree = match foyer.donne_cle_chiffrement_classeur(index_classeur) {
                     Ok(valeur) => valeur,
                     Err(_) => {
-                        return Err(ErreurFeuNoyau::GardienPasDeClePourClasseur(i, j));
+                        return Err(ErreurFeuNoyau::GardienPasDeClePourClasseur(
+                            index_foyer.valeur(),
+                            index_classeur.valeur(),
+                        ));
                     }
                 };
 
                 Self::ecrire_fichier_600(
-                    &chemin_foyer.join(format!("classeur{j}.cle")),
+                    &chemin_foyer.join(format!("classeur{}.cle", index_classeur.valeur())),
                     cle_chiffree,
                 )?;
             }
@@ -431,15 +435,17 @@ impl Carnet {
         );
 
         // Pour chaque classeur
-        for j in 0..MAX_CLASSEURS {
-            let cle_classeur = std::fs::read(chemin_foyer.join(format!("classeur{j}.cle")))?
-                .try_into()
-                .map_err(|_| {
-                    ErreurFeuNoyau::GardienTailleFichierInattendue(
-                        chemin_foyer.join(format!("classeur{j}.cle")),
-                    )
-                })?;
-            trousseau_public_foyer.ajoute_cle_chiffrement_classeur(cle_classeur, j)?;
+        for index_classeur in IndexClasseur::tous() {
+            let cle_classeur = std::fs::read(
+                chemin_foyer.join(format!("classeur{}.cle", index_classeur.valeur())),
+            )?
+            .try_into()
+            .map_err(|_| {
+                ErreurFeuNoyau::GardienTailleFichierInattendue(
+                    chemin_foyer.join(format!("classeur{}.cle", index_classeur.valeur())),
+                )
+            })?;
+            trousseau_public_foyer.ajoute_cle_chiffrement_classeur(cle_classeur, index_classeur);
         }
 
         Ok(trousseau_public_foyer)

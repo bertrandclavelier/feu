@@ -29,7 +29,10 @@ use std::{
     thread::{JoinHandle, spawn},
 };
 
-use feu_application::{FeuApplication, InterfaceFeuApplication, SessionApplication, fiche::Fiche};
+use feu_application::{
+    FeuApplication, IndexClasseur, IndexFoyer, InterfaceFeuApplication, SessionApplication,
+    fiche::Fiche,
+};
 use secrecy::SecretString;
 
 /// Messages envoyés du thread cœur vers le thread TUI.
@@ -142,14 +145,14 @@ pub(crate) enum MessageTuiCoeur {
     /// l'index est capturé depuis la position courante, sans saisie ;
     /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
     /// [`feu_application::FeuApplication::commande_fermeture_foyer`].
-    FermetureFoyer(usize),
+    FermetureFoyer(IndexFoyer),
 
     /// Demande l'ouverture du foyer à l'index donné.
     ///
     /// Émis par [`crate::tui::Tui`] à la validation du buffer de saisie ;
     /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
     /// [`feu_application::FeuApplication::commande_ouverture_foyer`].
-    OuvertureFoyer(usize),
+    OuvertureFoyer(IndexFoyer),
 
     /// Demande l'ouverture d'un comptoir de dépôt au chemin porté, vers le foyer
     /// puis le classeur portés.
@@ -163,7 +166,7 @@ pub(crate) enum MessageTuiCoeur {
     ///
     /// Le chemin traverse le canal plutôt que d'être connu du cœur : la TUI seule
     /// décide où le dossier apparaît.
-    OuvertureComptoir(PathBuf, usize, usize),
+    OuvertureComptoir(PathBuf, IndexFoyer, IndexClasseur),
 
     /// Demande la matérialisation d'une ENU dans un dossier de l'OS.
     ///
@@ -178,10 +181,10 @@ pub(crate) enum MessageTuiCoeur {
 
     /// Demande la fermeture en secours du foyer à la position donnée.
     ///
-    /// Porte le seul numéro saisi : la TUI ne sait pas quels foyers sont dans
-    /// l'état du secours. Le refus — index hors bornes, foyer sain — remonte en
-    /// [`MessageCoeurTui::AffichageErreur`].
-    SecoursFermetureFoyer(usize),
+    /// Porte la seule position saisie : la TUI ne sait pas quels foyers sont
+    /// dans l'état du secours. Le refus — foyer sain, diagnostic en anomalie —
+    /// remonte en [`MessageCoeurTui::AffichageErreur`].
+    SecoursFermetureFoyer(IndexFoyer),
 
     /// L'utilisateur a confirmé l'enregistrement de la seed — débloque le thread cœur en attente.
     ///

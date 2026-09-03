@@ -32,6 +32,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
+use feu_noyau::IndexClasseur;
 use tempfile::TempDir;
 
 use super::*;
@@ -66,7 +67,9 @@ fn cree_noyau_et_foyer_ouvert() -> (
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut recepteur).unwrap();
     let mut scribe = Scribe::new(&chemin_feu);
 
-    noyau.ouverture_foyer(&mut recepteur, 0).unwrap();
+    noyau
+        .ouverture_foyer(&mut recepteur, IndexFoyer::ZERO)
+        .unwrap();
 
     // Après l'ouverture du foyer, et non avant comme en production : `recepteur`
     // emprunte `session` en mutable, et `activation` en veut une aussi — deux
@@ -93,7 +96,9 @@ fn cree_noyau_et_foyer_ouvert() -> (
 fn fermer_foyer(mut noyau: FeuNoyau, mut session: SessionApplication) {
     let interface = InterfaceTest::new("mot de passe");
     let mut recepteur = RecepteurNoyau::new(&mut session, &interface);
-    noyau.fermeture_foyer(&mut recepteur, 0).unwrap();
+    noyau
+        .fermeture_foyer(&mut recepteur, IndexFoyer::ZERO)
+        .unwrap();
 }
 
 /// Signe une ENU de test sur le foyer 0.
@@ -112,7 +117,13 @@ fn creer_enu_donnee(
 
     carte.ajout_meta("nom", &format!("donnee_{marqueur}"));
 
-    let enu = Enu::new(carte, noyau, session, session.braise_foyer(0).unwrap()).unwrap();
+    let enu = Enu::new(
+        carte,
+        noyau,
+        session,
+        session.braise_foyer(IndexFoyer::ZERO),
+    )
+    .unwrap();
     enu.sauvegarder(chemin_enu).unwrap();
 
     enu
@@ -138,7 +149,13 @@ fn creer_enu_repertoire(
 
     carte.ajout_meta("nom", nom_dossier);
 
-    let enu = Enu::new(carte, noyau, session, session.braise_foyer(0).unwrap()).unwrap();
+    let enu = Enu::new(
+        carte,
+        noyau,
+        session,
+        session.braise_foyer(IndexFoyer::ZERO),
+    )
+    .unwrap();
     enu.sauvegarder(chemin_enu).unwrap();
 
     enu
@@ -258,7 +275,11 @@ fn cycle_racine() {
 
     scribe
         .comptoirs
-        .ajouter_comptoir_depot(ComptoirDepot::new(chemin_enu.join("comptoir"), 1, 0))
+        .ajouter_comptoir_depot(ComptoirDepot::new(
+            chemin_enu.join("comptoir"),
+            IndexFoyer::try_from(1).unwrap(),
+            IndexClasseur::ZERO,
+        ))
         .unwrap();
 
     // 2e activation

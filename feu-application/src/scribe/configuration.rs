@@ -27,6 +27,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
+use feu_noyau::{IndexClasseur, IndexFoyer};
 
 use crate::{
     ErreurFeuApplication, ResultFeuApplication, Scribe,
@@ -49,7 +50,7 @@ pub(super) struct Configuration {
     version: u32,
     /// Un comptoir de dépôt ouvert par entrée : identifiant, dossier, foyer et
     /// classeur de destination.
-    comptoirs_depot: Vec<(usize, PathBuf, usize, usize)>,
+    comptoirs_depot: Vec<(usize, PathBuf, IndexFoyer, IndexClasseur)>,
     /// Dossier du comptoir de travail et `hash_carte` de la racine sortie, au
     /// plus un.
     comptoir_travail: Option<(PathBuf, [u8; 32])>,
@@ -207,7 +208,7 @@ impl Configuration {
             .ok_or(ErreurFeuApplication::ScribeConfigManqueAuMoinsUnElement)?
             .parse::<u32>()?;
 
-        let mut comptoirs_depot: Vec<(usize, PathBuf, usize, usize)> = Vec::new();
+        let mut comptoirs_depot: Vec<(usize, PathBuf, IndexFoyer, IndexClasseur)> = Vec::new();
         for _ in 0..nombre_comptoirs_depot {
             let index_comptoir = lignes
                 .next()
@@ -219,15 +220,19 @@ impl Configuration {
                 .ok_or(ErreurFeuApplication::ScribeConfigManqueAuMoinsUnElement)?;
             let chemin = PathBuf::from(OsString::from_vec(HEXLOWER.decode(ligne.as_bytes())?));
 
-            let index_foyer = lignes
-                .next()
-                .ok_or(ErreurFeuApplication::ScribeConfigManqueAuMoinsUnElement)?
-                .parse::<usize>()?;
+            let index_foyer = IndexFoyer::try_from(
+                lignes
+                    .next()
+                    .ok_or(ErreurFeuApplication::ScribeConfigManqueAuMoinsUnElement)?
+                    .parse::<usize>()?,
+            )?;
 
-            let index_classeur = lignes
-                .next()
-                .ok_or(ErreurFeuApplication::ScribeConfigManqueAuMoinsUnElement)?
-                .parse::<usize>()?;
+            let index_classeur = IndexClasseur::try_from(
+                lignes
+                    .next()
+                    .ok_or(ErreurFeuApplication::ScribeConfigManqueAuMoinsUnElement)?
+                    .parse::<usize>()?,
+            )?;
 
             comptoirs_depot.push((index_comptoir, chemin, index_foyer, index_classeur));
         }
@@ -279,8 +284,8 @@ impl Configuration {
                     "{}\n{}\n{}\n{}\n",
                     comptoir.0,
                     HEXLOWER.encode(comptoir.1.as_os_str().as_bytes()),
-                    comptoir.2,
-                    comptoir.3
+                    comptoir.2.valeur(),
+                    comptoir.3.valeur()
                 )
             })
             .fold(resultat, |mut cumul, ligne| {
@@ -344,9 +349,24 @@ mod tests {
         let configuration = Configuration {
             version: 1,
             comptoirs_depot: Vec::from([
-                (1, PathBuf::from("test1"), 0, 0),
-                (2, PathBuf::from("test2"), 0, 0),
-                (3, PathBuf::from("test3"), 0, 0),
+                (
+                    1,
+                    PathBuf::from("test1"),
+                    IndexFoyer::ZERO,
+                    IndexClasseur::ZERO,
+                ),
+                (
+                    2,
+                    PathBuf::from("test2"),
+                    IndexFoyer::ZERO,
+                    IndexClasseur::ZERO,
+                ),
+                (
+                    3,
+                    PathBuf::from("test3"),
+                    IndexFoyer::ZERO,
+                    IndexClasseur::ZERO,
+                ),
             ]),
             comptoir_travail: None,
         };
@@ -388,9 +408,24 @@ mod tests {
         let configuration = Configuration {
             version: 1,
             comptoirs_depot: Vec::from([
-                (1, PathBuf::from("test1"), 0, 0),
-                (2, PathBuf::from("test2"), 0, 0),
-                (3, PathBuf::from("test3"), 0, 0),
+                (
+                    1,
+                    PathBuf::from("test1"),
+                    IndexFoyer::ZERO,
+                    IndexClasseur::ZERO,
+                ),
+                (
+                    2,
+                    PathBuf::from("test2"),
+                    IndexFoyer::ZERO,
+                    IndexClasseur::ZERO,
+                ),
+                (
+                    3,
+                    PathBuf::from("test3"),
+                    IndexFoyer::ZERO,
+                    IndexClasseur::ZERO,
+                ),
             ]),
             comptoir_travail: Some((PathBuf::from("test"), [1u8; 32])),
         };
@@ -412,8 +447,18 @@ mod tests {
         let configuration = Configuration {
             version: 1,
             comptoirs_depot: Vec::from([
-                (1, PathBuf::from(OsString::from_vec(vec![0xff, 0xfe])), 0, 0),
-                (2, PathBuf::from(OsString::from_vec(vec![0xff, 0xfe])), 0, 0),
+                (
+                    1,
+                    PathBuf::from(OsString::from_vec(vec![0xff, 0xfe])),
+                    IndexFoyer::ZERO,
+                    IndexClasseur::ZERO,
+                ),
+                (
+                    2,
+                    PathBuf::from(OsString::from_vec(vec![0xff, 0xfe])),
+                    IndexFoyer::ZERO,
+                    IndexClasseur::ZERO,
+                ),
             ]),
             comptoir_travail: Some((
                 PathBuf::from(OsString::from_vec(vec![0xff, 0xfe])),
@@ -440,9 +485,24 @@ mod tests {
         let configuration = Configuration {
             version: 1,
             comptoirs_depot: Vec::from([
-                (1, PathBuf::from("test1"), 0, 0),
-                (2, PathBuf::from("test2"), 0, 0),
-                (3, PathBuf::from("test3"), 0, 0),
+                (
+                    1,
+                    PathBuf::from("test1"),
+                    IndexFoyer::ZERO,
+                    IndexClasseur::ZERO,
+                ),
+                (
+                    2,
+                    PathBuf::from("test2"),
+                    IndexFoyer::ZERO,
+                    IndexClasseur::ZERO,
+                ),
+                (
+                    3,
+                    PathBuf::from("test3"),
+                    IndexFoyer::ZERO,
+                    IndexClasseur::ZERO,
+                ),
             ]),
             comptoir_travail: Some((PathBuf::from("test"), [1u8; 32])),
         };

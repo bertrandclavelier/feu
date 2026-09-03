@@ -36,8 +36,9 @@ use crate::{ErreurFeuApplication, ResultFeuApplication};
 /// 60 kio reste très large pour du texte brut.
 ///
 /// **Borne incluse** : 61440 octets passent, la garde est un `>` strict. Une
-/// taille est une quantité, pas un cardinal d'index — le `>=` de `MAX_FOYERS` et
-/// `MAX_CLASSEURS`, où l'index valide s'arrête à MAX-1, ne s'applique pas ici.
+/// taille est une quantité, pas un cardinal d'index — le `>=` de
+/// `IndexFoyer::NOMBRE` et `IndexClasseur::NOMBRE`, où l'index valide s'arrête à
+/// `NOMBRE - 1`, ne s'applique pas ici.
 pub(crate) const MAX_TAILLE_TEXTE: usize = 1024 * 60;
 
 /// Contenu métier enveloppé par une `Enu`.

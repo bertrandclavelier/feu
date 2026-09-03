@@ -62,7 +62,7 @@ use std::{
 };
 
 use crate::{
-    Anomalie, DonneesBlob, ErreurFeuNoyau, MAX_CLASSEURS, ResultFeuNoyau,
+    Anomalie, DonneesBlob, ErreurFeuNoyau, IndexClasseur, ResultFeuNoyau,
     archiviste::tiroir::Tiroir,
 };
 
@@ -87,9 +87,8 @@ impl Archiviste {
     /// si nécessaire.
     ///
     /// Teste la présence de `registre/` pour déterminer s'il s'agit de la
-    /// première ouverture. Si c'est le cas, crée `registre/` et les
-    /// `MAX_CLASSEURS` dossiers `classeur0/` à `classeur4/` avec les
-    /// permissions `rwx------` (0o700).
+    /// première ouverture. Si c'est le cas, crée `registre/` et les dossiers
+    /// `classeur0/` à `classeur4/` avec les permissions `rwx------` (0o700).
     ///
     /// # Errors
     ///
@@ -100,9 +99,12 @@ impl Archiviste {
         if !&archiviste.donne_chemin_registre().exists() {
             Self::creer_dossier_700(&archiviste.donne_chemin_registre())?;
 
-            for i in 0..MAX_CLASSEURS {
-                std::os::unix::fs::symlink("../", archiviste.donne_chemin_lien_classeur(i))?;
-                Self::creer_dossier_700(archiviste.donne_chemin_classeur(i).as_ref())?;
+            for index_classeur in IndexClasseur::tous() {
+                std::os::unix::fs::symlink(
+                    "../",
+                    archiviste.donne_chemin_lien_classeur(index_classeur),
+                )?;
+                Self::creer_dossier_700(&archiviste.donne_chemin_classeur(index_classeur))?;
             }
         }
         Ok(archiviste)
@@ -115,7 +117,7 @@ impl Archiviste {
     /// Le tiroir est un objet éphémère de transfert — il est destiné à être
     /// rempli par [`FeuNoyau`](crate::FeuNoyau) puis transmis au Cryptographe pour chiffrement,
     /// avant d'être retourné à l'Archiviste via [`ecrit_blob`](Self::ecrit_blob).
-    pub(super) fn donne_tiroir_vide(&self, index_classeur: usize) -> Tiroir {
+    pub(super) fn donne_tiroir_vide(&self, index_classeur: IndexClasseur) -> Tiroir {
         Tiroir::new(index_classeur)
     }
 
@@ -131,7 +133,7 @@ impl Archiviste {
     /// ou si la lecture échoue.
     pub(super) fn donne_tiroir_plein(
         &self,
-        index_classeur: usize,
+        index_classeur: IndexClasseur,
         hash: &str,
     ) -> ResultFeuNoyau<Tiroir> {
         let chemin = self.donne_chemin_blob(index_classeur, hash);
@@ -187,7 +189,11 @@ impl Archiviste {
     ///
     /// Retourne [`ErreurFeuNoyau::CheminInexistant`] si le blob est absent du
     /// classeur, ou propage l'échec de la suppression.
-    pub(super) fn supprime_blob(&self, index_classeur: usize, hash: &str) -> ResultFeuNoyau<()> {
+    pub(super) fn supprime_blob(
+        &self,
+        index_classeur: IndexClasseur,
+        hash: &str,
+    ) -> ResultFeuNoyau<()> {
         let chemin = self.donne_chemin_blob(index_classeur, hash);
         if !chemin.exists() {
             return Err(ErreurFeuNoyau::CheminInexistant(chemin));
@@ -198,7 +204,7 @@ impl Archiviste {
     /// Indique si un blob identifié par `hash` est présent dans le classeur à `index_classeur`.
     ///
     /// Retourne `true` si `classeurN/<hash>.dat` existe sur le disque, `false` sinon.
-    pub(super) fn existe_blob(&self, index_classeur: usize, hash: &str) -> bool {
+    pub(super) fn existe_blob(&self, index_classeur: IndexClasseur, hash: &str) -> bool {
         self.donne_chemin_blob(index_classeur, hash).exists()
     }
 
@@ -212,7 +218,10 @@ impl Archiviste {
     /// # Errors
     ///
     /// Retourne une erreur si la lecture du dossier échoue.
-    pub(super) fn donne_liste_blobs(&self, index_classeur: usize) -> ResultFeuNoyau<Vec<String>> {
+    pub(super) fn donne_liste_blobs(
+        &self,
+        index_classeur: IndexClasseur,
+    ) -> ResultFeuNoyau<Vec<String>> {
         let mut liste = Vec::new();
         for element in std::fs::read_dir(self.donne_chemin_classeur(index_classeur))? {
             if let Some(nom) = element?.path().file_stem() {
@@ -232,7 +241,7 @@ impl Archiviste {
     /// Retourne une erreur si le fichier n'existe pas ou si la lecture des métadonnées échoue.
     pub(super) fn donne_informations_blob(
         &self,
-        index_classeur: usize,
+        index_classeur: IndexClasseur,
         hash: &str,
     ) -> ResultFeuNoyau<DonneesBlob> {
         let metadata = std::fs::metadata(self.donne_chemin_blob(index_classeur, hash))?;
@@ -250,8 +259,8 @@ impl Archiviste {
 
     /// Vérifie la présence des éléments structurels du foyer ouvert.
     ///
-    /// Contrôle `registre/` et les `MAX_CLASSEURS` liens symboliques
-    /// `registre/classeur.N`, ainsi que l'existence des cibles de ces liens.
+    /// Contrôle `registre/` et les liens symboliques `registre/classeur.N`,
+    /// ainsi que l'existence des cibles de ces liens.
     /// N'inspecte pas le contenu des classeurs — seule la structure est vérifiée.
     ///
     /// # Errors
@@ -266,11 +275,13 @@ impl Archiviste {
         }
 
         // Pour chaque classeur
-        for j in 0..MAX_CLASSEURS {
-            if !self.donne_chemin_lien_classeur(j).is_symlink() {
-                resultat.push(Anomalie::ElementAbsent(self.donne_chemin_lien_classeur(j)));
-            } else if !self.donne_chemin_lien_classeur(j).exists() {
-                let chemin_cible = fs::read_link(self.donne_chemin_lien_classeur(j))?;
+        for index_classeur in IndexClasseur::tous() {
+            if !self.donne_chemin_lien_classeur(index_classeur).is_symlink() {
+                resultat.push(Anomalie::ElementAbsent(
+                    self.donne_chemin_lien_classeur(index_classeur),
+                ));
+            } else if !self.donne_chemin_lien_classeur(index_classeur).exists() {
+                let chemin_cible = fs::read_link(self.donne_chemin_lien_classeur(index_classeur))?;
                 resultat.push(Anomalie::ElementAbsent(chemin_cible));
             }
         }
@@ -288,19 +299,19 @@ impl Archiviste {
     ///
     /// Ce lien est le point d'entrée canonique pour accéder au classeur — il permet
     /// de rediriger les classeurs vers des emplacements arbitraires sans modifier le code.
-    fn donne_chemin_lien_classeur(&self, index_classeur: usize) -> PathBuf {
+    fn donne_chemin_lien_classeur(&self, index_classeur: IndexClasseur) -> PathBuf {
         self.donne_chemin_registre()
-            .join(format!("{}.{}", CLASSEUR, index_classeur))
+            .join(format!("{}.{}", CLASSEUR, index_classeur.valeur()))
     }
 
-    /// Retourne le chemin du dossier `classeurN/` à l'`index` donné.
-    fn donne_chemin_classeur(&self, index_classeur: usize) -> PathBuf {
+    /// Retourne le chemin du dossier `classeurN/` du classeur `index_classeur`.
+    fn donne_chemin_classeur(&self, index_classeur: IndexClasseur) -> PathBuf {
         self.donne_chemin_lien_classeur(index_classeur)
-            .join(format!("{}{}", CLASSEUR, index_classeur))
+            .join(format!("{}{}", CLASSEUR, index_classeur.valeur()))
     }
 
     /// Retourne le chemin complet du blob `<hash>.dat` dans le classeur à `index_classeur`.
-    fn donne_chemin_blob(&self, index_classeur: usize, hash: &str) -> PathBuf {
+    fn donne_chemin_blob(&self, index_classeur: IndexClasseur, hash: &str) -> PathBuf {
         self.donne_chemin_classeur(index_classeur)
             .join(format!("{}.dat", hash))
     }

@@ -52,7 +52,7 @@ use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox, SecretString};
 use sha3::{Digest, Sha3_256};
 
 use crate::{
-    ErreurFeuNoyau, InterfaceFeuNoyau, MAX_FOYERS, ResultFeuNoyau,
+    ErreurFeuNoyau, IndexClasseur, IndexFoyer, InterfaceFeuNoyau, ResultFeuNoyau,
     cryptographe::{
         trousseau::Trousseau,
         trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud},
@@ -199,9 +199,10 @@ impl Cryptographe {
 
         self.trousseau.ajouter_paire_noeud(&seed_bytes)?;
 
-        // Ajoute les trousseaux des MAX_FOYERS
-        for i in 0..MAX_FOYERS {
-            self.trousseau.ajouter_trousseau_foyer(&seed_bytes, i)?;
+        // Ajoute le trousseau de chaque foyer
+        for index_foyer in IndexFoyer::tous() {
+            self.trousseau
+                .ajouter_trousseau_foyer(&seed_bytes, index_foyer)?;
         }
 
         // Génère le sel et le met dans le trousseau
@@ -246,7 +247,7 @@ impl Cryptographe {
     ///
     /// Déchiffre toutes les clés privées et symétriques du [`TrousseauPublicFoyer`]
     /// fourni avec la clé éphémère et les enregistre dans le trousseau à la position
-    /// `index`. L'adresse `.braise` est lue depuis le [`TrousseauPublicFoyer`].
+    /// `index_foyer`. L'adresse `.braise` est lue depuis le [`TrousseauPublicFoyer`].
     /// Le mot de passe et la clé éphémère sont effacés avant le retour.
     ///
     /// # Prérequis
@@ -260,7 +261,7 @@ impl Cryptographe {
     pub(super) fn recoit_trousseau_public_foyer(
         &mut self,
         trousseau_public_foyer: TrousseauPublicFoyer,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuNoyau<()> {
         self.trousseau
             .trousseau_public_foyer_vers_trousseau_foyer(&trousseau_public_foyer, index_foyer)?;
@@ -286,7 +287,7 @@ impl Cryptographe {
     pub(super) fn secours_recoit_trousseau_public_foyer(
         &mut self,
         trousseau_public_foyer: TrousseauPublicFoyer,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         interface: &impl InterfaceFeuNoyau,
     ) -> ResultFeuNoyau<()> {
         self.demande_mdp(interface)?;
@@ -352,28 +353,28 @@ impl Cryptographe {
 
     // ── Blobs ─────────────────────────────────────────────────────────────────
 
-    /// Chiffre un flux de données du foyer à la position `index`.
+    /// Chiffre un flux de données du foyer à la position `index_foyer`.
     ///
     /// Délègue directement à [`Trousseau::chiffre_avec_cle_foyer`] —
     /// la clé symétrique est lue depuis le trousseau en mémoire.
     ///
     /// # Prérequis
     ///
-    /// Le foyer à l'`index` donné doit être ouvert — ses clés doivent être
-    /// présentes dans le trousseau.
+    /// Le foyer à la position `index_foyer` doit être ouvert — ses clés doivent
+    /// être présentes dans le trousseau.
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si aucun foyer n'est chargé à cet index,
-    /// ou si le chiffrement AES-GCM-stream échoue.
+    /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est pas
+    /// ouvert, ou une erreur si le chiffrement AES-GCM-stream échoue.
     pub(super) fn donne_flux_chiffrement_foyer(
         &self,
-        index: usize,
+        index_foyer: IndexFoyer,
         source: &mut impl Read,
         destination: &mut impl Write,
     ) -> ResultFeuNoyau<()> {
         self.trousseau
-            .chiffre_avec_cle_foyer(index, source, destination)?;
+            .chiffre_avec_cle_foyer(index_foyer, source, destination)?;
         Ok(())
     }
 
@@ -416,12 +417,13 @@ impl Cryptographe {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si le foyer ou le classeur à l'index donné est absent
-    /// du trousseau, ou si le chiffrement AES-256-GCM échoue.
+    /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est pas
+    /// ouvert, [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente`] si sa
+    /// clé de classeur manque, ou une erreur si le chiffrement AES-256-GCM échoue.
     pub(super) fn chiffrement_blob(
         &self,
-        index_foyer: usize,
-        index_classeur: usize,
+        index_foyer: IndexFoyer,
+        index_classeur: IndexClasseur,
         blob: &[u8],
     ) -> ResultFeuNoyau<(Vec<u8>, String)> {
         let hash: [u8; 32] = Sha3_256::digest(blob).into();
@@ -448,13 +450,14 @@ impl Cryptographe {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si le foyer ou le classeur est absent du trousseau,
-    /// si le déchiffrement AES-256-GCM échoue, ou si le hash du clair ne
-    /// correspond pas à `hash` (donnée corrompue).
+    /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est pas
+    /// ouvert, [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente`] si sa
+    /// clé de classeur manque, ou une erreur si le déchiffrement AES-256-GCM échoue
+    /// ou si le hash du clair ne correspond pas à `hash` (donnée corrompue).
     pub(super) fn dechiffrement_blob(
         &self,
-        index_foyer: usize,
-        index_classeur: usize,
+        index_foyer: IndexFoyer,
+        index_classeur: IndexClasseur,
         hash: &str,
         blob: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
@@ -547,12 +550,12 @@ impl Cryptographe {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si le ciphertext KEM est invalide,
-    /// si le foyer est absent du trousseau, si la dérivation HKDF échoue,
-    /// ou si le déchiffrement AES-256-GCM échoue.
+    /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est pas
+    /// ouvert, ou une erreur si le ciphertext KEM est invalide, si la dérivation
+    /// HKDF échoue, ou si le déchiffrement AES-256-GCM échoue.
     pub(super) fn dechiffrement_asymetrique(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         octets_a_dechiffrer: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
         // Extrait le ciphertext KEM (1568 o)
@@ -600,10 +603,11 @@ impl Cryptographe {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si le foyer est absent du trousseau.
+    /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est pas
+    /// ouvert.
     pub(super) fn signature_foyer(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         octets_a_signer: &[u8],
     ) -> ResultFeuNoyau<[u8; 4627]> {
         self.trousseau
@@ -761,8 +765,12 @@ mod tests {
             .definit_mdp(SecretString::from("mot de passe"));
         cryptographe.trousseau.definit_sel([0x33; 16]);
         cryptographe.trousseau.ajouter_paire_noeud(&seed)?;
-        cryptographe.trousseau.ajouter_trousseau_foyer(&seed, 0)?;
-        cryptographe.trousseau.ajouter_trousseau_foyer(&seed, 1)?;
+        cryptographe
+            .trousseau
+            .ajouter_trousseau_foyer(&seed, IndexFoyer::ZERO)?;
+        cryptographe
+            .trousseau
+            .ajouter_trousseau_foyer(&seed, IndexFoyer::try_from(1)?)?;
 
         cryptographe.donne_trousseau_public_complet()
     }
@@ -800,11 +808,13 @@ mod tests {
         // Cas nominal d'un foyer. Cette signature sert aussi de témoin aux deux
         // cas négatifs qui suivent : seule la clé de vérification, puis le
         // message, y changent — l'échec ne peut donc venir que de là.
-        let signature = cryptographe.signature_foyer(0, message)?;
+        let index_foyer_0 = IndexFoyer::ZERO;
+        let index_foyer_1 = IndexFoyer::try_from(1)?;
+        let signature = cryptographe.signature_foyer(index_foyer_0, message)?;
 
         assert!(Cryptographe::verification_signature(
             trousseau_public
-                .donne_trousseau_public_foyer(0)?
+                .donne_trousseau_public_foyer(index_foyer_0)?
                 .donne_cle_sig_pub(),
             signature,
             message
@@ -813,7 +823,7 @@ mod tests {
         // Clé publique d'un autre foyer, signature et message inchangés.
         assert!(!Cryptographe::verification_signature(
             trousseau_public
-                .donne_trousseau_public_foyer(1)?
+                .donne_trousseau_public_foyer(index_foyer_1)?
                 .donne_cle_sig_pub(),
             signature,
             message
@@ -824,7 +834,7 @@ mod tests {
 
         assert!(!Cryptographe::verification_signature(
             trousseau_public
-                .donne_trousseau_public_foyer(0)?
+                .donne_trousseau_public_foyer(index_foyer_0)?
                 .donne_cle_sig_pub(),
             signature,
             message_altere
@@ -854,15 +864,17 @@ mod tests {
         // consomme que la clé publique du destinataire, aucun secret de
         // l'expéditeur n'entre dans le schéma — un second cryptographe
         // n'apporterait rien au test.
+        let index_foyer_0 = IndexFoyer::ZERO;
+        let index_foyer_1 = IndexFoyer::try_from(1)?;
         let message_chiffre = cryptographe.chiffrement_asymetrique(
             &trousseau_public
-                .donne_trousseau_public_foyer(0)?
+                .donne_trousseau_public_foyer(index_foyer_0)?
                 .donne_cle_chiff_pub(),
             message,
         )?;
 
         assert_eq!(
-            cryptographe.dechiffrement_asymetrique(0, &message_chiffre)?,
+            cryptographe.dechiffrement_asymetrique(index_foyer_0, &message_chiffre)?,
             message
         );
 
@@ -870,7 +882,7 @@ mod tests {
         // privée capable d'en retrouver le bon secret partagé.
         assert!(
             cryptographe
-                .dechiffrement_asymetrique(1, &message_chiffre)
+                .dechiffrement_asymetrique(index_foyer_1, &message_chiffre)
                 .is_err()
         );
 

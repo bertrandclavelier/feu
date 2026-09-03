@@ -45,7 +45,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use feu_noyau::{DonneesBlob, FeuNoyau};
+use feu_noyau::{DonneesBlob, FeuNoyau, IndexFoyer};
 
 use crate::{
     ErreurFeuApplication, ResultFeuApplication, SessionApplication,
@@ -193,8 +193,8 @@ impl Scribe {
         &self,
         session: &SessionApplication,
         enu: &Enu,
-    ) -> ResultFeuApplication<(usize, [u8; 32])> {
-        let Some(index) = session.braise_vers_index(enu.braise()) else {
+    ) -> ResultFeuApplication<(IndexFoyer, [u8; 32])> {
+        let Some(index_foyer) = session.braise_vers_index(enu.braise()) else {
             return Err(ErreurFeuApplication::ScribeBraiseInconnue);
         };
 
@@ -207,7 +207,7 @@ impl Scribe {
             return Err(ErreurFeuApplication::ScribeEnuDAttendue);
         };
 
-        Ok((index, *hash_blob))
+        Ok((index_foyer, *hash_blob))
     }
 
     /// Déchiffre le blob référencé par `fiche` et écrit le clair dans
@@ -457,25 +457,22 @@ impl Scribe {
     /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] si `nom` est refusé
     /// comme composant de chemin — les deux via [`Carte::new_texte`] —, ou
     /// [`ErreurFeuApplication::ScribeEnuRAttendue`] si `fiche_racine_depot` ne
-    /// désigne pas un répertoire (via `ajout_hash_enu`), ou
-    /// [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] si `index_foyer` sort
-    /// des bornes. Propage toute erreur d'E/S, d'authentification ou de
-    /// signature — notamment si un foyer du chemin reconstruit est fermé.
+    /// désigne pas un répertoire (via `ajout_hash_enu`). Propage toute erreur
+    /// d'E/S, d'authentification ou de signature — notamment si un foyer du
+    /// chemin reconstruit est fermé.
     pub(crate) fn depot_enu_texte(
         &self,
         noyau: &FeuNoyau,
         session: &SessionApplication,
         fiche_racine_depot: &Fiche,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         nom: &str,
         contenu: &str,
     ) -> ResultFeuApplication<()> {
         if matches!(self.comptoirs, Comptoirs::Travail(_)) {
             return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
         }
-        let Some(braise) = session.braise_foyer(index_foyer) else {
-            return Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(index_foyer));
-        };
+        let braise = session.braise_foyer(index_foyer);
 
         let enu_racine_depot =
             Enu::charger(&self.chemin_enu, session, &fiche_racine_depot.hash_carte())?;

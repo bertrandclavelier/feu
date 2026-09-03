@@ -316,9 +316,8 @@ impl Enu {
     /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la braise ne
-    /// résout vers aucun foyer de la session,
-    /// [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] si ce foyer ne livre
-    /// aucune clé, et propage l'erreur cryptographique du noyau. Une signature
+    /// résout vers aucun foyer de la session, et propage l'erreur
+    /// cryptographique du noyau. Une signature
     /// simplement invalide est un `Ok(false)`, à l'appelant d'en faire un refus.
     pub(crate) fn authentique(&self, session: &SessionApplication) -> ResultFeuApplication<bool> {
         if self.braise == Braise::VIDE && self.carte.metas().contains_key("_racine") {
@@ -331,9 +330,7 @@ impl Enu {
             let Some(index_foyer) = session.braise_vers_index(self.braise) else {
                 return Err(ErreurFeuApplication::ScribeBraiseInconnue);
             };
-            let Some(cle) = session.cle_publique_sig_foyer(index_foyer) else {
-                return Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(index_foyer));
-            };
+            let cle = session.cle_publique_sig_foyer(index_foyer);
 
             Ok(FeuNoyau::verification_signature(
                 cle,

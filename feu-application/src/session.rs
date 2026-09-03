@@ -39,12 +39,12 @@
 //! entre les deux. Un miroir tenu de plus loin finirait par mentir sur un
 //! chemin d'erreur.
 //!
-//! # Aucune erreur, que des options
+//! # Aucune erreur
 //!
-//! Aucun accesseur de [`SessionApplication`] ne rend de `Result`. Un index de
-//! foyer hors bornes est une absence de valeur, pas une faute : les accesseurs
-//! indexés rendent tous [`Option`], et l'appelant décide ce que l'absence vaut
-//! chez lui — `unwrap_or` côté présentation, code d'erreur propre côté Scribe.
+//! Aucun accesseur de [`SessionApplication`] ne rend de `Result` ni d'[`Option`]
+//! indexée : [`IndexFoyer`] borne la position par construction, tout foyer
+//! désigné existe. Seule [`Self::braise_vers_index`] rend une [`Option`], parce
+//! qu'une braise peut n'appartenir à aucun foyer.
 //!
 //! La session ne peut donc pas faire remonter d'erreur applicative dans une
 //! couche qui la consomme, ni celle-ci la lui renvoyer aplatie de ses préfixes.
@@ -52,7 +52,7 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use feu_noyau::{
-    Braise, MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
+    Braise, IndexClasseur, IndexFoyer, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
     MAX_TAILLE_SIGNATURE,
 };
 
@@ -60,21 +60,18 @@ use crate::fiche::Fiche;
 
 /// État applicatif de la session courante.
 ///
-/// Regroupe les capacités du noyau (limites de taille, nombre de foyers) et
-/// l'état dynamique de la session (adresses braise, états d'ouverture, clés
-/// publiques, comptoirs de dépôt ouverts). Peuplé à l'allumage, puis mis à jour
-/// à chaque ouverture ou fermeture de foyer et de comptoir.
+/// Regroupe les limites de taille du noyau et l'état dynamique de la session
+/// (adresses braise, états d'ouverture, clés publiques, comptoirs de dépôt
+/// ouverts). Peuplé à l'allumage, puis mis à jour à chaque ouverture ou
+/// fermeture de foyer et de comptoir.
 ///
 /// # Invariants
 ///
-/// Les champs `nombre_foyers`, `nombre_classeurs` et `max_taille_*` sont des
-/// constantes dérivées de `MAX_*` du noyau. Ils ne changent pas en cours de session.
+/// Les champs `max_taille_*` sont des constantes reprises du noyau. Ils ne
+/// changent pas en cours de session. Le nombre de foyers et de classeurs n'est
+/// pas recopié ici : il est porté par [`IndexFoyer`] et [`IndexClasseur`].
 #[derive(Clone)]
 pub struct SessionApplication {
-    /// Nombre maximum de foyers — dérivé de [`MAX_FOYERS`].
-    pub nombre_foyers: usize,
-    /// Nombre maximum de classeurs par foyer — dérivé de [`MAX_CLASSEURS`].
-    pub nombre_classeurs: usize,
     /// Taille maximum d'un blob en octets — dérivée de [`MAX_TAILLE_BLOB`].
     pub max_taille_blob: usize,
     /// Taille maximum d'un message à chiffrer asymétriquement.
@@ -82,15 +79,15 @@ pub struct SessionApplication {
     /// Taille maximum d'un message à signer.
     pub max_taille_signature: usize,
     /// Adresses `.braise` des foyers — indexées par position.
-    braise_foyers: [Braise; MAX_FOYERS],
+    braise_foyers: [Braise; IndexFoyer::NOMBRE],
     /// État d'ouverture de chaque foyer — `true` si ouvert.
-    etat_foyers: [bool; MAX_FOYERS],
+    etat_foyers: [bool; IndexFoyer::NOMBRE],
     /// Clé publique de signature ML-DSA-87 du nœud — reçue à l'allumage.
     cle_publique_sig_noeud: [u8; 2592],
     /// Clés publiques de signature ML-DSA-87 des foyers — reçues à l'ouverture.
-    cle_publique_sig_foyers: [[u8; 2592]; MAX_FOYERS],
+    cle_publique_sig_foyers: [[u8; 2592]; IndexFoyer::NOMBRE],
     /// Clés publiques de chiffrement ML-KEM-1024 des foyers — reçues à l'ouverture.
-    cle_publique_chif_foyers: [[u8; 1568]; MAX_FOYERS],
+    cle_publique_chif_foyers: [[u8; 1568]; IndexFoyer::NOMBRE],
     /// Comptoirs de dépôt ouverts — miroir lisible de ceux que le Scribe
     /// détient : identifiant, puis dossier, foyer et classeur de destination.
     /// Le Scribe seul les connaît, et un identifiant nu n'apprendrait rien à la
@@ -99,7 +96,7 @@ pub struct SessionApplication {
     /// Une [`BTreeMap`] porte l'unicité de l'identifiant par le type, et son
     /// ordre trié est celui des ouvertures, les identifiants venant d'un
     /// compteur croissant.
-    comptoirs_depot_ouverts: BTreeMap<usize, (PathBuf, usize, usize)>,
+    comptoirs_depot_ouverts: BTreeMap<usize, (PathBuf, IndexFoyer, IndexClasseur)>,
 
     /// Comptoir de travail ouvert — miroir de celui que tient le Scribe.
     ///
@@ -123,65 +120,56 @@ impl SessionApplication {
     /// distingue par ce que le noyau n'y a pas encore écrit.
     pub fn new() -> Self {
         Self {
-            nombre_foyers: MAX_FOYERS,
-            nombre_classeurs: MAX_CLASSEURS,
             max_taille_blob: MAX_TAILLE_BLOB,
             max_taille_chiffrement_asymetrique: MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
             max_taille_signature: MAX_TAILLE_SIGNATURE,
-            braise_foyers: [Braise::VIDE; MAX_FOYERS],
-            etat_foyers: [false; MAX_FOYERS],
+            braise_foyers: [Braise::VIDE; IndexFoyer::NOMBRE],
+            etat_foyers: [false; IndexFoyer::NOMBRE],
             cle_publique_sig_noeud: [0u8; 2592],
-            cle_publique_sig_foyers: [[0u8; 2592]; MAX_FOYERS],
-            cle_publique_chif_foyers: [[0u8; 1568]; MAX_FOYERS],
+            cle_publique_sig_foyers: [[0u8; 2592]; IndexFoyer::NOMBRE],
+            cle_publique_chif_foyers: [[0u8; 1568]; IndexFoyer::NOMBRE],
             comptoirs_depot_ouverts: BTreeMap::new(),
             comptoir_travail_ouvert: None,
         }
     }
 
-    /// Retourne l'adresse `.braise` du foyer à la position `index_foyer` —
-    /// `None` si l'index dépasse [`MAX_FOYERS`].
+    /// Retourne l'adresse `.braise` du foyer à la position `index_foyer`.
     ///
-    /// Réciproque de [`Self::braise_vers_index`], et de même forme.
-    pub fn braise_foyer(&self, index_foyer: usize) -> Option<Braise> {
-        if index_foyer >= MAX_FOYERS {
-            return None;
-        }
-        Some(self.braise_foyers[index_foyer])
+    /// Réciproque de [`Self::braise_vers_index`]. Aucune [`Option`] :
+    /// [`IndexFoyer`] borne la position, tout foyer désigné existe.
+    pub fn braise_foyer(&self, index_foyer: IndexFoyer) -> Braise {
+        self.braise_foyers[index_foyer.valeur()]
     }
 
     /// Résout une adresse `.braise` en position de foyer.
     ///
-    /// Retourne `Some(index)` si la braise est celle d'un foyer connu dans la
-    /// session, `None` si l'adresse est inconnue. Permet de retrouver la clé
+    /// Retourne `Some(index_foyer)` si la braise est celle d'un foyer connu dans
+    /// la session, `None` si l'adresse est inconnue. Permet de retrouver la clé
     /// publique de signature d'un foyer à partir de la braise lue dans une ENU.
-    pub fn braise_vers_index(&self, braise: Braise) -> Option<usize> {
-        self.braise_foyers.iter().position(|b| *b == braise)
+    pub fn braise_vers_index(&self, braise: Braise) -> Option<IndexFoyer> {
+        IndexFoyer::tous().find(|index_foyer| self.braise_foyers[index_foyer.valeur()] == braise)
     }
 
     /// Enregistre l'adresse `.braise` du foyer à la position `index_foyer`.
     ///
     /// Appelé par `RecepteurNoyau` lors de l'allumage du nœud.
-    pub(crate) fn definit_braise_foyer(&mut self, index_foyer: usize, braise: Braise) {
-        self.braise_foyers[index_foyer] = braise;
+    pub(crate) fn definit_braise_foyer(&mut self, index_foyer: IndexFoyer, braise: Braise) {
+        self.braise_foyers[index_foyer.valeur()] = braise;
     }
 
     /// Retourne une vue immuable sur le tableau des états d'ouverture des foyers.
     ///
     /// Permet à l'appelant d'itérer pour repérer les positions ouvertes sans
-    /// connaître `MAX_FOYERS` ni passer par [`Self::etat_foyer`] index par index.
+    /// passer par [`Self::etat_foyer`] index par index.
     /// Préserve l'encapsulation : le tableau reste privé en écriture, seul
     /// `feu-application` peut le muter via `definit_etat_foyer`.
     pub fn etat_foyers(&self) -> &[bool] {
         &self.etat_foyers
     }
 
-    /// Retourne l'état d'ouverture du foyer à la position `index_foyer` —
-    /// `None` si l'index dépasse [`MAX_FOYERS`].
-    pub fn etat_foyer(&self, index_foyer: usize) -> Option<bool> {
-        if index_foyer >= MAX_FOYERS {
-            return None;
-        }
-        Some(self.etat_foyers[index_foyer])
+    /// Retourne l'état d'ouverture du foyer à la position `index_foyer`.
+    pub fn etat_foyer(&self, index_foyer: IndexFoyer) -> bool {
+        self.etat_foyers[index_foyer.valeur()]
     }
 
     /// Indique si tous les foyers sont fermés.
@@ -209,8 +197,8 @@ impl SessionApplication {
     /// Met à jour l'état d'ouverture du foyer à la position `index_foyer`.
     ///
     /// Appelé par `RecepteurNoyau` après ouverture ou fermeture d'un foyer.
-    pub(crate) fn definit_etat_foyer(&mut self, index_foyer: usize, etat: bool) {
-        self.etat_foyers[index_foyer] = etat;
+    pub(crate) fn definit_etat_foyer(&mut self, index_foyer: IndexFoyer, etat: bool) {
+        self.etat_foyers[index_foyer.valeur()] = etat;
     }
 
     /// Enregistre la clé publique de signature ML-DSA-87 du nœud.
@@ -226,48 +214,51 @@ impl SessionApplication {
     }
 
     /// Retourne la clé publique de signature ML-DSA-87 du foyer à la position
-    /// `index_foyer` — `None` si l'index dépasse [`MAX_FOYERS`].
+    /// `index_foyer`.
     ///
     /// Interrogée par `Enu::charger` après résolution de la braise : c'est la
     /// clé contre laquelle une ENU de contenu est authentifiée.
-    pub fn cle_publique_sig_foyer(&self, index_foyer: usize) -> Option<[u8; 2592]> {
-        if index_foyer >= MAX_FOYERS {
-            return None;
-        }
-        Some(self.cle_publique_sig_foyers[index_foyer])
+    pub fn cle_publique_sig_foyer(&self, index_foyer: IndexFoyer) -> [u8; 2592] {
+        self.cle_publique_sig_foyers[index_foyer.valeur()]
     }
 
     /// Enregistre la clé publique de signature ML-DSA-87 du foyer.
     ///
     /// Appelé par `RecepteurNoyau` à l'ouverture du foyer.
-    pub(crate) fn definit_cle_publique_sig_foyer(&mut self, index_foyer: usize, cle: [u8; 2592]) {
-        self.cle_publique_sig_foyers[index_foyer] = cle;
+    pub(crate) fn definit_cle_publique_sig_foyer(
+        &mut self,
+        index_foyer: IndexFoyer,
+        cle: [u8; 2592],
+    ) {
+        self.cle_publique_sig_foyers[index_foyer.valeur()] = cle;
     }
 
     /// Retourne la clé publique de chiffrement ML-KEM-1024 du foyer à la
-    /// position `index_foyer` — `None` si l'index dépasse [`MAX_FOYERS`].
-    pub fn cle_publique_chif_foyer(&self, index_foyer: usize) -> Option<[u8; 1568]> {
-        if index_foyer >= MAX_FOYERS {
-            return None;
-        }
-        Some(self.cle_publique_chif_foyers[index_foyer])
+    /// position `index_foyer`.
+    pub fn cle_publique_chif_foyer(&self, index_foyer: IndexFoyer) -> [u8; 1568] {
+        self.cle_publique_chif_foyers[index_foyer.valeur()]
     }
 
     /// Enregistre la clé publique de chiffrement ML-KEM-1024 du foyer.
     ///
     /// Appelé par `RecepteurNoyau` à l'ouverture du foyer.
-    pub(crate) fn definit_cle_publique_chif_foyer(&mut self, index_foyer: usize, cle: [u8; 1568]) {
-        self.cle_publique_chif_foyers[index_foyer] = cle;
+    pub(crate) fn definit_cle_publique_chif_foyer(
+        &mut self,
+        index_foyer: IndexFoyer,
+        cle: [u8; 1568],
+    ) {
+        self.cle_publique_chif_foyers[index_foyer.valeur()] = cle;
     }
 
     /// Retourne les comptoirs de dépôt ouverts, indexés par identifiant.
     ///
     /// Par référence : la présentation reçoit déjà une [`SessionApplication`]
     /// clonée entière après chaque commande mutante, une copie de plus
-    /// n'ajouterait rien. Aucune [`Option`] non plus, contrairement aux
-    /// accesseurs indexés — la table existe toujours, vide quand aucun comptoir
-    /// n'est ouvert.
-    pub fn comptoirs_depot_ouverts(&self) -> &BTreeMap<usize, (PathBuf, usize, usize)> {
+    /// n'ajouterait rien. Aucune [`Option`] : la table existe toujours, vide
+    /// quand aucun comptoir n'est ouvert.
+    pub fn comptoirs_depot_ouverts(
+        &self,
+    ) -> &BTreeMap<usize, (PathBuf, IndexFoyer, IndexClasseur)> {
         &self.comptoirs_depot_ouverts
     }
 
@@ -282,7 +273,7 @@ impl SessionApplication {
     /// aucun chemin d'erreur ne passe entre les deux écritures.
     pub(crate) fn mut_comptoirs_depot_ouverts(
         &mut self,
-    ) -> &mut BTreeMap<usize, (PathBuf, usize, usize)> {
+    ) -> &mut BTreeMap<usize, (PathBuf, IndexFoyer, IndexClasseur)> {
         &mut self.comptoirs_depot_ouverts
     }
 
@@ -327,23 +318,26 @@ impl Default for SessionApplication {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ResultFeuApplication;
 
     /// Deux foyers ouverts sur trois, lus par les deux accesseurs.
     ///
     /// Seul cet état panaché sépare un `all` d'un `any`. Le compte relevé dès
     /// la session neuve attrape un `filter` inversé.
     #[test]
-    fn etat_foyers() {
+    fn etat_foyers() -> ResultFeuApplication<()> {
         let mut session = SessionApplication::new();
 
         assert_eq!(session.nombre_foyers_ouverts(), 0);
         assert!(session.foyers_fermes());
 
-        session.definit_etat_foyer(0, true);
+        session.definit_etat_foyer(IndexFoyer::ZERO, true);
         assert_eq!(session.nombre_foyers_ouverts(), 1);
-        session.definit_etat_foyer(1, true);
+        session.definit_etat_foyer(IndexFoyer::try_from(1)?, true);
         assert_eq!(session.nombre_foyers_ouverts(), 2);
 
         assert!(!session.foyers_fermes());
+
+        Ok(())
     }
 }

@@ -21,6 +21,8 @@
 
 use std::{collections::HashMap, fs::remove_dir_all, path::PathBuf};
 
+use feu_noyau::{IndexClasseur, IndexFoyer};
+
 use crate::{ErreurFeuApplication, ResultFeuApplication, Scribe, fiche::Fiche};
 
 /// Classeur où sont rangés les blobs recréés à la fermeture d'un comptoir de
@@ -29,7 +31,7 @@ use crate::{ErreurFeuApplication, ResultFeuApplication, Scribe, fiche::Fiche};
 /// Un choix arbitraire, et sans portée : une ENU désigne sa donnée par le couple
 /// `(foyer, hash)`, jamais par un classeur, que le noyau retrouve en balayant.
 /// Le comptoir n'a donc pas à en mémoriser un à l'ouverture.
-pub(super) const CLASSEUR_DEFAUT_COMPTOIR_TRAVAIL: usize = 0;
+pub(super) const CLASSEUR_DEFAUT_COMPTOIR_TRAVAIL: IndexClasseur = IndexClasseur::ZERO;
 
 /// État des comptoirs ouverts : aucun, des dépôts, ou un travail.
 ///
@@ -214,9 +216,9 @@ pub(super) struct ComptoirDepot {
     /// Chemin du dossier sur le système de fichiers.
     chemin: PathBuf,
     /// Index du foyer propriétaire de ce comptoir.
-    index_foyer: usize,
+    index_foyer: IndexFoyer,
     /// Index du classeur de destination des données déposées.
-    index_classeur: usize,
+    index_classeur: IndexClasseur,
 }
 
 impl ComptoirDepot {
@@ -224,7 +226,11 @@ impl ComptoirDepot {
     ///
     /// Le dossier n'est pas créé ici — appeler [`ouvrir`](ComptoirDepot::ouvrir)
     /// pour le rendre utilisable.
-    pub(super) fn new(chemin: PathBuf, index_foyer: usize, index_classeur: usize) -> Self {
+    pub(super) fn new(
+        chemin: PathBuf,
+        index_foyer: IndexFoyer,
+        index_classeur: IndexClasseur,
+    ) -> Self {
         Self {
             chemin,
             index_foyer,
@@ -238,12 +244,12 @@ impl ComptoirDepot {
     }
 
     /// Retourne l'index du foyer de destination des données.
-    pub(super) fn index_foyer(&self) -> usize {
+    pub(super) fn index_foyer(&self) -> IndexFoyer {
         self.index_foyer
     }
 
     /// Retourne l'index du classeur de destination des données.
-    pub(super) fn index_classeur(&self) -> usize {
+    pub(super) fn index_classeur(&self) -> IndexClasseur {
         self.index_classeur
     }
 
@@ -364,7 +370,11 @@ mod tests {
 
         // Création du chemin et du comptoir
         let chemin = tmp.path().to_path_buf().join("comptoir_depot");
-        let comptoir = ComptoirDepot::new(chemin.clone(), 2, 5);
+        let comptoir = ComptoirDepot::new(
+            chemin.clone(),
+            IndexFoyer::try_from(2)?,
+            IndexClasseur::try_from(4)?,
+        );
 
         // Le dossier n'existe pas encore
         assert!(!comptoir.chemin().exists());
@@ -403,15 +413,27 @@ mod tests {
         let chemin = PathBuf::from("chemin_test");
 
         let chemin1 = chemin.join("comptoir_depot1");
-        let comptoir1 = ComptoirDepot::new(chemin1, 1, 2);
+        let comptoir1 = ComptoirDepot::new(
+            chemin1,
+            IndexFoyer::try_from(1)?,
+            IndexClasseur::try_from(2)?,
+        );
         let chemin2 = chemin.join("comptoir_depot2");
-        let comptoir2 = ComptoirDepot::new(chemin2, 2, 1);
+        let comptoir2 = ComptoirDepot::new(
+            chemin2,
+            IndexFoyer::try_from(2)?,
+            IndexClasseur::try_from(1)?,
+        );
         let chemin3 = chemin.join("comptoir_depot3");
-        let comptoir3 = ComptoirDepot::new(chemin3, 0, 1);
+        let comptoir3 = ComptoirDepot::new(chemin3, IndexFoyer::ZERO, IndexClasseur::try_from(1)?);
         let chemin4 = chemin.join("comptoir_depot4");
-        let comptoir4 = ComptoirDepot::new(chemin4, 1, 0);
+        let comptoir4 = ComptoirDepot::new(chemin4, IndexFoyer::try_from(1)?, IndexClasseur::ZERO);
         let chemin5 = chemin.join("comptoir_depot5");
-        let comptoir5 = ComptoirDepot::new(chemin5, 2, 1);
+        let comptoir5 = ComptoirDepot::new(
+            chemin5,
+            IndexFoyer::try_from(2)?,
+            IndexClasseur::try_from(1)?,
+        );
 
         let mut comptoirs = Comptoirs::Vide;
 
@@ -453,10 +475,19 @@ mod tests {
         let chemin = PathBuf::from("chemin_test");
 
         let chemin1 = chemin.join("comptoir_depot1");
-        let comptoir1 = ComptoirDepot::new(chemin1.clone(), 1, 2);
-        let comptoir1bis = ComptoirDepot::new(chemin1, 0, 1);
+        let comptoir1 = ComptoirDepot::new(
+            chemin1.clone(),
+            IndexFoyer::try_from(1)?,
+            IndexClasseur::try_from(2)?,
+        );
+        let comptoir1bis =
+            ComptoirDepot::new(chemin1, IndexFoyer::ZERO, IndexClasseur::try_from(1)?);
         let chemin2 = chemin.join("comptoir_depot2");
-        let comptoir2 = ComptoirDepot::new(chemin2, 2, 1);
+        let comptoir2 = ComptoirDepot::new(
+            chemin2,
+            IndexFoyer::try_from(2)?,
+            IndexClasseur::try_from(1)?,
+        );
 
         let mut comptoirs = Comptoirs::Vide;
 

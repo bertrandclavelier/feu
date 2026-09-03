@@ -17,7 +17,7 @@ use data_encoding::HEXLOWER;
 use feu_application::{
     Carte, ErreurFeuApplication, FeuApplication, ResultFeuApplication, fiche::Fiche,
 };
-use feu_noyau::{MAX_CLASSEURS, MAX_FOYERS};
+use feu_noyau::{IndexClasseur, IndexFoyer};
 use tempfile::TempDir;
 
 use crate::commun::{
@@ -40,8 +40,12 @@ fn deposer_repertoire_sous_racine(
 
     let fiche_racine = app.commande_derniere_enu_racine()?;
 
-    let index_comptoir =
-        app.commande_ouverture_comptoir_depot(interface_test, &chemin_comptoir_depot, 0, 0)?;
+    let index_comptoir = app.commande_ouverture_comptoir_depot(
+        interface_test,
+        &chemin_comptoir_depot,
+        IndexFoyer::ZERO,
+        IndexClasseur::ZERO,
+    )?;
 
     let chemin = chemin_comptoir_depot.join("documents");
     create_dir(&chemin)?;
@@ -68,7 +72,7 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     let dossier_temporaire = TempDir::new().unwrap();
 
@@ -79,27 +83,12 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
     //
     let chemin_comptoir1 = dossier_temporaire.path().join("comptoir_depot1");
 
-    assert!(matches!(
-        app.commande_ouverture_comptoir_depot(
-            &interface_test,
-            &chemin_comptoir1,
-            MAX_FOYERS + 1,
-            0
-        ),
-        Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(_))
-    ));
-    assert!(matches!(
-        app.commande_ouverture_comptoir_depot(
-            &interface_test,
-            &chemin_comptoir1,
-            0,
-            MAX_CLASSEURS + 1
-        ),
-        Err(ErreurFeuApplication::ScribeIndexClasseurInvalide(_))
-    ));
-
-    let index_comptoir =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir1, 0, 0)?;
+    let index_comptoir = app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_comptoir1,
+        IndexFoyer::ZERO,
+        IndexClasseur::ZERO,
+    )?;
     assert_eq!(index_comptoir, 0);
     assert!(
         interface_test
@@ -109,7 +98,7 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
             .contains_key(&index_comptoir)
     );
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     assert!(matches!(
         app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir, &enu_racine),
@@ -125,7 +114,7 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
             .contains_key(&index_comptoir)
     );
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     // L'index 1 n'a jamais été attribué : le Scribe ne connaît que le zéro.
     assert!(matches!(
@@ -141,7 +130,7 @@ fn cycle_ouverture_fermeture_comptoir() -> ResultFeuApplication<()> {
         Err(ErreurFeuApplication::ScribeDossierDepotIntrouvable(_))
     ));
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     // L'erreur à commande_fermeture_comptoir_depot empêche l'envoie de la nouvelle session
     // il faut attendre une nouvelle commande réussie qui refait un envoi de session
@@ -174,7 +163,7 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     let dossier_temporaire = TempDir::new().unwrap();
 
@@ -185,8 +174,12 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
     //
     let chemin_comptoir1 = dossier_temporaire.path().join("comptoir_depot1");
 
-    let index_comptoir1 =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir1, 0, 0)?;
+    let index_comptoir1 = app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_comptoir1,
+        IndexFoyer::ZERO,
+        IndexClasseur::ZERO,
+    )?;
 
     // Fermeture comptoir vide
     app.commande_fermeture_comptoir_depot(&interface_test, index_comptoir1, &enu_racine)?;
@@ -201,8 +194,12 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
     //
     let chemin_comptoir2 = dossier_temporaire.path().join("comptoir_depot2");
 
-    let index_comptoir2 =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir2, 0, 0)?;
+    let index_comptoir2 = app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_comptoir2,
+        IndexFoyer::ZERO,
+        IndexClasseur::ZERO,
+    )?;
     assert_eq!(index_comptoir2, 0);
 
     remplir_dossier(&chemin_comptoir2);
@@ -250,7 +247,7 @@ fn cycle_depot_retrait_simple() -> ResultFeuApplication<()> {
         Err(ErreurFeuApplication::ScribeEnuDAttendue)
     ));
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     app.commande_extinction_noeud(&interface_test)?;
 
@@ -274,7 +271,7 @@ fn ouverture_comptoir_travail_normal() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     let racine_comptoir = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
 
@@ -288,7 +285,7 @@ fn ouverture_comptoir_travail_normal() -> ResultFeuApplication<()> {
     assert_eq!(chemin, &chemin_comptoir);
     assert_eq!(fiche.hash_carte(), racine_comptoir.hash_carte());
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
     app.commande_extinction_noeud(&interface_test)?;
 
     Ok(())
@@ -310,11 +307,16 @@ fn ouverture_comptoir_travail_depot_deja_ouvert() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     let racine_comptoir = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
 
-    app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot, 0, 0)?;
+    app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_comptoir_depot,
+        IndexFoyer::ZERO,
+        IndexClasseur::ZERO,
+    )?;
 
     assert!(matches!(
         app.commande_ouverture_comptoir_travail(
@@ -325,7 +327,7 @@ fn ouverture_comptoir_travail_depot_deja_ouvert() -> ResultFeuApplication<()> {
         Err(ErreurFeuApplication::ScribeComptoirDepotOuvert)
     ));
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
     app.commande_extinction_noeud(&interface_test)?;
 
     Ok(())
@@ -350,7 +352,7 @@ fn exclusivite_comptoir_travail() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     let racine_comptoir = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
 
@@ -370,12 +372,22 @@ fn exclusivite_comptoir_travail() -> ResultFeuApplication<()> {
     ));
 
     assert!(matches!(
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot, 0, 0),
+        app.commande_ouverture_comptoir_depot(
+            &interface_test,
+            &chemin_comptoir_depot,
+            IndexFoyer::ZERO,
+            IndexClasseur::ZERO
+        ),
         Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
     ));
 
     assert!(matches!(
-        app.commande_depot_enu_texte(&racine_comptoir, 0, "test", "contenu de test"),
+        app.commande_depot_enu_texte(
+            &racine_comptoir,
+            IndexFoyer::ZERO,
+            "test",
+            "contenu de test"
+        ),
         Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
     ));
 
@@ -384,7 +396,7 @@ fn exclusivite_comptoir_travail() -> ResultFeuApplication<()> {
         Err(ErreurFeuApplication::ScribeComptoirTravailOuvert)
     ));
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
     app.commande_extinction_noeud(&interface_test)?;
 
     Ok(())
@@ -405,10 +417,18 @@ fn persistance_comptoir_depot() -> ResultFeuApplication<()> {
     let mut app = FeuApplication::new(&chemin_feu);
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    let id1 =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot1, 1, 0)?;
-    let id2 =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir_depot2, 0, 1)?;
+    let id1 = app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_comptoir_depot1,
+        IndexFoyer::try_from(1)?,
+        IndexClasseur::ZERO,
+    )?;
+    let id2 = app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_comptoir_depot2,
+        IndexFoyer::ZERO,
+        IndexClasseur::try_from(1)?,
+    )?;
 
     drop(app);
 
@@ -421,10 +441,10 @@ fn persistance_comptoir_depot() -> ResultFeuApplication<()> {
 
     assert_eq!(comptoir1_relu.0, chemin_comptoir_depot1);
     assert_eq!(comptoir2_relu.0, chemin_comptoir_depot2);
-    assert_eq!(comptoir1_relu.1, 1);
-    assert_eq!(comptoir2_relu.1, 0);
-    assert_eq!(comptoir1_relu.2, 0);
-    assert_eq!(comptoir2_relu.2, 1);
+    assert_eq!(comptoir1_relu.1, IndexFoyer::try_from(1)?);
+    assert_eq!(comptoir2_relu.1, IndexFoyer::ZERO);
+    assert_eq!(comptoir1_relu.2, IndexClasseur::ZERO);
+    assert_eq!(comptoir2_relu.2, IndexClasseur::try_from(1)?);
 
     app.commande_extinction_noeud(&interface_test)?;
 
@@ -445,7 +465,7 @@ fn persistance_comptoir_travail() -> ResultFeuApplication<()> {
     let mut app = FeuApplication::new(&chemin_feu);
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     let racine_comptoir = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
 
@@ -455,7 +475,7 @@ fn persistance_comptoir_travail() -> ResultFeuApplication<()> {
         &racine_comptoir,
     )?;
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
     drop(app);
 
     let mut app = FeuApplication::new(&chemin_feu);
@@ -487,7 +507,7 @@ fn fermeture_depot_travail() -> ResultFeuApplication<()> {
 
     app.commande_allumage_noeud(&interface_test, None)?;
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     //
     // 1. Une première arborescence, déposée par comptoir de dépôt
@@ -498,8 +518,12 @@ fn fermeture_depot_travail() -> ResultFeuApplication<()> {
 
     let chemin_comptoir = dossier_temporaire.path().join("comptoir_depot");
 
-    let index_comptoir =
-        app.commande_ouverture_comptoir_depot(&interface_test, &chemin_comptoir, 0, 0)?;
+    let index_comptoir = app.commande_ouverture_comptoir_depot(
+        &interface_test,
+        &chemin_comptoir,
+        IndexFoyer::ZERO,
+        IndexClasseur::ZERO,
+    )?;
 
     remplir_dossier(&chemin_comptoir);
 
@@ -640,7 +664,7 @@ fn fermeture_depot_travail() -> ResultFeuApplication<()> {
         fiche_fichier_2
     );
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     app.commande_extinction_noeud(&interface_test)?;
 
@@ -662,11 +686,16 @@ fn fermeture_depot_travail_avec_enu_texte() -> ResultFeuApplication<()> {
 
     let dossier_temporaire = TempDir::new().unwrap();
 
-    app.commande_ouverture_foyer(&interface_test, 0)?;
+    app.commande_ouverture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     let fiche_racine_depot = deposer_repertoire_sous_racine(&mut app, &interface_test)?;
 
-    app.commande_depot_enu_texte(&fiche_racine_depot, 0, "note", "contenu de test")?;
+    app.commande_depot_enu_texte(
+        &fiche_racine_depot,
+        IndexFoyer::ZERO,
+        "note",
+        "contenu de test",
+    )?;
 
     let enu_racine = app.commande_derniere_enu_racine()?;
     let chemin_comptoir = dossier_temporaire.path().join("comptoir_travail");
@@ -692,7 +721,7 @@ fn fermeture_depot_travail_avec_enu_texte() -> ResultFeuApplication<()> {
     assert_eq!(contenu, "contenu modifie");
     assert_eq!(fiche_note.carte().metas()["nom"], "note");
 
-    app.commande_fermeture_foyer(&interface_test, 0)?;
+    app.commande_fermeture_foyer(&interface_test, IndexFoyer::ZERO)?;
 
     app.commande_extinction_noeud(&interface_test)?;
 

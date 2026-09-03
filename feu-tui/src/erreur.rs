@@ -68,6 +68,13 @@ pub(crate) enum ErreurFeuTui {
     #[error("TUI > {0} : Index comptoir invalide")]
     TuiIndexComptoirInvalide(usize),
 
+    /// La saisie est un entier, mais aucun foyer n'occupe cette position.
+    ///
+    /// Le contrôle revient ici : `IndexFoyer` étant borné par construction, la
+    /// saisie est le dernier endroit où un nombre quelconque existe encore.
+    #[error("TUI > {0} : Index foyer invalide")]
+    TuiIndexFoyerInvalide(usize),
+
     /// Le nœud s'est éteint entre l'affichage de la commande et sa validation.
     #[error("TUI > Le nœud doit être allumé")]
     TuiNoeudEteint,

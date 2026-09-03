@@ -9,9 +9,11 @@
 //! Types élémentaires du noyau, bien formés par construction.
 //!
 //! [`Braise`] porte l'adresse `.braise` d'un foyer, [`IndexFoyer`] et
-//! [`IndexClasseur`] une position bornée. Aucun ne naît autrement que d'un
-//! `TryFrom` qui valide : son existence vaut garantie. Les deux index sont des
-//! types distincts et ne se substituent pas l'un à l'autre.
+//! [`IndexClasseur`] une position bornée. Aucun ne se construit sans contrôle :
+//! un `TryFrom` qui valide, ou une constante dont la valeur est vérifiée à
+//! l'écriture — [`Braise::VIDE`], [`IndexFoyer::ZERO`]. Leur existence vaut
+//! garantie. Les deux index sont des types distincts et ne se substituent pas
+//! l'un à l'autre.
 //!
 //! L'apport est la **rigueur** (un état mal formé est inconstructible) et
 //! l'**ergonomie** (valeurs `Copy`, sans allocation), pas la sécurité : la
@@ -21,7 +23,7 @@
 use core::fmt;
 use std::fmt::{Debug, Display};
 
-use crate::{ErreurFeuNoyau, MAX_CLASSEURS, MAX_FOYERS, ResultFeuNoyau};
+use crate::{ErreurFeuNoyau, NOMBRE_CLASSEURS, NOMBRE_FOYERS, ResultFeuNoyau};
 
 /// Adresse `.braise` d'un foyer, bien formée par construction.
 ///
@@ -109,18 +111,24 @@ impl Debug for Braise {
 
 /// Position d'un foyer dans le nœud, bornée par construction.
 ///
-/// Ne naît que d'un `TryFrom<usize>` qui refuse tout index atteignant
-/// [`IndexFoyer::NOMBRE`] : indexer un tableau de foyers avec cette valeur reste
-/// dans les bornes, sans nouveau contrôle à chaque accès.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// Ne naît que de [`IndexFoyer::ZERO`] ou d'un `TryFrom<usize>` qui refuse tout
+/// index atteignant [`IndexFoyer::NOMBRE`] : indexer un tableau de foyers avec
+/// cette valeur reste dans les bornes, sans nouveau contrôle à chaque accès.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct IndexFoyer(usize);
 
 impl IndexFoyer {
-    /// Nombre de foyers d'un nœud, repris de [`MAX_FOYERS`].
+    /// Nombre de foyers d'un nœud.
     ///
     /// C'est un cardinal, pas un index : les positions valides s'arrêtent à
     /// `NOMBRE - 1`.
-    pub const NOMBRE: usize = MAX_FOYERS;
+    pub const NOMBRE: usize = NOMBRE_FOYERS;
+
+    /// Premier foyer du nœud.
+    ///
+    /// Toujours valide — un nœud compte au moins un foyer —, donc lisible en
+    /// `const`, là où `TryFrom` impose un `Result` à déballer.
+    pub const ZERO: Self = Self(0);
 
     /// Retourne la position sous forme d'entier, pour indexer un tableau.
     pub fn valeur(self) -> usize {
@@ -157,15 +165,21 @@ impl TryFrom<usize> for IndexFoyer {
 /// Même garantie que [`IndexFoyer`], sur une autre borne : les deux types ne
 /// sont pas interchangeables, et un index de classeur ne peut pas désigner un
 /// foyer par mégarde.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct IndexClasseur(usize);
 
 impl IndexClasseur {
-    /// Nombre de classeurs d'un foyer, repris de [`MAX_CLASSEURS`].
+    /// Nombre de classeurs d'un foyer.
     ///
     /// C'est un cardinal, pas un index : les positions valides s'arrêtent à
     /// `NOMBRE - 1`.
-    pub const NOMBRE: usize = MAX_CLASSEURS;
+    pub const NOMBRE: usize = NOMBRE_CLASSEURS;
+
+    /// Premier classeur du foyer.
+    ///
+    /// Toujours valide — un foyer compte au moins un classeur —, donc lisible en
+    /// `const`, là où `TryFrom` impose un `Result` à déballer.
+    pub const ZERO: Self = Self(0);
 
     /// Retourne la position sous forme d'entier, pour indexer un tableau.
     pub fn valeur(self) -> usize {

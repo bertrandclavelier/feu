@@ -17,7 +17,7 @@
 
 use std::path::PathBuf;
 
-use feu_noyau::{ErreurFeuNoyau, MAX_CLASSEURS, MAX_FOYERS};
+use feu_noyau::ErreurFeuNoyau;
 use thiserror::Error;
 
 use crate::scribe::carte::MAX_TAILLE_TEXTE;
@@ -147,20 +147,10 @@ pub enum ErreurFeuApplication {
     #[error("APP > Foyers à ouvrir : {liste}", liste = .0.iter().map(usize::to_string).collect::<Vec<_>>().join(", "))]
     ScribeFoyersFermes(Vec<usize>),
 
-    /// Index de classeur hors bornes, refusé à l'ouverture du comptoir : l'index
-    /// y est figé, un comptoir hors bornes échouerait à chaque fermeture.
-    #[error("APP > Index classeur invalide : {0} (max {max})", max = MAX_CLASSEURS - 1)]
-    ScribeIndexClasseurInvalide(usize),
-
     /// Aucun comptoir de dépôt actif sous cet index : la clé est absente de
     /// `comptoirs_depot`, pas hors bornes — rien à fermer.
     #[error("APP > Index comptoir inconnu : {0}")]
     ScribeIndexComptoirInconnu(usize),
-
-    /// Index de foyer hors bornes, vérifié par le Scribe avant d'engager le
-    /// noyau. Porte la valeur reçue : c'est une donnée d'appel, jamais un secret.
-    #[error("APP > Index foyer invalide : {0} (max {max})", max = MAX_FOYERS - 1)]
-    ScribeIndexFoyerInvalide(usize),
 
     /// La carte ne porte pas de méta `"nom"` : rien pour la matérialiser sur le
     /// système de fichiers au retrait.

@@ -55,11 +55,11 @@ use tempfile::TempDir;
 struct InterfaceTest {
     mot_de_passe: String,
     seed: Vec<String>,
-    braises: [Braise; MAX_FOYERS],
-    etats: [bool; MAX_FOYERS],
+    braises: [Braise; IndexFoyer::NOMBRE],
+    etats: [bool; IndexFoyer::NOMBRE],
     cle_publique_noeud: Option<[u8; 2592]>,
-    cles_pub_sig: [Option<[u8; 2592]>; MAX_FOYERS],
-    cles_pub_chif: [Option<[u8; 1568]>; MAX_FOYERS],
+    cles_pub_sig: [Option<[u8; 2592]>; IndexFoyer::NOMBRE],
+    cles_pub_chif: [Option<[u8; 1568]>; IndexFoyer::NOMBRE],
 }
 
 impl InterfaceTest {
@@ -73,11 +73,11 @@ impl InterfaceTest {
         Self {
             mot_de_passe: String::from(mot_de_passe),
             seed: Vec::new(),
-            braises: [Braise::VIDE; MAX_FOYERS],
-            etats: [false; MAX_FOYERS],
+            braises: [Braise::VIDE; IndexFoyer::NOMBRE],
+            etats: [false; IndexFoyer::NOMBRE],
             cle_publique_noeud: None,
-            cles_pub_sig: [None; MAX_FOYERS],
-            cles_pub_chif: [None; MAX_FOYERS],
+            cles_pub_sig: [None; IndexFoyer::NOMBRE],
+            cles_pub_chif: [None; IndexFoyer::NOMBRE],
         }
     }
 }
@@ -103,12 +103,12 @@ impl InterfaceFeuNoyau for InterfaceTest {
         true
     }
 
-    fn recevoir_braise_foyer(&mut self, index_foyer: usize, braise: Braise) {
-        self.braises[index_foyer] = braise;
+    fn recevoir_braise_foyer(&mut self, index_foyer: IndexFoyer, braise: Braise) {
+        self.braises[index_foyer.valeur()] = braise;
     }
 
-    fn recevoir_etat_foyer(&mut self, index_foyer: usize, etat: bool) {
-        self.etats[index_foyer] = etat;
+    fn recevoir_etat_foyer(&mut self, index_foyer: IndexFoyer, etat: bool) {
+        self.etats[index_foyer.valeur()] = etat;
     }
 
     fn recevoir_cle_publique_noeud(&mut self, cle_publique_sig_noeud: [u8; 2592]) {
@@ -117,12 +117,12 @@ impl InterfaceFeuNoyau for InterfaceTest {
 
     fn recevoir_cles_publiques_foyer(
         &mut self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         cle_publique_sig: [u8; 2592],
         cle_publique_chif: [u8; 1568],
     ) {
-        self.cles_pub_sig[index_foyer] = Some(cle_publique_sig);
-        self.cles_pub_chif[index_foyer] = Some(cle_publique_chif);
+        self.cles_pub_sig[index_foyer.valeur()] = Some(cle_publique_sig);
+        self.cles_pub_chif[index_foyer.valeur()] = Some(cle_publique_chif);
     }
 }
 
@@ -182,41 +182,50 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
 
     assert!(interface.cle_publique_noeud.is_some());
 
-    for i in 0..MAX_FOYERS {
-        assert!(!interface.etats[i]);
-        assert!(interface.braises[i] != Braise::VIDE);
+    let index_classeur_0 = IndexClasseur::ZERO;
+    let index_classeur_1 = IndexClasseur::try_from(1)?;
+    for index_foyer in IndexFoyer::tous() {
+        assert!(!interface.etats[index_foyer.valeur()]);
+        assert!(interface.braises[index_foyer.valeur()] != Braise::VIDE);
 
-        noyau.ouverture_foyer(&mut interface, i)?;
+        noyau.ouverture_foyer(&mut interface, index_foyer)?;
 
         // Les clés publiques du foyer ne remontent qu'ici : elles n'existent
         // qu'une fois le foyer désarchivé, un foyer fermé n'étant qu'une archive
         // chiffrée. Les asserter avant l'ouverture échouerait.
-        assert!(interface.etats[i]);
-        assert!(interface.cles_pub_sig[i].is_some());
-        assert!(interface.cles_pub_chif[i].is_some());
+        assert!(interface.etats[index_foyer.valeur()]);
+        assert!(interface.cles_pub_sig[index_foyer.valeur()].is_some());
+        assert!(interface.cles_pub_chif[index_foyer.valeur()].is_some());
 
         // Chaque dépôt exige une source neuve : `remplir` lit jusqu'à EOF, un
         // handle réutilisé ne rendrait plus qu'un blob vide.
         let source_donnees = File::open(&chemin_donnees).unwrap();
-        (hash_blob, _) = noyau.depot_blob(i, 0, &source_donnees)?;
+        (hash_blob, _) = noyau.depot_blob(index_foyer, index_classeur_0, &source_donnees)?;
 
         // Même contenu, autre classeur demandé : le blob ne doit pas être
         // dupliqué, et le dépôt rendre le classeur 0 où il réside déjà. Le hash
         // identique le confirme — il ne dépend que du clair, jamais de la clé du
         // classeur sous laquelle il vient d'être chiffré.
         let source_donnees = File::open(&chemin_donnees).unwrap();
-        let (hash_blob2, index) = noyau.depot_blob(i, 1, &source_donnees)?;
+        let (hash_blob2, index_classeur_recu) =
+            noyau.depot_blob(index_foyer, index_classeur_1, &source_donnees)?;
 
-        assert_eq!(noyau.liste_blobs(i, 0)?.len(), 1);
-        assert_eq!(noyau.liste_blobs(i, 0)?.first().unwrap(), &hash_blob);
-        assert_eq!(noyau.liste_blobs(i, 1)?.len(), 0);
+        assert_eq!(noyau.liste_blobs(index_foyer, index_classeur_0)?.len(), 1);
+        assert_eq!(
+            noyau
+                .liste_blobs(index_foyer, index_classeur_0)?
+                .first()
+                .unwrap(),
+            &hash_blob
+        );
+        assert_eq!(noyau.liste_blobs(index_foyer, index_classeur_1)?.len(), 0);
 
-        assert_eq!(index, 0);
+        assert_eq!(index_classeur_recu, index_classeur_0);
         assert_eq!(hash_blob, hash_blob2);
 
-        noyau.fermeture_foyer(&mut interface, i)?;
+        noyau.fermeture_foyer(&mut interface, index_foyer)?;
 
-        assert!(!interface.etats[i]);
+        assert!(!interface.etats[index_foyer.valeur()]);
     }
 
     // Extinction explicite : le second noyau doit tout retrouver du disque et du
@@ -237,14 +246,14 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
     assert_eq!(interface.cle_publique_noeud, interface2.cle_publique_noeud);
     assert_eq!(interface.braises, interface2.braises);
 
-    for i in 0..MAX_FOYERS {
+    for index_foyer in IndexFoyer::tous() {
         // Recréé à chaque tour pour tronquer : `vider` écrit à la position
         // courante, un handle partagé concaténerait les lectures successives.
         let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
 
-        noyau2.ouverture_foyer(&mut interface2, i)?;
+        noyau2.ouverture_foyer(&mut interface2, index_foyer)?;
 
-        noyau2.lecture_blob(i, &hash_blob, &fichier_recuperation)?;
+        noyau2.lecture_blob(index_foyer, &hash_blob, &fichier_recuperation)?;
 
         let contenu_recupere = read_to_string(tmp.path().join("temp")).unwrap();
 
@@ -252,21 +261,21 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
 
         // Classeur 0 : celui que le premier dépôt a rendu, et où le second a
         // laissé le blob.
-        noyau2.suppression_blob(i, &hash_blob)?;
+        noyau2.suppression_blob(index_foyer, &hash_blob)?;
 
-        assert!(!noyau2.existence_blob(i, &hash_blob)?);
+        assert!(!noyau2.existence_blob(index_foyer, &hash_blob)?);
         assert!(matches!(
-            noyau2.lecture_blob(i, &hash_blob, &fichier_recuperation),
+            noyau2.lecture_blob(index_foyer, &hash_blob, &fichier_recuperation),
             Err(ErreurFeuNoyau::BlobIntrouvable(_))
         ));
     }
 
     verifie_permissions(&chemin_feu);
 
-    for i in 0..MAX_FOYERS {
-        noyau2.fermeture_foyer(&mut interface2, i)?;
+    for index_foyer in IndexFoyer::tous() {
+        noyau2.fermeture_foyer(&mut interface2, index_foyer)?;
 
-        assert!(!interface2.etats[i]);
+        assert!(!interface2.etats[index_foyer.valeur()]);
     }
 
     verifie_permissions(&chemin_feu);
@@ -292,8 +301,8 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
 
     // `changement_mdp` exige les trois foyers ouverts — leurs clés doivent être
     // en mémoire pour être rechiffrées, sinon `AuMoinsUnFoyerFerme`.
-    for i in 0..MAX_FOYERS {
-        noyau.ouverture_foyer(&mut interface, i)?;
+    for index_foyer in IndexFoyer::tous() {
+        noyau.ouverture_foyer(&mut interface, index_foyer)?;
     }
 
     // Le nouveau mot de passe est porté par une interface distincte : le
@@ -305,8 +314,8 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
 
     // L'interface passée ici est indifférente : la fermeture rechiffre avec les
     // clés déjà en mémoire et ne redemande jamais le mot de passe.
-    for i in 0..MAX_FOYERS {
-        noyau.fermeture_foyer(&mut interface, i)?;
+    for index_foyer in IndexFoyer::tous() {
+        noyau.fermeture_foyer(&mut interface, index_foyer)?;
     }
 
     // Extinction explicite : ce qui suit doit tout relire du disque, sans
@@ -333,21 +342,26 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
     // clair s'il est ouvert, archive `.feu` s'il est fermé, jamais les deux — et
     // jamais de `.tar`, qui ne survit à aucune opération, réussie ou non. Il est
     // rejoué après chaque transition qui suit.
-    for i in 0..MAX_FOYERS {
-        assert!(!chemin_feu.join(interface2.braises[i].to_string()).is_dir());
+    for index_foyer in IndexFoyer::tous() {
+        assert!(
+            !chemin_feu
+                .join(interface2.braises[index_foyer.valeur()].to_string())
+                .is_dir()
+        );
         assert!(
             chemin_feu
-                .join(format!("{}.feu", interface2.braises[i]))
+                .join(format!("{}.feu", interface2.braises[index_foyer.valeur()]))
                 .exists()
         );
         assert!(
             !chemin_feu
-                .join(format!("{}.tar", interface2.braises[i]))
+                .join(format!("{}.tar", interface2.braises[index_foyer.valeur()]))
                 .exists()
         );
     }
 
-    noyau.ouverture_foyer(&mut interface2, 0)?;
+    let index_foyer_0 = IndexFoyer::ZERO;
+    noyau.ouverture_foyer(&mut interface2, index_foyer_0)?;
 
     assert!(chemin_feu.join(interface2.braises[0].to_string()).is_dir());
     assert!(
@@ -361,7 +375,7 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
             .exists()
     );
 
-    noyau.fermeture_foyer(&mut interface2, 0)?;
+    noyau.fermeture_foyer(&mut interface2, index_foyer_0)?;
 
     assert!(!chemin_feu.join(interface2.braises[0].to_string()).is_dir());
     assert!(
@@ -379,7 +393,7 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
     // refermé juste avant. L'échec ne peut donc venir que de l'ancien mot de
     // passe présenté à l'ouverture.
     assert!(matches!(
-        noyau.ouverture_foyer(&mut interface, 0),
+        noyau.ouverture_foyer(&mut interface, index_foyer_0),
         Err(ErreurFeuNoyau::AesGcm(_))
     ));
 
@@ -397,8 +411,8 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
 
     // Le refus n'a rien laissé derrière lui : un `.tar` résiduel ferait échouer
     // cette réouverture sur son existence, avant même la saisie du mot de passe.
-    noyau.ouverture_foyer(&mut interface2, 0)?;
-    noyau.fermeture_foyer(&mut interface2, 0)?;
+    noyau.ouverture_foyer(&mut interface2, index_foyer_0)?;
+    noyau.fermeture_foyer(&mut interface2, index_foyer_0)?;
 
     Ok(())
 }
@@ -412,9 +426,9 @@ fn cycle_mot_de_passe() -> ResultFeuNoyau<()> {
 /// suivant.
 ///
 /// [`ErreurFeuNoyau::IndexFoyerInvalide`] et
-/// [`ErreurFeuNoyau::IndexClasseurInvalide`] en sont absentes délibérément :
-/// c'est une comparaison de borne répétée à l'entrée d'une dizaine de méthodes,
-/// sans logique qu'un test puisse prendre en défaut.
+/// [`ErreurFeuNoyau::IndexClasseurInvalide`] en sont absentes parce qu'aucune
+/// méthode du noyau ne les rend : elles ne sortent que des `TryFrom` de
+/// [`IndexFoyer`] et [`IndexClasseur`], qui se testent chez eux.
 #[test]
 fn erreurs_usage() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -427,15 +441,16 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
 
     // Tous les foyers sont fermés à l'allumage : le refus de fermer est le seul
     // qui s'éprouve sans rien préparer.
+    let index_foyer_0 = IndexFoyer::ZERO;
     assert!(matches!(
-        noyau.fermeture_foyer(&mut interface, 0),
+        noyau.fermeture_foyer(&mut interface, index_foyer_0),
         Err(ErreurFeuNoyau::FoyerFerme(i)) if i == 0
     ));
 
-    noyau.ouverture_foyer(&mut interface, 0)?;
+    noyau.ouverture_foyer(&mut interface, index_foyer_0)?;
 
     assert!(matches!(
-        noyau.ouverture_foyer(&mut interface, 0),
+        noyau.ouverture_foyer(&mut interface, index_foyer_0),
         Err(ErreurFeuNoyau::FoyerDejaOuvert(i)) if i == 0
     ));
 
@@ -454,11 +469,11 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
     let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
 
     assert!(matches!(
-        noyau.lecture_blob(0, &hash, &fichier_recuperation),
+        noyau.lecture_blob(index_foyer_0, &hash, &fichier_recuperation),
         Err(ErreurFeuNoyau::BlobIntrouvable(i)) if i == 0
     ));
 
-    noyau.fermeture_foyer(&mut interface, 0)?;
+    noyau.fermeture_foyer(&mut interface, index_foyer_0)?;
 
     let chemin_donnees = tmp.path().join("fichier.txt");
     let contenu = "contenu de test";
@@ -469,7 +484,7 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
     // opérations qui en dépendent.
     let source_donnees = File::open(&chemin_donnees).unwrap();
     assert!(matches!(
-        noyau.depot_blob(0, 0, &source_donnees),
+        noyau.depot_blob(index_foyer_0, IndexClasseur::ZERO, &source_donnees),
         Err(ErreurFeuNoyau::FoyerFerme(i)) if i == 0
     ));
 
@@ -525,7 +540,9 @@ fn drop_foyer_ouvert() {
 
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface).unwrap();
 
-    noyau.ouverture_foyer(&mut interface, 0).unwrap();
+    noyau
+        .ouverture_foyer(&mut interface, IndexFoyer::ZERO)
+        .unwrap();
 }
 
 /// Un foyer laissé ouvert par une terminaison anormale se referme par
@@ -551,25 +568,26 @@ fn fermeture_secours() -> ResultFeuNoyau<()> {
 
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
 
-    noyau.ouverture_foyer(&mut interface, 0)?;
+    let index_foyer_0 = IndexFoyer::ZERO;
+    noyau.ouverture_foyer(&mut interface, index_foyer_0)?;
     let source_donnees = File::open(&chemin_donnees).unwrap();
-    let (hash_blob, _) = noyau.depot_blob(0, 0, &source_donnees)?;
+    let (hash_blob, _) = noyau.depot_blob(index_foyer_0, IndexClasseur::ZERO, &source_donnees)?;
 
     forget(noyau);
 
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
 
     assert!(matches!(
-        noyau.ouverture_foyer(&mut interface, 0),
+        noyau.ouverture_foyer(&mut interface, index_foyer_0),
         Err(ErreurFeuNoyau::IoError(_))
     ));
 
-    noyau.secours_fermeture_foyer(&mut interface, 0)?;
-    noyau.ouverture_foyer(&mut interface, 0)?;
+    noyau.secours_fermeture_foyer(&mut interface, index_foyer_0)?;
+    noyau.ouverture_foyer(&mut interface, index_foyer_0)?;
 
     let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
 
-    noyau.lecture_blob(0, &hash_blob, &fichier_recuperation)?;
+    noyau.lecture_blob(index_foyer_0, &hash_blob, &fichier_recuperation)?;
 
     let contenu_recupere = read_to_string(tmp.path().join("temp")).unwrap();
 
@@ -591,7 +609,7 @@ fn fermeture_secours() -> ResultFeuNoyau<()> {
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
 
     assert!(matches!(
-        noyau.secours_fermeture_foyer(&mut interface, 0),
+        noyau.secours_fermeture_foyer(&mut interface, index_foyer_0),
         Err(ErreurFeuNoyau::FermetureSecoursFoyerImpossible)
     ));
 
@@ -642,12 +660,13 @@ fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
 
     // Une donnée confiée au nœud reconstruit — c'est elle qui devra survivre au
     // secours plus bas.
-    noyau.ouverture_foyer(&mut interface, 0)?;
+    let index_foyer_0 = IndexFoyer::ZERO;
+    noyau.ouverture_foyer(&mut interface, index_foyer_0)?;
 
     let source_donnees = File::open(&chemin_donnees).unwrap();
-    let (hash_blob, _) = noyau.depot_blob(0, 0, &source_donnees)?;
+    let (hash_blob, _) = noyau.depot_blob(index_foyer_0, IndexClasseur::ZERO, &source_donnees)?;
 
-    noyau.fermeture_foyer(&mut interface, 0)?;
+    noyau.fermeture_foyer(&mut interface, index_foyer_0)?;
 
     // Nœud amputé de la clé privée de signature : plus rien ne s'allume.
     remove_file(chemin_feu.join(".cles").join("feu_sig.priv")).unwrap();
@@ -676,17 +695,17 @@ fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
         message.as_bytes(),
     )?);
 
-    noyau.ouverture_foyer(&mut interface, 0)?;
+    noyau.ouverture_foyer(&mut interface, index_foyer_0)?;
 
     let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
 
-    noyau.lecture_blob(0, &hash_blob, &fichier_recuperation)?;
+    noyau.lecture_blob(index_foyer_0, &hash_blob, &fichier_recuperation)?;
 
     let contenu_recupere = read_to_string(tmp.path().join("temp")).unwrap();
 
     assert_eq!(contenu, contenu_recupere);
 
-    noyau.fermeture_foyer(&mut interface, 0)?;
+    noyau.fermeture_foyer(&mut interface, index_foyer_0)?;
 
     Ok(())
 }

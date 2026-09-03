@@ -28,7 +28,7 @@ use hkdf::InvalidLength;
 use thiserror::Error;
 
 use crate::{
-    MAX_CLASSEURS, MAX_FOYERS, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
+    IndexClasseur, IndexFoyer, MAX_TAILLE_BLOB, MAX_TAILLE_CHIFFREMENT_ASYMETRIQUE,
     MAX_TAILLE_SIGNATURE,
 };
 
@@ -190,8 +190,8 @@ pub enum ErreurFeuNoyau {
     #[error("NOY > L'archive chiffrée est inexistante")]
     GardienArchiveChiffreeInexistante,
 
-    /// `noyau.feu` compte moins de `2 + MAX_FOYERS` lignes : version, prochain
-    /// index ou braise de foyer manquants.
+    /// `noyau.feu` compte moins de `2 + IndexFoyer::NOMBRE` lignes : version,
+    /// prochain index ou braise de foyer manquants.
     #[error("NOY > Il manque au moins un élément dans noyau.feu")]
     GardienConfigManqueAuMoinsUnElement,
 
@@ -210,14 +210,15 @@ pub enum ErreurFeuNoyau {
     #[error("NOY > Taille de fichier inattendue")]
     GardienTailleFichierInattendue(PathBuf),
 
-    /// Index de classeur hors bornes (`>= MAX_CLASSEURS`), à l'intérieur d'un
-    /// foyer par ailleurs valide.
-    #[error("NOY > Index classeur invalide : {0} (max {max})", max = MAX_CLASSEURS - 1)]
+    /// Index de classeur refusé par `IndexClasseur::try_from` : il atteint ou
+    /// dépasse [`IndexClasseur::NOMBRE`]. Ne sort que de là.
+    #[error("NOY > Index classeur invalide : {0} (max {max})", max = IndexClasseur::NOMBRE - 1)]
     IndexClasseurInvalide(usize),
 
-    /// Index de foyer hors bornes (`>= MAX_FOYERS`). Porte la valeur reçue :
-    /// c'est une donnée d'appel, jamais un secret.
-    #[error("NOY > Index foyer invalide : {0} (max {max})", max = MAX_FOYERS - 1)]
+    /// Index de foyer refusé par `IndexFoyer::try_from` : il atteint ou dépasse
+    /// [`IndexFoyer::NOMBRE`]. Porte la valeur reçue : c'est une donnée d'appel,
+    /// jamais un secret.
+    #[error("NOY > Index foyer invalide : {0} (max {max})", max = IndexFoyer::NOMBRE - 1)]
     IndexFoyerInvalide(usize),
 
     /// Seed passée à [`crate::FeuNoyau::new`] alors que l'arborescence existe :

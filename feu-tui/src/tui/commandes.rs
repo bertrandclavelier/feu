@@ -50,7 +50,7 @@
 //!   marquée.
 //! - **Nœud allumé, dans un foyer** : `f` ferme le foyer courant ; `0`-`9`
 //!   entrent dans le classeur correspondant (dans la limite de
-//!   `nombre_classeurs`) ; `Backspace` remonte à la racine ; `o` ouvre un
+//!   `IndexClasseur::NOMBRE`) ; `Backspace` remonte à la racine ; `o` ouvre un
 //!   foyer si la capacité libre le permet.
 //! - **Nœud allumé, dans un classeur** : `f` ferme le foyer parent ;
 //!   `Backspace` remonte au foyer ; `o` ouvre un foyer si la capacité libre
@@ -65,8 +65,8 @@
 //! Les index sont ceux du noyau, à partir de zéro : la touche *est* l'index,
 //! mappé en `KeyCode::Char((b'0' + index) as char)`. D'où la borne `0`-`9`, qui
 //! n'est pas une capacité métier — au-delà de la dixième position le mapping
-//! n'aurait plus de caractère. Le noyau (`MAX_FOYERS = 3`, `MAX_CLASSEURS = 5`)
-//! reste largement en deçà.
+//! n'aurait plus de caractère. Le noyau (`IndexFoyer::NOMBRE` = 3,
+//! `IndexClasseur::NOMBRE` = 5) reste largement en deçà.
 //!
 //! # Asymétrie ouverture / fermeture
 //!
@@ -107,7 +107,7 @@
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyModifiers};
-use feu_application::Carte;
+use feu_application::{Carte, IndexClasseur, IndexFoyer};
 
 use crate::tui::{Ecran, EtatTui};
 
@@ -276,8 +276,8 @@ pub(super) enum Commande {
     /// foyer vers un de ses classeurs, `None` remonte au foyer parent.
     ///
     /// Liée aux touches `0`-`9` dans un foyer, dans la limite de
-    /// `nombre_classeurs`, et à `Backspace` dans un classeur.
-    PilotageChangerPositionClasseur(Option<usize>),
+    /// [`IndexClasseur::NOMBRE`], et à `Backspace` dans un classeur.
+    PilotageChangerPositionClasseur(Option<IndexClasseur>),
 
     /// Affecte directement la position courante, côté foyer.
     ///
@@ -286,7 +286,7 @@ pub(super) enum Commande {
     ///
     /// Liée à `0`-`9` à la racine, **uniquement pour les foyers effectivement
     /// ouverts**, et à `Backspace` dans un foyer.
-    PilotageChangerPositionFoyer(Option<usize>),
+    PilotageChangerPositionFoyer(Option<IndexFoyer>),
 
     /// Demande l'extinction du nœud — émet [`crate::connecteurs::MessageTuiCoeur::ExtinctionNoeud`].
     ///
@@ -318,7 +318,7 @@ pub(super) enum Commande {
     ///
     /// Le dispatch remet ensuite la position à la racine, et comme c'est l'unique
     /// chemin de fermeture, l'invariant tient jusqu'à l'extinction.
-    PilotageFermerFoyer(usize),
+    PilotageFermerFoyer(IndexFoyer),
 
     /// Ouvre un comptoir de dépôt à destination du foyer et du classeur portés
     /// — émet
@@ -332,12 +332,12 @@ pub(super) enum Commande {
     /// marque : **c'est lui le comptoir, jamais le dossier marqué**, que le cœur
     /// crée puis supprime à la fermeture. Son nom porte la destination, ce qui le
     /// rend unique par couple foyer-classeur.
-    PilotageOuvrirComptoirDepot(usize, usize),
+    PilotageOuvrirComptoirDepot(IndexFoyer, IndexClasseur),
 
     /// Prépare l'ouverture d'un foyer — bascule l'invite en mode saisie pour collecter le numéro.
     ///
     /// Active uniquement lorsque le nœud est allumé **et** qu'au moins une place
-    /// reste libre (`nombre_foyers_ouverts < nombre_foyers`). La saisie du numéro
+    /// reste libre (`nombre_foyers_ouverts < IndexFoyer::NOMBRE`). La saisie du numéro
     /// et l'envoi de [`crate::connecteurs::MessageTuiCoeur::OuvertureFoyer`] sont
     /// gérés par `saisie_mode_insertion` une fois le buffer validé.
     PilotageOuvrirFoyer,
@@ -474,7 +474,7 @@ impl CommandesActives {
                     Commande::PilotageEteindreNoeud,
                 );
             }
-            if session.nombre_foyers_ouverts() < session.nombre_foyers {
+            if session.nombre_foyers_ouverts() < IndexFoyer::NOMBRE {
                 commandes_actives.insert(
                     (KeyCode::Char('o'), KeyModifiers::NONE),
                     Commande::PilotageOuvrirFoyer,
@@ -495,11 +495,14 @@ impl CommandesActives {
                     etat_tui.etat_pilotage.position_courante.classeur,
                 ) {
                     (None, _) => {
-                        for (i, etat) in session.etat_foyers().iter().enumerate() {
-                            if *etat && i < 10 {
+                        for index_foyer in IndexFoyer::tous() {
+                            if session.etat_foyer(index_foyer) && index_foyer.valeur() < 10 {
                                 commandes_actives.insert(
-                                    (KeyCode::Char((b'0' + i as u8) as char), KeyModifiers::NONE),
-                                    Commande::PilotageChangerPositionFoyer(Some(i)),
+                                    (
+                                        KeyCode::Char((b'0' + index_foyer.valeur() as u8) as char),
+                                        KeyModifiers::NONE,
+                                    ),
+                                    Commande::PilotageChangerPositionFoyer(Some(index_foyer)),
                                 );
                             }
                         }
@@ -514,11 +517,16 @@ impl CommandesActives {
                             Commande::PilotageChangerPositionFoyer(None),
                         );
 
-                        for i in 0..session.nombre_classeurs {
-                            if i < 10 {
+                        for index_classeur in IndexClasseur::tous() {
+                            if index_classeur.valeur() < 10 {
                                 commandes_actives.insert(
-                                    (KeyCode::Char((b'0' + i as u8) as char), KeyModifiers::NONE),
-                                    Commande::PilotageChangerPositionClasseur(Some(i)),
+                                    (
+                                        KeyCode::Char(
+                                            (b'0' + index_classeur.valeur() as u8) as char,
+                                        ),
+                                        KeyModifiers::NONE,
+                                    ),
+                                    Commande::PilotageChangerPositionClasseur(Some(index_classeur)),
                                 );
                             }
                         }

@@ -22,6 +22,7 @@
 //! appartiennent à [`EtatTui`] ; chaque écran apporte ainsi les siennes sans
 //! que la boucle principale ait à connaître ses variantes.
 
+use feu_application::{IndexClasseur, IndexFoyer};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Margin},
@@ -138,14 +139,14 @@ pub(super) struct PositionCourante {
     /// Posé depuis la racine — la table n'expose la touche que pour les foyers
     /// effectivement ouverts. Effacé par `Backspace` ou par la fermeture du
     /// foyer.
-    pub(super) foyer: Option<usize>,
+    pub(super) foyer: Option<IndexFoyer>,
 
     /// Index du classeur, `None` si l'on n'y est pas descendu.
     ///
-    /// La table expose `0`-`9` dans la limite de `nombre_classeurs` : un
+    /// La table expose `0`-`9` dans la limite de [`IndexClasseur::NOMBRE`] : un
     /// classeur ne s'ouvre pas, tous les indices valides sont accessibles.
     /// Effacé par `Backspace` ou par la fermeture du foyer.
-    pub(super) classeur: Option<usize>,
+    pub(super) classeur: Option<IndexClasseur>,
 }
 
 /// Tout ce que l'écran de pilotage retient d'une frame à l'autre.
@@ -333,7 +334,6 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
         let vecteur_span: Vec<Span> = session
             .etat_foyers()
             .iter()
-            .take(session.nombre_foyers)
             .map(|allume| {
                 if *allume {
                     Span::styled(
@@ -369,11 +369,11 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
 
     // [4] invite
     let mut spans_invite = vec![Span::raw("feu")];
-    if let Some(index) = etat_tui.etat_pilotage.position_courante.foyer {
-        spans_invite.push(Span::raw(format!("/foy.{index}")));
+    if let Some(index_foyer) = etat_tui.etat_pilotage.position_courante.foyer {
+        spans_invite.push(Span::raw(format!("/foy.{}", index_foyer.valeur())));
     }
-    if let Some(index) = etat_tui.etat_pilotage.position_courante.classeur {
-        spans_invite.push(Span::raw(format!("/cla.{index}")));
+    if let Some(index_classeur) = etat_tui.etat_pilotage.position_courante.classeur {
+        spans_invite.push(Span::raw(format!("/cla.{}", index_classeur.valeur())));
     }
     spans_invite.extend([
         Span::styled(
@@ -413,7 +413,9 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
                 ligne.push_span(Span::raw(format!(" {SEPARATEUR} ")));
             }
             ligne.push_span(Span::raw(format!(
-                "{index}.{{f{index_foyer}.c{index_classeur}}}",
+                "{index}.{{f{}.c{}}}",
+                index_foyer.valeur(),
+                index_classeur.valeur()
             )));
         }
         if session.comptoirs_depot_ouverts().len() > 5 {

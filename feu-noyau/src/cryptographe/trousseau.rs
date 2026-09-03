@@ -90,7 +90,7 @@ use sha3::{Digest, Sha3_256};
 use super::trousseaux_publics::{
     TrousseauPublicComplet, TrousseauPublicFoyer, TrousseauPublicNoeud,
 };
-use crate::{Braise, ErreurFeuNoyau, MAX_CLASSEURS, MAX_FOYERS, ResultFeuNoyau};
+use crate::{Braise, ErreurFeuNoyau, IndexClasseur, IndexFoyer, ResultFeuNoyau};
 
 // ── Labels de dérivation HKDF ────────────────────────────────────────────────
 //
@@ -180,7 +180,7 @@ struct TrousseauFoyer {
     paire_chiffrement: PaireClesChiffrement,
     /// Une clé AES-256 par classeur, `None` tant que le classeur n'a pas servi :
     /// la dérivation n'a lieu qu'au premier blob déposé.
-    cles_chiffrement_classeurs: [Option<SecretBox<[u8; 32]>>; MAX_CLASSEURS],
+    cles_chiffrement_classeurs: [Option<SecretBox<[u8; 32]>>; IndexClasseur::NOMBRE],
 }
 
 impl TrousseauFoyer {
@@ -203,12 +203,17 @@ impl TrousseauFoyer {
         }
     }
 
-    /// Insère la clé de chiffrement d'un classeur à l'`index` donné.
+    /// Insère la clé de chiffrement du classeur `index_classeur`.
     ///
-    /// Appelée après [`new`](Self::new) pour peupler les slots de classeurs
-    /// un par un. L'accès est direct — l'appelant garantit que `index < MAX_CLASSEURS`.
-    fn ajoute_cle_classeur(&mut self, cle_classeur: SecretBox<[u8; 32]>, index: usize) {
-        self.cles_chiffrement_classeurs[index] = Some(cle_classeur);
+    /// Appelée après [`new`](Self::new) pour peupler les slots de classeurs un
+    /// par un. L'écriture est directe et sans garde : [`IndexClasseur`] borne
+    /// l'index par construction.
+    fn ajoute_cle_classeur(
+        &mut self,
+        cle_classeur: SecretBox<[u8; 32]>,
+        index_classeur: IndexClasseur,
+    ) {
+        self.cles_chiffrement_classeurs[index_classeur.valeur()] = Some(cle_classeur);
     }
 
     /// Chiffre toutes les clés du foyer et produit le [`TrousseauPublicFoyer`] persistable.
@@ -220,7 +225,9 @@ impl TrousseauFoyer {
     /// # Errors
     ///
     /// Retourne une erreur si le chiffrement d'une clé échoue — clé éphémère
-    /// absente du trousseau ou échec AES-256-GCM.
+    /// absente du trousseau ou échec AES-256-GCM, et
+    /// [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente`] si l'un des
+    /// classeurs n'a pas de clé.
     fn genere_trousseau_public_foyer(
         &self,
         trousseau: &Trousseau,
@@ -240,15 +247,15 @@ impl TrousseauFoyer {
             self.paire_chiffrement.publique.to_bytes().into(),
         );
 
-        for i in 0..MAX_CLASSEURS {
-            if let Some(cle) = &self.cles_chiffrement_classeurs[i] {
+        for index_classeur in IndexClasseur::tous() {
+            if let Some(cle) = &self.cles_chiffrement_classeurs[index_classeur.valeur()] {
                 trousseau_public_foyer.ajoute_cle_chiffrement_classeur(
                     trousseau.chiffre_cle(cle.expose_secret())?,
-                    i,
-                )?;
+                    index_classeur,
+                );
             } else {
                 return Err(ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente(
-                    i,
+                    index_classeur.valeur(),
                 ));
             }
         }
@@ -292,7 +299,7 @@ pub(super) struct Trousseau {
     paire_signature_noeud: Option<PaireClesSignature>,
     /// Un trousseau par foyer ouvert, `None` pour les autres : c'est ce champ
     /// qui porte l'état d'ouverture côté secrets.
-    trousseaux_foyers: [Option<TrousseauFoyer>; MAX_FOYERS],
+    trousseaux_foyers: [Option<TrousseauFoyer>; IndexFoyer::NOMBRE],
 }
 
 impl Trousseau {
@@ -367,16 +374,20 @@ impl Trousseau {
     pub(super) fn ajouter_trousseau_foyer(
         &mut self,
         seed_bytes: &SecretBox<[u8; 64]>,
-        position: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuNoyau<()> {
-        // L'index de dérivation est position + 1
-        let index_foyer = (position + 1) as u32;
+        // Les labels de dérivation numérotent les foyers à partir de 1, quand
+        // IndexFoyer part de 0.
+        let index_derivation_foyer = (index_foyer.valeur() + 1) as u32;
 
         // Paire de clés signature du foyer
         let cle_sig_priv = SigningKey::<MlDsa87>::from_seed(
             Self::derive_depuis_seed::<32>(
                 seed_bytes,
-                &format!("{}/{}", LABEL_DERIVATION_SIGNATURE_FOYER, index_foyer),
+                &format!(
+                    "{}/{}",
+                    LABEL_DERIVATION_SIGNATURE_FOYER, index_derivation_foyer
+                ),
             )?
             .expose_secret()
             .into(),
@@ -394,7 +405,7 @@ impl Trousseau {
             seed_bytes,
             &format!(
                 "{}/{}",
-                LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_FOYER, index_foyer
+                LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_FOYER, index_derivation_foyer
             ),
         )?;
 
@@ -402,7 +413,10 @@ impl Trousseau {
         let cle_chiff_priv = {
             let seed_brute = Self::derive_depuis_seed::<64>(
                 seed_bytes,
-                &format!("{}/{}", LABEL_DERIVATION_CHIFFREMENT_FOYER, index_foyer),
+                &format!(
+                    "{}/{}",
+                    LABEL_DERIVATION_CHIFFREMENT_FOYER, index_derivation_foyer
+                ),
             )?;
             DecapsulationKey1024::from_seed(Seed::from(*seed_brute.expose_secret()))
         };
@@ -414,17 +428,19 @@ impl Trousseau {
             publique: cle_chiff_pub,
         };
 
-        // Création des clés de chiffrement des 5 premiers classeurs
-        let mut cles_chiffrement_classeurs: [Option<SecretBox<[u8; 32]>>; MAX_CLASSEURS] =
+        // Une clé de chiffrement par classeur, les labels les numérotant eux
+        // aussi à partir de 1.
+        let mut cles_chiffrement_classeurs: [Option<SecretBox<[u8; 32]>>; IndexClasseur::NOMBRE] =
             std::array::from_fn(|_| None);
         for (i, e) in cles_chiffrement_classeurs.iter_mut().enumerate() {
+            let index_derivation_classeur = i + 1;
             *e = Some(Self::derive_depuis_seed::<32>(
                 seed_bytes,
                 &format!(
                     "{}/{}/{}",
                     LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_CLASSEUR,
-                    index_foyer,
-                    i + 1
+                    index_derivation_foyer,
+                    index_derivation_classeur,
                 ),
             )?);
         }
@@ -436,7 +452,10 @@ impl Trousseau {
         // en v0.0.4 ne change aucune braise).
         let braise_brute = Self::derive_depuis_seed::<32>(
             seed_bytes,
-            &format!("{}/{}", LABEL_DERIVATION_BRAISE_FOYER, index_foyer),
+            &format!(
+                "{}/{}",
+                LABEL_DERIVATION_BRAISE_FOYER, index_derivation_foyer
+            ),
         )?;
 
         // Checksum de 2 octets accolé à la braise : repère une faute de frappe à la
@@ -464,11 +483,7 @@ impl Trousseau {
             cles_chiffrement_classeurs,
         };
 
-        // Ajout du TrousseauFoyer dans le trousseau
-        if position >= MAX_FOYERS {
-            return Err(ErreurFeuNoyau::IndexFoyerInvalide(position));
-        }
-        self.trousseaux_foyers[position] = Some(trousseau_foyer);
+        self.trousseaux_foyers[index_foyer.valeur()] = Some(trousseau_foyer);
 
         Ok(())
     }
@@ -580,7 +595,8 @@ impl Trousseau {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si la clé de signature du nœud est absente du trousseau.
+    /// [`ErreurFeuNoyau::CryptographePaireSignatureNoeudAbsente`] si la clé de
+    /// signature du nœud n'est pas chargée.
     pub(super) fn signe_avec_cle_noeud(
         &self,
         octets_a_signer: &[u8],
@@ -595,10 +611,11 @@ impl Trousseau {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si le foyer est absent du trousseau.
+    /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est
+    /// pas ouvert.
     pub(super) fn signe_avec_cle_foyer(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         octets_a_signer: &[u8],
     ) -> ResultFeuNoyau<[u8; 4627]> {
         Ok(Self::signe_octets(
@@ -733,8 +750,8 @@ impl Trousseau {
     /// ou si le chiffrement AES-256-GCM échoue.
     pub(super) fn chiffre_blob(
         &self,
-        index_foyer: usize,
-        index_classeur: usize,
+        index_foyer: IndexFoyer,
+        index_classeur: IndexClasseur,
         blob: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
         Self::chiffrement_generique_avec_cle(
@@ -756,8 +773,8 @@ impl Trousseau {
     /// ou si le déchiffrement AES-256-GCM échoue.
     pub(super) fn dechiffre_blob(
         &self,
-        index_foyer: usize,
-        index_classeur: usize,
+        index_foyer: IndexFoyer,
+        index_classeur: IndexClasseur,
         blob: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
         Self::dechiffrement_generique_avec_cle(
@@ -767,27 +784,27 @@ impl Trousseau {
         )
     }
 
-    /// Chiffre un flux de données du foyer à la position `index`.
+    /// Chiffre un flux de données du foyer à la position `index_foyer`.
     ///
     /// Récupère la clé symétrique du foyer dans le trousseau et délègue
     /// le chiffrement à [`chiffre_avec_cle`](Self::chiffre_avec_cle).
     ///
     /// # Prérequis
     ///
-    /// Le foyer à l'`index` donné doit être présent dans le trousseau —
-    /// c'est-à-dire que le foyer doit être ouvert.
+    /// Le foyer à la position `index_foyer` doit être présent dans le
+    /// trousseau — c'est-à-dire qu'il doit être ouvert.
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si aucun foyer n'est chargé à cet index,
-    /// ou si le chiffrement AES-GCM-stream échoue.
+    /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est
+    /// pas ouvert, ou une erreur si le chiffrement AES-GCM-stream échoue.
     pub(super) fn chiffre_avec_cle_foyer(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         source: &mut impl Read,
         destination: &mut impl Write,
     ) -> ResultFeuNoyau<()> {
-        if let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] {
+        if let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer.valeur()] {
             self.chiffre_avec_cle(
                 trousseau_foyer.donne_cle_chiffrement().expose_secret(),
                 source,
@@ -796,7 +813,7 @@ impl Trousseau {
             return Ok(());
         }
         Err(ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent(
-            index_foyer,
+            index_foyer.valeur(),
         ))
     }
 
@@ -912,10 +929,11 @@ impl Trousseau {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si le foyer à `index_foyer` est absent du trousseau.
+    /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est
+    /// pas ouvert.
     pub(super) fn recuperation_secret_partage(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         ciphertext: &Ciphertext1024,
     ) -> ResultFeuNoyau<SecretBox<[u8; 32]>> {
         let secret_partage = self
@@ -954,12 +972,12 @@ impl Trousseau {
 
                 let mut trousseau_public_complet =
                     TrousseauPublicComplet::new(trousseau_public_noeud);
-                for i in 0..MAX_FOYERS {
-                    if let Some(trousseau_foyer) = &self.trousseaux_foyers[i] {
+                for index_foyer in IndexFoyer::tous() {
+                    if let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer.valeur()] {
                         trousseau_public_complet.ajoute_trousseau_foyer_public(
                             trousseau_foyer.genere_trousseau_public_foyer(self)?,
-                            i,
-                        )?;
+                            index_foyer,
+                        );
                     }
                 }
 
@@ -1010,7 +1028,8 @@ impl Trousseau {
     ///
     /// Déchiffre la clé symétrique, la paire de signature ML-DSA-87, la paire de chiffrement ML-KEM-1024
     /// et les cinq clés de classeurs avec la clé éphémère, puis enregistre le [`TrousseauFoyer`]
-    /// résultant à l'`index` donné. La braise (identifiant du foyer) est lue depuis le [`TrousseauPublicFoyer`].
+    /// résultant à la position `index_foyer`. La braise (identifiant du foyer) est
+    /// lue depuis le [`TrousseauPublicFoyer`].
     ///
     /// # Prérequis
     ///
@@ -1025,7 +1044,7 @@ impl Trousseau {
     pub(super) fn trousseau_public_foyer_vers_trousseau_foyer(
         &mut self,
         trousseau_public_foyer: &TrousseauPublicFoyer,
-        index: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuNoyau<()> {
         let cle_chiffrement =
             self.dechiffre_cle(&trousseau_public_foyer.donne_cle_chiffrement())?;
@@ -1054,12 +1073,13 @@ impl Trousseau {
             paire_chiffrement,
         );
 
-        for j in 0..MAX_CLASSEURS {
-            let cle_classeur =
-                self.dechiffre_cle(trousseau_public_foyer.donne_cle_chiffrement_classeur(j)?)?;
-            trousseau_foyer.ajoute_cle_classeur(cle_classeur, j);
+        for index_classeur in IndexClasseur::tous() {
+            let cle_classeur = self.dechiffre_cle(
+                trousseau_public_foyer.donne_cle_chiffrement_classeur(index_classeur)?,
+            )?;
+            trousseau_foyer.ajoute_cle_classeur(cle_classeur, index_classeur);
         }
-        self.trousseaux_foyers[index] = Some(trousseau_foyer);
+        self.trousseaux_foyers[index_foyer.valeur()] = Some(trousseau_foyer);
 
         Ok(())
     }
@@ -1070,21 +1090,25 @@ impl Trousseau {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si le foyer ou le classeur est absent du trousseau.
+    /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est
+    /// pas ouvert, [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente`]
+    /// si sa clé de classeur manque.
     fn donne_cle_chiffrement_classeur(
         &self,
-        index_foyer: usize,
-        index_classeur: usize,
+        index_foyer: IndexFoyer,
+        index_classeur: IndexClasseur,
     ) -> ResultFeuNoyau<&SecretBox<[u8; 32]>> {
-        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
+        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer.valeur()] else {
             return Err(ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent(
-                index_foyer,
+                index_foyer.valeur(),
             ));
         };
 
-        let Some(cle_classeur) = &trousseau_foyer.cles_chiffrement_classeurs[index_classeur] else {
+        let Some(cle_classeur) =
+            &trousseau_foyer.cles_chiffrement_classeurs[index_classeur.valeur()]
+        else {
             return Err(ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente(
-                index_classeur,
+                index_classeur.valeur(),
             ));
         };
         Ok(cle_classeur)
@@ -1094,14 +1118,15 @@ impl Trousseau {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si le foyer est absent du trousseau.
+    /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est
+    /// pas ouvert.
     fn donne_cle_privee_chiffrement_foyer(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuNoyau<&DecapsulationKey1024> {
-        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
+        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer.valeur()] else {
             return Err(ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent(
-                index_foyer,
+                index_foyer.valeur(),
             ));
         };
 
@@ -1112,14 +1137,15 @@ impl Trousseau {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si le foyer est absent du trousseau.
+    /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est
+    /// pas ouvert.
     fn donne_cle_privee_signature_foyer(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuNoyau<&SigningKey<MlDsa87>> {
-        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer] else {
+        let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer.valeur()] else {
             return Err(ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent(
-                index_foyer,
+                index_foyer.valeur(),
             ));
         };
 
@@ -1130,7 +1156,8 @@ impl Trousseau {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si la paire de signature du nœud est absente du trousseau.
+    /// [`ErreurFeuNoyau::CryptographePaireSignatureNoeudAbsente`] si la paire du
+    /// nœud n'est pas chargée.
     fn donne_cle_privee_signature_noeud(&self) -> ResultFeuNoyau<&SigningKey<MlDsa87>> {
         let Some(paire_signature_noeud) = &self.paire_signature_noeud else {
             return Err(ErreurFeuNoyau::CryptographePaireSignatureNoeudAbsente);
@@ -1342,16 +1369,16 @@ mod tests {
         let mut trousseau1 = Trousseau::new();
         trousseau1.genere_sel(&seed)?;
         trousseau1.ajouter_paire_noeud(&seed)?;
-        for i in 0..MAX_FOYERS {
-            trousseau1.ajouter_trousseau_foyer(&seed, i)?;
+        for index_foyer in IndexFoyer::tous() {
+            trousseau1.ajouter_trousseau_foyer(&seed, index_foyer)?;
         }
 
         // Génération trousseau 2
         let mut trousseau2 = Trousseau::new();
         trousseau2.genere_sel(&seed)?;
         trousseau2.ajouter_paire_noeud(&seed)?;
-        for i in 0..MAX_FOYERS {
-            trousseau2.ajouter_trousseau_foyer(&seed, i)?;
+        for index_foyer in IndexFoyer::tous() {
+            trousseau2.ajouter_trousseau_foyer(&seed, index_foyer)?;
         }
 
         assert_eq!(
@@ -1364,9 +1391,13 @@ mod tests {
             trousseau2.donne_cle_privee_signature_noeud()?
         );
 
-        for i in 0..MAX_FOYERS {
-            let trousseau_foyer1 = trousseau1.trousseaux_foyers[i].as_ref().unwrap();
-            let trousseau_foyer2 = trousseau2.trousseaux_foyers[i].as_ref().unwrap();
+        for index_foyer in IndexFoyer::tous() {
+            let trousseau_foyer1 = trousseau1.trousseaux_foyers[index_foyer.valeur()]
+                .as_ref()
+                .unwrap();
+            let trousseau_foyer2 = trousseau2.trousseaux_foyers[index_foyer.valeur()]
+                .as_ref()
+                .unwrap();
 
             assert_eq!(trousseau_foyer1.braise, trousseau_foyer2.braise);
             assert_eq!(
@@ -1382,11 +1413,11 @@ mod tests {
                 trousseau_foyer2.donne_cle_chiffrement().expose_secret(),
             );
 
-            for j in 0..MAX_CLASSEURS {
-                let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[j]
+            for index_classeur in IndexClasseur::tous() {
+                let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[index_classeur.valeur()]
                     .as_ref()
                     .unwrap();
-                let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[j]
+                let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[index_classeur.valeur()]
                     .as_ref()
                     .unwrap();
 
@@ -1413,16 +1444,16 @@ mod tests {
         let mut trousseau1 = Trousseau::new();
         trousseau1.genere_sel(&seed1)?;
         trousseau1.ajouter_paire_noeud(&seed1)?;
-        for i in 0..MAX_FOYERS {
-            trousseau1.ajouter_trousseau_foyer(&seed1, i)?;
+        for index_foyer in IndexFoyer::tous() {
+            trousseau1.ajouter_trousseau_foyer(&seed1, index_foyer)?;
         }
 
         // Génération trousseau 2
         let mut trousseau2 = Trousseau::new();
         trousseau2.genere_sel(&seed2)?;
         trousseau2.ajouter_paire_noeud(&seed2)?;
-        for i in 0..MAX_FOYERS {
-            trousseau2.ajouter_trousseau_foyer(&seed2, i)?;
+        for index_foyer in IndexFoyer::tous() {
+            trousseau2.ajouter_trousseau_foyer(&seed2, index_foyer)?;
         }
 
         assert_ne!(
@@ -1435,9 +1466,13 @@ mod tests {
             trousseau2.donne_cle_privee_signature_noeud()?
         );
 
-        for i in 0..MAX_FOYERS {
-            let trousseau_foyer1 = trousseau1.trousseaux_foyers[i].as_ref().unwrap();
-            let trousseau_foyer2 = trousseau2.trousseaux_foyers[i].as_ref().unwrap();
+        for index_foyer in IndexFoyer::tous() {
+            let trousseau_foyer1 = trousseau1.trousseaux_foyers[index_foyer.valeur()]
+                .as_ref()
+                .unwrap();
+            let trousseau_foyer2 = trousseau2.trousseaux_foyers[index_foyer.valeur()]
+                .as_ref()
+                .unwrap();
 
             assert_ne!(trousseau_foyer1.braise, trousseau_foyer2.braise);
             assert_ne!(
@@ -1453,11 +1488,11 @@ mod tests {
                 trousseau_foyer2.donne_cle_chiffrement().expose_secret(),
             );
 
-            for j in 0..MAX_CLASSEURS {
-                let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[j]
+            for index_classeur in IndexClasseur::tous() {
+                let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[index_classeur.valeur()]
                     .as_ref()
                     .unwrap();
-                let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[j]
+                let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[index_classeur.valeur()]
                     .as_ref()
                     .unwrap();
 
@@ -1545,8 +1580,8 @@ mod tests {
         // Génération trousseau
         let mut trousseau = Trousseau::new();
         trousseau.ajouter_paire_noeud(&seed)?;
-        for i in 0..MAX_FOYERS {
-            trousseau.ajouter_trousseau_foyer(&seed, i)?;
+        for index_foyer in IndexFoyer::tous() {
+            trousseau.ajouter_trousseau_foyer(&seed, index_foyer)?;
         }
 
         let mut cles_publiques_signature_vues = HashSet::new();
@@ -1564,8 +1599,10 @@ mod tests {
         let mut cles_chiffrement_vues = HashSet::new();
         let mut cles_publiques_chiffrement_vues = HashSet::new();
 
-        for i in 0..MAX_FOYERS {
-            let trousseau_foyer = trousseau.trousseaux_foyers[i].as_ref().unwrap();
+        for index_foyer in IndexFoyer::tous() {
+            let trousseau_foyer = trousseau.trousseaux_foyers[index_foyer.valeur()]
+                .as_ref()
+                .unwrap();
 
             assert!(
                 cles_publiques_signature_vues
@@ -1582,8 +1619,8 @@ mod tests {
                     .insert(*trousseau_foyer.donne_cle_chiffrement().expose_secret())
             );
 
-            for j in 0..MAX_CLASSEURS {
-                let cle = trousseau_foyer.cles_chiffrement_classeurs[j]
+            for index_classeur in IndexClasseur::tous() {
+                let cle = trousseau_foyer.cles_chiffrement_classeurs[index_classeur.valeur()]
                     .as_ref()
                     .unwrap();
 
@@ -1591,13 +1628,13 @@ mod tests {
             }
         }
 
-        assert_eq!(cles_publiques_signature_vues.len(), MAX_FOYERS + 1);
+        assert_eq!(cles_publiques_signature_vues.len(), IndexFoyer::NOMBRE + 1);
 
-        assert_eq!(cles_publiques_chiffrement_vues.len(), MAX_FOYERS);
+        assert_eq!(cles_publiques_chiffrement_vues.len(), IndexFoyer::NOMBRE);
 
         assert_eq!(
             cles_chiffrement_vues.len(),
-            MAX_FOYERS * MAX_CLASSEURS + MAX_FOYERS
+            IndexFoyer::NOMBRE * IndexClasseur::NOMBRE + IndexFoyer::NOMBRE
         );
 
         Ok(())

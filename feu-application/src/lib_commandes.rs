@@ -59,7 +59,7 @@
 
 use std::io::Write;
 
-use feu_noyau::{Anomalie, DonneesBlob, FeuNoyau};
+use feu_noyau::{Anomalie, DonneesBlob, FeuNoyau, IndexClasseur};
 
 use super::*;
 use crate::{
@@ -193,12 +193,12 @@ impl FeuApplication {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si l'index est invalide, si le foyer est déjà ouvert,
-    /// si le mot de passe est incorrect, ou si une opération disque échoue.
+    /// Retourne une erreur si le foyer est déjà ouvert, si le mot de passe est
+    /// incorrect, ou si une opération disque échoue.
     pub fn commande_ouverture_foyer(
         &mut self,
         interface_feu_application: &impl InterfaceFeuApplication,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
@@ -223,12 +223,12 @@ impl FeuApplication {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si l'index est invalide, si le foyer n'est pas ouvert,
-    /// ou si une opération disque échoue.
+    /// Retourne une erreur si le foyer n'est pas ouvert, ou si une opération
+    /// disque échoue.
     pub fn commande_fermeture_foyer(
         &mut self,
         interface_feu_application: &impl InterfaceFeuApplication,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
@@ -254,13 +254,13 @@ impl FeuApplication {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si l'index est invalide, si le foyer est marqué
-    /// ouvert, si le diagnostic du foyer détecte une anomalie, si le mot de passe
-    /// est incorrect, ou si une opération disque échoue.
+    /// Retourne une erreur si le foyer est marqué ouvert, si le diagnostic du
+    /// foyer détecte une anomalie, si le mot de passe est incorrect, ou si une
+    /// opération disque échoue.
     pub fn commande_secours_fermeture_foyer(
         &mut self,
         interface_feu_application: &impl InterfaceFeuApplication,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
@@ -291,10 +291,10 @@ impl FeuApplication {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si l'index est invalide ou si le diagnostic échoue.
+    /// Retourne une erreur si le diagnostic échoue.
     pub fn commande_diagnostic_foyer(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
     ) -> ResultFeuApplication<Vec<Anomalie>> {
         let noyau = self
             .feu_noyau
@@ -340,11 +340,11 @@ impl FeuApplication {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si l'index est invalide, si le foyer n'est pas ouvert,
-    /// si la taille dépasse la limite, ou si le déchiffrement échoue.
+    /// Retourne une erreur si le foyer n'est pas ouvert, si la taille dépasse la
+    /// limite, ou si le déchiffrement échoue.
     pub fn commande_dechiffrement_asymetrique(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         octets_a_dechiffrer: &[u8],
     ) -> ResultFeuApplication<Vec<u8>> {
         let noyau = self
@@ -382,11 +382,11 @@ impl FeuApplication {
     ///
     /// # Errors
     ///
-    /// Retourne une erreur si l'index est invalide, si le foyer n'est pas ouvert,
-    /// ou si la clé privée est absente.
+    /// Retourne une erreur si le foyer n'est pas ouvert, ou si la clé privée est
+    /// absente.
     pub fn commande_signature_foyer(
         &self,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         octets_a_signer: &[u8],
     ) -> ResultFeuApplication<[u8; 4627]> {
         let noyau = self
@@ -452,10 +452,7 @@ impl FeuApplication {
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : comptoir de travail ouvert
     /// ([`ErreurFeuApplication::ScribeComptoirTravailOuvert`]), qui leur est
-    /// exclusif, index de foyer
-    /// ([`ErreurFeuApplication::ScribeIndexFoyerInvalide`]) ou de classeur
-    /// ([`ErreurFeuApplication::ScribeIndexClasseurInvalide`]) hors bornes,
-    /// dossier déjà existant
+    /// exclusif, dossier déjà existant
     /// ([`ErreurFeuApplication::ScribeDossierDejaExistant`]) ou impossible à
     /// créer. Un échec ne laisse aucun identifiant dans la session — sauf celui
     /// de l'écriture de `scribe.feu`, qui survient le comptoir déjà ouvert. Rien
@@ -464,8 +461,8 @@ impl FeuApplication {
         &mut self,
         interface_feu_application: &impl InterfaceFeuApplication,
         chemin: &Path,
-        index_foyer: usize,
-        index_classeur: usize,
+        index_foyer: IndexFoyer,
+        index_classeur: IndexClasseur,
     ) -> ResultFeuApplication<usize> {
         if !self.scribe.est_actif() {
             return Err(ErreurFeuApplication::NoeudEteint);
@@ -503,9 +500,8 @@ impl FeuApplication {
     /// propage les erreurs du Scribe : comptoir inconnu
     /// ([`ErreurFeuApplication::ScribeIndexComptoirInconnu`]), dossier du
     /// comptoir disparu ([`ErreurFeuApplication::ScribeDossierDepotIntrouvable`]),
-    /// foyer de destination fermé ([`ErreurFeuApplication::ScribeFoyerFerme`])
-    /// ou braise introuvable
-    /// ([`ErreurFeuApplication::ScribeIndexFoyerInvalide`]), racine d'accueil qui
+    /// foyer de destination fermé ([`ErreurFeuApplication::ScribeFoyerFerme`]),
+    /// racine d'accueil qui
     /// n'est plus la dernière ([`ErreurFeuApplication::ScribeRacinePerimee`]),
     /// répertoire d'accueil absent de l'arbre courant
     /// ([`ErreurFeuApplication::ScribeRemplacementSansEffet`]), E/S, dépôt de
@@ -859,8 +855,7 @@ impl FeuApplication {
     /// ([`ErreurFeuApplication::ScribeComptoirTravailOuvert`]), qui verrouille
     /// l'arborescence, texte trop long
     /// ([`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`]), nom invalide
-    /// ([`ErreurFeuApplication::ScribeNomFichierInvalide`]), `index_foyer` hors
-    /// bornes ([`ErreurFeuApplication::ScribeIndexFoyerInvalide`]), répertoire
+    /// ([`ErreurFeuApplication::ScribeNomFichierInvalide`]), répertoire
     /// d'accueil invalide ([`ErreurFeuApplication::ScribeEnuRAttendue`]), racine
     /// d'accueil qui n'est plus la dernière
     /// ([`ErreurFeuApplication::ScribeRacinePerimee`]), répertoire d'accueil
@@ -870,7 +865,7 @@ impl FeuApplication {
     pub fn commande_depot_enu_texte(
         &self,
         fiche_racine_depot: &Fiche,
-        index_foyer: usize,
+        index_foyer: IndexFoyer,
         nom: &str,
         contenu: &str,
     ) -> ResultFeuApplication<()> {

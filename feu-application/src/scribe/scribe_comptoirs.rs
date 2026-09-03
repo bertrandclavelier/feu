@@ -26,7 +26,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use feu_noyau::{Braise, FeuNoyau, MAX_CLASSEURS, MAX_FOYERS};
+use feu_noyau::{Braise, FeuNoyau, IndexClasseur, IndexFoyer};
 use walkdir::WalkDir;
 
 use crate::{
@@ -51,29 +51,19 @@ impl Scribe {
     /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si le
-    /// comptoir de travail est ouvert, qui leur est exclusif. Retourne
-    /// [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] ou
-    /// [`ErreurFeuApplication::ScribeIndexClasseurInvalide`] si l'index sort des
-    /// bornes, et propage l'échec de création du dossier — notamment s'il existe
+    /// comptoir de travail est ouvert, qui leur est exclusif, et propage
+    /// l'échec de création du dossier — notamment s'il existe
     /// déjà — comme celui de [`Self::sauvegarder_configuration`], qui survient
     /// le comptoir déjà ouvert et inscrit.
     pub(crate) fn ouverture_comptoir_depot(
         &mut self,
         session: &mut SessionApplication,
         chemin: &Path,
-        index_foyer: usize,
-        index_classeur: usize,
+        index_foyer: IndexFoyer,
+        index_classeur: IndexClasseur,
     ) -> ResultFeuApplication<usize> {
         if matches!(self.comptoirs, Comptoirs::Travail(_)) {
             return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
-        }
-        if index_foyer >= MAX_FOYERS {
-            return Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(index_foyer));
-        }
-        if index_classeur >= MAX_CLASSEURS {
-            return Err(ErreurFeuApplication::ScribeIndexClasseurInvalide(
-                index_classeur,
-            ));
         }
 
         let comptoir = ComptoirDepot::new(chemin.to_path_buf(), index_foyer, index_classeur);
@@ -127,10 +117,6 @@ impl Scribe {
     /// celle du nœud, signée nœud et sans foyer : sa braise ne désigne alors
     /// rien. Ces refus laissent le comptoir enregistré, la fermeture se retente
     /// une fois le ou les foyers rouverts.
-    /// [`ErreurFeuApplication::ScribeIndexFoyerInvalide`] sort au même endroit,
-    /// mais ne couvre ici que le `None` de
-    /// [`SessionApplication::braise_foyer`], que la validation d'index à
-    /// l'ouverture rend inatteignable.
     ///
     /// Les deux autres sont sans retour :
     /// [`ErreurFeuApplication::ScribeIndexComptoirInconnu`], et
@@ -160,22 +146,18 @@ impl Scribe {
 
         let comptoir = self.comptoirs.donne_comptoir_depot(index_comptoir)?;
 
-        let Some(braise) = session.braise_foyer(comptoir.index_foyer()) else {
-            return Err(ErreurFeuApplication::ScribeIndexFoyerInvalide(
-                comptoir.index_foyer(),
-            ));
-        };
+        let braise = session.braise_foyer(comptoir.index_foyer());
 
-        if !session.etat_foyers()[comptoir.index_foyer()] {
+        if !session.etat_foyer(comptoir.index_foyer()) {
             return Err(ErreurFeuApplication::ScribeFoyerFerme(
-                comptoir.index_foyer(),
+                comptoir.index_foyer().valeur(),
             ));
         }
 
-        if let Some(index) = session.braise_vers_index(enu_racine_depot.braise())
-            && !session.etat_foyers()[index]
+        if let Some(index_foyer) = session.braise_vers_index(enu_racine_depot.braise())
+            && !session.etat_foyer(index_foyer)
         {
-            return Err(ErreurFeuApplication::ScribeFoyerFerme(index));
+            return Err(ErreurFeuApplication::ScribeFoyerFerme(index_foyer.valeur()));
         }
 
         let comptoir = self.comptoirs.retirer_comptoir_depot(index_comptoir)?;
@@ -372,7 +354,8 @@ impl Scribe {
         let foyers_fermes: Vec<usize> = self
             .foyers_requis(session, &fiche_racine.hash_carte())?
             .into_iter()
-            .filter(|index| !session.etat_foyers()[*index])
+            .filter(|index_foyer| !session.etat_foyer(*index_foyer))
+            .map(IndexFoyer::valeur)
             .collect();
 
         if !foyers_fermes.is_empty() {
@@ -583,7 +566,7 @@ impl Scribe {
         chemin: &Path,
         nom: &str,
         braise: Braise,
-        index_classeur: usize,
+        index_classeur: IndexClasseur,
     ) -> ResultFeuApplication<Enu> {
         let est_dossier = chemin.is_dir();
 
@@ -841,7 +824,8 @@ impl Scribe {
         let foyers_fermes: Vec<usize> = self
             .foyers_requis(session, &fiche_r.hash_carte())?
             .into_iter()
-            .filter(|index| !session.etat_foyers()[*index])
+            .filter(|index_foyer| !session.etat_foyer(*index_foyer))
+            .map(IndexFoyer::valeur)
             .collect();
 
         if !foyers_fermes.is_empty() {
@@ -981,7 +965,7 @@ impl Scribe {
         &self,
         session: &SessionApplication,
         hash_carte: &[u8; 32],
-    ) -> ResultFeuApplication<BTreeSet<usize>> {
+    ) -> ResultFeuApplication<BTreeSet<IndexFoyer>> {
         self.donne_descendants(hash_carte)
             .filter_map(|item| match item {
                 Err(e) => Some(Err(e)),
