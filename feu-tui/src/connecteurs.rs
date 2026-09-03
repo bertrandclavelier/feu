@@ -67,7 +67,11 @@ pub(crate) enum MessageCoeurTui {
     /// Le `Vec` est le parcours en profondeur de l'arbre, racine comprise,
     /// chaque fiche précédée de sa profondeur. C'est l'ordre de l'affichage et
     /// son décalage : la TUI n'a rien à reconstruire, elle indente et dessine.
-    EnvoiArborescenceEnu(Vec<(usize, Fiche)>),
+    ///
+    /// Le troisième membre est le classeur qui détient le blob de l'entrée,
+    /// résolu ici parce qu'il demande le noyau : `None` dit qu'on ne sait pas —
+    /// foyer fermé, carte sans blob, ou braise étrangère au nœud.
+    EnvoiArborescenceEnu(Vec<(usize, Fiche, Option<IndexClasseur>)>),
 
     /// La seed vient d'être générée — la TUI doit basculer sur l'écran d'affichage.
     ///
@@ -272,7 +276,18 @@ impl ConnecteurVersTui {
                             .commande_derniere_enu_racine()
                             .and_then(|racine| feu_application.commande_descendants(&racine))
                             .and_then(|descendants| {
-                                descendants.collect::<Result<Vec<(usize, Fiche)>, _>>()
+                                descendants
+                                    .map(|item| {
+                                        item.map(|(profondeur, fiche)| {
+                                            let classeur = feu_application
+                                                .commande_existence_blob(&fiche)
+                                                .ok()
+                                                .flatten();
+
+                                            (profondeur, fiche, classeur)
+                                        })
+                                    })
+                                    .collect::<Result<Vec<_>, _>>()
                             });
 
                         match arborescence {

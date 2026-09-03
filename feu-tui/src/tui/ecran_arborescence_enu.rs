@@ -14,8 +14,8 @@
 //! l'ENU sous le curseur dans [`crate::tui::EtatTui::enu_selectionnee`] — d'où
 //! le pilotage la lira — et `x` l'y efface.
 //!
-//! Chaque ligne porte la colonne de marque, un guide par niveau, le symbole de
-//! la carte, puis le nom. Le guide est le même à tous les niveaux : le cœur
+//! Chaque ligne porte les index foyer et classeur, la colonne de marque, un
+//! guide par niveau, le symbole de la carte, puis le nom. Le guide est le même à tous les niveaux : le cœur
 //! envoie une profondeur, pas une fratrie, et distinguer le dernier enfant d'un
 //! `└` demanderait de reconstruire après coup une information que le parcours a
 //! jetée.
@@ -54,7 +54,7 @@
 
 use std::collections::HashSet;
 
-use feu_application::{Carte, fiche::Fiche};
+use feu_application::{Carte, IndexClasseur, fiche::Fiche};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Margin},
@@ -88,7 +88,10 @@ pub(super) struct EtatArborescenceEnu {
     /// `None` ne veut pas dire « arbre vide » mais **rien à montrer** : jamais
     /// demandé, ou invalidé par un dépôt. C'est lui qui distingue l'écran d'un
     /// nœud sans contenu, et il porte le même appel au `R` dans les deux cas.
-    arborescence_enus: Option<Vec<(usize, Fiche)>>,
+    ///
+    /// Le classeur, lui, vient résolu par le cœur : `None` dit qu'il n'y a rien
+    /// à situer, pas qu'il vaut zéro.
+    arborescence_enus: Option<Vec<(usize, Fiche, Option<IndexClasseur>)>>,
 
     /// Les index de [`Self::arborescence_enus`] dont le sous-arbre est montré.
     ///
@@ -142,7 +145,10 @@ impl EtatArborescenceEnu {
     /// arbitraire. Laissé tel quel le 18 août 2026, le temps de voir ce que
     /// donne l'usage réel ; à reprendre en posant ici `deplies` à `{0}` et le
     /// curseur à zéro, en même temps que l'arbre.
-    pub(super) fn recevoir_arborescence_enus(&mut self, arborescence_enus: Vec<(usize, Fiche)>) {
+    pub(super) fn recevoir_arborescence_enus(
+        &mut self,
+        arborescence_enus: Vec<(usize, Fiche, Option<IndexClasseur>)>,
+    ) {
         self.arborescence_enus = Some(arborescence_enus);
     }
 
@@ -337,7 +343,7 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
                 .lignes_visibles()
                 .iter()
                 .map(|i| {
-                    let (profondeur, fiche) = &arborescence_enu[*i];
+                    let (profondeur, fiche, index_classeur) = &arborescence_enu[*i];
 
                     // Colonne de marque, large de deux cellules qu'une fiche
                     // soit retenue ou non : c'est elle qui garde l'arbre
@@ -350,6 +356,26 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
                         });
 
                     Line::from(vec![
+                        // Colonne fixe de quatre cellules, en tête : posée avant
+                        // l'indentation, elle ne bouge pas avec la profondeur.
+                        // `-` dit l'absence de blob ou le foyer fermé, `?` une
+                        // braise étrangère au nœud.
+                        Span::styled(
+                            match (
+                                etat_tui
+                                    .session_application
+                                    .as_ref()
+                                    .and_then(|session| session.braise_vers_index(fiche.braise())),
+                                index_classeur,
+                            ) {
+                                (Some(foyer), Some(classeur)) => {
+                                    format!("{}·{} ", foyer.valeur(), classeur.valeur())
+                                }
+                                (Some(foyer), None) => format!("{}·- ", foyer.valeur()),
+                                (None, _) => String::from("?·- "),
+                            },
+                            Style::default().add_modifier(Modifier::DIM),
+                        ),
                         Span::styled(
                             if marquee {
                                 format!("{MARQUE_SELECTION} ")
