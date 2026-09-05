@@ -211,105 +211,61 @@ impl TryFrom<usize> for IndexClasseur {
     }
 }
 
-/// Tests en ligne de [`Braise`] : la réciprocité de `try_from` et `Display`, et
-/// les chaînes que la conversion refuse.
+/// Tests en ligne des trois types : la réciprocité de `try_from` et `Display`
+/// sur [`Braise`], les valeurs que chaque conversion refuse, et le parcours des
+/// index.
 #[cfg(test)]
 mod tests {
+    use proptest::{prop_assert, prop_assert_eq, prop_assume, proptest};
+
     use super::*;
 
-    /// `try_from` puis `Display` redonnent la chaîne d'origine : les deux
-    /// transformations sont réciproques (composée = identité).
-    #[test]
-    fn reciprocité_chaine() {
-        let corps = "a".repeat(Braise::LONGUEUR);
-        let braise = format!("{corps}.braise");
+    proptest! {
+            /// Toute adresse bien formée ressort identique : sur l'alphabet entier,
+            /// `try_from` et `Display` restent réciproques.
+            #[test]
+            fn reciprocité_chaine(corps in "[a-z2-7]{55}") {
+                let adresse = format!("{corps}.braise");
 
-        let b = Braise::try_from(braise.as_str()).unwrap();
+                let braise = Braise::try_from(adresse.as_str()).unwrap();
 
-        assert_eq!(b.to_string(), braise);
-    }
+                prop_assert_eq!(braise.to_string(), adresse);
+            }
 
-    /// Rejet d'une chaîne dépourvue du suffixe `.braise`.
-    #[test]
-    fn suffixe_absent() {
-        let corps = "a".repeat(Braise::LONGUEUR);
+            /// Aucune chaîne, valide ou non, ne fait paniquer la conversion : les
+            /// `unwrap` du chemin de validation restent hors d'atteinte.
+            #[test]
+            fn jamais_de_panique(chaine in ".{0,80}") {
 
-        assert!(matches!(
-            Braise::try_from(corps.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseErronnee(_)
-        ));
-    }
+                let _ = Braise::try_from(chaine.as_str());
+            }
 
-    /// Rejet d'un corps plus court que `Braise::LONGUEUR`.
-    #[test]
-    fn corps_trop_court() {
-        let corps = "a".repeat(Braise::LONGUEUR - 2);
-        let braise = format!("{corps}.braise");
+            /// Rejet d'un caractère hors alphabet BASE32, à n'importe quelle position.
+            #[test]
+            fn hors_alphabet(corps in "[a-z2-7]{55}", pos in 0..55usize, intrus in "[^a-z2-7]") {
+                let mut corps = corps;
+                corps.replace_range(pos..pos + 1, &intrus);
+                let adresse = format!("{corps}.braise");
 
-        assert!(matches!(
-            Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseErronnee(_)
-        ));
-    }
+                prop_assert!(Braise::try_from(adresse.as_str()).is_err());
+            }
 
-    /// Rejet d'un corps plus long que `Braise::LONGUEUR`.
-    #[test]
-    fn corps_trop_long() {
-        let corps = "a".repeat(Braise::LONGUEUR + 2);
-        let braise = format!("{corps}.braise");
+            /// Rejet de tout corps dont la longueur n'est pas `Braise::LONGUEUR`.
+            #[test]
+            fn longueur_erronee(corps in "[a-z2-7]{0,120}") {
+                prop_assume!(corps.len() != Braise::LONGUEUR);
+                let adresse = format!("{corps}.braise");
 
-        assert!(matches!(
-            Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseErronnee(_)
-        ));
-    }
+                prop_assert!(Braise::try_from(adresse.as_str()).is_err());
+            }
 
-    /// Rejet d'une majuscule : hors de l'alphabet BASE32 minuscule.
-    #[test]
-    fn corps_avec_masjuscule() {
-        let corps = "a".repeat(Braise::LONGUEUR - 1);
-        let braise = format!("A{corps}.braise");
-
-        assert!(matches!(
-            Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseErronnee(_)
-        ));
-    }
-
-    /// Rejet du chiffre `0` : hors de l'alphabet BASE32 (`2-7` seulement).
-    #[test]
-    fn corps_avec_0() {
-        let corps = "a".repeat(Braise::LONGUEUR - 1);
-        let braise = format!("0{corps}.braise");
-
-        assert!(matches!(
-            Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseErronnee(_)
-        ));
-    }
-
-    /// Rejet du chiffre `8` : hors de l'alphabet BASE32 (`2-7` seulement).
-    #[test]
-    fn corps_avec_8() {
-        let corps = "a".repeat(Braise::LONGUEUR - 1);
-        let braise = format!("8{corps}.braise");
-
-        assert!(matches!(
-            Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseErronnee(_)
-        ));
-    }
-
-    /// Rejet d'un caractère spécial (`@`) : hors de l'alphabet BASE32.
-    #[test]
-    fn corps_avec_caractere_special() {
-        let corps = "a".repeat(Braise::LONGUEUR - 1);
-        let braise = format!("@{corps}.braise");
-
-        assert!(matches!(
-            Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseErronnee(_)
-        ));
+            /// Rejet de tout suffixe autre que `.braise`, absence comprise.
+            #[test]
+            fn suffixe_erroné(corps in "[a-z2-7]{55}", suffixe in "[a-z.]{0,8}") {
+                prop_assume!(suffixe != ".braise");
+                let adresse = format!("{corps}{suffixe}");
+                prop_assert!(Braise::try_from(adresse.as_str()).is_err());
+            }
     }
 
     /// Rejet de la chaîne vide (ni suffixe, ni corps).
@@ -321,5 +277,46 @@ mod tests {
             Braise::try_from(braise.as_str()).unwrap_err(),
             ErreurFeuNoyau::BraiseErronnee(_)
         ));
+    }
+
+    /// `Braise::VIDE`, construite sans passer par `TryFrom`, est bien formée.
+    #[test]
+    fn braise_vide() {
+        assert!(Braise::try_from(Braise::VIDE.to_string().as_str()).is_ok());
+    }
+
+    proptest! {
+
+        /// Rejet de tout entier atteignant ou dépassant `IndexFoyer::NOMBRE`.
+        #[test]
+        fn index_foyer_hors_bornes(n in IndexFoyer::NOMBRE..) {
+            prop_assert!(IndexFoyer::try_from(n).is_err());
+        }
+
+        /// Rejet de tout entier atteignant ou dépassant `IndexClasseur::NOMBRE`.
+        #[test]
+        fn index_classeur_hors_bornes(n in IndexClasseur::NOMBRE..) {
+            prop_assert!(IndexClasseur::try_from(n).is_err());
+        }
+    }
+
+    /// `tous()` rend les positions valides dans l'ordre croissant, à partir de zéro.
+    #[test]
+    fn index_foyer_tous() {
+        assert_eq!(IndexFoyer::tous().count(), IndexFoyer::NOMBRE);
+
+        for (i, index_foyer) in IndexFoyer::tous().enumerate() {
+            assert_eq!(index_foyer.valeur(), i);
+        }
+    }
+
+    /// `tous()` rend les positions valides dans l'ordre croissant, à partir de zéro.
+    #[test]
+    fn index_classeur_tous() {
+        assert_eq!(IndexClasseur::tous().count(), IndexClasseur::NOMBRE);
+
+        for (i, index_classeur) in IndexClasseur::tous().enumerate() {
+            assert_eq!(index_classeur.valeur(), i);
+        }
     }
 }
