@@ -169,6 +169,19 @@ impl Gardien {
 
     // ── Arborescence ─────────────────────────────────────────────────────────
 
+    /// Réserve le nœud à cette instance de Feu, par le verrou du carnet.
+    ///
+    /// Appelée par [`crate::FeuNoyau::new`] une fois l'arborescence acquise, et
+    /// jamais avant : la prise exige que `~/.feu` existe.
+    ///
+    /// # Errors
+    ///
+    /// Propage [`ErreurFeuNoyau::GardienNoeudDejaVerrouille`] si un autre Feu
+    /// tient déjà le nœud, et [`ErreurFeuNoyau::IoError`] sur échec d'ouverture.
+    pub(super) fn verrouille_noeud(&mut self) -> ResultFeuNoyau<()> {
+        self.carnet.cree_verrou()
+    }
+
     /// Indique si l'arborescence `~/.feu` existe sur le système de fichiers.
     pub(super) fn existence_arborescence(&self) -> bool {
         self.carnet.existe_arborescence_noeud()

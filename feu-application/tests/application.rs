@@ -33,7 +33,7 @@
 use std::{
     collections::HashSet,
     fs::{File, create_dir, read_to_string},
-    mem::forget,
+    panic::{AssertUnwindSafe, catch_unwind},
 };
 
 use data_encoding::HEXLOWER;
@@ -473,8 +473,11 @@ fn secours_fermeture_foyer() -> ResultFeuApplication<()> {
 
     app.commande_ouverture_foyer(&interface_test, IndexFoyer::try_from(1)?)?;
 
-    // Terminaison brutale : aucun `Drop` ne passe, le dossier clair survit.
-    forget(app);
+    // Terminaison brutale : le `Drop` du noyau panique sur le foyer resté
+    // ouvert, la panique est absorbée et le test continue. Rien n'est nettoyé —
+    // le dossier clair survit —, mais les champs sont bien droppés, dont le
+    // verrou du nœud, que l'OS relâcherait de même en tuant le processus.
+    let _ = catch_unwind(AssertUnwindSafe(move || drop(app)));
 
     let mut app = FeuApplication::new(&chemin_feu);
 

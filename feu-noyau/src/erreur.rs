@@ -195,6 +195,12 @@ pub enum ErreurFeuNoyau {
     #[error("NOY > Il manque au moins un élément dans noyau.feu")]
     GardienConfigManqueAuMoinsUnElement,
 
+    /// Le verrou de `~/.feu/verrou` est déjà tenu : une autre instance de Feu
+    /// a le nœud ouvert. Le verrou est consultatif et tombe avec le processus
+    /// qui le porte, y compris sur arrêt brutal — rien à nettoyer à la main.
+    #[error("NOY > Le nœud est déjà ouvert par un autre Feu")]
+    GardienNoeudDejaVerrouille,
+
     /// Le trousseau public du foyer ne détient pas de clé pour ce classeur —
     /// porte le foyer puis le classeur.
     #[error("NOY > Foyer {0} : pas de clé pour le classeur {1}")]

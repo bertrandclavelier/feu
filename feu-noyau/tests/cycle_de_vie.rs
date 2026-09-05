@@ -31,8 +31,8 @@ use std::{
         File, create_dir, read_dir, read_to_string, remove_dir, remove_dir_all, remove_file,
         symlink_metadata, write,
     },
-    mem::forget,
     os::unix::fs::PermissionsExt,
+    panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
 };
 
@@ -159,8 +159,8 @@ fn verifie_permissions(racine: &Path) {
 /// retrouvées à partir du seul mot de passe, et s'efface ensuite sans trace.
 ///
 /// Établit au passage l'unicité d'un blob dans un foyer, la relecture d'un
-/// contenu dépassant `TAILLE_CHUNK`, et les permissions aux trois états
-/// stables du nœud.
+/// contenu dépassant `TAILLE_CHUNK`, le refus d'un second nœud sur le même
+/// dossier, et les permissions aux trois états stables du nœud.
 #[test]
 fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -179,6 +179,13 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
     let mut interface = InterfaceTest::new("mot de passe");
 
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
+
+    // Le nœud est verrouillé tant que cette instance vit : un second Feu se
+    // heurte au verrou avant même de lire une clé.
+    assert!(matches!(
+        FeuNoyau::new(&chemin_feu, None, &mut interface),
+        Err(ErreurFeuNoyau::GardienNoeudDejaVerrouille)
+    ));
 
     assert!(interface.cle_publique_noeud.is_some());
 
@@ -525,9 +532,9 @@ fn erreurs_usage() -> ResultFeuNoyau<()> {
 /// Le message n'est vérifié que par sa première moitié : l'invariant tient à ce
 /// que la panique survienne, pas à la formulation qui l'accompagne.
 ///
-/// La panique est laissée au harnais plutôt que rattrapée par `catch_unwind` :
-/// le test s'arrête donc ici, ce qu'assume [`fermeture_secours`] en remontant le
-/// même état par `forget`, sans passer par le `Drop`.
+/// La panique remonte au harnais, qui l'attend : c'est elle que le test éprouve,
+/// et le test s'arrête là. [`fermeture_secours`], qui monte le même état pour
+/// aller plus loin, la rattrape par `catch_unwind`.
 #[test]
 #[should_panic(expected = "Les foyers n'étaient pas tous fermés")]
 fn drop_foyer_ouvert() {
@@ -548,9 +555,11 @@ fn drop_foyer_ouvert() {
 /// [`secours_fermeture_foyer`](FeuNoyau::secours_fermeture_foyer), et la donnée
 /// qu'il détenait se relit ensuite à l'identique.
 ///
-/// L'état est monté par `forget`, qui laisse sur le disque ce que laisse une
-/// terminaison brutale. Le second volet éprouve le refus : clé retirée du
-/// dossier clair, le secours doit renoncer plutôt qu'archiver un foyer amputé.
+/// L'état est monté en laissant le `Drop` du noyau paniquer sous `catch_unwind` :
+/// rien n'est nettoyé, comme après une terminaison brutale, et le verrou du nœud
+/// tombe comme l'OS le relâcherait. Le second volet éprouve le refus : clé
+/// retirée du dossier clair, le secours doit renoncer plutôt qu'archiver un
+/// foyer amputé.
 #[test]
 fn fermeture_secours() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
@@ -572,7 +581,7 @@ fn fermeture_secours() -> ResultFeuNoyau<()> {
     let source_donnees = File::open(&chemin_donnees).unwrap();
     let (hash_blob, _) = noyau.depot_blob(index_foyer_0, IndexClasseur::ZERO, &source_donnees)?;
 
-    forget(noyau);
+    let _ = catch_unwind(AssertUnwindSafe(move || drop(noyau)));
 
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
 
@@ -592,7 +601,7 @@ fn fermeture_secours() -> ResultFeuNoyau<()> {
 
     assert_eq!(contenu, contenu_recupere);
 
-    forget(noyau);
+    let _ = catch_unwind(AssertUnwindSafe(move || drop(noyau)));
 
     // Le `.cles/` du foyer, à ne pas confondre avec celui du nœud : celui-ci vit
     // dans le dossier clair, et n'importe laquelle de ses neuf clés suffit à
@@ -667,6 +676,11 @@ fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
 
     noyau.fermeture_foyer(&mut interface, index_foyer_0)?;
 
+    // Le secours réécrit le disque : aucune instance ne doit rester en vie. Le
+    // verrou du nœud tombe avec elle, sans quoi le rallumage ci-dessous se
+    // heurterait à notre propre verrou avant d'atteindre la clé manquante.
+    drop(noyau);
+
     // Nœud amputé de la clé privée de signature : plus rien ne s'allume.
     remove_file(chemin_feu.join(".cles").join("feu_sig.priv")).unwrap();
 
@@ -674,9 +688,6 @@ fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
         FeuNoyau::new(&chemin_feu, None, &mut interface),
         Err(ErreurFeuNoyau::IoError(_))
     ));
-
-    // Le secours réécrit le disque : aucune instance ne doit rester en vie.
-    drop(noyau);
 
     let mut interface = InterfaceTest::new("mot de passe");
     FeuNoyau::demarrage_secours(&chemin_feu, seed.clone(), &mut interface)?;

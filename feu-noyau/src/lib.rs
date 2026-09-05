@@ -416,7 +416,9 @@ impl FeuNoyau {
                 return Err(ErreurFeuNoyau::SeedRefuseeNoeudExistant);
             }
 
-            let gardien = Gardien::ouvre_nouveau(chemin_feu)?;
+            let mut gardien = Gardien::ouvre_nouveau(chemin_feu)?;
+            gardien.verrouille_noeud()?;
+
             let mut cryptographe = Cryptographe::new();
 
             let trousseau_public_noeud = &gardien.lecture_pour_creation_trousseau_public_noeud()?;
@@ -471,6 +473,7 @@ impl FeuNoyau {
             // 2- LE GARDIEN TRAVAILLE SUR LE DISQUE
 
             gardien.cree_premiere_arborescence(&trousseau_public_complet)?;
+            gardien.verrouille_noeud()?;
 
             let mut session = SessionFoyers::new();
 

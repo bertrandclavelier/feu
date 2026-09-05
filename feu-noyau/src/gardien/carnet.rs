@@ -36,6 +36,11 @@ use crate::{
     cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer},
 };
 
+/// Verrou d'instance du nœud, à la racine `~/.feu/` — tenu ouvert tant que le
+/// nœud est allumé, pour qu'un second Feu ne travaille pas sur les mêmes
+/// fichiers.
+const FEU_VERROU: &str = "verrou";
+
 /// Dossier des fichiers de configuration, sous `~/.feu/`.
 const FEU_DOSSIER_CONFIG: &str = ".config";
 
@@ -77,6 +82,13 @@ const CLE_FOYER_CHIF_PUB: &str = "chif.pub";
 pub(super) struct Carnet {
     /// Chemin racine du nœud — `~/.feu`.
     chemin_feu: PathBuf,
+
+    /// Descripteur du verrou d'instance, `None` tant qu'il n'est pas pris.
+    ///
+    /// Le carnet naît avant l'arborescence qu'il décrit, le verrou ne peut donc
+    /// être posé qu'ensuite. Le champ n'existe que pour tenir le descripteur
+    /// ouvert : le fermer rendrait le verrou.
+    verrou: Option<File>,
 }
 
 impl Carnet {
@@ -89,10 +101,37 @@ impl Carnet {
     pub(super) fn new(chemin_feu: &Path) -> Self {
         Carnet {
             chemin_feu: chemin_feu.to_path_buf(),
+            verrou: None,
         }
     }
 
     // ── Arborescence ─────────────────────────────────────────────────────────
+
+    /// Pose le verrou d'instance du nœud et en retient le descripteur.
+    ///
+    /// Le verrou est consultatif et tenu par le système : il vaut pour tout
+    /// processus qui ouvre le même fichier, et tombe à la fermeture du
+    /// descripteur, donc à la mort du processus, arrêt brutal compris.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuNoyau::GardienNoeudDejaVerrouille`] si le verrou est
+    /// déjà tenu, et [`ErreurFeuNoyau::IoError`] si le fichier ne peut pas être
+    /// ouvert — l'arborescence doit exister.
+    pub(super) fn cree_verrou(&mut self) -> ResultFeuNoyau<()> {
+        let verrou = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(self.chemin_feu.join(FEU_VERROU))?;
+        if verrou.try_lock().is_err() {
+            return Err(ErreurFeuNoyau::GardienNoeudDejaVerrouille);
+        }
+        self.verrou = Some(verrou);
+
+        Ok(())
+    }
 
     /// Retourne le chemin racine du nœud `~/.feu`.
     pub(super) fn donne_chemin_feu(&self) -> PathBuf {
