@@ -14,19 +14,17 @@ The target architecture relies on dedicated hardware, along the lines of a crypt
 
 Under active development. Working locally, with no networking.
 
-### v0.0.6 — 22 August 2026
+### v0.0.7 — 5 September 2026
 
-The first version whose chain works end to end: a user opens a *foyer*, deposits a tree into it, takes it back out and browses it, without leaving the TUI. Three undertakings carry it — the overhaul of error handling, deposit counters and read-only withdrawal, and the wiring of the TUI.
+The work counter version: the subtree of an ENU is written out in the clear into a folder, edited freely there, and taken back by Feu on closing — the disk then holds the authority.
 
-- **Error handling overhauled**: a single type per crate, with variants named after the fact they report. The TUI structures its own without ever interrupting its loop — only a terminal failure exits the program.
-- **A TUI with three working screens**: control, ENU tree, disk tree. Navigation, folding, and marking either an ENU or a path.
-- **Multiple counters**: several deposits open at once, each designated by its path and by the ENU to graft under.
-- **Guarded withdrawal**: refused outright if a *foyer* that signed part of the subtree is closed, the list of *foyers* to open being drawn up before any writing.
-- **Tree traversals**: descending and ascending, both usable with every *foyer* closed.
-- **`Enu` made private, `Fiche` at the boundary**: the presentation layer now handles only cards — the envelope without its signature.
-- **Emergency closing** of a *foyer* left open after an abrupt shutdown, reachable from the TUI.
-- **67 tests**, up from 61.
-- Cryptography unchanged. Still no networking.
+- **Work counter**: opened and closed from the TUI with a single key. Whatever has not moved is reused as is, an entry deleted disappears from the tree, a new one joins it. Only one at a time, and never alongside an open deposit counter.
+- **Persistent counters**: their state outlives shutdown and is reopened when the node is lit.
+- **Single instance**: one Feu at a time on a node, the system releasing the lock even after an abrupt shutdown.
+- **Typed indices**: a position inside the node is bounded by its type, end to end; the ENU tree shows where each entry is stored.
+- **ENUs**: creation date under the signature, serialised format version, and uniqueness of sibling names enforced on deposit.
+- **86 tests**, up from 67, the end-to-end ones moved into external crates.
+- Cryptography unchanged, RustCrypto cohort upgraded. Still no networking.
 
 Earlier versions are in the [changelog](CHANGELOG.md) (French).
 

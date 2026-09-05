@@ -14,19 +14,17 @@ L'architecture cible repose sur un dispositif matériel dédié, à l'image des 
 
 Projet en développement actif. Fonctionnel localement, sans réseau.
 
-### v0.0.6 — 22 août 2026
+### v0.0.7 — 5 septembre 2026
 
-Première version dont la chaîne fonctionne de bout en bout : un utilisateur ouvre un foyer, y dépose une arborescence, la ressort, la parcourt, sans quitter la TUI. Trois chantiers la portent — la refonte de la gestion des erreurs, les comptoirs de dépôt et le retrait en lecture seule, et le câblage de la TUI.
+Version du comptoir de travail : le sous-arbre d'une ENU sort en clair dans un dossier, on l'y modifie librement, et Feu le reprend à la fermeture — le disque fait alors autorité.
 
-- **Gestion des erreurs refondue** : un seul type par crate, à variantes nommées par le fait. La TUI structure les siennes sans jamais interrompre sa boucle — seule une panne du terminal sort du programme.
-- **TUI à trois écrans de travail** : pilotage, arborescence des ENU, arborescence du disque. Navigation, plis, marquage d'une ENU ou d'un chemin.
-- **Comptoirs multiples** : plusieurs dépôts ouverts à la fois, chacun désigné par son chemin et par l'ENU sous laquelle greffer.
-- **Retrait gardé** : refusé d'un bloc si un foyer signataire du sous-arbre est fermé, la liste des foyers à ouvrir étant dressée avant toute écriture.
-- **Parcours de l'arborescence** : descendant et remontant, tous deux praticables foyers fermés.
-- **`Enu` privée, `Fiche` en frontière** : la couche présentation ne manipule plus que des fiches, l'enveloppe sans sa signature.
-- **Fermeture de secours** d'un foyer resté ouvert après un arrêt brutal, accessible depuis la TUI.
-- **67 tests**, contre 61.
-- Cryptographie inchangée. Toujours aucun réseau.
+- **Comptoir de travail** : ouvert et refermé depuis la TUI sur une seule touche. Ce qui n'a pas bougé est réemployé tel quel, une entrée effacée disparaît de l'arbre, une entrée nouvelle le rejoint. Un seul à la fois, et jamais avec un comptoir de dépôt ouvert.
+- **Comptoirs persistants** : leur état survit à l'extinction et se rouvre à l'allumage.
+- **Verrou d'instance** : un seul Feu à la fois sur un nœud, le système relâchant le verrou même après un arrêt brutal.
+- **Index typés** : une position dans le nœud est bornée par son type, de bout en bout ; l'arborescence des ENU montre où chaque entrée est rangée.
+- **ENU** : date de création sous la signature, version du format sérialisé, unicité des noms d'enfants tenue au dépôt.
+- **86 tests**, contre 67, dont les bout-en-bout passés en crates externes.
+- Cryptographie inchangée, cohorte RustCrypto montée. Toujours aucun réseau.
 
 Les versions antérieures sont dans le [changelog](CHANGELOG.md).
 

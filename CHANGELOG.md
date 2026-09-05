@@ -13,6 +13,41 @@ des versions antérieures restent atteignables à leur tag, par exemple
 
 ---
 
+## v0.0.7 — 5 septembre 2026
+
+Version du **comptoir de travail** : le sous-arbre d'une ENU répertoire sort en
+clair dans un dossier, on l'y modifie librement, et Feu le reprend à la
+fermeture — le disque fait alors autorité. Deux autres chantiers la portent : la
+persistance des comptoirs, et les bornes portées par les types.
+
+- **Comptoir de travail** : ouverture et fermeture côté Scribe, câblées dans la
+  TUI sur la touche `T`. Ce qui n'a pas bougé sur le disque est réemployé tel
+  quel — même ENU, même signature ; une entrée effacée disparaît de l'arbre, une
+  entrée nouvelle rejoint le foyer de son accueil. Un seul comptoir de travail à
+  la fois, et jamais avec un comptoir de dépôt ouvert : l'exclusivité est portée
+  par l'enum `Comptoirs`, pas par une garde à écrire.
+- **Comptoirs persistants** : leur état est sérialisé dans `.config/scribe.feu`
+  et rouvert à l'allumage.
+- **Verrou d'instance** : un seul Feu à la fois sur un nœud. Le verrou est posé
+  à l'allumage dans `~/.feu/verrou` et relâché par le système à la mort du
+  processus — rien à nettoyer après un arrêt brutal.
+- **Index typés** : `IndexFoyer` et `IndexClasseur`, bornés par construction,
+  remontés jusqu'à la TUI ; les gardes de bornes disparaissent au profit du
+  type, et les cardinaux sont portés par `IndexFoyer::NOMBRE` et
+  `IndexClasseur::NOMBRE`. L'arborescence des ENU affiche le foyer et le
+  classeur de chaque entrée.
+- **Hashs de blob en `[u8; 32]`** dans toute l'API du noyau ; `existence_blob`
+  rend le classeur qui détient le blob plutôt qu'un booléen.
+- **ENU** : `Carte` extraite dans son module, date de création en méta de la
+  carte — donc sous la signature —, version du format sérialisé, et unicité des
+  noms d'enfants tenue au dépôt plutôt qu'au retrait.
+- **Cohorte RustCrypto montée** (`aes-gcm` 0.11, `argon2` 0.6, `hkdf` 0.13,
+  `sha3` 0.11) ; le chiffrement stream des archives vient d'`aead-stream`.
+- **86 tests**, contre 67 : les bout-en-bout du noyau et de l'application passent
+  en crates externes `tests/`, où c'est le compilateur qui tient l'inaccessibilité
+  des composants internes.
+- Cryptographie inchangée. Toujours aucun réseau.
+
 ## v0.0.6 — 22 août 2026
 
 Première version dont la chaîne fonctionne de bout en bout : un utilisateur

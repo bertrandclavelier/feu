@@ -180,11 +180,11 @@ fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
 
     let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
 
-    // Le nœud est verrouillé tant que cette instance vit : un second Feu se
+    // Le nœud est verrouillé tant que cette instance vit : un second allumage se
     // heurte au verrou avant même de lire une clé.
     assert!(matches!(
         FeuNoyau::new(&chemin_feu, None, &mut interface),
-        Err(ErreurFeuNoyau::GardienNoeudDejaVerrouille)
+        Err(ErreurFeuNoyau::GardienNoeudDejaAllume)
     ));
 
     assert!(interface.cle_publique_noeud.is_some());

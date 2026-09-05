@@ -556,9 +556,11 @@ impl FeuApplication {
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint,
     /// [`ErreurFeuApplication::ScribeComptoirDepotOuvert`] ou
     /// [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si l'exclusivité
-    /// n'est pas tenue. Propage ensuite les erreurs du Scribe : foyers requis
-    /// fermés ([`ErreurFeuApplication::ScribeFoyersFermes`], avant toute
-    /// écriture), dossier déjà existant, `fiche_racine` qui ne désigne pas un
+    /// n'est pas tenue, et [`ErreurFeuApplication::ScribeRacineNoeudInterdite`]
+    /// si `fiche_racine` est la racine du nœud. Propage ensuite les erreurs du
+    /// Scribe : foyers requis fermés
+    /// ([`ErreurFeuApplication::ScribeFoyersFermes`], avant toute écriture),
+    /// dossier déjà existant, `fiche_racine` qui ne désigne pas un
     /// répertoire, nom absent ou invalide, authentification, E/S ou lecture de
     /// blob. Aucun comptoir n'est retenu si la sortie échoue.
     pub fn commande_ouverture_comptoir_travail(

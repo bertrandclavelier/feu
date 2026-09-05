@@ -176,8 +176,8 @@ impl Gardien {
     ///
     /// # Errors
     ///
-    /// Propage [`ErreurFeuNoyau::GardienNoeudDejaVerrouille`] si un autre Feu
-    /// tient déjà le nœud, et [`ErreurFeuNoyau::IoError`] sur échec d'ouverture.
+    /// Propage [`ErreurFeuNoyau::GardienNoeudDejaAllume`] si le verrou est déjà
+    /// tenu, et [`ErreurFeuNoyau::IoError`] sur échec d'ouverture.
     pub(super) fn verrouille_noeud(&mut self) -> ResultFeuNoyau<()> {
         self.carnet.cree_verrou()
     }

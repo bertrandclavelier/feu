@@ -36,9 +36,9 @@ use crate::{
     cryptographe::trousseaux_publics::{TrousseauPublicComplet, TrousseauPublicFoyer},
 };
 
-/// Verrou d'instance du nœud, à la racine `~/.feu/` — tenu ouvert tant que le
-/// nœud est allumé, pour qu'un second Feu ne travaille pas sur les mêmes
-/// fichiers.
+/// Verrou d'instance du nœud, à la racine `~/.feu/` — son descripteur reste
+/// ouvert tant que le nœud est allumé, pour qu'il ne le soit pas deux fois sur
+/// les mêmes fichiers.
 const FEU_VERROU: &str = "verrou";
 
 /// Dossier des fichiers de configuration, sous `~/.feu/`.
@@ -115,7 +115,7 @@ impl Carnet {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuNoyau::GardienNoeudDejaVerrouille`] si le verrou est
+    /// Retourne [`ErreurFeuNoyau::GardienNoeudDejaAllume`] si le verrou est
     /// déjà tenu, et [`ErreurFeuNoyau::IoError`] si le fichier ne peut pas être
     /// ouvert — l'arborescence doit exister.
     pub(super) fn cree_verrou(&mut self) -> ResultFeuNoyau<()> {
@@ -126,7 +126,7 @@ impl Carnet {
             .mode(0o600)
             .open(self.chemin_feu.join(FEU_VERROU))?;
         if verrou.try_lock().is_err() {
-            return Err(ErreurFeuNoyau::GardienNoeudDejaVerrouille);
+            return Err(ErreurFeuNoyau::GardienNoeudDejaAllume);
         }
         self.verrou = Some(verrou);
 

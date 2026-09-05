@@ -3,7 +3,7 @@
 ### 24 mots, un nœud, tout son numérique.
 
 **Livre blanc**
-**Date : 22 août 2026**
+**Date : 5 septembre 2026**
 
 *Le 17 février 2026, nouvel an chinois marquant le début de l'année du Cheval de Feu, naît le projet Feu.*
 
@@ -101,9 +101,9 @@ Côté architecture, l'IdNU est une donnée comme les autres : un blob stocké d
 
 Sous Unix, tout est fichier. Sous Feu, tout est **ENU**.
 
-L'ENU est l'unité fondamentale du protocole. Une structure légère — quelques milliers d'octets, l'essentiel étant la signature — faite de deux parties : une **carte**, qui décrit ou contient la donnée, et une **enveloppe** qui la scelle. La carte porte le sens : type, métadonnées, tags, et selon le type le hash d'une donnée, un texte, ou les hashs d'autres ENU. L'enveloppe porte le hash de la carte, la signature de la carte (ML-DSA-87, post-quantique), la braise du signataire et une date.
+L'ENU est l'unité fondamentale du protocole. Une structure légère — quelques milliers d'octets, l'essentiel étant la signature — faite de deux parties : une **carte**, qui décrit ou contient la donnée, et une **enveloppe** qui la scelle. La carte porte le sens : type, métadonnées, tags, et selon le type le hash d'une donnée, un texte, ou les hashs d'autres ENU. L'enveloppe porte le hash de la carte, la signature de la carte (ML-DSA-87, post-quantique), la braise du signataire et la version du format.
 
-Le sceau ne couvre que la carte. La braise et la date restent hors signature : ce sont des indications de routage et d'horodatage, malléables par nature. Falsifier la braise ne fait qu'aiguiller la vérification vers la mauvaise clé — donc échouer. Une enveloppe n'est jamais lue sans que son hash soit recalculé et sa signature vérifiée.
+Le sceau ne couvre que la carte. La braise et la version du format restent hors signature : routage pour l'une, lecture du fichier pour l'autre, malléables par nature. La date, elle, est une métadonnée de la carte : elle est scellée avec elle. Falsifier la braise ne fait qu'aiguiller la vérification vers la mauvaise clé — donc échouer. Une enveloppe n'est jamais lue sans que son hash soit recalculé et sa signature vérifiée.
 
 L'ENU est **immuable** : le hash de la carte est le nom du fichier, donc modifier une carte, c'est créer une autre ENU. L'ancienne ne disparaît pas pour autant — voir « Une arborescence qui garde ses versions » plus bas.
 
@@ -170,7 +170,8 @@ Le foyer est l'espace souverain de l'utilisateur. Il contient les classeurs (don
 ```
 ~/.feu/
     .cles/                          ← clés du nœud et clés d'archive des foyers
-    config.feu                      ← configuration globale
+    .config/                        ← configuration du nœud
+    verrou                          ← verrou d'instance : un seul Feu à la fois
     <braise>/                       ← un foyer ouvert
         .cles/                      ← clés du foyer et des classeurs, chiffrées
         classeur0/
