@@ -21,11 +21,12 @@
 //! # Modèle de confiance
 //!
 //! Le hash et la signature couvrent **uniquement la carte sérialisée**, jamais
-//! la braise ni la date — qui restent des métadonnées malléables (routage,
-//! horodatage indicatif). La désérialisation reconstruit les champs sans
-//! revérifier le hash ni la signature : tant qu'une ENU vient du disque, elle
-//! n'est pas digne de confiance avant que l'appelant ait recalculé le hash de
-//! sa carte et validé la signature contre la braise annoncée.
+//! la braise ni la version — qui restent des métadonnées d'enveloppe malléables
+//! (routage, format sérialisé). Ce qui doit être authentifié va dans la carte,
+//! l'horodatage compris ([`Carte::date`]). La désérialisation reconstruit les
+//! champs sans revérifier le hash ni la signature : tant qu'une ENU vient du
+//! disque, elle n'est pas digne de confiance avant que l'appelant ait recalculé
+//! le hash de sa carte et validé la signature contre la braise annoncée.
 //!
 //! # Couplage avec la braise du noyau
 //!
@@ -56,7 +57,6 @@ use std::{
     os::unix::fs::symlink,
     path::{Path, PathBuf},
     str::from_utf8,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use data_encoding::HEXLOWER;
@@ -67,16 +67,28 @@ use crate::{
     scribe::carte::{Carte, prendre_octets},
 };
 
+/// Version du format sérialisé d'une [`Enu`], écrite en tête de chaque fichier.
+///
+/// À incrémenter dès que la disposition des champs change. Écrite avant que
+/// quoi que ce soit ne la lise : une v2 ne saura relire la v1 que si celle-ci
+/// s'est annoncée.
+const VERSION_ENU: u32 = 1;
+
 /// Enveloppe Numérique Universelle.
 ///
 /// Le `hash_carte` (SHA3-256 de la carte sérialisée) est le nom du fichier
 /// dans `~/.feu/enu/`. La `signature_carte` (ML-DSA-87) couvre la carte
-/// sérialisée directement. La `date` est le timestamp Unix de mise sous
-/// enveloppe. La `braise` identifie le signataire pour la vérification :
-/// l'adresse d'un foyer, ou [`Braise::VIDE`] quand le signataire est le nœud
-/// (racines de l'arborescence).
+/// sérialisée directement. La `version` numérote le format de l'enveloppe.
+/// L'horodatage n'est pas ici mais dans la carte, en méta `"date"`
+/// ([`Carte::date`]), donc sous la signature. La `braise` identifie le
+/// signataire pour la vérification : l'adresse d'un foyer, ou [`Braise::VIDE`]
+/// quand le signataire est le nœud (racines de l'arborescence).
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Enu {
+    /// Version du format sérialisé — [`VERSION_ENU`] à l'écriture, relue telle
+    /// quelle (non couverte par le hash ni la signature).
+    version: u32,
+
     /// Adresse `.braise` du signataire — un foyer, ou [`Braise::VIDE`] pour une
     /// racine signée par le nœud (non couverte par le hash ni la signature —
     /// métadonnée de routage).
@@ -86,9 +98,6 @@ pub struct Enu {
     hash_carte: [u8; 32],
     /// Signature ML-DSA-87 de la carte sérialisée (taille fixe, 4627 o).
     signature_carte: [u8; 4627],
-    /// Timestamp Unix de mise sous enveloppe (non couvert par la signature).
-    date: u64,
-
     /// Le contenu enveloppé, seule partie couverte par `hash_carte` et par la
     /// signature.
     carte: Carte,
@@ -97,9 +106,10 @@ pub struct Enu {
 impl Enu {
     /// Crée une ENU signée pour le foyer désigné par `braise`.
     ///
-    /// Hash la carte (`creation_empreinte`), la signe avec la clé du foyer,
-    /// horodate, et conserve la braise comme métadonnée de routage. Le foyer
-    /// doit être ouvert — sa clé privée doit être présente en mémoire.
+    /// Hash la carte (`creation_empreinte`), la signe avec la clé du foyer, et
+    /// conserve la braise comme métadonnée de routage. La carte porte déjà sa
+    /// date, posée à sa construction. Le foyer doit être ouvert — sa clé privée
+    /// doit être présente en mémoire.
     ///
     /// La braise est résolue en position via [`SessionApplication::braise_vers_index`] :
     /// c'est la frontière où la couche application traduit son adresse `.braise`
@@ -125,13 +135,10 @@ impl Enu {
 
         let octets_carte = carte.vers_octets();
         Ok(Self {
+            version: VERSION_ENU,
             braise,
             hash_carte: FeuNoyau::creation_empreinte(&octets_carte),
             signature_carte: feu_noyau.signature_foyer(index_foyer, &octets_carte)?,
-            date: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Horloge système antérieure à 1970")
-                .as_secs(),
             carte,
         })
     }
@@ -208,13 +215,10 @@ impl Enu {
         let octets_carte = carte.vers_octets();
 
         let enu_racine = Self {
+            version: VERSION_ENU,
             braise: Braise::VIDE,
             hash_carte: FeuNoyau::creation_empreinte(&octets_carte),
             signature_carte: feu_noyau.signature_noeud(&octets_carte)?,
-            date: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Horloge système antérieure à 1970")
-                .as_secs(),
             carte,
         };
 
@@ -274,13 +278,6 @@ impl Enu {
     /// de l'ENU, également utilisé comme nom de fichier dans `~/.feu/enu/`.
     pub(crate) fn hash_carte(&self) -> [u8; 32] {
         self.hash_carte
-    }
-
-    /// Retourne le timestamp Unix de mise sous enveloppe.
-    ///
-    /// Non couvert par la signature ni le hash — métadonnée indicative.
-    pub(crate) fn date(&self) -> u64 {
-        self.date
     }
 
     /// Retourne une référence à la [`Carte`] transportée par l'enveloppe.
@@ -350,8 +347,10 @@ impl Enu {
     /// l'idempotence ci-dessous ne réécrirait jamais.
     ///
     /// **Idempotent.** Si le fichier existe déjà, l'écriture est shuntée : le nom
-    /// étant le hash de la carte, un même nom encode la même carte, que `date` et
-    /// `signature` ne touchent pas — d'où une déduplication à l'échelle du nœud.
+    /// étant le hash de la carte, un même nom encode la même carte, que la
+    /// `signature` ne touche pas — d'où une déduplication à l'échelle du nœud.
+    /// La méta `"date"` étant dans la carte, deux cartes de même contenu
+    /// construites à deux instants différents portent deux noms.
     ///
     /// # Retour
     ///
@@ -496,16 +495,19 @@ impl Enu {
 
     /// Sérialise l'enveloppe pour écriture disque.
     ///
-    /// Format : `braise` (62 o UTF-8) | `hash_carte` (32 o) |
-    /// `signature_carte` (4627 o) | `date` (u64 BE) | carte (délègue à
+    /// Format : `version` (u32 BE) | `braise` (62 o UTF-8) | `hash_carte`
+    /// (32 o) | `signature_carte` (4627 o) | carte (délègue à
     /// [`Carte::vers_octets`]).
+    ///
+    /// En-tête de 4725 octets, de taille fixe, puis la carte, de taille
+    /// variable.
     fn vers_octets(&self) -> Vec<u8> {
         let mut resultat = Vec::new();
 
+        resultat.extend(self.version.to_be_bytes());
         resultat.extend(self.braise.to_string().as_bytes());
         resultat.extend(self.hash_carte);
         resultat.extend(self.signature_carte);
-        resultat.extend(&self.date.to_be_bytes());
         resultat.extend(self.carte.vers_octets());
 
         resultat
@@ -513,9 +515,12 @@ impl Enu {
 
     /// Désérialise une ENU depuis ses octets canoniques.
     ///
-    /// Format attendu : `braise` (62 o) | `hash_carte` (32 o) |
-    /// `signature_carte` (4627 o) | `date` (u64 BE) | carte (via
+    /// Format attendu : `version` (u32 BE) | `braise` (62 o) | `hash_carte`
+    /// (32 o) | `signature_carte` (4627 o) | carte (via
     /// [`Carte::octets_vers_carte`]). Inverse de [`Enu::vers_octets`].
+    ///
+    /// La `version` est relue sans être confrontée à [`VERSION_ENU`] : la seule
+    /// en circulation étant la 1, il n'y a rien sur quoi aiguiller.
     ///
     /// Ne valide **que la structure**, pas l'authenticité : le hash n'est pas
     /// recalculé et la signature n'est pas vérifiée. Une ENU issue du disque
@@ -529,7 +534,10 @@ impl Enu {
     /// l'UTF-8 valide. Les 62 octets de braise mal formés remontent du noyau en
     /// [`ErreurFeuApplication::FeuNoyau`], via `Braise::try_from`.
     fn octets_vers_enu(octets: &[u8]) -> ResultFeuApplication<Enu> {
-        let (mut octets, mut reste) = prendre_octets(octets, 62)?;
+        let (mut octets, mut reste) = prendre_octets(octets, 4)?;
+        let version = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+
+        (octets, reste) = prendre_octets(reste, 62)?;
         let braise = Braise::try_from(from_utf8(octets)?)?;
 
         (octets, reste) = prendre_octets(reste, 32)?;
@@ -538,16 +546,13 @@ impl Enu {
         (octets, reste) = prendre_octets(reste, 4627)?;
         let signature_carte: [u8; 4627] = octets.try_into().unwrap(); // pas d'erreur possible
 
-        (octets, reste) = prendre_octets(reste, 8)?;
-        let date = u64::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
-
         let carte = Carte::octets_vers_carte(reste)?;
 
         Ok(Self {
+            version,
             braise,
             hash_carte,
             signature_carte,
-            date,
             carte,
         })
     }
@@ -742,7 +747,6 @@ mod tests {
 
         let hash_carte: [u8; 32] = std::array::from_fn(|i| i as u8);
         let signature_carte = [0u8; 4627];
-        let date: u64 = 1234567890;
 
         let metas = BTreeMap::from([
             (String::from("clé1"), String::from("valeur1")),
@@ -758,10 +762,10 @@ mod tests {
         };
 
         let enu = Enu {
+            version: VERSION_ENU,
             braise,
             hash_carte,
             signature_carte,
-            date,
             carte,
         };
 

@@ -25,9 +25,10 @@ use crate::scribe::{carte::Carte, enu::Enu};
 
 /// Vue d'une `Enu` destinée à sortir de la crate.
 ///
-/// Porte tous les champs d'une `Enu` sauf `signature_carte`. La `braise` est
-/// gardée pour situer l'entrée dans son foyer — non couverte par le hash ni par
-/// la signature, elle vaut pour l'affichage, pas pour décider.
+/// Porte les champs d'une `Enu` sauf la `signature_carte` et la `version` de son
+/// format sérialisé, qui ne regarde que le disque. La `braise` est gardée pour
+/// situer l'entrée dans son foyer — non couverte par le hash ni par la
+/// signature, elle vaut pour l'affichage, pas pour décider.
 ///
 /// `Debug` et `PartialEq` ne servent qu'aux assertions des tests. `Clone`, lui,
 /// sert au consommateur : une interface qui retient une fiche hors du parcours
@@ -40,8 +41,6 @@ pub struct Fiche {
     braise: Braise,
     /// SHA3-256 de la carte — identifiant qui permet de retrouver l'ENU.
     hash_carte: [u8; 32],
-    /// Timestamp Unix de mise sous enveloppe.
-    date: u64,
     /// La carte entière, seule source de ce qu'il y a à dessiner : sa variante
     /// (donnée, texte, répertoire), ses métas, ses tags, et les `hashs_enu` qui
     /// portent la structure de l'arbre.
@@ -57,7 +56,6 @@ impl Fiche {
         Self {
             braise: enu.braise(),
             hash_carte: enu.hash_carte(),
-            date: enu.date(),
             carte: enu.carte().clone(),
         }
     }
@@ -70,11 +68,6 @@ impl Fiche {
     /// L'identifiant à renvoyer pour agir sur l'entrée.
     pub fn hash_carte(&self) -> [u8; 32] {
         self.hash_carte
-    }
-
-    /// Date de mise sous enveloppe, à mettre en forme par l'appelant.
-    pub fn date(&self) -> u64 {
-        self.date
     }
 
     /// Emprunt : le rendu repasse à chaque frame, une carte porte des `String`

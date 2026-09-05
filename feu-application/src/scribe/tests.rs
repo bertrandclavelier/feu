@@ -197,10 +197,10 @@ fn falsification_avant_chargement_enu() {
     let enu = creer_enu_donnee(&chemin_enu, &noyau, &session, 0u8);
 
     let mut octets = read(enu.chemin(&chemin_enu)).unwrap();
-    // Octet dans la zone de signature (elle débute à 62 + 32 = 94). XOR 0xFF
+    // Octet dans la zone de signature (elle débute à 4 + 62 + 32 = 98). XOR 0xFF
     // garantit une modification, là où une inversion de bits laisserait un
     // octet palindrome inchangé.
-    octets[97] ^= 0xFF;
+    octets[101] ^= 0xFF;
 
     write(enu.chemin(&chemin_enu), octets).unwrap();
 
@@ -231,7 +231,7 @@ fn falsification_braise_avant_chargement_enu() {
     // Octet du corps de la braise, remplacé par un autre caractère de l'alphabet
     // BASE32 : la braise reste bien formée (sinon le refus tomberait dès la
     // désérialisation) mais ne désigne plus aucun foyer de la session.
-    octets[0] = if octets[0] == b'a' { b'b' } else { b'a' };
+    octets[4] = if octets[4] == b'a' { b'b' } else { b'a' };
 
     write(enu.chemin(&chemin_enu), octets).unwrap();
 

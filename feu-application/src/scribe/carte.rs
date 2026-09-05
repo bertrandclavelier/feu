@@ -19,10 +19,15 @@
 //! enveloppe l'écrit dans `enu/`, et constructeurs comme mutateurs restent
 //! `pub(super)`. La confiance vient de la vérification du hash et de la
 //! signature au chargement, pas de l'encapsulation.
+//!
+//! Deux métas sont posées par la crate : `"nom"` ([`Carte::nom`]) et `"date"`
+//! ([`Carte::date`]). Les porter là plutôt que dans l'enveloppe les fait entrer
+//! dans le hash et sous la signature.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
     str::from_utf8,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crate::{ErreurFeuApplication, ResultFeuApplication};
@@ -83,14 +88,96 @@ pub enum Carte {
 }
 
 impl Carte {
+    /// Pose la méta `"date"` — timestamp Unix en secondes, en décimal.
+    ///
+    /// Appelée par les trois constructeurs, et par eux seuls : la date est celle
+    /// de la première création de l'entrée, non d'une modification, qui
+    /// demanderait une autre méta. Une carte reconstruite à partir d'une autre
+    /// hérite donc de sa date. Étant une méta, elle entre dans le `hash_carte`
+    /// et sous la signature, ce qu'un champ d'enveloppe ne ferait pas.
+    ///
+    /// Une horloge antérieure au 1ᵉʳ janvier 1970 donne une date nulle, jamais
+    /// une panique ni une méta absente : la carte reste construite, et une date
+    /// impossible désigne l'horloge de la machine plutôt qu'un défaut de Feu.
+    fn horodatee(mut self) -> Self {
+        self.ajout_meta(
+            "date",
+            &SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO)
+                .as_secs()
+                .to_string(),
+        );
+
+        self
+    }
+
     /// Construit une [`Carte::Donnee`] — référence un blob dans un
     /// classeur.
+    ///
+    /// Horodatée à la construction (voir [`Self::horodatee`]).
     pub(super) fn new_donnee(hash_blob: [u8; 32]) -> Self {
         Self::Donnee {
             metas: BTreeMap::new(),
             tags: BTreeSet::new(),
             hash_blob,
         }
+        .horodatee()
+    }
+
+    /// Construit une [`Carte::Texte`] — le texte est embarqué directement dans
+    /// la carte, sans blob ni classeur.
+    ///
+    /// Horodatée à la construction (voir [`Self::horodatee`]).
+    ///
+    /// Le contenu est borné à [`MAX_TAILLE_TEXTE`] (mesuré en octets UTF-8) : la
+    /// vérification a lieu ici, avant toute mise sous enveloppe, pour échouer
+    /// proprement plutôt que de buter sur le plafond de signature du noyau.
+    ///
+    /// Le `nom` est posé en méta `"nom"` — comme pour les entrées d'un comptoir
+    /// de dépôt, c'est lui qui nommera le fichier au retrait. Contrairement à
+    /// elles, il ne vient pas du système de fichiers mais de l'appelant : il est
+    /// donc validé dès la construction ([`Self::nom_fichier_valide`]), pour
+    /// refuser d'emblée une carte qu'aucun retrait ne saurait matérialiser.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`] si
+    /// `contenu` dépasse [`MAX_TAILLE_TEXTE`], ou
+    /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] si `nom` est refusé
+    /// comme composant de chemin.
+    pub(super) fn new_texte(nom: &str, contenu: &str) -> ResultFeuApplication<Self> {
+        if contenu.len() > MAX_TAILLE_TEXTE {
+            return Err(ErreurFeuApplication::ScribeTailleMaxDepasseeTexte(
+                contenu.len(),
+            ));
+        }
+
+        if !Self::nom_fichier_valide(nom) {
+            return Err(ErreurFeuApplication::ScribeNomFichierInvalide);
+        }
+
+        let mut carte = Self::Texte {
+            metas: BTreeMap::new(),
+            tags: BTreeSet::new(),
+            contenu: contenu.to_string(),
+        };
+        carte.ajout_meta("nom", nom);
+
+        Ok(carte.horodatee())
+    }
+
+    /// Construit une [`Carte::Repertoire`] — référence des ENU enfants
+    /// par leur `hash_carte`.
+    ///
+    /// Horodatée à la construction (voir [`Self::horodatee`]).
+    pub(super) fn new_repertoire(hashs_enu: BTreeSet<[u8; 32]>) -> Self {
+        Self::Repertoire {
+            metas: BTreeMap::new(),
+            tags: BTreeSet::new(),
+            hashs_enu,
+        }
+        .horodatee()
     }
 
     /// Retourne les métadonnées structurées, communes aux trois variantes.
@@ -178,8 +265,7 @@ impl Carte {
     /// de fichiers (retrait) : le nom vient d'une ENU lue sur disque, et même
     /// signé il reste une entrée non fiable pour un `Path::join` — un nom
     /// absolu **remplacerait** le chemin cible, un `..` en sortirait. La
-    /// validation ([`Self::nom_fichier_valide`]) garantit un composant unique
-    /// et inoffensif.
+    /// validation garantit un composant unique et inoffensif.
     ///
     /// # Errors
     ///
@@ -187,7 +273,7 @@ impl Carte {
     /// `"nom"` est absente, ou
     /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] si le nom est refusé
     /// comme composant de chemin.
-    pub(super) fn nom_fichier(&self) -> ResultFeuApplication<String> {
+    pub fn nom(&self) -> ResultFeuApplication<String> {
         let Some(nom) = self.metas().get("nom") else {
             return Err(ErreurFeuApplication::ScribeMetaNomAbsente);
         };
@@ -199,6 +285,24 @@ impl Carte {
         Ok(nom.to_string())
     }
 
+    /// Retourne la date de création de la carte — timestamp Unix en secondes.
+    ///
+    /// La méta est posée par les trois constructeurs : son absence signale une
+    /// carte mal formée.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeMetaDateAbsente`] si la méta
+    /// `"date"` est absente, et propage [`ErreurFeuApplication::ParseIntError`]
+    /// si sa valeur n'est pas un entier décimal.
+    pub fn date(&self) -> ResultFeuApplication<u64> {
+        let Some(date) = self.metas().get("date") else {
+            return Err(ErreurFeuApplication::ScribeMetaDateAbsente);
+        };
+
+        Ok(date.parse::<u64>()?)
+    }
+
     /// `true` si `nom` est un composant de chemin unique et inoffensif.
     ///
     /// Empêche un nom d'entraîner l'écriture hors du dossier de retrait, pas un
@@ -208,56 +312,6 @@ impl Carte {
     /// avec `.` ou `..` est refusée.
     fn nom_fichier_valide(nom: &str) -> bool {
         !nom.is_empty() && !nom.contains('/') && nom != "." && nom != ".."
-    }
-
-    /// Construit une [`Carte::Texte`] — le texte est embarqué directement dans
-    /// la carte, sans blob ni classeur.
-    ///
-    /// Le contenu est borné à [`MAX_TAILLE_TEXTE`] (mesuré en octets UTF-8) : la
-    /// vérification a lieu ici, avant toute mise sous enveloppe, pour échouer
-    /// proprement plutôt que de buter sur le plafond de signature du noyau.
-    ///
-    /// Le `nom` est posé en méta `"nom"` — comme pour les entrées d'un comptoir
-    /// de dépôt, c'est lui qui nommera le fichier au retrait. Contrairement à
-    /// elles, il ne vient pas du système de fichiers mais de l'appelant : il est
-    /// donc validé dès la construction ([`Self::nom_fichier_valide`]), pour
-    /// refuser d'emblée une carte qu'aucun retrait ne saurait matérialiser.
-    ///
-    /// # Errors
-    ///
-    /// Retourne [`ErreurFeuApplication::ScribeTailleMaxDepasseeTexte`] si
-    /// `contenu` dépasse [`MAX_TAILLE_TEXTE`], ou
-    /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] si `nom` est refusé
-    /// comme composant de chemin.
-    pub(super) fn new_texte(nom: &str, contenu: &str) -> ResultFeuApplication<Self> {
-        if contenu.len() > MAX_TAILLE_TEXTE {
-            return Err(ErreurFeuApplication::ScribeTailleMaxDepasseeTexte(
-                contenu.len(),
-            ));
-        }
-
-        if !Self::nom_fichier_valide(nom) {
-            return Err(ErreurFeuApplication::ScribeNomFichierInvalide);
-        }
-
-        let mut enu = Self::Texte {
-            metas: BTreeMap::new(),
-            tags: BTreeSet::new(),
-            contenu: contenu.to_string(),
-        };
-        enu.ajout_meta("nom", nom);
-
-        Ok(enu)
-    }
-
-    /// Construit une [`Carte::Repertoire`] — référence des ENU enfants
-    /// par leur `hash_carte`.
-    pub(super) fn new_repertoire(hashs_enu: BTreeSet<[u8; 32]>) -> Self {
-        Self::Repertoire {
-            metas: BTreeMap::new(),
-            tags: BTreeSet::new(),
-            hashs_enu,
-        }
     }
 
     /// Ajoute une métadonnée structurée à la carte.
@@ -842,7 +896,9 @@ mod tests {
             assert_eq!(h, &hash_blob);
         }
 
-        assert!(carte.tags().is_empty() && carte.metas().is_empty());
+        assert!(carte.tags().is_empty());
+        assert!(carte.metas().contains_key("date"));
+        assert_eq!(carte.metas().len(), 1);
 
         carte.ajout_tag("tag1");
         carte.ajout_tag("tag2");
@@ -853,7 +909,7 @@ mod tests {
         carte.ajout_meta("meta1", "valeur1");
         carte.ajout_meta("meta2", "valeur2");
 
-        assert_eq!(carte.metas().len(), 2);
+        assert_eq!(carte.metas().len(), 3);
         assert!(carte.metas().contains_key("meta1") && carte.metas().contains_key("meta2"));
 
         Ok(())
@@ -893,7 +949,7 @@ mod tests {
         carte.ajout_meta("meta1", "valeur1");
         carte.ajout_meta("meta2", "valeur2");
 
-        assert_eq!(carte.metas().len(), 3);
+        assert_eq!(carte.metas().len(), 4);
         assert!(carte.metas().contains_key("meta1") && carte.metas().contains_key("meta2"));
 
         Ok(())
@@ -959,7 +1015,9 @@ mod tests {
             assert_eq!(h.len(), 2);
         }
 
-        assert!(carte.tags().is_empty() && carte.metas().is_empty());
+        assert!(carte.tags().is_empty());
+        assert!(carte.metas().contains_key("date"));
+        assert_eq!(carte.metas().len(), 1);
 
         carte.ajout_tag("tag1");
         carte.ajout_tag("tag2");
@@ -970,7 +1028,7 @@ mod tests {
         carte.ajout_meta("meta1", "valeur1");
         carte.ajout_meta("meta2", "valeur2");
 
-        assert_eq!(carte.metas().len(), 2);
+        assert_eq!(carte.metas().len(), 3);
         assert!(carte.metas().contains_key("meta1") && carte.metas().contains_key("meta2"));
 
         Ok(())
@@ -994,7 +1052,7 @@ mod tests {
 
         // Pas de meta nom
         assert!(matches!(
-            carte.nom_fichier(),
+            carte.nom(),
             Err(ErreurFeuApplication::ScribeMetaNomAbsente)
         ));
 
@@ -1002,7 +1060,7 @@ mod tests {
         carte.ajout_meta("nom", "");
 
         assert!(matches!(
-            carte.nom_fichier(),
+            carte.nom(),
             Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
@@ -1010,7 +1068,7 @@ mod tests {
         carte.ajout_meta("nom", "/azerty");
 
         assert!(matches!(
-            carte.nom_fichier(),
+            carte.nom(),
             Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
@@ -1018,7 +1076,7 @@ mod tests {
         carte.ajout_meta("nom", "aa/bbb");
 
         assert!(matches!(
-            carte.nom_fichier(),
+            carte.nom(),
             Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
@@ -1026,7 +1084,7 @@ mod tests {
         carte.ajout_meta("nom", "/aa/bbb/");
 
         assert!(matches!(
-            carte.nom_fichier(),
+            carte.nom(),
             Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
@@ -1034,7 +1092,7 @@ mod tests {
         carte.ajout_meta("nom", "azerty/");
 
         assert!(matches!(
-            carte.nom_fichier(),
+            carte.nom(),
             Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
@@ -1042,7 +1100,7 @@ mod tests {
         carte.ajout_meta("nom", ".");
 
         assert!(matches!(
-            carte.nom_fichier(),
+            carte.nom(),
             Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
@@ -1050,37 +1108,37 @@ mod tests {
         carte.ajout_meta("nom", "..");
 
         assert!(matches!(
-            carte.nom_fichier(),
+            carte.nom(),
             Err(ErreurFeuApplication::ScribeNomFichierInvalide)
         ));
 
         // Nom débute par '.'
         carte.ajout_meta("nom", ".test");
-        assert_eq!(carte.nom_fichier()?, ".test");
+        assert_eq!(carte.nom()?, ".test");
 
         // Nom termine par '.'
         carte.ajout_meta("nom", "test.");
-        assert_eq!(carte.nom_fichier()?, "test.");
+        assert_eq!(carte.nom()?, "test.");
 
         // Nom contient '.'
         carte.ajout_meta("nom", "test.2");
-        assert_eq!(carte.nom_fichier()?, "test.2");
+        assert_eq!(carte.nom()?, "test.2");
 
         // Nom débute par '..'
         carte.ajout_meta("nom", "..test");
-        assert_eq!(carte.nom_fichier()?, "..test");
+        assert_eq!(carte.nom()?, "..test");
 
         // Nom termine par '..'
         carte.ajout_meta("nom", "test..");
-        assert_eq!(carte.nom_fichier()?, "test..");
+        assert_eq!(carte.nom()?, "test..");
 
         // Nom contient '..'
         carte.ajout_meta("nom", "test..2");
-        assert_eq!(carte.nom_fichier()?, "test..2");
+        assert_eq!(carte.nom()?, "test..2");
 
         // Nom contient '.' et '..'
         carte.ajout_meta("nom", ".te.st..test.te.st..");
-        assert_eq!(carte.nom_fichier()?, ".te.st..test.te.st..");
+        assert_eq!(carte.nom()?, ".te.st..test.te.st..");
 
         Ok(())
     }

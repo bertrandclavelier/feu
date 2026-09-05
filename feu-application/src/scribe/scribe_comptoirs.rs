@@ -420,7 +420,7 @@ impl Scribe {
         for h in enu_courante.carte().hashs_enu().into_iter().flatten() {
             let enu = Enu::charger_sans_verification_signature(&self.chemin_enu, h)?;
 
-            noms_enu.insert(enu.carte().nom_fichier()?, enu);
+            noms_enu.insert(enu.carte().nom()?, enu);
         }
 
         let mut hashs_retenus: BTreeSet<[u8; 32]> = BTreeSet::new();
@@ -684,7 +684,7 @@ impl Scribe {
         let mut nom_enfants = BTreeSet::new();
         for h in enu_racine_depot.carte().hashs_enu().into_iter().flatten() {
             let enu = Enu::charger_sans_verification_signature(&self.chemin_enu, h)?;
-            nom_enfants.insert(enu.carte().nom_fichier()?);
+            nom_enfants.insert(enu.carte().nom()?);
         }
 
         for h in hashs_nouveaux_enfants {
@@ -699,7 +699,7 @@ impl Scribe {
             }
 
             let enu = Enu::charger_sans_verification_signature(&self.chemin_enu, h)?;
-            let nom = enu.carte().nom_fichier()?;
+            let nom = enu.carte().nom()?;
 
             // nom libre : l'ENU se greffe telle quelle. Sinon c'est une copie
             // renommée qui se greffe, l'occupant n'étant jamais touché.
@@ -873,7 +873,7 @@ impl Scribe {
     ) -> ResultFeuApplication<()> {
         // nom validé avant tout join — il vient du disque et pourrait sinon
         // faire écrire hors du dossier de retrait, quelle que soit la variante
-        let nom_fichier = enu_courante.carte().nom_fichier()?;
+        let nom_fichier = enu_courante.carte().nom()?;
 
         let chemin = chemin_courant.join(&nom_fichier);
 

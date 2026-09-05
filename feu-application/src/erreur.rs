@@ -152,6 +152,11 @@ pub enum ErreurFeuApplication {
     #[error("APP > Index comptoir inconnu : {0}")]
     ScribeIndexComptoirInconnu(usize),
 
+    /// La carte ne porte pas de méta `"date"` : les trois constructeurs la
+    /// posent, une carte qui en manque est donc mal formée.
+    #[error("APP > La carte n'a pas de méta date")]
+    ScribeMetaDateAbsente,
+
     /// La carte ne porte pas de méta `"nom"` : rien pour la matérialiser sur le
     /// système de fichiers au retrait.
     #[error("APP > La carte n'a pas de méta nom")]
