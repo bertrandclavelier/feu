@@ -47,7 +47,8 @@
 //! Le geste typique au clavier : `a` allume le nœud, mot de passe, seed
 //! validée par deux pressions d'Entrée ; `o` ouvre un foyer (saisie du
 //! numéro), `0`-`9` entrent dans un foyer ouvert puis dans un de ses
-//! classeurs, `d` y ouvre un comptoir de dépôt et `c` le ferme, `r` retire
+//! classeurs, `d` y ouvre un comptoir de dépôt et `c` le ferme, `T` ouvre le
+//! comptoir de travail sur l'ENU marquée et le referme, `r` retire
 //! l'arborescence sur le disque, `Backspace` remonte d'un niveau, `f` ferme le
 //! foyer où l'on est, `e` éteint quand tous les foyers sont fermés, `q` quitte
 //! quand le nœud est éteint, `!` affiche l'à-propos. Sur les deux écrans
@@ -684,6 +685,15 @@ impl Tui {
                     self.etat_tui.validation_buffer_saisie =
                         ValidationBufferSaisie::FermetureComptoirDepot;
                 }
+                Commande::PilotageFermerComptoirTravail => {
+                    self.connecteur_vers_coeur
+                        .envoyer_message_tui_coeur(MessageTuiCoeur::FermetureComptoirTravail);
+
+                    // Le dépôt change la racine : ce qui est affiché et ce qui
+                    // est marqué désignent un arbre qui n'existe plus.
+                    self.etat_tui.enu_selectionnee = None;
+                    self.etat_tui.etat_arborescence_enu.vider_arborescence();
+                }
                 Commande::PilotageFermerFoyer(index) => {
                     self.connecteur_vers_coeur
                         .envoyer_message_tui_coeur(MessageTuiCoeur::FermetureFoyer(*index));
@@ -695,7 +705,7 @@ impl Tui {
                         return Err(ErreurFeuTui::TuiAucunCheminSelectionne);
                     };
                     self.connecteur_vers_coeur.envoyer_message_tui_coeur(
-                        MessageTuiCoeur::OuvertureComptoir(
+                        MessageTuiCoeur::OuvertureComptoirDepot(
                             chemin.join(format!(
                                 "f{}.c{}_depot_feu",
                                 index_foyer.valeur(),
@@ -703,6 +713,20 @@ impl Tui {
                             )),
                             *index_foyer,
                             *index_classeur,
+                        ),
+                    );
+                }
+                Commande::PilotageOuvrirComptoirTravail => {
+                    let Some(chemin) = self.etat_tui.chemin_selectionne.as_ref() else {
+                        return Err(ErreurFeuTui::TuiAucunCheminSelectionne);
+                    };
+                    let Some(fiche) = self.etat_tui.enu_selectionnee.as_ref() else {
+                        return Err(ErreurFeuTui::TuiAucuneEnuSelectionnee);
+                    };
+                    self.connecteur_vers_coeur.envoyer_message_tui_coeur(
+                        MessageTuiCoeur::OuvertureComptoirTravail(
+                            chemin.join("travail_feu"),
+                            fiche.clone(),
                         ),
                     );
                 }

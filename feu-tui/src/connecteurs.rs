@@ -143,6 +143,18 @@ pub(crate) enum MessageTuiCoeur {
     /// [`FeuApplication::commande_fermeture_comptoir_depot`].
     FermetureComptoirDepot(usize, Fiche),
 
+    /// Demande la fermeture du comptoir de travail ouvert.
+    ///
+    /// Ne porte rien, à la différence de [`Self::FermetureComptoirDepot`] : il
+    /// n'y a qu'un comptoir de travail, et le cœur en retient depuis l'ouverture
+    /// le dossier comme la racine du sous-arbre à remplacer. Aucune saisie, donc,
+    /// et aucune ENU marquée.
+    ///
+    /// Émis par [`crate::tui::Tui`] sur dispatch de `PilotageFermerComptoirTravail` ;
+    /// consommé par [`ConnecteurVersTui::lancer_thread_coeur`] qui appelle
+    /// [`FeuApplication::commande_fermeture_comptoir_travail`].
+    FermetureComptoirTravail,
+
     /// Demande la fermeture du foyer à l'index donné.
     ///
     /// Émis par [`crate::tui::Tui`] sur dispatch de `PilotageFermerFoyer` —
@@ -170,7 +182,20 @@ pub(crate) enum MessageTuiCoeur {
     ///
     /// Le chemin traverse le canal plutôt que d'être connu du cœur : la TUI seule
     /// décide où le dossier apparaît.
-    OuvertureComptoir(PathBuf, IndexFoyer, IndexClasseur),
+    OuvertureComptoirDepot(PathBuf, IndexFoyer, IndexClasseur),
+
+    /// Demande l'ouverture du comptoir de travail au chemin porté, sur le
+    /// sous-arbre de l'ENU portée.
+    ///
+    /// Le chemin est celui du dossier **à créer**, sous-dossier de la marque
+    /// posée par l'utilisateur — le cœur refuse un chemin déjà pris. La [`Fiche`]
+    /// est le répertoire marqué : sa descendance est matérialisée à l'ouverture,
+    /// et le dossier fera autorité sur elle à la fermeture.
+    ///
+    /// Émis sur dispatch de `PilotageOuvrirComptoirTravail`, consommé par un appel
+    /// à [`FeuApplication::commande_ouverture_comptoir_travail`], qui refuse tant
+    /// qu'un comptoir de dépôt ou de travail est ouvert.
+    OuvertureComptoirTravail(PathBuf, Fiche),
 
     /// Demande la matérialisation d'une ENU dans un dossier de l'OS.
     ///
@@ -319,7 +344,7 @@ impl ConnecteurVersTui {
                             feu_application.commande_ouverture_foyer(&self, index_foyer),
                         );
                     }
-                    Ok(MessageTuiCoeur::OuvertureComptoir(
+                    Ok(MessageTuiCoeur::OuvertureComptoirDepot(
                         chemin_comptoir_depot,
                         index_foyer,
                         index_classeur,
@@ -331,12 +356,27 @@ impl ConnecteurVersTui {
                             index_classeur,
                         ));
                     }
+                    Ok(MessageTuiCoeur::OuvertureComptoirTravail(
+                        chemin_comptoir_travail,
+                        fiche_racine,
+                    )) => {
+                        self.signaler_erreur(feu_application.commande_ouverture_comptoir_travail(
+                            &self,
+                            &chemin_comptoir_travail,
+                            &fiche_racine,
+                        ));
+                    }
                     Ok(MessageTuiCoeur::FermetureComptoirDepot(index_comptoir, fiche)) => {
                         self.signaler_erreur(feu_application.commande_fermeture_comptoir_depot(
                             &self,
                             index_comptoir,
                             &fiche,
                         ));
+                    }
+                    Ok(MessageTuiCoeur::FermetureComptoirTravail) => {
+                        self.signaler_erreur(
+                            feu_application.commande_fermeture_comptoir_travail(&self),
+                        );
                     }
                     Ok(MessageTuiCoeur::RetraitLectureSeule(chemin, fiche)) => {
                         self.signaler_erreur(

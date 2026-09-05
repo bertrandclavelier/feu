@@ -47,7 +47,9 @@
 //!   ouvert.
 //! - **Nœud allumé, au moins un foyer ouvert, où que l'on soit** : `c` ferme un
 //!   comptoir de dépôt dès qu'il en existe un et qu'une ENU répertoire est
-//!   marquée.
+//!   marquée ; `T` ouvre le comptoir de travail sur l'ENU répertoire marquée au
+//!   chemin marqué, et le ferme dès qu'il est ouvert — une seule touche pour les
+//!   deux sens, les conditions étant complémentaires.
 //! - **Nœud allumé, dans un foyer** : `f` ferme le foyer courant ; `0`-`9`
 //!   entrent dans le classeur correspondant (dans la limite de
 //!   `IndexClasseur::NOMBRE`) ; `Backspace` remonte à la racine ; `o` ouvre un
@@ -309,6 +311,18 @@ pub(super) enum Commande {
     /// d'identifiant — le bras d'exécution bascule en saisie pour le collecter.
     PilotageFermerComptoirDepot,
 
+    /// Ferme le comptoir de travail ouvert — émet
+    /// [`crate::connecteurs::MessageTuiCoeur::FermetureComptoirTravail`].
+    ///
+    /// Active dès que la session en porte un, sans autre condition : ni ENU
+    /// marquée ni identifiant à saisir, le cœur sachant déjà quel dossier
+    /// reprendre et sous quelle racine le greffer.
+    ///
+    /// Partage sa touche avec [`Commande::PilotageOuvrirComptoirTravail`], dont
+    /// la condition est l'exacte complémentaire : le comptoir ouvert active
+    /// celle-ci et retire l'autre, la table n'en porte donc jamais qu'une.
+    PilotageFermerComptoirTravail,
+
     /// Ferme le foyer dont l'index est porté par la variante — émet
     /// [`crate::connecteurs::MessageTuiCoeur::FermetureFoyer`].
     ///
@@ -322,7 +336,7 @@ pub(super) enum Commande {
 
     /// Ouvre un comptoir de dépôt à destination du foyer et du classeur portés
     /// — émet
-    /// [`crate::connecteurs::MessageTuiCoeur::OuvertureComptoir`].
+    /// [`crate::connecteurs::MessageTuiCoeur::OuvertureComptoirDepot`].
     ///
     /// Active dans un classeur, marque de chemin posée : c'est le seul contexte
     /// où les deux index sont connus, capturés depuis la position courante sans
@@ -333,6 +347,23 @@ pub(super) enum Commande {
     /// crée puis supprime à la fermeture. Son nom porte la destination, ce qui le
     /// rend unique par couple foyer-classeur.
     PilotageOuvrirComptoirDepot(IndexFoyer, IndexClasseur),
+
+    /// Ouvre le comptoir de travail sur l'ENU marquée — émet
+    /// [`crate::connecteurs::MessageTuiCoeur::OuvertureComptoirTravail`].
+    ///
+    /// Active hors comptoir de travail déjà ouvert, une ENU **répertoire** et une
+    /// marque de chemin posées : le cœur exige un répertoire pour racine du
+    /// sous-arbre.
+    ///
+    /// **Un comptoir de dépôt ouvert ne la retire pas**, alors que le cœur exige
+    /// l'exclusivité entre les deux sortes de comptoir : l'erreur qui nomme ce
+    /// qu'il reste à fermer guide mieux qu'une touche évanouie.
+    ///
+    /// Le chemin est formé au dispatch, sous-dossier `travail_feu` de la marque :
+    /// **c'est lui le comptoir, jamais le dossier marqué**, que le cœur crée puis
+    /// supprime à la fermeture. Son nom n'a rien à porter de plus, le comptoir de
+    /// travail étant unique.
+    PilotageOuvrirComptoirTravail,
 
     /// Prépare l'ouverture d'un foyer — bascule l'invite en mode saisie pour collecter le numéro.
     ///
@@ -488,6 +519,23 @@ impl CommandesActives {
                     commandes_actives.insert(
                         (KeyCode::Char('c'), KeyModifiers::NONE),
                         Commande::PilotageFermerComptoirDepot,
+                    );
+                }
+
+                if let Some(enu) = &etat_tui.enu_selectionnee
+                    && matches!(enu.carte(), Carte::Repertoire { .. })
+                    && etat_tui.chemin_selectionne.is_some()
+                    && session.comptoir_travail_ouvert().is_none()
+                {
+                    commandes_actives.insert(
+                        (KeyCode::Char('T'), KeyModifiers::SHIFT),
+                        Commande::PilotageOuvrirComptoirTravail,
+                    );
+                }
+                if session.comptoir_travail_ouvert().is_some() {
+                    commandes_actives.insert(
+                        (KeyCode::Char('T'), KeyModifiers::SHIFT),
+                        Commande::PilotageFermerComptoirTravail,
                     );
                 }
                 match (

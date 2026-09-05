@@ -297,7 +297,7 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
         Constraint::Length(2), // [3] respiration
         Constraint::Length(1), // [4] invite
         Constraint::Length(2), // [5] respiration
-        Constraint::Length(1), // [6] affichage dépôt
+        Constraint::Length(1), // [6] affichage des comptoirs
         Constraint::Length(1), // [7] enu sélectionnée
         Constraint::Length(1), // [8] chemin sélectionné
         Constraint::Fill(1),   // [9]
@@ -397,7 +397,7 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
         }),
     );
 
-    // [6] comptoir dépôt
+    // [6] comptoirs — dépôt XOR travail
     if let Some(session) = &etat_tui.session_application
         && !session.comptoirs_depot_ouverts().is_empty()
     {
@@ -407,7 +407,7 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
         )]);
 
         for (rang, (index, (_, index_foyer, index_classeur))) in
-            session.comptoirs_depot_ouverts().iter().take(5).enumerate()
+            session.comptoirs_depot_ouverts().iter().take(4).enumerate()
         {
             if rang > 0 {
                 ligne.push_span(Span::raw(format!(" {SEPARATEUR} ")));
@@ -418,10 +418,23 @@ fn dessiner_ecran_principal(frame: &mut Frame, etat_tui: &EtatTui) {
                 index_classeur.valeur()
             )));
         }
-        if session.comptoirs_depot_ouverts().len() > 5 {
+        if session.comptoirs_depot_ouverts().len() > 4 {
             ligne.push_span(Span::raw(format!(" {SEPARATEUR} ")));
             ligne.push_span(Span::raw("…"));
         }
+
+        frame.render_widget(ligne, carre_lignes[6]);
+    }
+    if let Some(session) = &etat_tui.session_application
+        && let Some(comptoir_travail) = session.comptoir_travail_ouvert()
+    {
+        let ligne = Line::from(vec![
+            Span::styled(
+                format!("Comptoir travail {CHEVRON_INVITE} "),
+                Style::default().fg(COULEUR_ACCENT),
+            ),
+            Span::raw(comptoir_travail.0.to_string_lossy()),
+        ]);
 
         frame.render_widget(ligne, carre_lignes[6]);
     }
