@@ -13,3 +13,7 @@ thiserror = "2"
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "feu"
+path = "src/main.rs"

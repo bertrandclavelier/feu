@@ -1,6 +1,6 @@
 # Feu — guide utilisateur
 
-> **Date :** 5 septembre 2026
+> **Date :** 6 septembre 2026
 > **Version :** v0.0.7
 
 Ce guide vous emmène de l'installation au premier dépôt-retrait complet. Il ne
@@ -44,11 +44,25 @@ seul fichier, lui-même chiffré : il n'en reste qu'un `.feu` sur le disque.
 
 ## 3. Installation
 
+**1. Récupérer les sources**
+
 ```sh
 git clone https://git.clavelier.me/bertrand/feu.git
 cd feu
+```
+
+**2. Compiler et essayer**
+
+```sh
 cargo build --release
 cargo run --release -p feu-tui
+```
+
+**3. Installer et désinstaller**
+
+```sh
+cargo install --path feu-tui    # dépose la commande `feu` dans ~/.cargo/bin
+cargo uninstall feu-tui
 ```
 
 Prérequis : Rust ≥ 1.98, Linux ou macOS. Aucune autre dépendance. Chaque

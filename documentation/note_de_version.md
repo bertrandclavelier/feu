@@ -1,6 +1,6 @@
 # Feu — Note de version v0.0.7
 
-> **Date :** 5 septembre 2026
+> **Date :** 6 septembre 2026
 > **Statut :** septième version
 > **Licence :** GNU General Public License v3.0 ou ultérieure (GPL-3.0-or-later)
 > **Photo technique** — ce document décrit l'état réel du code, pas les intentions de conception.
@@ -663,6 +663,33 @@ Chaque chunk : `plaintext (≤ CHUNK_SIZE o) + tag AES-GCM (16 o)`. `CHUNK_SIZE 
 | `TAILLE_CHUNK` | 8 192 o | Granularité de lecture d'un blob par le Tiroir (`pub(crate)`) |
 | `NOMBRE_MOTS_SEED` | 24 | Mots de la seed BIP39 (interne au cryptographe) |
 | `CHUNK_SIZE` | 4 096 o | Taille des chunks du stream AES-256-GCM des archives `.feu` (interne au cryptographe) |
+
+---
+
+## Installation
+
+**1. Récupérer les sources**
+
+```sh
+git clone https://git.clavelier.me/bertrand/feu.git
+cd feu
+```
+
+**2. Compiler et essayer**
+
+```sh
+cargo build --release
+cargo run --release -p feu-tui
+```
+
+**3. Installer et désinstaller**
+
+```sh
+cargo install --path feu-tui    # dépose la commande `feu` dans ~/.cargo/bin
+cargo uninstall feu-tui
+```
+
+La crate `feu-tui` déclare une cible binaire nommée `feu` : la compilation produit `target/release/feu`.
 
 ---
 

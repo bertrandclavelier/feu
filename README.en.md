@@ -40,11 +40,25 @@ Earlier versions are in the [changelog](CHANGELOG.md) (French).
 
 ## Install and run
 
+**1. Get the sources**
+
 ```sh
 git clone https://git.clavelier.me/bertrand/feu.git
 cd feu
+```
+
+**2. Build and try**
+
+```sh
 cargo build --release
 cargo run --release -p feu-tui
+```
+
+**3. Install and uninstall**
+
+```sh
+cargo install --path feu-tui    # puts the `feu` command in ~/.cargo/bin
+cargo uninstall feu-tui
 ```
 
 Feu opens on its control screen, node off. The

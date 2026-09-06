@@ -40,11 +40,25 @@ Les versions antérieures sont dans le [changelog](CHANGELOG.md).
 
 ## Installation et lancement
 
+**1. Récupérer les sources**
+
 ```sh
 git clone https://git.clavelier.me/bertrand/feu.git
 cd feu
+```
+
+**2. Compiler et essayer**
+
+```sh
 cargo build --release
 cargo run --release -p feu-tui
+```
+
+**3. Installer et désinstaller**
+
+```sh
+cargo install --path feu-tui    # dépose la commande `feu` dans ~/.cargo/bin
+cargo uninstall feu-tui
 ```
 
 Feu s'ouvre sur son écran de pilotage, nœud éteint. Le
