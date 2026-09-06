@@ -244,7 +244,7 @@ mod tests {
             #[test]
             fn hors_alphabet(corps in "[a-z2-7]{55}", pos in 0..55usize, intrus in "[^a-z2-7]") {
                 let mut corps = corps;
-                corps.replace_range(pos..pos + 1, &intrus);
+                corps.replace_range(pos..=pos, &intrus);
                 let adresse = format!("{corps}.braise");
 
                 prop_assert!(Braise::try_from(adresse.as_str()).is_err());
@@ -271,7 +271,7 @@ mod tests {
     /// Rejet de la chaîne vide (ni suffixe, ni corps).
     #[test]
     fn chaine_vide() {
-        let braise = String::from("");
+        let braise = String::new();
 
         assert!(matches!(
             Braise::try_from(braise.as_str()).unwrap_err(),

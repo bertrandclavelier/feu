@@ -331,8 +331,8 @@ impl EtatTui {
     /// Retourne le texte du message d'erreur courant, `None` si aucun.
     ///
     /// Expose uniquement le texte — le compte à rebours est un détail interne.
-    fn message_erreur(&self) -> &Option<String> {
-        &self.message_erreur.0
+    fn message_erreur(&self) -> Option<&str> {
+        self.message_erreur.0.as_deref()
     }
 
     /// Pose un message d'erreur avec un compte à rebours de 5 secondes.
@@ -347,8 +347,8 @@ impl EtatTui {
     /// Retourne le texte du message d'aide courant, `None` si aucun.
     ///
     /// Expose uniquement le texte — le compte à rebours est un détail interne.
-    fn message_aide(&self) -> &Option<String> {
-        &self.message_aide.0
+    fn message_aide(&self) -> Option<&str> {
+        self.message_aide.0.as_deref()
     }
 
     /// Pose un message d'aide avec un compte à rebours de 2 secondes.

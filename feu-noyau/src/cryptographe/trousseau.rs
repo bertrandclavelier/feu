@@ -378,16 +378,13 @@ impl Trousseau {
     ) -> ResultFeuNoyau<()> {
         // Les labels de dérivation numérotent les foyers à partir de 1, quand
         // IndexFoyer part de 0.
-        let index_derivation_foyer = (index_foyer.valeur() + 1) as u32;
+        let index_derivation_foyer = index_foyer.valeur() + 1;
 
         // Paire de clés signature du foyer
         let cle_sig_priv = SigningKey::<MlDsa87>::from_seed(
             Self::derive_depuis_seed::<32>(
                 seed_bytes,
-                &format!(
-                    "{}/{}",
-                    LABEL_DERIVATION_SIGNATURE_FOYER, index_derivation_foyer
-                ),
+                &format!("{LABEL_DERIVATION_SIGNATURE_FOYER}/{index_derivation_foyer}"),
             )?
             .expose_secret()
             .into(),
@@ -403,20 +400,14 @@ impl Trousseau {
         // Clé symétrique de chiffrement du foyer
         let cle_chiffrement = Self::derive_depuis_seed::<32>(
             seed_bytes,
-            &format!(
-                "{}/{}",
-                LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_FOYER, index_derivation_foyer
-            ),
+            &format!("{LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_FOYER}/{index_derivation_foyer}"),
         )?;
 
         // Paire de clés chiffrement foyer
         let cle_chiff_priv = {
             let seed_brute = Self::derive_depuis_seed::<64>(
                 seed_bytes,
-                &format!(
-                    "{}/{}",
-                    LABEL_DERIVATION_CHIFFREMENT_FOYER, index_derivation_foyer
-                ),
+                &format!("{LABEL_DERIVATION_CHIFFREMENT_FOYER}/{index_derivation_foyer}"),
             )?;
             DecapsulationKey1024::from_seed(Seed::from(*seed_brute.expose_secret()))
         };
@@ -437,10 +428,7 @@ impl Trousseau {
             *e = Some(Self::derive_depuis_seed::<32>(
                 seed_bytes,
                 &format!(
-                    "{}/{}/{}",
-                    LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_CLASSEUR,
-                    index_derivation_foyer,
-                    index_derivation_classeur,
+                    "{LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_CLASSEUR}/{index_derivation_foyer}/{index_derivation_classeur}"
                 ),
             )?);
         }
@@ -452,10 +440,7 @@ impl Trousseau {
         // en v0.0.4 ne change aucune braise).
         let braise_brute = Self::derive_depuis_seed::<32>(
             seed_bytes,
-            &format!(
-                "{}/{}",
-                LABEL_DERIVATION_BRAISE_FOYER, index_derivation_foyer
-            ),
+            &format!("{LABEL_DERIVATION_BRAISE_FOYER}/{index_derivation_foyer}"),
         )?;
 
         // Checksum de 2 octets accolé à la braise : repère une faute de frappe à la
@@ -805,7 +790,7 @@ impl Trousseau {
         destination: &mut impl Write,
     ) -> ResultFeuNoyau<()> {
         if let Some(trousseau_foyer) = &self.trousseaux_foyers[index_foyer.valeur()] {
-            self.chiffre_avec_cle(
+            Self::chiffre_avec_cle(
                 trousseau_foyer.donne_cle_chiffrement().expose_secret(),
                 source,
                 destination,
@@ -842,7 +827,7 @@ impl Trousseau {
         source: &mut impl Read,
         destination: &mut impl Write,
     ) -> ResultFeuNoyau<()> {
-        self.dechiffre_avec_cle(
+        Self::dechiffre_avec_cle(
             self.dechiffre_cle(cle_chiffree)?.expose_secret(),
             source,
             destination,
@@ -1230,7 +1215,6 @@ impl Trousseau {
     /// Retourne une erreur si une opération d'entrée/sortie échoue ou si le
     /// chiffrement AES-GCM-stream échoue.
     fn chiffre_avec_cle(
-        &self,
         cle_chiffrement: &[u8; 32],
         source: &mut impl Read,
         destination: &mut impl Write,
@@ -1288,7 +1272,6 @@ impl Trousseau {
     /// d'entrée/sortie échoue, ou si la vérification de l'auth tag AES-GCM échoue
     /// (données corrompues ou clé incorrecte).
     fn dechiffre_avec_cle(
-        &self,
         cle_chiffrement: &[u8; 32],
         source: &mut impl Read,
         destination: &mut impl Write,

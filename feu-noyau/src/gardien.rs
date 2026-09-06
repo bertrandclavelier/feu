@@ -89,7 +89,7 @@ impl Configuration {
         let prochain_index = lignes.remove(0).parse::<u32>()?;
 
         let mut tableau = [Braise::VIDE; IndexFoyer::NOMBRE];
-        for e in tableau.iter_mut() {
+        for e in &mut tableau {
             *e = Braise::try_from(String::from(lignes.remove(0)).as_str())
                 .map_err(|_| ErreurFeuNoyau::GardienProblemeEncodageBraise)?;
         }
@@ -263,7 +263,7 @@ impl Gardien {
     /// Retourne une erreur si l'écriture échoue.
     pub(super) fn enregistrement_configuration(&self) -> ResultFeuNoyau<()> {
         self.carnet
-            .enregistre_configuration(self.configuration.exporte_en_texte())?;
+            .enregistre_configuration(&self.configuration.exporte_en_texte())?;
 
         Ok(())
     }

@@ -293,17 +293,14 @@ impl Configuration {
                 cumul
             });
 
-        match &self.comptoir_travail {
-            Some(comptoir) => {
-                resultat.push_str(&HEXLOWER.encode(comptoir.0.as_os_str().as_bytes()));
-                resultat.push('\n');
-                resultat.push_str(&HEXLOWER.encode(&comptoir.1));
-                resultat.push('\n');
-            }
-            None => {
-                resultat.push_str("None");
-                resultat.push('\n');
-            }
+        if let Some(comptoir) = &self.comptoir_travail {
+            resultat.push_str(&HEXLOWER.encode(comptoir.0.as_os_str().as_bytes()));
+            resultat.push('\n');
+            resultat.push_str(&HEXLOWER.encode(&comptoir.1));
+            resultat.push('\n');
+        } else {
+            resultat.push_str("None");
+            resultat.push('\n');
         }
 
         resultat

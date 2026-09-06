@@ -420,6 +420,10 @@ pub(super) fn dessiner_ecran_arborescence_enu(frame: &mut Frame, etat_tui: &mut 
 ///
 /// **Une racine se reconnaît à sa méta `_racine`**, non à sa position, et rend
 /// une chaîne vide — son symbole la désigne déjà.
+#[allow(
+    clippy::single_match_else,
+    reason = "deux cas nommés : le `match` les sépare mieux qu'un `else` à retour anticipé"
+)]
 pub(super) fn libelle(fiche: &Fiche) -> String {
     match fiche.carte().metas().get("nom") {
         Some(nom) => {

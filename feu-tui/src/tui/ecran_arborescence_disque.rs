@@ -235,6 +235,10 @@ impl EtatArborescenceDisque {
     ///
     /// [`ErreurFeuTui::DisqueSelectionHorsListe`] si `index` ne désigne aucune ligne.
     /// [`ErreurFeuTui::DisqueRepertoireIllisible`] si `read_dir` échoue.
+    #[allow(
+        clippy::range_plus_one,
+        reason = "plage vide voulue : insertion sans suppression ; `..=` écraserait une ligne"
+    )]
     fn deplier(&mut self, index: usize) -> ResultFeuTui<()> {
         let Some(LigneDisque {
             chemin, profondeur, ..

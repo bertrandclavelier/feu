@@ -190,13 +190,13 @@ impl Carte {
                 metas,
                 tags: _,
                 hash_blob: _,
-            } => metas,
-            Self::Texte {
+            }
+            | Self::Texte {
                 metas,
                 tags: _,
                 contenu: _,
-            } => metas,
-            Self::Repertoire {
+            }
+            | Self::Repertoire {
                 metas,
                 tags: _,
                 hashs_enu: _,
@@ -216,21 +216,21 @@ impl Carte {
     /// un clone par pas serait payé pour rien.
     pub fn hashs_enu(&self) -> Option<&BTreeSet<[u8; 32]>> {
         match self {
-            Self::Donnee {
-                metas: _,
-                tags: _,
-                hash_blob: _,
-            } => None,
-            Self::Texte {
-                metas: _,
-                tags: _,
-                contenu: _,
-            } => None,
             Self::Repertoire {
                 metas: _,
                 tags: _,
                 hashs_enu,
             } => Some(hashs_enu),
+            Self::Donnee {
+                metas: _,
+                tags: _,
+                hash_blob: _,
+            }
+            | Self::Texte {
+                metas: _,
+                tags: _,
+                contenu: _,
+            } => None,
         }
     }
 
@@ -244,13 +244,13 @@ impl Carte {
                 metas: _,
                 tags,
                 hash_blob: _,
-            } => tags,
-            Self::Texte {
+            }
+            | Self::Texte {
                 metas: _,
                 tags,
                 contenu: _,
-            } => tags,
-            Self::Repertoire {
+            }
+            | Self::Repertoire {
                 metas: _,
                 tags,
                 hashs_enu: _,
@@ -282,7 +282,7 @@ impl Carte {
             return Err(ErreurFeuApplication::ScribeNomFichierInvalide);
         }
 
-        Ok(nom.to_string())
+        Ok(nom.clone())
     }
 
     /// Retourne la date de création de la carte — timestamp Unix en secondes.
@@ -327,17 +327,13 @@ impl Carte {
                 metas,
                 tags: _,
                 hash_blob: _,
-            } => {
-                metas.insert(cle, valeur);
             }
-            Self::Texte {
+            | Self::Texte {
                 metas,
                 tags: _,
                 contenu: _,
-            } => {
-                metas.insert(cle, valeur);
             }
-            Self::Repertoire {
+            | Self::Repertoire {
                 metas,
                 tags: _,
                 hashs_enu: _,
@@ -358,17 +354,13 @@ impl Carte {
                 metas: _,
                 tags,
                 hash_blob: _,
-            } => {
-                tags.insert(tag);
             }
-            Self::Texte {
+            | Self::Texte {
                 metas: _,
                 tags,
                 contenu: _,
-            } => {
-                tags.insert(tag);
             }
-            Self::Repertoire {
+            | Self::Repertoire {
                 metas: _,
                 tags,
                 hashs_enu: _,
@@ -408,7 +400,12 @@ impl Carte {
     /// Format : discriminant `u8` (0x00=CaD, 0x01=CaT, 0x02=CaR), métadonnées,
     /// tags, puis les champs spécifiques à chaque variante. Le résultat est
     /// déterministe : même carte → mêmes octets → même hash.
-    pub(super) fn vers_octets(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeCarteMalFormee`] si une longueur
+    /// dépasse `u32::MAX` : refuser plutôt que tronquer en silence.
+    pub(super) fn vers_octets(&self) -> ResultFeuApplication<Vec<u8>> {
         let mut resultat = Vec::new();
         match self {
             Carte::Donnee {
@@ -417,8 +414,8 @@ impl Carte {
                 hash_blob,
             } => {
                 resultat.push(0x00);
-                metas_vers_octets(&mut resultat, metas);
-                tags_vers_octets(&mut resultat, tags);
+                metas_vers_octets(&mut resultat, metas)?;
+                tags_vers_octets(&mut resultat, tags)?;
                 resultat.extend(hash_blob);
             }
             Carte::Texte {
@@ -427,8 +424,8 @@ impl Carte {
                 contenu,
             } => {
                 resultat.push(0x01);
-                metas_vers_octets(&mut resultat, metas);
-                tags_vers_octets(&mut resultat, tags);
+                metas_vers_octets(&mut resultat, metas)?;
+                tags_vers_octets(&mut resultat, tags)?;
                 let c = contenu.as_bytes();
                 resultat.extend(&(c.len() as u64).to_be_bytes());
                 resultat.extend(c);
@@ -439,15 +436,17 @@ impl Carte {
                 hashs_enu,
             } => {
                 resultat.push(0x02);
-                metas_vers_octets(&mut resultat, metas);
-                tags_vers_octets(&mut resultat, tags);
-                resultat.extend(&(hashs_enu.len() as u32).to_be_bytes());
+                metas_vers_octets(&mut resultat, metas)?;
+                tags_vers_octets(&mut resultat, tags)?;
+                let nombre = u32::try_from(hashs_enu.len())
+                    .map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?;
+                resultat.extend(&nombre.to_be_bytes());
                 for h in hashs_enu {
                     resultat.extend(h);
                 }
             }
         }
-        resultat
+        Ok(resultat)
     }
 
     /// Désérialise une carte depuis ses octets canoniques.
@@ -471,7 +470,9 @@ impl Carte {
         match octets[0] {
             0 => {
                 let (hash, reste) = prendre_octets(reste, 32)?;
-                let hash_blob: [u8; 32] = hash.try_into().unwrap(); // pas d'erreur possible
+                let hash_blob: [u8; 32] = hash
+                    .try_into()
+                    .map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?;
 
                 if !reste.is_empty() {
                     return Err(ErreurFeuApplication::ScribeCarteMalFormee);
@@ -485,9 +486,13 @@ impl Carte {
             }
             1 => {
                 (octets, reste) = prendre_octets(reste, 8)?;
-                let longueur = u64::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+                let entete = octets
+                    .try_into()
+                    .map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?;
+                let longueur = usize::try_from(u64::from_be_bytes(entete))
+                    .map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?;
 
-                (octets, reste) = prendre_octets(reste, longueur as usize)?;
+                (octets, reste) = prendre_octets(reste, longueur)?;
 
                 let contenu = from_utf8(octets)?.to_string();
 
@@ -504,13 +509,19 @@ impl Carte {
 
             2 => {
                 (octets, reste) = prendre_octets(reste, 4)?;
-                let n_hashs = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+                let n_hashs = u32::from_be_bytes(
+                    octets
+                        .try_into()
+                        .map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?,
+                );
 
                 let mut hashs_enu = BTreeSet::new();
 
                 for _ in 0..n_hashs {
                     (octets, reste) = prendre_octets(reste, 32)?;
-                    let hash: [u8; 32] = octets.try_into().unwrap(); // pas d'erreur possible
+                    let hash: [u8; 32] = octets
+                        .try_into()
+                        .map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?;
                     hashs_enu.insert(hash);
                 }
 
@@ -532,14 +543,25 @@ impl Carte {
 
 /// Écrit les tags dans le buffer au format canonique :
 /// `u32 nb_tags` puis pour chaque tag `u32 len_utf8` suivi des octets UTF-8.
-fn tags_vers_octets(buf: &mut Vec<u8>, tags: &BTreeSet<String>) {
-    buf.extend(&(tags.len() as u32).to_be_bytes());
+///
+/// # Errors
+///
+/// Retourne [`ErreurFeuApplication::ScribeCarteMalFormee`] si une longueur
+/// dépasse `u32::MAX`.
+fn tags_vers_octets(buf: &mut Vec<u8>, tags: &BTreeSet<String>) -> ResultFeuApplication<()> {
+    let nombre =
+        u32::try_from(tags.len()).map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?;
+    buf.extend(&nombre.to_be_bytes());
 
     for tag in tags {
         let b = tag.as_bytes();
-        buf.extend(&(b.len() as u32).to_be_bytes());
+        let longueur =
+            u32::try_from(b.len()).map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?;
+        buf.extend(&longueur.to_be_bytes());
         buf.extend(b);
     }
+
+    Ok(())
 }
 
 /// Désérialise un `BTreeSet<String>` de tags depuis le format canonique.
@@ -555,11 +577,19 @@ fn tags_vers_octets(buf: &mut Vec<u8>, tags: &BTreeSet<String>) {
 fn octets_vers_tags(octets: &[u8]) -> ResultFeuApplication<(BTreeSet<String>, &[u8])> {
     let mut tags = BTreeSet::new();
     let (mut octets, mut reste) = prendre_octets(octets, 4)?;
-    let n_tags = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+    let n_tags = u32::from_be_bytes(
+        octets
+            .try_into()
+            .map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?,
+    );
 
     for _ in 0..n_tags {
         (octets, reste) = prendre_octets(reste, 4)?;
-        let longueur = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+        let longueur = u32::from_be_bytes(
+            octets
+                .try_into()
+                .map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?,
+        );
 
         (octets, reste) = prendre_octets(reste, longueur as usize)?;
 
@@ -573,17 +603,33 @@ fn octets_vers_tags(octets: &[u8]) -> ResultFeuApplication<(BTreeSet<String>, &[
 /// `u32 nb_metas` puis pour chaque paire `u32 len_cle`, clé UTF-8, `u32
 /// len_valeur`, valeur UTF-8. Ordre de parcours : celui du BTreeMap
 /// (alphabétique par clé).
-fn metas_vers_octets(buf: &mut Vec<u8>, metas: &BTreeMap<String, String>) {
-    buf.extend(&(metas.len() as u32).to_be_bytes());
+///
+/// # Errors
+///
+/// Retourne [`ErreurFeuApplication::ScribeCarteMalFormee`] si une longueur
+/// dépasse `u32::MAX`.
+fn metas_vers_octets(
+    buf: &mut Vec<u8>,
+    metas: &BTreeMap<String, String>,
+) -> ResultFeuApplication<()> {
+    let nombre =
+        u32::try_from(metas.len()).map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?;
+    buf.extend(&nombre.to_be_bytes());
 
     for (cle, valeur) in metas {
         let cle = cle.as_bytes();
         let valeur = valeur.as_bytes();
-        buf.extend(&(cle.len() as u32).to_be_bytes());
+        let longueur_cle =
+            u32::try_from(cle.len()).map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?;
+        buf.extend(&longueur_cle.to_be_bytes());
         buf.extend(cle);
-        buf.extend(&(valeur.len() as u32).to_be_bytes());
+        let longueur_valeur =
+            u32::try_from(valeur.len()).map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?;
+        buf.extend(&longueur_valeur.to_be_bytes());
         buf.extend(valeur);
     }
+
+    Ok(())
 }
 
 /// Désérialise un `BTreeMap<String, String>` de métadonnées depuis le format
@@ -601,17 +647,29 @@ fn metas_vers_octets(buf: &mut Vec<u8>, metas: &BTreeMap<String, String>) {
 fn octets_vers_metas(octets: &[u8]) -> ResultFeuApplication<(BTreeMap<String, String>, &[u8])> {
     let mut metas = BTreeMap::new();
     let (mut octets, mut reste) = prendre_octets(octets, 4)?;
-    let n_metas = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+    let n_metas = u32::from_be_bytes(
+        octets
+            .try_into()
+            .map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?,
+    );
 
     for _ in 0..n_metas {
         (octets, reste) = prendre_octets(reste, 4)?;
-        let longueur = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+        let longueur = u32::from_be_bytes(
+            octets
+                .try_into()
+                .map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?,
+        );
 
         (octets, reste) = prendre_octets(reste, longueur as usize)?;
         let cle = from_utf8(octets)?.to_string();
 
         (octets, reste) = prendre_octets(reste, 4)?;
-        let longueur = u32::from_be_bytes(octets.try_into().unwrap()); // pas d'erreur possible
+        let longueur = u32::from_be_bytes(
+            octets
+                .try_into()
+                .map_err(|_| ErreurFeuApplication::ScribeCarteMalFormee)?,
+        );
 
         (octets, reste) = prendre_octets(reste, longueur as usize)?;
         let valeur = from_utf8(octets)?.to_string();
@@ -709,7 +767,7 @@ mod tests {
         let tags = BTreeSet::new();
         let mut octets = Vec::new();
 
-        tags_vers_octets(&mut octets, &tags);
+        tags_vers_octets(&mut octets, &tags)?;
         let (tags_retour, reste) = octets_vers_tags(&octets)?;
 
         assert!(tags_retour.is_empty());
@@ -724,7 +782,7 @@ mod tests {
         let tags = BTreeSet::from([String::from("tag1")]);
         let mut octets = Vec::new();
 
-        tags_vers_octets(&mut octets, &tags);
+        tags_vers_octets(&mut octets, &tags)?;
         let (tags_retour, reste) = octets_vers_tags(&octets)?;
 
         assert_eq!(tags_retour, tags);
@@ -739,7 +797,7 @@ mod tests {
         let tags = BTreeSet::from([String::from("z"), String::from("b"), String::from("a")]);
         let mut octets = Vec::new();
 
-        tags_vers_octets(&mut octets, &tags);
+        tags_vers_octets(&mut octets, &tags)?;
         let (tags_retour, reste) = octets_vers_tags(&octets)?;
 
         assert_eq!(tags_retour, tags);
@@ -754,7 +812,7 @@ mod tests {
         let metas = BTreeMap::new();
         let mut octets = Vec::new();
 
-        metas_vers_octets(&mut octets, &metas);
+        metas_vers_octets(&mut octets, &metas)?;
         let (metas_retour, reste) = octets_vers_metas(&octets)?;
 
         assert!(metas_retour.is_empty());
@@ -769,7 +827,7 @@ mod tests {
         let metas = BTreeMap::from([(String::from("clé1"), String::from("valeur1"))]);
         let mut octets = Vec::new();
 
-        metas_vers_octets(&mut octets, &metas);
+        metas_vers_octets(&mut octets, &metas)?;
         let (metas_retour, reste) = octets_vers_metas(&octets)?;
 
         assert_eq!(metas, metas_retour);
@@ -788,7 +846,7 @@ mod tests {
         ]);
         let mut octets = Vec::new();
 
-        metas_vers_octets(&mut octets, &metas);
+        metas_vers_octets(&mut octets, &metas)?;
         let (metas_retour, reste) = octets_vers_metas(&octets)?;
 
         assert_eq!(metas, metas_retour);
@@ -807,7 +865,7 @@ mod tests {
             (String::from("clé2"), String::from("valeur2")),
         ]);
         let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
-        let hash_blob: [u8; 32] = std::array::from_fn(|i| i as u8);
+        let hash_blob: [u8; 32] = std::array::from_fn(|i| u8::try_from(i).unwrap());
 
         let carte = Carte::Donnee {
             metas,
@@ -815,7 +873,7 @@ mod tests {
             hash_blob,
         };
 
-        let octets = carte.vers_octets();
+        let octets = carte.vers_octets()?;
         let carte_retour = Carte::octets_vers_carte(&octets)?;
 
         assert_eq!(carte, carte_retour);
@@ -839,7 +897,7 @@ mod tests {
             contenu,
         };
 
-        let octets = carte.vers_octets();
+        let octets = carte.vers_octets()?;
         let carte_retour = Carte::octets_vers_carte(&octets)?;
 
         assert_eq!(carte, carte_retour);
@@ -855,8 +913,8 @@ mod tests {
             (String::from("clé2"), String::from("valeur2")),
         ]);
         let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
-        let hash1: [u8; 32] = std::array::from_fn(|i| i as u8);
-        let hash2: [u8; 32] = std::array::from_fn(|i| (i * 2) as u8);
+        let hash1: [u8; 32] = std::array::from_fn(|i| u8::try_from(i).unwrap());
+        let hash2: [u8; 32] = std::array::from_fn(|i| u8::try_from(i * 2).unwrap());
 
         let hashs_enu = BTreeSet::from([hash1, hash2]);
 
@@ -866,7 +924,7 @@ mod tests {
             hashs_enu,
         };
 
-        let octets = carte.vers_octets();
+        let octets = carte.vers_octets()?;
         let carte_retour = Carte::octets_vers_carte(&octets)?;
 
         assert_eq!(carte, carte_retour);
@@ -878,7 +936,7 @@ mod tests {
     /// refus de `ajout_hash_enu` (`ScribeEnuRAttendue`), tags et metas insérés
     /// puis relus via les accesseurs communs.
     #[test]
-    fn carte_donnee() -> ResultFeuApplication<()> {
+    fn carte_donnee() {
         let hash_blob = [0u8; 32];
         let mut carte = Carte::new_donnee(hash_blob);
 
@@ -911,8 +969,6 @@ mod tests {
 
         assert_eq!(carte.metas().len(), 3);
         assert!(carte.metas().contains_key("meta1") && carte.metas().contains_key("meta2"));
-
-        Ok(())
     }
 
     /// Cycle complet sur `Carte::Texte` : contenu conservé et méta `"nom"`
@@ -958,15 +1014,13 @@ mod tests {
     /// Contenu dépassant `MAX_TAILLE_TEXTE` d'un octet → refus
     /// (`ScribeTailleMaxDepasseeTexte`).
     #[test]
-    fn carte_texte_trop_grande() -> ResultFeuApplication<()> {
+    fn carte_texte_trop_grande() {
         let contenu = "a".repeat(MAX_TAILLE_TEXTE + 1);
 
         assert!(matches!(
             Carte::new_texte("test", &contenu),
             Err(ErreurFeuApplication::ScribeTailleMaxDepasseeTexte(_))
         ));
-
-        Ok(())
     }
 
     /// Nom contenant un séparateur de chemin → refus

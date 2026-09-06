@@ -204,13 +204,17 @@ impl SessionApplication {
     /// Enregistre la clé publique de signature ML-DSA-87 du nœud.
     ///
     /// Appelé par `RecepteurNoyau` à l'allumage du nœud.
+    #[allow(
+        clippy::large_types_passed_by_value,
+        reason = "clé stockée telle quelle : une référence n'éviterait pas la copie"
+    )]
     pub(crate) fn definit_cle_publique_sig_noeud(&mut self, cle: [u8; 2592]) {
         self.cle_publique_sig_noeud = cle;
     }
 
     /// Retourne la clé publique de signature ML-DSA-87 du nœud.
-    pub fn cle_publique_sig_noeud(&self) -> [u8; 2592] {
-        self.cle_publique_sig_noeud
+    pub fn cle_publique_sig_noeud(&self) -> &[u8; 2592] {
+        &self.cle_publique_sig_noeud
     }
 
     /// Retourne la clé publique de signature ML-DSA-87 du foyer à la position
@@ -218,13 +222,17 @@ impl SessionApplication {
     ///
     /// Interrogée par `Enu::charger` après résolution de la braise : c'est la
     /// clé contre laquelle une ENU de contenu est authentifiée.
-    pub fn cle_publique_sig_foyer(&self, index_foyer: IndexFoyer) -> [u8; 2592] {
-        self.cle_publique_sig_foyers[index_foyer.valeur()]
+    pub fn cle_publique_sig_foyer(&self, index_foyer: IndexFoyer) -> &[u8; 2592] {
+        &self.cle_publique_sig_foyers[index_foyer.valeur()]
     }
 
     /// Enregistre la clé publique de signature ML-DSA-87 du foyer.
     ///
     /// Appelé par `RecepteurNoyau` à l'ouverture du foyer.
+    #[allow(
+        clippy::large_types_passed_by_value,
+        reason = "clé stockée telle quelle : une référence n'éviterait pas la copie"
+    )]
     pub(crate) fn definit_cle_publique_sig_foyer(
         &mut self,
         index_foyer: IndexFoyer,
@@ -235,13 +243,17 @@ impl SessionApplication {
 
     /// Retourne la clé publique de chiffrement ML-KEM-1024 du foyer à la
     /// position `index_foyer`.
-    pub fn cle_publique_chif_foyer(&self, index_foyer: IndexFoyer) -> [u8; 1568] {
-        self.cle_publique_chif_foyers[index_foyer.valeur()]
+    pub fn cle_publique_chif_foyer(&self, index_foyer: IndexFoyer) -> &[u8; 1568] {
+        &self.cle_publique_chif_foyers[index_foyer.valeur()]
     }
 
     /// Enregistre la clé publique de chiffrement ML-KEM-1024 du foyer.
     ///
     /// Appelé par `RecepteurNoyau` à l'ouverture du foyer.
+    #[allow(
+        clippy::large_types_passed_by_value,
+        reason = "clé stockée telle quelle : une référence n'éviterait pas la copie"
+    )]
     pub(crate) fn definit_cle_publique_chif_foyer(
         &mut self,
         index_foyer: IndexFoyer,

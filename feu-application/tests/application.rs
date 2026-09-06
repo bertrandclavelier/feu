@@ -359,7 +359,7 @@ fn descendants() -> ResultFeuApplication<()> {
         .map(|(profondeur, _)| *profondeur)
         .collect();
 
-    profondeurs.sort();
+    profondeurs.sort_unstable();
 
     assert_eq!(profondeurs, [0, 1, 1, 2, 2, 3]);
 
@@ -370,7 +370,7 @@ fn descendants() -> ResultFeuApplication<()> {
         .collect();
 
     // Triées, les mêmes tailles fixent la forme de l'arbre.
-    tailles.sort();
+    tailles.sort_unstable();
 
     assert_eq!(tailles, [1, 1, 1, 2, 4, 6]);
 
@@ -417,7 +417,7 @@ fn racines_anterieures() -> ResultFeuApplication<()> {
         app.commande_depot_enu_texte(
             &enu_racine,
             IndexFoyer::try_from(1)?,
-            &format!("fichier{}", i),
+            &format!("fichier{i}"),
             "contenu",
         )?;
     }

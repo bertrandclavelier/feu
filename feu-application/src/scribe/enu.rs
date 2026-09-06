@@ -133,7 +133,7 @@ impl Enu {
             return Err(ErreurFeuApplication::ScribeBraiseInconnue);
         };
 
-        let octets_carte = carte.vers_octets();
+        let octets_carte = carte.vers_octets()?;
         Ok(Self {
             version: VERSION_ENU,
             braise,
@@ -212,7 +212,7 @@ impl Enu {
             }
         };
 
-        let octets_carte = carte.vers_octets();
+        let octets_carte = carte.vers_octets()?;
 
         let enu_racine = Self {
             version: VERSION_ENU,
@@ -293,10 +293,14 @@ impl Enu {
     /// `hash_carte` de l'enveloppe elle-même ne prouve rien de tel — un fichier
     /// forgé s'accorde avec lui-même ; ça ne vaut que là où la signature suit,
     /// pour établir que le hash annoncé désigne bien la carte authentifiée.
-    pub(crate) fn integre(&self, hash_attendu: &[u8; 32]) -> bool {
-        let hash = FeuNoyau::creation_empreinte(&self.carte.vers_octets());
+    ///
+    /// # Errors
+    ///
+    /// Propage l'erreur de [`Carte::vers_octets`].
+    pub(crate) fn integre(&self, hash_attendu: &[u8; 32]) -> ResultFeuApplication<bool> {
+        let hash = FeuNoyau::creation_empreinte(&self.carte.vers_octets()?);
 
-        &hash == hash_attendu
+        Ok(&hash == hash_attendu)
     }
 
     /// Vérifie la signature de la carte contre la clé publique de son signataire.
@@ -320,8 +324,8 @@ impl Enu {
         if self.braise == Braise::VIDE && self.carte.metas().contains_key("_racine") {
             Ok(FeuNoyau::verification_signature(
                 session.cle_publique_sig_noeud(),
-                self.signature_carte,
-                &self.carte.vers_octets(),
+                &self.signature_carte,
+                &self.carte.vers_octets()?,
             )?)
         } else {
             let Some(index_foyer) = session.braise_vers_index(self.braise) else {
@@ -331,8 +335,8 @@ impl Enu {
 
             Ok(FeuNoyau::verification_signature(
                 cle,
-                self.signature_carte,
-                &self.carte.vers_octets(),
+                &self.signature_carte,
+                &self.carte.vers_octets()?,
             )?)
         }
     }
@@ -366,7 +370,7 @@ impl Enu {
         let chemin = self.chemin(chemin_enu);
 
         if !chemin.exists() {
-            Scribe::ecrire_fichier_600(&chemin, &self.vers_octets())?;
+            Scribe::ecrire_fichier_600(&chemin, &self.vers_octets()?)?;
         }
 
         Ok(chemin)
@@ -445,7 +449,7 @@ impl Enu {
 
         let enu = Self::octets_vers_enu(&read(chemin)?)?;
 
-        if !enu.integre(hash_carte) {
+        if !enu.integre(hash_carte)? {
             return Err(ErreurFeuApplication::ScribeEnuNonIntegre);
         }
 
@@ -483,7 +487,7 @@ impl Enu {
         if enu.braise != Braise::VIDE || !enu.carte.metas().contains_key("_racine") {
             return Err(ErreurFeuApplication::ScribeEnuRacineAttendue);
         }
-        if !enu.integre(&enu.hash_carte()) {
+        if !enu.integre(&enu.hash_carte())? {
             return Err(ErreurFeuApplication::ScribeEnuNonIntegre);
         }
         if !enu.authentique(session)? {
@@ -501,16 +505,20 @@ impl Enu {
     ///
     /// En-tête de 4725 octets, de taille fixe, puis la carte, de taille
     /// variable.
-    fn vers_octets(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Propage l'erreur de [`Carte::vers_octets`].
+    fn vers_octets(&self) -> ResultFeuApplication<Vec<u8>> {
         let mut resultat = Vec::new();
 
         resultat.extend(self.version.to_be_bytes());
         resultat.extend(self.braise.to_string().as_bytes());
         resultat.extend(self.hash_carte);
         resultat.extend(self.signature_carte);
-        resultat.extend(self.carte.vers_octets());
+        resultat.extend(self.carte.vers_octets()?);
 
-        resultat
+        Ok(resultat)
     }
 
     /// Désérialise une ENU depuis ses octets canoniques.
@@ -745,7 +753,7 @@ mod tests {
             Braise::try_from("aaaaabbbbbcccccdddddeeeeefffffggggghhhhhiiiiijjjjjkkkkk.braise")
                 .unwrap();
 
-        let hash_carte: [u8; 32] = std::array::from_fn(|i| i as u8);
+        let hash_carte: [u8; 32] = std::array::from_fn(|i| u8::try_from(i).unwrap());
         let signature_carte = [0u8; 4627];
 
         let metas = BTreeMap::from([
@@ -753,7 +761,7 @@ mod tests {
             (String::from("clé2"), String::from("valeur2")),
         ]);
         let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
-        let hash_blob: [u8; 32] = std::array::from_fn(|i| i as u8);
+        let hash_blob: [u8; 32] = std::array::from_fn(|i| u8::try_from(i).unwrap());
 
         let carte = Carte::Donnee {
             metas,
@@ -769,7 +777,7 @@ mod tests {
             carte,
         };
 
-        let octets = enu.vers_octets();
+        let octets = enu.vers_octets()?;
         let enu_retour = Enu::octets_vers_enu(&octets)?;
 
         assert_eq!(enu, enu_retour);

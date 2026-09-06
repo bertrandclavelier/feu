@@ -428,10 +428,10 @@ mod tests {
         // Plus rien à tirer de la session notifiée, désormais `None` : le teardown
         // ne se constate que sur les champs.
         assert_eq!(app.session.braise_foyer(IndexFoyer::ZERO), Braise::VIDE);
-        assert_eq!(app.session.cle_publique_sig_noeud(), [0u8; 2592]);
+        assert_eq!(app.session.cle_publique_sig_noeud(), &[0u8; 2592]);
         assert_eq!(
             app.session.cle_publique_sig_foyer(IndexFoyer::ZERO),
-            [0u8; 2592]
+            &[0u8; 2592]
         );
         assert!(app.session.foyers_fermes());
         assert!(!app.scribe.est_actif());

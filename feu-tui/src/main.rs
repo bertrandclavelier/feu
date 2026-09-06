@@ -19,8 +19,15 @@
 //! orchestrant ses sous-modules : la table des commandes, l'aiguillage du
 //! rendu, et un module par écran.
 //!
-//! Le code de sortie 1 signale une panique du thread cœur, qu'aucun chemin
-//! connu ne provoque : ses erreurs partent en message vers la TUI.
+//! # Ligne de commande
+//!
+//! `--version` est le seul argument reconnu : tout se pilote depuis la TUI.
+//! Tout autre argument est refusé plutôt qu'ignoré — une frappe manquée n'a pas
+//! à démarrer l'interface par-dessus.
+//!
+//! Codes de sortie : 2 pour un usage invalide, 1 pour une panique du thread
+//! cœur, qu'aucun chemin connu ne provoque — ses erreurs partent en message
+//! vers la TUI.
 //! Le terminal est restauré automatiquement par le guard de [`ratatui::run`]
 //! même si la TUI panique avant ce point.
 
@@ -28,16 +35,30 @@ mod connecteurs;
 mod erreur;
 mod tui;
 
-use std::{env, io::Error, path::PathBuf, sync::mpsc::channel};
+use std::{collections::HashSet, env, io::Error, path::PathBuf, sync::mpsc::channel};
 
 use crate::{
     connecteurs::{ConnecteurVersCoeur, ConnecteurVersTui, MessageCoeurTui, MessageTuiCoeur},
     tui::Tui,
 };
 
-/// Point d'entrée : résout les deux chemins, ouvre les canaux entre TUI et
-/// cœur, lance les deux threads et échoue si le cœur a paniqué.
+/// Point d'entrée : traite la ligne de commande, résout les deux chemins, ouvre
+/// les canaux entre TUI et cœur, lance les deux threads et échoue si le cœur a
+/// paniqué.
+///
+/// Les arguments tiennent dans un `HashSet` : ni l'ordre ni les répétitions
+/// n'ont de sens ici. `--version` l'emporte sur ce qui l'accompagne.
 fn main() -> Result<(), Error> {
+    let arguments: HashSet<String> = env::args().skip(1).collect();
+    if arguments.contains("--version") {
+        println!("version {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if !arguments.is_empty() {
+        eprintln!("Usage : feu [--version]");
+        std::process::exit(2);
+    }
+
     // Unique point de lecture de l'environnement dans tout Feu : les deux
     // chemins sont résolus ici, au bord du programme, puis injectés — le nœud
     // vers le bas (application, noyau, scribe), le dossier personnel vers la

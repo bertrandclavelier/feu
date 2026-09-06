@@ -162,6 +162,10 @@ fn verifie_permissions(racine: &Path) {
 /// contenu dépassant `TAILLE_CHUNK`, le refus d'un second nœud sur le même
 /// dossier, et les permissions aux trois états stables du nœud.
 #[test]
+#[allow(
+    clippy::format_collect,
+    reason = "contenu de test : lisibilité avant allocation"
+)]
 fn cycle_vie_noyau() -> ResultFeuNoyau<()> {
     let tmp = TempDir::new().unwrap();
 
@@ -661,8 +665,8 @@ fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
     let mut noyau = FeuNoyau::new(&chemin_feu, Some(seed.clone()), &mut interface)?;
 
     assert!(FeuNoyau::verification_signature(
-        interface.cle_publique_noeud.unwrap(),
-        message_signe,
+        &interface.cle_publique_noeud.unwrap(),
+        &message_signe,
         message.as_bytes(),
     )?);
 
@@ -700,8 +704,8 @@ fn cycle_demarrage_seed() -> ResultFeuNoyau<()> {
     assert_eq!(braises, braises2);
 
     assert!(FeuNoyau::verification_signature(
-        interface.cle_publique_noeud.unwrap(),
-        message_signe,
+        &interface.cle_publique_noeud.unwrap(),
+        &message_signe,
         message.as_bytes(),
     )?);
 

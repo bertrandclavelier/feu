@@ -375,9 +375,11 @@ impl Drop for FeuNoyau {
     /// [`FeuNoyau::secours_fermeture_foyer`] permet de le réparer en
     /// refermant proprement le foyer depuis son dossier clair.
     fn drop(&mut self) {
-        if !self.session.est_tout_ferme() {
-            panic!("Les foyers n'étaient pas tous fermés avant de quitter");
-        }
+        // Panique délibérée : un foyer resté ouvert laisse un dossier clair.
+        assert!(
+            self.session.est_tout_ferme(),
+            "Les foyers n'étaient pas tous fermés avant de quitter"
+        );
     }
 }
 
@@ -694,7 +696,7 @@ impl FeuNoyau {
         if let Err(e) = self.gardien.desarchivage_chiffre_foyer(braise) {
             let _ = self.gardien.suppression_archive_foyer_tar(braise);
             return Err(e);
-        };
+        }
 
         let trousseau_public_foyer = self.gardien.creation_trousseau_foyer_public(braise)?;
 
@@ -780,7 +782,7 @@ impl FeuNoyau {
             let _ = self.gardien.suppression_archive_foyer_chiffree(braise);
 
             return Err(e);
-        };
+        }
 
         self.gardien.suppression_archive_foyer_tar(braise)?;
         self.gardien.suppression_dossier_braise(braise)?;
@@ -895,7 +897,7 @@ impl FeuNoyau {
     ) -> ResultFeuNoyau<([u8; 32], IndexClasseur)> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
-        let mut tiroir = archiviste.donne_tiroir_vide(index_classeur);
+        let mut tiroir = Archiviste::donne_tiroir_vide(index_classeur);
         tiroir.remplir(source)?;
         let (blob_chiffre, hash) =
             self.cryptographe
@@ -1115,8 +1117,7 @@ impl FeuNoyau {
             ));
         }
 
-        self.cryptographe
-            .chiffrement_asymetrique(cle_publique_destinataire, octets_a_chiffrer)
+        Cryptographe::chiffrement_asymetrique(cle_publique_destinataire, octets_a_chiffrer)
     }
 
     /// Déchiffre un message chiffré à destination de ce foyer.
@@ -1221,8 +1222,8 @@ impl FeuNoyau {
     /// Retourne [`ErreurFeuNoyau::CryptographeSignatureMlDsaMalFormee`] si
     /// `signature` n'est pas un encodage ML-DSA-87 décodable.
     pub fn verification_signature(
-        cle_publique: [u8; 2592],
-        signature: [u8; 4627],
+        cle_publique: &[u8; 2592],
+        signature: &[u8; 4627],
         octets_signes: &[u8],
     ) -> ResultFeuNoyau<bool> {
         Cryptographe::verification_signature(cle_publique, signature, octets_signes)

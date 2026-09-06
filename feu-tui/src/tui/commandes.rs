@@ -45,11 +45,13 @@
 //!   (si la capacité maximale n'est pas atteinte) ; `0`-`9` entrent dans le
 //!   foyer correspondant *s'il est ouvert*. Pas de `e` tant qu'un foyer est
 //!   ouvert.
+//! - **Nœud allumé, où que l'on soit** : `T` ouvre le comptoir de travail sur
+//!   l'ENU répertoire marquée au chemin marqué, et le ferme dès qu'il est
+//!   ouvert — une seule touche pour les deux sens, les conditions étant
+//!   complémentaires. Aucun foyer ouvert n'est exigé ici.
 //! - **Nœud allumé, au moins un foyer ouvert, où que l'on soit** : `c` ferme un
 //!   comptoir de dépôt dès qu'il en existe un et qu'une ENU répertoire est
-//!   marquée ; `T` ouvre le comptoir de travail sur l'ENU répertoire marquée au
-//!   chemin marqué, et le ferme dès qu'il est ouvert — une seule touche pour les
-//!   deux sens, les conditions étant complémentaires.
+//!   marquée.
 //! - **Nœud allumé, dans un foyer** : `f` ferme le foyer courant ; `0`-`9`
 //!   entrent dans le classeur correspondant (dans la limite de
 //!   `IndexClasseur::NOMBRE`) ; `Backspace` remonte à la racine ; `o` ouvre un
@@ -511,6 +513,22 @@ impl CommandesActives {
                     Commande::PilotageOuvrirFoyer,
                 );
             }
+            if let Some(enu) = &etat_tui.enu_selectionnee
+                && matches!(enu.carte(), Carte::Repertoire { .. })
+                && etat_tui.chemin_selectionne.is_some()
+                && session.comptoir_travail_ouvert().is_none()
+            {
+                commandes_actives.insert(
+                    (KeyCode::Char('T'), KeyModifiers::SHIFT),
+                    Commande::PilotageOuvrirComptoirTravail,
+                );
+            }
+            if session.comptoir_travail_ouvert().is_some() {
+                commandes_actives.insert(
+                    (KeyCode::Char('T'), KeyModifiers::SHIFT),
+                    Commande::PilotageFermerComptoirTravail,
+                );
+            }
             if session.nombre_foyers_ouverts() > 0 {
                 if !session.comptoirs_depot_ouverts().is_empty()
                     && let Some(enu) = &etat_tui.enu_selectionnee
@@ -522,34 +540,18 @@ impl CommandesActives {
                     );
                 }
 
-                if let Some(enu) = &etat_tui.enu_selectionnee
-                    && matches!(enu.carte(), Carte::Repertoire { .. })
-                    && etat_tui.chemin_selectionne.is_some()
-                    && session.comptoir_travail_ouvert().is_none()
-                {
-                    commandes_actives.insert(
-                        (KeyCode::Char('T'), KeyModifiers::SHIFT),
-                        Commande::PilotageOuvrirComptoirTravail,
-                    );
-                }
-                if session.comptoir_travail_ouvert().is_some() {
-                    commandes_actives.insert(
-                        (KeyCode::Char('T'), KeyModifiers::SHIFT),
-                        Commande::PilotageFermerComptoirTravail,
-                    );
-                }
                 match (
                     etat_tui.etat_pilotage.position_courante.foyer,
                     etat_tui.etat_pilotage.position_courante.classeur,
                 ) {
                     (None, _) => {
                         for index_foyer in IndexFoyer::tous() {
-                            if session.etat_foyer(index_foyer) && index_foyer.valeur() < 10 {
+                            if session.etat_foyer(index_foyer)
+                                && index_foyer.valeur() < 10
+                                && let Ok(valeur) = u8::try_from(index_foyer.valeur())
+                            {
                                 commandes_actives.insert(
-                                    (
-                                        KeyCode::Char((b'0' + index_foyer.valeur() as u8) as char),
-                                        KeyModifiers::NONE,
-                                    ),
+                                    (KeyCode::Char((b'0' + valeur) as char), KeyModifiers::NONE),
                                     Commande::PilotageChangerPositionFoyer(Some(index_foyer)),
                                 );
                             }
@@ -566,14 +568,11 @@ impl CommandesActives {
                         );
 
                         for index_classeur in IndexClasseur::tous() {
-                            if index_classeur.valeur() < 10 {
+                            if index_classeur.valeur() < 10
+                                && let Ok(valeur) = u8::try_from(index_classeur.valeur())
+                            {
                                 commandes_actives.insert(
-                                    (
-                                        KeyCode::Char(
-                                            (b'0' + index_classeur.valeur() as u8) as char,
-                                        ),
-                                        KeyModifiers::NONE,
-                                    ),
+                                    (KeyCode::Char((b'0' + valeur) as char), KeyModifiers::NONE),
                                     Commande::PilotageChangerPositionClasseur(Some(index_classeur)),
                                 );
                             }
@@ -710,6 +709,10 @@ impl CommandesActives {
     /// **L'ordre suit l'itération du `HashMap`**, non déterministe d'un appel à
     /// l'autre. L'aide sert à repérer ce qui est actif, pas à être lue deux
     /// fois.
+    #[allow(
+        clippy::format_push_string,
+        reason = "quelques touches concaténées : `write!` n'y gagne rien"
+    )]
     pub(super) fn liste_commandes_actives(&self) -> String {
         let mut liste_commandes = String::new();
 

@@ -270,7 +270,7 @@ fn cycle_racine() {
 
     assert_eq!(
         enu_racine.carte().metas().get_key_value("_racine"),
-        Some((&"_racine".to_string(), &"".to_string()))
+        Some((&"_racine".to_string(), &String::new()))
     );
 
     scribe

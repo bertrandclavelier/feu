@@ -119,7 +119,7 @@ impl Archiviste {
     /// Le tiroir est un objet éphémère de transfert — il est destiné à être
     /// rempli par [`FeuNoyau`](crate::FeuNoyau) puis transmis au Cryptographe pour chiffrement,
     /// avant d'être retourné à l'Archiviste via [`ecrit_blob`](Self::ecrit_blob).
-    pub(super) fn donne_tiroir_vide(&self, index_classeur: IndexClasseur) -> Tiroir {
+    pub(super) fn donne_tiroir_vide(index_classeur: IndexClasseur) -> Tiroir {
         Tiroir::new(index_classeur)
     }
 

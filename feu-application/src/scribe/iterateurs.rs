@@ -55,7 +55,7 @@ pub struct Descendants<'a> {
     a_visiter: Vec<(usize, [u8; 32])>,
 }
 
-impl<'a> Iterator for Descendants<'a> {
+impl Iterator for Descendants<'_> {
     /// L'erreur est celle de l'API publique : `Descendants` traverse la
     /// frontière du crate, et [`ErreurFeuApplication`]
     /// est le seul type d'erreur qu'il expose.
@@ -133,7 +133,7 @@ pub struct RacinesAnterieures<'a> {
     hash_suivant: Option<[u8; 32]>,
 }
 
-impl<'a> Iterator for RacinesAnterieures<'a> {
+impl Iterator for RacinesAnterieures<'_> {
     /// L'erreur est celle de l'API publique, comme pour [`Descendants`].
     type Item = ResultFeuApplication<Fiche>;
 
@@ -208,7 +208,7 @@ impl<'a> RacinesAnterieures<'a> {
                     .decode(hash_string.as_bytes())?
                     .try_into()
                     .map_err(|_| ErreurFeuApplication::ScribeEnuRacineAttendue)?,
-            )
+            );
         }
 
         Ok(Fiche::new(&enu))

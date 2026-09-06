@@ -182,6 +182,10 @@ impl Cryptographe {
     /// Retourne une erreur si la collecte du mot de passe échoue, si le parsing de
     /// la phrase BIP39 échoue, si la dérivation des clés d'un foyer échoue, ou si
     /// la génération du sel échoue.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "consommée pour être zéroïsée en sortie"
+    )]
     pub(super) fn genere_trousseau_a_partir_seed(
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
@@ -257,6 +261,10 @@ impl Cryptographe {
     ///
     /// Retourne une erreur si la clé éphémère est absente ou si le déchiffrement
     /// d'une clé échoue.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "consommé après usage, jamais laissé vivant chez l'appelant"
+    )]
     pub(super) fn recoit_trousseau_public_foyer(
         &mut self,
         trousseau_public_foyer: TrousseauPublicFoyer,
@@ -497,7 +505,6 @@ impl Cryptographe {
     /// Retourne une erreur si la clé publique est invalide, si la dérivation HKDF
     /// ou le chiffrement AES-256-GCM échoue.
     pub(super) fn chiffrement_asymetrique(
-        &self,
         cle_publique_destinataire: &[u8; 1568],
         octets_a_chiffrer: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
@@ -624,13 +631,13 @@ impl Cryptographe {
     ///
     /// Retourne une erreur si `signature` n'est pas un encodage ML-DSA-87 valide.
     pub(super) fn verification_signature(
-        cle_publique: [u8; 2592],
-        signature: [u8; 4627],
+        cle_publique: &[u8; 2592],
+        signature: &[u8; 4627],
         octets_signes: &[u8],
     ) -> ResultFeuNoyau<bool> {
-        let signature = Signature::<MlDsa87>::decode(&signature.into())
+        let signature = Signature::<MlDsa87>::decode(&(*signature).into())
             .ok_or(ErreurFeuNoyau::CryptographeSignatureMlDsaMalFormee)?;
-        let cle_publique = VerifyingKey::<MlDsa87>::decode(&cle_publique.into());
+        let cle_publique = VerifyingKey::<MlDsa87>::decode(&(*cle_publique).into());
 
         Ok(cle_publique.verify(octets_signes, &signature).is_ok())
     }
@@ -795,10 +802,10 @@ mod tests {
         let signature = cryptographe.signature_noeud(message)?;
 
         assert!(Cryptographe::verification_signature(
-            trousseau_public
+            &trousseau_public
                 .donne_trousseau_public_noeud()
                 .donne_cle_sig_pub(),
-            signature,
+            &signature,
             message
         )?);
 
@@ -810,19 +817,19 @@ mod tests {
         let signature = cryptographe.signature_foyer(index_foyer_0, message)?;
 
         assert!(Cryptographe::verification_signature(
-            trousseau_public
+            &trousseau_public
                 .donne_trousseau_public_foyer(index_foyer_0)?
                 .donne_cle_sig_pub(),
-            signature,
+            &signature,
             message
         )?);
 
         // Clé publique d'un autre foyer, signature et message inchangés.
         assert!(!Cryptographe::verification_signature(
-            trousseau_public
+            &trousseau_public
                 .donne_trousseau_public_foyer(index_foyer_1)?
                 .donne_cle_sig_pub(),
-            signature,
+            &signature,
             message
         )?);
 
@@ -830,10 +837,10 @@ mod tests {
         let message_altere = b"message a signer et verifie";
 
         assert!(!Cryptographe::verification_signature(
-            trousseau_public
+            &trousseau_public
                 .donne_trousseau_public_foyer(index_foyer_0)?
                 .donne_cle_sig_pub(),
-            signature,
+            &signature,
             message_altere
         )?);
 
@@ -863,7 +870,7 @@ mod tests {
         // n'apporterait rien au test.
         let index_foyer_0 = IndexFoyer::ZERO;
         let index_foyer_1 = IndexFoyer::try_from(1)?;
-        let message_chiffre = cryptographe.chiffrement_asymetrique(
+        let message_chiffre = Cryptographe::chiffrement_asymetrique(
             &trousseau_public
                 .donne_trousseau_public_foyer(index_foyer_0)?
                 .donne_cle_chiff_pub(),

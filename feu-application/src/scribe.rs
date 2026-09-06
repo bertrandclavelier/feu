@@ -189,7 +189,6 @@ impl Scribe {
     /// [`ErreurFeuApplication::ScribeEnuDAttendue`] si la carte n'est pas une
     /// [`Carte::Donnee`] et ne référence donc aucun blob.
     fn index_et_hash_blob(
-        &self,
         session: &SessionApplication,
         enu: &Enu,
     ) -> ResultFeuApplication<(IndexFoyer, [u8; 32])> {
@@ -229,7 +228,7 @@ impl Scribe {
         fiche: &Fiche,
         destination: impl Write,
     ) -> ResultFeuApplication<()> {
-        let (index, hash_blobs) = self.index_et_hash_blob(
+        let (index, hash_blobs) = Self::index_et_hash_blob(
             session,
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
@@ -263,7 +262,7 @@ impl Scribe {
         if matches!(self.comptoirs, Comptoirs::Travail(_)) {
             return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
         }
-        let (index, hash_blobs) = self.index_et_hash_blob(
+        let (index, hash_blobs) = Self::index_et_hash_blob(
             session,
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
@@ -292,7 +291,7 @@ impl Scribe {
         session: &SessionApplication,
         fiche: &Fiche,
     ) -> ResultFeuApplication<Option<IndexClasseur>> {
-        let (index, hash_blobs) = self.index_et_hash_blob(
+        let (index, hash_blobs) = Self::index_et_hash_blob(
             session,
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
@@ -317,7 +316,7 @@ impl Scribe {
         session: &SessionApplication,
         fiche: &Fiche,
     ) -> ResultFeuApplication<DonneesBlob> {
-        let (index, hash_blobs) = self.index_et_hash_blob(
+        let (index, hash_blobs) = Self::index_et_hash_blob(
             session,
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;

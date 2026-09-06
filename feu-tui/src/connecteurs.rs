@@ -288,6 +288,10 @@ impl ConnecteurVersTui {
     ///
     /// La boucle se termine sur `Quitter` ou fermeture du canal ; la poignée
     /// rendue permet à `main` de l'attendre, sans thread orphelin.
+    #[allow(
+        clippy::match_same_arms,
+        reason = "corps identiques, situations distinctes : arrêt demandé, canal rompu, message ignoré"
+    )]
     pub(crate) fn lancer_thread_coeur(self, chemin_feu: &Path) -> JoinHandle<()> {
         let mut feu_application = FeuApplication::new(chemin_feu);
         spawn(move || {
@@ -413,6 +417,10 @@ impl InterfaceFeuApplication for ConnecteurVersTui {
     /// ou fermeture du canal — TUI morte — (retourne également `None`).
     /// Les autres messages reçus pendant l'attente sont ignorés : hors-protocole
     /// dans ce contexte, ils ne peuvent pas être dispatchés depuis ici.
+    #[allow(
+        clippy::match_same_arms,
+        reason = "corps identiques, situations distinctes : arrêt demandé, canal rompu, message ignoré"
+    )]
     fn demander_mdp(&self) -> Option<SecretString> {
         self.envoyer_message_coeur_tui(MessageCoeurTui::AttenteMdp);
 
@@ -438,6 +446,10 @@ impl InterfaceFeuApplication for ConnecteurVersTui {
     /// ou fermeture du canal — TUI morte — (retour anticipé sans erreur).
     /// Les autres messages reçus pendant l'attente sont ignorés : hors-protocole
     /// dans ce contexte, ils ne peuvent pas être dispatchés depuis ici.
+    #[allow(
+        clippy::match_same_arms,
+        reason = "corps identiques, situations distinctes : arrêt demandé, canal rompu, message ignoré"
+    )]
     fn recevoir_seed(&self, mots: &[&str]) {
         self.envoyer_message_coeur_tui(MessageCoeurTui::EnvoiSeed(
             mots.iter()

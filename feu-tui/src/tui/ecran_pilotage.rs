@@ -263,10 +263,10 @@ pub(super) fn dessiner_ecran_pilotage(frame: &mut Frame, etat_tui: &EtatTui) {
         EcranPilotage::Principal => dessiner_ecran_principal(frame, etat_tui),
         EcranPilotage::SaisieMdp => dessiner_ecran_saisie_mdp(frame, etat_tui),
         EcranPilotage::AffichageSeed { seed, rappel } => {
-            dessiner_ecran_affichage_seed(frame, seed, *rappel)
+            dessiner_ecran_affichage_seed(frame, seed, *rappel);
         }
         EcranPilotage::AffichageInformation { titre, information } => {
-            dessiner_ecran_affichage_information(frame, titre, information)
+            dessiner_ecran_affichage_information(frame, titre, information);
         }
     }
 }
@@ -548,7 +548,7 @@ fn dessiner_ecran_saisie_mdp(frame: &mut Frame, etat_tui: &EtatTui) {
 /// Seule fonction de dessin à hauteur variable : `n` lignes de trois colonnes,
 /// selon le nombre de mots. Le `rappel` ajoute la demande de confirmation.
 fn dessiner_ecran_affichage_seed(frame: &mut Frame, seed: &[SecretString], rappel: bool) {
-    let n = seed.len().div_ceil(NOMBRE_COLONNES_SEED) as u16;
+    let n = u16::try_from(seed.len().div_ceil(NOMBRE_COLONNES_SEED)).unwrap_or(u16::MAX);
 
     let lignes = Layout::vertical([
         Constraint::Fill(1),
@@ -659,7 +659,7 @@ fn dessiner_ecran_affichage_information(frame: &mut Frame, titre: &str, informat
         vertical: 1,
     });
 
-    let n = information.lines().count() as u16;
+    let n = u16::try_from(information.lines().count()).unwrap_or(u16::MAX);
 
     let zone_interieure_lignes = Layout::vertical([
         Constraint::Fill(1),

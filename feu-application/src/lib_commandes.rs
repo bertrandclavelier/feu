@@ -61,6 +61,10 @@ use std::io::Write;
 
 use feu_noyau::{Anomalie, DonneesBlob, FeuNoyau, IndexClasseur};
 
+#[allow(
+    clippy::wildcard_imports,
+    reason = "prolonge le module parent, dont il reprend le contexte"
+)]
 use super::*;
 use crate::{
     fiche::Fiche,
@@ -413,8 +417,8 @@ impl FeuApplication {
         octets_signes: &[u8],
     ) -> ResultFeuApplication<bool> {
         Ok(FeuNoyau::verification_signature(
-            cle_publique,
-            signature,
+            &cle_publique,
+            &signature,
             octets_signes,
         )?)
     }

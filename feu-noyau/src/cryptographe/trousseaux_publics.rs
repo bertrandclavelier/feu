@@ -51,6 +51,10 @@ impl TrousseauPublicFoyer {
     ///
     /// Les clés de classeur sont ajoutées après construction via
     /// [`ajoute_cle_chiffrement_classeur`](Self::ajoute_cle_chiffrement_classeur).
+    #[allow(
+        clippy::large_types_passed_by_value,
+        reason = "clé stockée telle quelle : une référence n'éviterait pas la copie"
+    )]
     pub(crate) fn new(
         braise: Braise,
         cle_chiffrement: [u8; 60],
@@ -150,6 +154,10 @@ pub(crate) struct TrousseauPublicNoeud {
 
 impl TrousseauPublicNoeud {
     /// Crée un [`TrousseauPublicNoeud`].
+    #[allow(
+        clippy::large_types_passed_by_value,
+        reason = "clé stockée telle quelle : une référence n'éviterait pas la copie"
+    )]
     pub(crate) fn new(sel: [u8; 16], cle_sig_privee: [u8; 60], cle_sig_pub: [u8; 2592]) -> Self {
         Self {
             sel,

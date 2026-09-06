@@ -341,7 +341,7 @@ impl Scribe {
 
         if !chemin.exists() {
             return Err(ErreurFeuApplication::ScribeDossierTravailIntrouvable(
-                chemin.to_path_buf(),
+                chemin.clone(),
             ));
         }
 

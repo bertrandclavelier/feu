@@ -152,12 +152,12 @@ impl Carnet {
 
     /// Donne le chemin de l'archive chiffrée `~/.feu/<braise>.feu`.
     pub(super) fn donne_chemin_archive_chiffree(&self, braise: Braise) -> PathBuf {
-        self.chemin_feu.join(format!("{}.feu", braise))
+        self.chemin_feu.join(format!("{braise}.feu"))
     }
 
     /// Donne le chemin de l'archive tar intermédiaire `~/.feu/<braise>.tar`.
     pub(super) fn donne_chemin_archive_tar(&self, braise: Braise) -> PathBuf {
-        self.chemin_feu.join(format!("{}.tar", braise))
+        self.chemin_feu.join(format!("{braise}.tar"))
     }
 
     /// Indique si le dossier `~/.feu` existe sur le système de fichiers.
@@ -273,7 +273,7 @@ impl Carnet {
     /// # Errors
     ///
     /// Retourne une erreur si l'écriture échoue.
-    pub(super) fn enregistre_configuration(&self, configuration: String) -> ResultFeuNoyau<()> {
+    pub(super) fn enregistre_configuration(&self, configuration: &str) -> ResultFeuNoyau<()> {
         Self::ecrire_fichier_600(&self.donne_chemin_configuration(), configuration.as_bytes())?;
 
         Ok(())
@@ -379,14 +379,11 @@ impl Carnet {
 
             // Pour chaque classeur
             for index_classeur in IndexClasseur::tous() {
-                let cle_chiffree = match foyer.donne_cle_chiffrement_classeur(index_classeur) {
-                    Ok(valeur) => valeur,
-                    Err(_) => {
-                        return Err(ErreurFeuNoyau::GardienPasDeClePourClasseur(
-                            index_foyer.valeur(),
-                            index_classeur.valeur(),
-                        ));
-                    }
+                let Ok(cle_chiffree) = foyer.donne_cle_chiffrement_classeur(index_classeur) else {
+                    return Err(ErreurFeuNoyau::GardienPasDeClePourClasseur(
+                        index_foyer.valeur(),
+                        index_classeur.valeur(),
+                    ));
                 };
 
                 Self::ecrire_fichier_600(
