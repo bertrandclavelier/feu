@@ -114,20 +114,20 @@ impl Archiviste {
 
     // ── Tiroirs ───────────────────────────────────────────────────────────────
 
-    /// Crée et retourne un [`Tiroir`] vide pour le classeur à `index_classeur`.
+    /// Crée et retourne un [`Tiroir`] vide.
     ///
     /// Le tiroir est un objet éphémère de transfert — il est destiné à être
     /// rempli par [`FeuNoyau`](crate::FeuNoyau) puis transmis au Cryptographe pour chiffrement,
     /// avant d'être retourné à l'Archiviste via [`ecrit_blob`](Self::ecrit_blob).
-    pub(super) fn donne_tiroir_vide(index_classeur: IndexClasseur) -> Tiroir {
-        Tiroir::new(index_classeur)
+    pub(super) fn donne_tiroir_vide() -> Tiroir {
+        Tiroir::new()
     }
 
     /// Charge le blob chiffré identifié par `hash` depuis le classeur et retourne
     /// un [`Tiroir`] prêt pour le déchiffrement.
     ///
-    /// Ouvre `classeurN/<hash>.dat`, lit son contenu dans le tiroir et enregistre
-    /// le hash. Le blob contenu est chiffré — c'est le Cryptographe qui le déchiffre.
+    /// Ouvre `classeurN/<hash>.dat` et lit son contenu dans le tiroir. Le blob
+    /// contenu est chiffré — c'est le Cryptographe qui le déchiffre.
     ///
     /// # Errors
     ///
@@ -141,8 +141,7 @@ impl Archiviste {
         let chemin = self.donne_chemin_blob(index_classeur, hash);
 
         let fichier = std::fs::File::open(chemin)?;
-        let mut tiroir = Tiroir::new(index_classeur);
-        tiroir.definit_hash(hash);
+        let mut tiroir = Tiroir::new();
         tiroir.remplir(fichier)?;
 
         Ok(tiroir)
@@ -150,10 +149,11 @@ impl Archiviste {
 
     // ── Blobs ─────────────────────────────────────────────────────────────────
 
-    /// Écrit le blob chiffré du tiroir dans le classeur correspondant.
+    /// Écrit le blob chiffré du tiroir dans le classeur `index_classeur`.
     ///
     /// Construit le chemin de destination à partir de l'index du classeur et du
-    /// hash (encodé en hexadécimal minuscule) : `classeurN/<hash>.dat`.
+    /// `hash` (encodé en hexadécimal minuscule) : `classeurN/<hash>.dat`. Le
+    /// tiroir ne portant que le contenu, les deux lui sont fournis ici.
     ///
     /// Le fichier est créé avec `create_new` — l'opération échoue si un blob
     /// portant ce hash existe déjà. Les permissions sont `rw-------` (0o600).
@@ -166,11 +166,15 @@ impl Archiviste {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuNoyau::ArchivisteTiroirSansHash`] si le tiroir n'a pas
-    /// encore été empreinté, ou propage l'échec de l'écriture — le fichier déjà
-    /// présent compris, la création étant exclusive.
-    pub(super) fn ecrit_blob(&self, mut tiroir: Tiroir) -> ResultFeuNoyau<()> {
-        let chemin = self.donne_chemin_blob(tiroir.lire_index_classeur(), &tiroir.lire_hash()?);
+    /// Propage l'échec de l'écriture — le fichier déjà présent compris, la
+    /// création étant exclusive.
+    pub(super) fn ecrit_blob(
+        &self,
+        index_classeur: IndexClasseur,
+        hash: &[u8; 32],
+        mut tiroir: Tiroir,
+    ) -> ResultFeuNoyau<()> {
+        let chemin = self.donne_chemin_blob(index_classeur, hash);
 
         let fichier = OpenOptions::new()
             .write(true)
@@ -178,7 +182,7 @@ impl Archiviste {
             .mode(0o600)
             .open(&chemin)?;
 
-        tiroir.vider(fichier)?;
+        tiroir.envoyer_et_vider(fichier)?;
 
         Ok(())
     }

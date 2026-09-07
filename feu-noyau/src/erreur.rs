@@ -60,11 +60,6 @@ pub enum ErreurFeuNoyau {
     #[error("NOY > Le blob dans le tiroir de l'archiviste est non vide")]
     ArchivisteTiroirBlobNonvide,
 
-    /// Hash lu avant que `definit_hash` l'ait posé : le blob n'a pas encore été
-    /// empreinté, il n'y a rien à rendre.
-    #[error("NOY > Le tiroir de l'archiviste n'a pas de hash")]
-    ArchivisteTiroirSansHash,
-
     /// Opération requérant que **tous** les foyers soient ouverts — typiquement
     /// un changement de mot de passe qui rechiffre l'intégralité du trousseau.
     #[error("NOY > Tous les foyers doivent être ouverts pour cette opération")]

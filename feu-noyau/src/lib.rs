@@ -890,14 +890,14 @@ impl FeuNoyau {
     /// [`ErreurFeuNoyau::TailleMaxDepasseeBlob`] si `source` dépasse
     /// [`MAX_TAILLE_BLOB`]. Propage enfin l'échec du chiffrement et de l'écriture.
     pub fn depot_blob(
-        &mut self,
+        &self,
         index_foyer: IndexFoyer,
         index_classeur: IndexClasseur,
         source: impl Read,
     ) -> ResultFeuNoyau<([u8; 32], IndexClasseur)> {
         let archiviste = self.archiviste_foyer_ouvert(index_foyer)?;
 
-        let mut tiroir = Archiviste::donne_tiroir_vide(index_classeur);
+        let mut tiroir = Archiviste::donne_tiroir_vide();
         tiroir.remplir(source)?;
         let (blob_chiffre, hash) =
             self.cryptographe
@@ -910,9 +910,88 @@ impl FeuNoyau {
         }
 
         tiroir.remplace_blob(blob_chiffre);
-        tiroir.definit_hash(&hash);
-        archiviste.ecrit_blob(tiroir)?;
+        archiviste.ecrit_blob(index_classeur, &hash, tiroir)?;
+
         Ok((hash, index_classeur))
+    }
+
+    /// Copie un blob dans un classeur d'un autre foyer.
+    ///
+    /// La clé étant dérivée du couple `(foyer, classeur)`, ce n'est pas une
+    /// recopie de fichier : le blob est déchiffré sous la clé d'origine, puis
+    /// rechiffré sous celle de la destination. Le hash porte sur le clair et ne
+    /// change pas. Le classeur d'origine est découvert par balayage, comme dans
+    /// [`lecture_blob`](Self::lecture_blob).
+    ///
+    /// L'original reste en place : un blob ne se déplace jamais. Ce qui le
+    /// référence ne retient que son hash, sous signature — le retirer de son
+    /// foyer y rendrait irréparable tout ce qui le désigne.
+    ///
+    /// Les deux foyers doivent être ouverts.
+    ///
+    /// # Retour
+    ///
+    /// Le classeur qui détient la copie, ou celui où le blob se trouvait déjà —
+    /// rien n'est copié dans ce cas, ni quand les deux foyers sont le même.
+    ///
+    /// # Errors
+    ///
+    /// Délègue à `archiviste_foyer_ouvert`, appelé sur les deux foyers avant
+    /// tout accès disque, le foyer fermé ([`ErreurFeuNoyau::FoyerFerme`]) et
+    /// l'Archiviste manquant ([`ErreurFeuNoyau::ArchivisteIndisponible`]).
+    /// Retourne [`ErreurFeuNoyau::BlobIntrouvable`] si aucun classeur du foyer
+    /// d'origine ne détient `hash`. Propage enfin l'échec du déchiffrement, du
+    /// chiffrement ou de l'écriture.
+    pub fn copie_blob(
+        &self,
+        hash: &[u8; 32],
+        index_foyer_origine: IndexFoyer,
+        index_foyer_destination: IndexFoyer,
+        index_classeur_destination: IndexClasseur,
+    ) -> ResultFeuNoyau<IndexClasseur> {
+        let archiviste_origine = self.archiviste_foyer_ouvert(index_foyer_origine)?;
+        let archiviste_destination = self.archiviste_foyer_ouvert(index_foyer_destination)?;
+
+        let index_classeur_origine = IndexClasseur::tous()
+            .find(|&index_classeur| archiviste_origine.existe_blob(index_classeur, hash))
+            .ok_or(ErreurFeuNoyau::BlobIntrouvable(
+                index_foyer_origine.valeur(),
+            ))?;
+
+        // Copier dans son propre foyer n'a pas de sens : le blob y est déjà, et un
+        // hash n'y réside qu'à un seul endroit.
+        if index_foyer_origine == index_foyer_destination {
+            return Ok(index_classeur_origine);
+        }
+
+        // Le foyer de destination détient déjà ce hash : rien à rechiffrer.
+        if let Some(index_classeur) = IndexClasseur::tous()
+            .find(|&index_classeur| archiviste_destination.existe_blob(index_classeur, hash))
+        {
+            return Ok(index_classeur);
+        }
+
+        let mut tiroir = archiviste_origine.donne_tiroir_plein(index_classeur_origine, hash)?;
+
+        tiroir.remplace_blob(self.cryptographe.dechiffrement_blob(
+            index_foyer_origine,
+            index_classeur_origine,
+            hash,
+            tiroir.lire_blob(),
+        )?);
+
+        // Le hash rendu est celui du même clair : il ne peut que retomber sur `hash`.
+        let (blob_chiffre, _) = self.cryptographe.chiffrement_blob(
+            index_foyer_destination,
+            index_classeur_destination,
+            tiroir.lire_blob(),
+        )?;
+
+        tiroir.remplace_blob(blob_chiffre);
+
+        archiviste_destination.ecrit_blob(index_classeur_destination, hash, tiroir)?;
+
+        Ok(index_classeur_destination)
     }
 
     /// Lit et déchiffre un blob d'un foyer ouvert, sans en connaître le classeur.
@@ -941,7 +1020,7 @@ impl FeuNoyau {
     /// Cryptographe, l'échec de déchiffrement ou de vérification d'intégrité, et
     /// l'échec d'écriture dans `destination`.
     pub fn lecture_blob(
-        &mut self,
+        &self,
         index_foyer: IndexFoyer,
         hash: &[u8; 32],
         destination: impl Write,
@@ -967,7 +1046,7 @@ impl FeuNoyau {
             tiroir.lire_blob(),
         )?);
 
-        tiroir.vider(destination)?;
+        tiroir.envoyer_et_vider(destination)?;
 
         Ok(())
     }

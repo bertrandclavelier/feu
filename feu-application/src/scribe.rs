@@ -223,7 +223,7 @@ impl Scribe {
     /// noyau : foyer fermé, blob introuvable, déchiffrement, donnée corrompue.
     pub(crate) fn charge_blob(
         &self,
-        noyau: &mut FeuNoyau,
+        noyau: &FeuNoyau,
         session: &SessionApplication,
         fiche: &Fiche,
         destination: impl Write,
@@ -255,21 +255,60 @@ impl Scribe {
     /// noyau : foyer fermé, blob introuvable, suppression disque.
     pub(crate) fn supprime_blob(
         &self,
-        noyau: &mut FeuNoyau,
+        noyau: &FeuNoyau,
         session: &SessionApplication,
         fiche: &Fiche,
     ) -> ResultFeuApplication<()> {
         if matches!(self.comptoirs, Comptoirs::Travail(_)) {
             return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
         }
-        let (index, hash_blobs) = Self::index_et_hash_blob(
+        let (index_foyer, hash_blobs) = Self::index_et_hash_blob(
             session,
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
 
-        noyau.suppression_blob(index, &hash_blobs)?;
+        noyau.suppression_blob(index_foyer, &hash_blobs)?;
 
         Ok(())
+    }
+
+    /// Copie le blob référencé par `fiche` dans un classeur d'un autre foyer.
+    ///
+    /// Même résolution de cible que [`charge_blob`](Self::charge_blob) : la fiche
+    /// donne l'ENU, l'ENU donne le foyer d'origine et le hash. La destination,
+    /// elle, ne se lit nulle part — l'appelant la fournit.
+    ///
+    /// Le Scribe n'écrit rien dans l'arborescence ici.
+    ///
+    /// # Retour
+    ///
+    /// Le classeur du foyer de destination qui détient la copie.
+    ///
+    /// # Errors
+    ///
+    /// Propage les refus du chargement de l'ENU (lecture, authentification) et
+    /// les deux de [`index_et_hash_blob`](Self::index_et_hash_blob), puis les
+    /// erreurs du noyau : foyer fermé, blob introuvable, déchiffrement,
+    /// chiffrement, écriture disque.
+    pub(crate) fn copie_blob(
+        &self,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+        fiche: &Fiche,
+        index_foyer_destination: IndexFoyer,
+        index_classeur_destination: IndexClasseur,
+    ) -> ResultFeuApplication<IndexClasseur> {
+        let (index_foyer_origine, hash_blobs) = Self::index_et_hash_blob(
+            session,
+            &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
+        )?;
+
+        Ok(noyau.copie_blob(
+            &hash_blobs,
+            index_foyer_origine,
+            index_foyer_destination,
+            index_classeur_destination,
+        )?)
     }
 
     /// Rend le classeur qui détient le blob référencé par `fiche`.

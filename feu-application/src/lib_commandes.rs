@@ -703,6 +703,46 @@ impl FeuApplication {
         Ok(())
     }
 
+    /// Copie le blob désigné par `fiche` dans un classeur d'un autre foyer.
+    ///
+    /// Désigne sa source comme
+    /// [`commande_chargement_blob`](Self::commande_chargement_blob) : par l'ENU
+    /// seule, dont la braise donne le foyer et la carte le hash. Le foyer et le
+    /// classeur de destination, eux, sont nommés par l'appelant.
+    ///
+    /// L'original reste en place, et aucune ENU ne référence la copie.
+    ///
+    /// # Retour
+    ///
+    /// Le classeur du foyer de destination qui détient la copie.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
+    /// ([`ErreurFeuApplication::ScribeBraiseInconnue`]), carte qui n'est pas une
+    /// [`Carte::Donnee`] ([`ErreurFeuApplication::ScribeEnuDAttendue`]), foyer
+    /// fermé, blob introuvable, déchiffrement, chiffrement, écriture disque.
+    pub fn commande_copie_blob(
+        &mut self,
+        fiche: &Fiche,
+        index_foyer_destination: IndexFoyer,
+        index_classeur_destination: IndexClasseur,
+    ) -> ResultFeuApplication<IndexClasseur> {
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        self.scribe.copie_blob(
+            noyau,
+            &self.session,
+            fiche,
+            index_foyer_destination,
+            index_classeur_destination,
+        )
+    }
+
     /// Supprime le blob désigné par `fiche` — le fichier `<hash>.dat` sur disque.
     /// L'opération est irréversible.
     ///
@@ -727,7 +767,7 @@ impl FeuApplication {
     pub fn commande_suppression_blob(&mut self, fiche: &Fiche) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
-            .as_mut()
+            .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
         self.scribe.supprime_blob(noyau, &self.session, fiche)?;
