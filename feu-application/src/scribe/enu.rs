@@ -726,6 +726,75 @@ impl Enu {
         // cible absente de ce sous-arbre : racine renvoyée inchangée
         Ok(racine.clone())
     }
+
+    /// Applique `f` à chaque ENU d'un sous-arbre et rend sa nouvelle racine.
+    ///
+    /// Descente d'abord, reconstruction ensuite : un répertoire dont un enfant
+    /// a changé est rebâti sur les hashs à jour, métas et tags reportés — sauf
+    /// `"date"`, la carte reconstruite étant une création, qui porte l'heure de
+    /// celle-ci.
+    ///
+    /// `f` porte la transformation et rien d'autre : elle reçoit cette carte et
+    /// la braise courante, rend celles à retenir. La signature reste ici, par
+    /// [`Enu::new`] — le foyer rendu par `f` doit donc être ouvert. Seule une
+    /// ENU dont le hash diffère de l'ancienne est sauvegardée, avant que son
+    /// parent la référence.
+    ///
+    /// Les enfants sont chargés **sans vérification de signature** : leur hash
+    /// vient de la carte du parent, et le chaînage de Merkle porte l'intégrité de
+    /// proche en proche — à l'appelant d'authentifier le point de départ.
+    ///
+    /// # Errors
+    ///
+    /// Propage les erreurs de
+    /// [`Self::charger_sans_verification_signature`] (E/S, intégrité), celles
+    /// rendues par `f`, celles de signature de [`Enu::new`] et celles de
+    /// [`Self::sauvegarder`].
+    pub(super) fn transformer_recursif(
+        chemin_enu: &Path,
+        enu: &Enu,
+        f: &mut dyn FnMut(Carte, Braise) -> ResultFeuApplication<(Carte, Braise)>,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+    ) -> ResultFeuApplication<Enu> {
+        let mut nouveaux = BTreeSet::new();
+        let mut modifie = false;
+
+        if let Some(hashs_enu) = enu.carte().hashs_enu() {
+            for h in hashs_enu {
+                let enfant = Enu::charger_sans_verification_signature(chemin_enu, h)?;
+                let transforme =
+                    Self::transformer_recursif(chemin_enu, &enfant, f, noyau, session)?;
+
+                modifie |= transforme.hash_carte() != enfant.hash_carte();
+                nouveaux.insert(transforme.hash_carte());
+            }
+        }
+
+        let carte_courante = if modifie {
+            let mut carte = Carte::new_repertoire(nouveaux);
+            for (cle, valeur) in enu.carte().metas() {
+                if cle != "date" {
+                    carte.ajout_meta(cle, valeur);
+                }
+            }
+            for tag in enu.carte().tags() {
+                carte.ajout_tag(tag);
+            }
+            carte
+        } else {
+            enu.carte().clone()
+        };
+
+        let (nouvelle_carte, nouvelle_braise) = f(carte_courante, enu.braise())?;
+        let nouvelle_enu = Enu::new(nouvelle_carte, noyau, session, nouvelle_braise)?;
+
+        if nouvelle_enu.hash_carte() != enu.hash_carte() {
+            nouvelle_enu.sauvegarder(chemin_enu)?;
+        }
+
+        Ok(nouvelle_enu)
+    }
 }
 
 /// Tests en ligne : ce qui se prouve sans monter de pile.

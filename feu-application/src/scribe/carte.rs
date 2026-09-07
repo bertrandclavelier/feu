@@ -99,7 +99,7 @@ impl Carte {
     /// Une horloge antérieure au 1ᵉʳ janvier 1970 donne une date nulle, jamais
     /// une panique ni une méta absente : la carte reste construite, et une date
     /// impossible désigne l'horloge de la machine plutôt qu'un défaut de Feu.
-    fn horodatee(mut self) -> Self {
+    pub(super) fn horodatee(mut self) -> Self {
         self.ajout_meta(
             "date",
             &SystemTime::now()
@@ -366,6 +366,32 @@ impl Carte {
                 hashs_enu: _,
             } => {
                 tags.insert(tag);
+            }
+        }
+    }
+
+    /// Retire un tag de la carte.
+    ///
+    /// Symétrique de [`Self::ajout_tag`], jusqu'au silence : un tag absent du
+    /// [`BTreeSet`] laisse la carte intacte, sans le dire.
+    pub(super) fn retrait_tag(&mut self, tag: &str) {
+        match self {
+            Self::Donnee {
+                metas: _,
+                tags,
+                hash_blob: _,
+            }
+            | Self::Texte {
+                metas: _,
+                tags,
+                contenu: _,
+            }
+            | Self::Repertoire {
+                metas: _,
+                tags,
+                hashs_enu: _,
+            } => {
+                tags.remove(tag);
             }
         }
     }

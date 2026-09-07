@@ -44,7 +44,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use feu_noyau::{DonneesBlob, FeuNoyau, IndexClasseur, IndexFoyer};
+use feu_noyau::{Braise, DonneesBlob, FeuNoyau, IndexClasseur, IndexFoyer};
 
 use crate::{
     ErreurFeuApplication, ResultFeuApplication, SessionApplication,
@@ -272,43 +272,169 @@ impl Scribe {
         Ok(())
     }
 
-    /// Copie le blob référencé par `fiche` dans un classeur d'un autre foyer.
+    /// Déplace `fiche_depart` et toute sa descendance dans un autre foyer.
     ///
-    /// Même résolution de cible que [`charge_blob`](Self::charge_blob) : la fiche
-    /// donne l'ENU, l'ENU donne le foyer d'origine et le hash. La destination,
-    /// elle, ne se lit nulle part — l'appelant la fournit.
-    ///
-    /// Le Scribe n'écrit rien dans l'arborescence ici.
-    ///
-    /// # Retour
-    ///
-    /// Le classeur du foyer de destination qui détient la copie.
+    /// Le déplacement est une copie : chaque blob est recopié dans le classeur
+    /// demandé, l'original reste. Chaque ENU du sous-arbre est recréée — carte
+    /// ré-horodatée, donc nouveau hash, et signature du foyer de destination —,
+    /// l'arborescence gardant sa forme. La greffe passe par [`Enu::remplacer`],
+    /// qui pose une nouvelle racine : les versions antérieures continuent de
+    /// désigner l'ancien foyer.
     ///
     /// # Errors
     ///
-    /// Propage les refus du chargement de l'ENU (lecture, authentification) et
-    /// les deux de [`index_et_hash_blob`](Self::index_et_hash_blob), puis les
-    /// erreurs du noyau : foyer fermé, blob introuvable, déchiffrement,
-    /// chiffrement, écriture disque.
-    pub(crate) fn copie_blob(
+    /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la braise
+    /// d'une ENU traversée ne résout aucun foyer, et
+    /// [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si la substitution
+    /// laisse l'arbre inchangé. Propage les refus du chargement (lecture,
+    /// authentification, intégrité), les erreurs du noyau à la copie du blob
+    /// (foyer fermé, blob introuvable, déchiffrement, chiffrement) et celles de
+    /// signature et d'écriture.
+    pub(crate) fn change_foyer(
         &self,
         noyau: &FeuNoyau,
         session: &SessionApplication,
-        fiche: &Fiche,
+        fiche_depart: &Fiche,
         index_foyer_destination: IndexFoyer,
         index_classeur_destination: IndexClasseur,
-    ) -> ResultFeuApplication<IndexClasseur> {
-        let (index_foyer_origine, hash_blobs) = Self::index_et_hash_blob(
+    ) -> ResultFeuApplication<()> {
+        let enu_depart = Enu::charger(&self.chemin_enu, session, &fiche_depart.hash_carte())?;
+        let braise_destination = session.braise_foyer(index_foyer_destination);
+
+        let mut transformation =
+            |carte: Carte, braise: Braise| -> ResultFeuApplication<(Carte, Braise)> {
+                if let Carte::Donnee { hash_blob, .. } = &carte {
+                    let Some(index_foyer_origine) = session.braise_vers_index(braise) else {
+                        return Err(ErreurFeuApplication::ScribeBraiseInconnue);
+                    };
+
+                    noyau.copie_blob(
+                        hash_blob,
+                        index_foyer_origine,
+                        index_foyer_destination,
+                        index_classeur_destination,
+                    )?;
+                }
+
+                Ok((carte.horodatee(), braise_destination))
+            };
+
+        let nouvelle_enu = Enu::transformer_recursif(
+            &self.chemin_enu,
+            &enu_depart,
+            &mut transformation,
+            noyau,
             session,
-            &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
         )?;
 
-        Ok(noyau.copie_blob(
-            &hash_blobs,
-            index_foyer_origine,
-            index_foyer_destination,
-            index_classeur_destination,
-        )?)
+        Enu::remplacer(
+            &self.chemin_enu,
+            &self.chemin_derniere_racine,
+            &fiche_depart.hash_carte(),
+            &nouvelle_enu,
+            noyau,
+            session,
+        )
+    }
+
+    /// Ajoute `tags` à `fiche_depart` et à toute sa descendance.
+    ///
+    /// Un tag posé sur un répertoire vaut pour tout ce qu'il contient : chaque
+    /// ENU du sous-arbre est recréée et re-signée sous **sa** braise, donc tous
+    /// les foyers traversés doivent être ouverts. La date n'est pas retouchée —
+    /// c'est le tag qui fait la carte nouvelle. La greffe passe par
+    /// [`Enu::remplacer`], qui pose une nouvelle racine.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si tous
+    /// les tags étaient déjà posés, l'arbre restant alors inchangé. Propage les
+    /// refus du chargement (lecture, authentification, intégrité), les erreurs
+    /// de signature — notamment un foyer fermé — et celles d'écriture.
+    pub(crate) fn ajoute_tags(
+        &self,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+        fiche_depart: &Fiche,
+        tags: &[&str],
+    ) -> ResultFeuApplication<()> {
+        let enu_depart = Enu::charger(&self.chemin_enu, session, &fiche_depart.hash_carte())?;
+
+        let mut transformation =
+            |carte: Carte, braise: Braise| -> ResultFeuApplication<(Carte, Braise)> {
+                let mut nouvelle_carte = carte;
+                for tag in tags {
+                    nouvelle_carte.ajout_tag(tag);
+                }
+
+                Ok((nouvelle_carte, braise))
+            };
+
+        let nouvelle_enu = Enu::transformer_recursif(
+            &self.chemin_enu,
+            &enu_depart,
+            &mut transformation,
+            noyau,
+            session,
+        )?;
+
+        Enu::remplacer(
+            &self.chemin_enu,
+            &self.chemin_derniere_racine,
+            &fiche_depart.hash_carte(),
+            &nouvelle_enu,
+            noyau,
+            session,
+        )
+    }
+
+    /// Retire `tags` de `fiche_depart` et de toute sa descendance.
+    ///
+    /// Exact symétrique de [`ajoute_tags`](Self::ajoute_tags), mêmes contraintes
+    /// de foyers ouverts et même greffe : le retrait se propage aussi loin que
+    /// l'ajout, un tag ne pouvant pas survivre sous une entrée d'où il a été
+    /// enlevé.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si aucun
+    /// des tags n'était présent. Propage les mêmes refus que
+    /// [`ajoute_tags`](Self::ajoute_tags).
+    pub(crate) fn retire_tags(
+        &self,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+        fiche_depart: &Fiche,
+        tags: &[&str],
+    ) -> ResultFeuApplication<()> {
+        let enu_depart = Enu::charger(&self.chemin_enu, session, &fiche_depart.hash_carte())?;
+
+        let mut transformation =
+            |carte: Carte, braise: Braise| -> ResultFeuApplication<(Carte, Braise)> {
+                let mut nouvelle_carte = carte;
+                for tag in tags {
+                    nouvelle_carte.retrait_tag(tag);
+                }
+
+                Ok((nouvelle_carte, braise))
+            };
+
+        let nouvelle_enu = Enu::transformer_recursif(
+            &self.chemin_enu,
+            &enu_depart,
+            &mut transformation,
+            noyau,
+            session,
+        )?;
+
+        Enu::remplacer(
+            &self.chemin_enu,
+            &self.chemin_derniere_racine,
+            &fiche_depart.hash_carte(),
+            &nouvelle_enu,
+            noyau,
+            session,
+        )
     }
 
     /// Rend le classeur qui détient le blob référencé par `fiche`.

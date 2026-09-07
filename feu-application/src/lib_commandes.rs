@@ -703,41 +703,36 @@ impl FeuApplication {
         Ok(())
     }
 
-    /// Copie le blob désigné par `fiche` dans un classeur d'un autre foyer.
+    /// Déplace `fiche_depart` et sa descendance dans le foyer et le classeur
+    /// demandés.
     ///
-    /// Désigne sa source comme
-    /// [`commande_chargement_blob`](Self::commande_chargement_blob) : par l'ENU
-    /// seule, dont la braise donne le foyer et la carte le hash. Le foyer et le
-    /// classeur de destination, eux, sont nommés par l'appelant.
-    ///
-    /// L'original reste en place, et aucune ENU ne référence la copie.
-    ///
-    /// # Retour
-    ///
-    /// Le classeur du foyer de destination qui détient la copie.
+    /// Chaque blob du sous-arbre est copié — l'original reste en place — et
+    /// chaque ENU est recréée sous le foyer de destination, l'arborescence
+    /// gardant sa forme. L'opération est versionnée : une nouvelle racine est
+    /// posée, et les versions antérieures désignent toujours l'ancien foyer.
     ///
     /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
     /// propage les erreurs du Scribe : braise ne résolvant vers aucun foyer
-    /// ([`ErreurFeuApplication::ScribeBraiseInconnue`]), carte qui n'est pas une
-    /// [`Carte::Donnee`] ([`ErreurFeuApplication::ScribeEnuDAttendue`]), foyer
-    /// fermé, blob introuvable, déchiffrement, chiffrement, écriture disque.
-    pub fn commande_copie_blob(
-        &mut self,
-        fiche: &Fiche,
+    /// ([`ErreurFeuApplication::ScribeBraiseInconnue`]), substitution sans effet
+    /// ([`ErreurFeuApplication::ScribeRemplacementSansEffet`]), foyer fermé,
+    /// blob introuvable, déchiffrement, chiffrement, signature, écriture disque.
+    pub fn commande_change_foyer(
+        &self,
+        fiche_depart: &Fiche,
         index_foyer_destination: IndexFoyer,
         index_classeur_destination: IndexClasseur,
-    ) -> ResultFeuApplication<IndexClasseur> {
+    ) -> ResultFeuApplication<()> {
         let noyau = self
             .feu_noyau
             .as_ref()
             .ok_or(ErreurFeuApplication::NoeudEteint)?;
 
-        self.scribe.copie_blob(
+        self.scribe.change_foyer(
             noyau,
             &self.session,
-            fiche,
+            fiche_depart,
             index_foyer_destination,
             index_classeur_destination,
         )
@@ -933,6 +928,61 @@ impl FeuApplication {
         )?;
 
         Ok(())
+    }
+
+    /// Ajoute `tags` à `fiche_depart` et à toute sa descendance.
+    ///
+    /// Un tag posé sur un répertoire vaut pour tout ce qu'il contient. Chaque
+    /// ENU du sous-arbre est recréée sous sa propre braise — tous les foyers
+    /// traversés doivent donc être ouverts —, et l'opération est versionnée :
+    /// une nouvelle racine est posée, les versions antérieures gardent leurs
+    /// tags.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : arbre inchangé parce que les tags y
+    /// étaient tous déjà
+    /// ([`ErreurFeuApplication::ScribeRemplacementSansEffet`]), authentification,
+    /// foyer fermé, signature, écriture disque.
+    pub fn commande_ajout_tags(
+        &self,
+        fiche_depart: &Fiche,
+        tags: &[&str],
+    ) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        self.scribe
+            .ajoute_tags(noyau, &self.session, fiche_depart, tags)
+    }
+
+    /// Retire `tags` de `fiche_depart` et de toute sa descendance.
+    ///
+    /// Symétrique de [`commande_ajout_tags`](Self::commande_ajout_tags), mêmes
+    /// contraintes de foyers ouverts et même versionnement : un tag retiré ne
+    /// survit nulle part sous l'entrée d'où il a été enlevé.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : arbre inchangé parce qu'aucun des tags
+    /// n'était présent ([`ErreurFeuApplication::ScribeRemplacementSansEffet`]),
+    /// authentification, foyer fermé, signature, écriture disque.
+    pub fn commande_retrait_tags(
+        &self,
+        fiche_depart: &Fiche,
+        tags: &[&str],
+    ) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        self.scribe
+            .retire_tags(noyau, &self.session, fiche_depart, tags)
     }
 
     /// Rend un itérateur sur tout le sous-arbre situé sous `fiche`, celle-ci
