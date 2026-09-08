@@ -1329,297 +1329,602 @@ impl Trousseau {
 /// cycle de chiffrement générique et le refus d'un mauvais mot de passe.
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use data_encoding::HEXLOWER;
+    use proptest::{
+        prelude::{ProptestConfig, any},
+        prop_assert, prop_assert_eq, prop_assert_ne, prop_assume, proptest,
+    };
 
     use super::*;
-    use crate::ResultFeuNoyau;
+    use crate::{Cryptographe, ResultFeuNoyau};
 
-    /// Vérifie qu'une même seed redonne toujours exactement le même matériau.
-    ///
-    /// C'est l'invariant sur lequel repose `demarrage_secours` : reconstruire un
-    /// nœud à partir de la seed doit rendre les mêmes clés et les mêmes braises.
-    /// S'il cède, les données déjà déposées deviennent illisibles et les foyers
-    /// changent d'adresse.
-    #[test]
-    fn derivation_deterministe_meme_seed() -> ResultFeuNoyau<()> {
-        let seed = SecretBox::new(Box::new([0x42; 64]));
+    proptest! {
+        /// Vérifie que deux labels distincts ne dérivent jamais le même matériau.
+        ///
+        /// C'est la séparation de domaine HKDF elle-même : le label est passé en
+        /// `info`, et lui seul sépare les clés d'une même seed. Le test tombe si
+        /// `expand` cesse de le consommer, une collision réelle sur 32 octets étant
+        /// hors de portée.
+        #[test]
+        fn derivation_labels_distincts(
+            octets in any::<[u8; 64]>(),
+            label1 in "[a-z0-9/]{1,32}",
+            label2 in "[a-z0-9/]{1,32}",
+        ) {
+            prop_assume!(label1 != label2);
 
-        // Les trois appels reproduisent la séquence de
-        // `Cryptographe::genere_trousseau_a_partir_seed` — sel et matériau des
-        // foyers sortent tous de la seed, par des labels HKDF distincts.
+            let seed = SecretBox::new(Box::new(octets));
 
-        // Génération trousseau 1
-        let mut trousseau1 = Trousseau::new();
-        trousseau1.genere_sel(&seed)?;
-        trousseau1.ajouter_paire_noeud(&seed)?;
-        for index_foyer in IndexFoyer::tous() {
-            trousseau1.ajouter_trousseau_foyer(&seed, index_foyer)?;
+            // Les deux tailles employées par le protocole : 32 octets pour les clés
+            // symétriques, les seeds ML-DSA et les braises, 64 pour la seed ML-KEM.
+            let cle32_1 = Trousseau::derive_depuis_seed::<32>(&seed, &label1)?;
+            let cle32_2 = Trousseau::derive_depuis_seed::<32>(&seed, &label2)?;
+
+            prop_assert_ne!(cle32_1.expose_secret(), cle32_2.expose_secret());
+
+            let cle64_1 = Trousseau::derive_depuis_seed::<64>(&seed, &label1)?;
+            let cle64_2 = Trousseau::derive_depuis_seed::<64>(&seed, &label2)?;
+
+            prop_assert_ne!(cle64_1.expose_secret(), cle64_2.expose_secret());
         }
+    }
 
-        // Génération trousseau 2
-        let mut trousseau2 = Trousseau::new();
-        trousseau2.genere_sel(&seed)?;
-        trousseau2.ajouter_paire_noeud(&seed)?;
-        for index_foyer in IndexFoyer::tous() {
-            trousseau2.ajouter_trousseau_foyer(&seed, index_foyer)?;
-        }
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
 
-        assert_eq!(
-            trousseau1.sel.as_ref().unwrap(),
-            trousseau2.sel.as_ref().unwrap()
-        );
+        /// Vérifie qu'une même seed redonne toujours exactement le même matériau.
+        ///
+        /// C'est l'invariant sur lequel repose `demarrage_secours` : reconstruire un
+        /// nœud à partir de la seed doit rendre les mêmes clés et les mêmes braises.
+        /// S'il cède, les données déjà déposées deviennent illisibles et les foyers
+        /// changent d'adresse.
+        #[test]
+        fn derivation_deterministe_meme_seed(octets in any::<[u8; 64]>()) {
+            let seed = SecretBox::new(Box::new(octets));
 
-        assert_eq!(
-            trousseau1.donne_cle_privee_signature_noeud()?,
-            trousseau2.donne_cle_privee_signature_noeud()?
-        );
+            // Les trois appels reproduisent la séquence de
+            // `Cryptographe::genere_trousseau_a_partir_seed` — sel et matériau des
+            // foyers sortent tous de la seed, par des labels HKDF distincts.
 
-        for index_foyer in IndexFoyer::tous() {
-            let trousseau_foyer1 = trousseau1.trousseaux_foyers[index_foyer.valeur()]
-                .as_ref()
-                .unwrap();
-            let trousseau_foyer2 = trousseau2.trousseaux_foyers[index_foyer.valeur()]
-                .as_ref()
-                .unwrap();
-
-            assert_eq!(trousseau_foyer1.braise, trousseau_foyer2.braise);
-            assert_eq!(
-                trousseau_foyer1.donne_cle_privee_signature(),
-                trousseau_foyer2.donne_cle_privee_signature()
-            );
-            assert_eq!(
-                trousseau_foyer1.donne_cle_privee_chiffrement(),
-                trousseau_foyer2.donne_cle_privee_chiffrement()
-            );
-            assert_eq!(
-                trousseau_foyer1.donne_cle_chiffrement().expose_secret(),
-                trousseau_foyer2.donne_cle_chiffrement().expose_secret(),
-            );
-
-            for index_classeur in IndexClasseur::tous() {
-                let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[index_classeur.valeur()]
-                    .as_ref()
-                    .unwrap();
-                let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[index_classeur.valeur()]
-                    .as_ref()
-                    .unwrap();
-
-                assert_eq!(cle1.expose_secret(), cle2.expose_secret());
+            // Génération trousseau 1
+            let mut trousseau1 = Trousseau::new();
+            trousseau1.genere_sel(&seed)?;
+            trousseau1.ajouter_paire_noeud(&seed)?;
+            for index_foyer in IndexFoyer::tous() {
+                trousseau1.ajouter_trousseau_foyer(&seed, index_foyer)?;
             }
-        }
 
-        Ok(())
-    }
-
-    /// Vérifie que deux seeds distinctes ne partagent aucun élément dérivé.
-    ///
-    /// Sel, clés du nœud, clés et braises de chaque foyer : rien ne doit
-    /// coïncider entre deux nœuds nés de seeds différentes.
-    #[test]
-    fn derivation_deterministe_seeds_differentes() -> ResultFeuNoyau<()> {
-        // Contrepartie du test précédent : une dérivation qui ignorerait la seed
-        // serait parfaitement « déterministe », mais rendrait le même matériau
-        // pour tous les nœuds. Seules deux seeds distinctes attrapent ce cas.
-        let seed1 = SecretBox::new(Box::new([0x42; 64]));
-        let seed2 = SecretBox::new(Box::new([0x43; 64]));
-
-        // Génération trousseau 1
-        let mut trousseau1 = Trousseau::new();
-        trousseau1.genere_sel(&seed1)?;
-        trousseau1.ajouter_paire_noeud(&seed1)?;
-        for index_foyer in IndexFoyer::tous() {
-            trousseau1.ajouter_trousseau_foyer(&seed1, index_foyer)?;
-        }
-
-        // Génération trousseau 2
-        let mut trousseau2 = Trousseau::new();
-        trousseau2.genere_sel(&seed2)?;
-        trousseau2.ajouter_paire_noeud(&seed2)?;
-        for index_foyer in IndexFoyer::tous() {
-            trousseau2.ajouter_trousseau_foyer(&seed2, index_foyer)?;
-        }
-
-        assert_ne!(
-            trousseau1.sel.as_ref().unwrap(),
-            trousseau2.sel.as_ref().unwrap()
-        );
-
-        assert_ne!(
-            trousseau1.donne_cle_privee_signature_noeud()?,
-            trousseau2.donne_cle_privee_signature_noeud()?
-        );
-
-        for index_foyer in IndexFoyer::tous() {
-            let trousseau_foyer1 = trousseau1.trousseaux_foyers[index_foyer.valeur()]
-                .as_ref()
-                .unwrap();
-            let trousseau_foyer2 = trousseau2.trousseaux_foyers[index_foyer.valeur()]
-                .as_ref()
-                .unwrap();
-
-            assert_ne!(trousseau_foyer1.braise, trousseau_foyer2.braise);
-            assert_ne!(
-                trousseau_foyer1.donne_cle_privee_signature(),
-                trousseau_foyer2.donne_cle_privee_signature()
-            );
-            assert_ne!(
-                trousseau_foyer1.donne_cle_privee_chiffrement(),
-                trousseau_foyer2.donne_cle_privee_chiffrement()
-            );
-            assert_ne!(
-                trousseau_foyer1.donne_cle_chiffrement().expose_secret(),
-                trousseau_foyer2.donne_cle_chiffrement().expose_secret(),
-            );
-
-            for index_classeur in IndexClasseur::tous() {
-                let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[index_classeur.valeur()]
-                    .as_ref()
-                    .unwrap();
-                let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[index_classeur.valeur()]
-                    .as_ref()
-                    .unwrap();
-
-                assert_ne!(cle1.expose_secret(), cle2.expose_secret());
+            // Génération trousseau 2
+            let mut trousseau2 = Trousseau::new();
+            trousseau2.genere_sel(&seed)?;
+            trousseau2.ajouter_paire_noeud(&seed)?;
+            for index_foyer in IndexFoyer::tous() {
+                trousseau2.ajouter_trousseau_foyer(&seed, index_foyer)?;
             }
+
+            prop_assert_eq!(
+                trousseau1.sel.as_ref().unwrap(),
+                trousseau2.sel.as_ref().unwrap()
+            );
+
+            prop_assert_eq!(
+                trousseau1.donne_cle_privee_signature_noeud()?,
+                trousseau2.donne_cle_privee_signature_noeud()?
+            );
+
+            for index_foyer in IndexFoyer::tous() {
+                let trousseau_foyer1 = trousseau1.trousseaux_foyers[index_foyer.valeur()]
+                    .as_ref()
+                    .unwrap();
+                let trousseau_foyer2 = trousseau2.trousseaux_foyers[index_foyer.valeur()]
+                    .as_ref()
+                    .unwrap();
+
+                prop_assert_eq!(trousseau_foyer1.braise, trousseau_foyer2.braise);
+                prop_assert_eq!(
+                    trousseau_foyer1.donne_cle_privee_signature(),
+                    trousseau_foyer2.donne_cle_privee_signature()
+                );
+                prop_assert_eq!(
+                    trousseau_foyer1.donne_cle_privee_chiffrement(),
+                    trousseau_foyer2.donne_cle_privee_chiffrement()
+                );
+                prop_assert_eq!(
+                    trousseau_foyer1.donne_cle_chiffrement().expose_secret(),
+                    trousseau_foyer2.donne_cle_chiffrement().expose_secret(),
+                );
+
+                for index_classeur in IndexClasseur::tous() {
+                    let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[index_classeur.valeur()]
+                        .as_ref()
+                        .unwrap();
+                    let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[index_classeur.valeur()]
+                        .as_ref()
+                        .unwrap();
+
+                    prop_assert_eq!(cle1.expose_secret(), cle2.expose_secret());
+                }
+            }
+
         }
 
-        Ok(())
+        /// Vérifie que deux seeds distinctes ne partagent aucun élément dérivé.
+        ///
+        /// Sel, clés du nœud, clés et braises de chaque foyer : rien ne doit
+        /// coïncider entre deux nœuds nés de seeds différentes.
+        #[test]
+        fn derivation_deterministe_seeds_differentes(
+            octets1 in any::<[u8; 64]>(),
+            octets2 in any::<[u8; 64]>(),
+            )  {
+            let seed1 = SecretBox::new(Box::new(octets1));
+            let seed2 = SecretBox::new(Box::new(octets2));
+
+            // Contrepartie du test précédent : une dérivation qui ignorerait la seed
+            // serait parfaitement « déterministe », mais rendrait le même matériau
+            // pour tous les nœuds. Seules deux seeds distinctes attrapent ce cas.
+            prop_assume!(octets1 != octets2);
+
+            // Génération trousseau 1
+            let mut trousseau1 = Trousseau::new();
+            trousseau1.genere_sel(&seed1)?;
+            trousseau1.ajouter_paire_noeud(&seed1)?;
+            for index_foyer in IndexFoyer::tous() {
+                trousseau1.ajouter_trousseau_foyer(&seed1, index_foyer)?;
+            }
+
+            // Génération trousseau 2
+            let mut trousseau2 = Trousseau::new();
+            trousseau2.genere_sel(&seed2)?;
+            trousseau2.ajouter_paire_noeud(&seed2)?;
+            for index_foyer in IndexFoyer::tous() {
+                trousseau2.ajouter_trousseau_foyer(&seed2, index_foyer)?;
+            }
+
+            prop_assert_ne!(
+                trousseau1.sel.as_ref().unwrap(),
+                trousseau2.sel.as_ref().unwrap()
+            );
+
+            prop_assert_ne!(
+                trousseau1.donne_cle_privee_signature_noeud()?,
+                trousseau2.donne_cle_privee_signature_noeud()?
+            );
+
+            for index_foyer in IndexFoyer::tous() {
+                let trousseau_foyer1 = trousseau1.trousseaux_foyers[index_foyer.valeur()]
+                    .as_ref()
+                    .unwrap();
+                let trousseau_foyer2 = trousseau2.trousseaux_foyers[index_foyer.valeur()]
+                    .as_ref()
+                    .unwrap();
+
+                prop_assert_ne!(trousseau_foyer1.braise, trousseau_foyer2.braise);
+                prop_assert_ne!(
+                    trousseau_foyer1.donne_cle_privee_signature(),
+                    trousseau_foyer2.donne_cle_privee_signature()
+                );
+                prop_assert_ne!(
+                    trousseau_foyer1.donne_cle_privee_chiffrement(),
+                    trousseau_foyer2.donne_cle_privee_chiffrement()
+                );
+                prop_assert_ne!(
+                    trousseau_foyer1.donne_cle_chiffrement().expose_secret(),
+                    trousseau_foyer2.donne_cle_chiffrement().expose_secret(),
+                );
+
+                for index_classeur in IndexClasseur::tous() {
+                    let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[index_classeur.valeur()]
+                        .as_ref()
+                        .unwrap();
+                    let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[index_classeur.valeur()]
+                        .as_ref()
+                        .unwrap();
+
+                    prop_assert_ne!(cle1.expose_secret(), cle2.expose_secret());
+                }
+            }
+
+        }
     }
 
-    /// Vérifie le cycle chiffrement/déchiffrement AES-256-GCM.
+    /// Vérifie que le protocole de dérivation rend aujourd'hui ce qu'il rendait
+    /// hier, de la phrase mnémonique aux clés de classeur.
     ///
-    /// `chiffrement_generique_avec_cle` est le point de passage unique de tout
-    /// le chiffrement symétrique du trousseau : `chiffre_cle`, `chiffre_seed` et
-    /// `chiffre_blob` y délèguent, en ne changeant que la clé fournie et le type
-    /// de sortie. Le tester une fois les couvre tous les trois.
-    #[test]
-    fn cycle_chiffrement_dechiffrement_generique() -> ResultFeuNoyau<()> {
-        let cle = [0x11u8; 32];
-        let contenu = b"contenu de test";
-
-        let chiffre1 = Trousseau::chiffrement_generique_avec_cle(&cle, contenu)?;
-        let chiffre2 = Trousseau::chiffrement_generique_avec_cle(&cle, contenu)?;
-
-        let dechiffre1 = Trousseau::dechiffrement_generique_avec_cle(&cle, &chiffre1)?;
-        let dechiffre2 = Trousseau::dechiffrement_generique_avec_cle(&cle, &chiffre2)?;
-
-        // Le nonce est tiré d'`OsRng` à chaque appel : deux chiffrements du même
-        // contenu ne peuvent pas coïncider. Un nonce figé briserait AES-GCM.
-        assert_ne!(chiffre1, chiffre2);
-        assert_eq!(dechiffre1, dechiffre2);
-        assert_eq!(dechiffre1, contenu);
-
-        Ok(())
-    }
-
-    /// Vérifie qu'un mot de passe incorrect fait échouer le déchiffrement.
+    /// Les tests de déterminisme qui précèdent comparent le code à lui-même : ils
+    /// resteraient verts si une montée de version changeait la dérivation. Seules des
+    /// valeurs gravées attrapent ce cas, et chaque assertion nomme son sujet — un
+    /// rouge dit lequel des maillons a bougé.
     ///
-    /// C'est le mécanisme réel de vérification du mot de passe Feu : aucun mot
-    /// de passe n'est stocké, ni en clair ni en hash. La clé éphémère est
-    /// dérivée par Argon2id du mot de passe et du sel — un mot de passe erroné
-    /// donne une clé différente, et AES-GCM rejette l'auth tag.
+    /// Seed, sel, clés brutes et braises ont été recalculées par une implémentation
+    /// indépendante ; les clés publiques et la signature, faute de seconde
+    /// implémentation, gravent l'état actuel. Le test détecte un changement, il ne
+    /// prouve pas une justesse.
     #[test]
-    fn mauvais_mot_de_passe() -> ResultFeuNoyau<()> {
-        let mut trousseau = Trousseau::new();
-        trousseau.definit_sel([0x22; 16]);
-        trousseau.definit_mdp(SecretString::from("bon mot de passe"));
-        trousseau.derive_cle_ephemere()?;
+    fn derivation_vecteurs_figes() -> ResultFeuNoyau<()> {
+        /// Phrase mnémonique BIP39 française du vecteur — 24 mots tirés au hasard une
+        /// fois pour toutes, et qui ne protègent aucun nœud réel. Sa valeur n'a
+        /// aucune importance, sa fixité en a toute.
+        const PHRASE_SEED_VECTEUR: &str = concat!(
+            "succès émeraude inspirer hygiène cadeau débrider dragon aspect ",
+            "biopsie torse dégivrer calvaire verdure infini épitaphe survie ",
+            "jovial peluche bolide astuce écharpe esquiver gentil venimeux"
+        );
 
-        let cle = [0x32; 32];
+        /// Seed brute attendue pour [`PHRASE_SEED_VECTEUR`] — 64 octets en
+        /// hexadécimal, recalculés par PBKDF2-HMAC-SHA512 hors du code éprouvé.
+        const SEED_BRUTE_VECTEUR: &str = concat!(
+            "6a540ec41828b126bc6fb42c25e95cfd1cd1bdf26fa62b95ebcdb10c2032f012",
+            "d19ae06e96575b4801eba4b0b77dde4431b5d893ec2097caafd4b5676ed118c9"
+        );
 
-        let cle_chiffree = trousseau.chiffre_cle(&cle)?;
+        /// Sel Argon2id attendu — label `feu/noeud/sel`, 16 octets.
+        const SEL_VECTEUR: &str = "03daad2ae70d874b4c7882368c829ff4";
 
-        // Témoin : établit que le déchiffrement fonctionne avec le bon mot de
-        // passe. Sans lui, l'échec attendu plus bas pourrait venir d'un
-        // chiffrement raté plutôt que du changement de mot de passe.
-        let cle_dechiffree = trousseau.dechiffre_cle(&cle_chiffree)?;
+        /// Mot de passe que le vecteur donne à Argon2id.
+        const MOT_DE_PASSE_VECTEUR: &str = "mot de passe du vecteur";
 
-        assert_eq!(&cle, cle_dechiffree.expose_secret());
+        /// Clé éphémère attendue pour [`MOT_DE_PASSE_VECTEUR`] et [`SEL_VECTEUR`].
+        ///
+        /// `derive_cle_ephemere` appelle `Argon2::default()` : ses paramètres
+        /// appartiennent à la crate, et les voir changer rendrait tout trousseau
+        /// existant indéchiffrable. Cette valeur est ce qui le verrait.
+        const CLE_EPHEMERE_VECTEUR: &str =
+            "16decdd2c3348f323d23ff1a22877bd004390688a7dd18a102586f4d2f7c55a6";
 
-        // Le sel reste inchangé : seul le mot de passe varie, donc seule la clé
-        // éphémère change.
-        trousseau.definit_mdp(SecretString::from("mauvais mot de passe"));
-        trousseau.derive_cle_ephemere()?;
+        /// Seed ML-DSA-87 du nœud — label `feu/noeud/signature`.
+        const CLE_SIGNATURE_NOEUD_VECTEUR: &str =
+            "e7e295c7c23f499688bde64fb45236424aa569f22512b11492ffd8cbdebc0dc2";
 
-        assert!(trousseau.dechiffre_cle(&cle_chiffree).is_err());
+        /// SHA3-256 de la clé publique de signature du nœud, encodée sur 2592 octets.
+        const HASH_CLE_PUBLIQUE_NOEUD_VECTEUR: &str =
+            "49ddfd12fe5e19cdbe49a81b882ae0ebb3b111a76a77e65db70e28897a925a97";
 
-        Ok(())
-    }
+        /// Message que le vecteur fait signer au nœud.
+        const MESSAGE_SIGNE_VECTEUR: &[u8] = b"vecteur de test Feu";
 
-    /// Vérifie que chaque dérivation produit une clé distincte de toutes les autres.
-    ///
-    /// Preuve de la séparation de domaine HKDF : chaque clé est tirée d'un `info`
-    /// qui lui est propre — label, index du foyer, et index du classeur le cas
-    /// échéant. Un label dupliqué ferait collisionner deux clés, et deux foyers
-    /// partageraient alors leur matériau.
-    #[test]
-    fn derivation_cles_distinctes() -> ResultFeuNoyau<()> {
-        // Un ensemble par famille : seules des valeurs de même nature et de même
-        // taille peuvent réellement collisionner. Confronter une clé symétrique
-        // de 32 octets à une clé publique de plusieurs milliers ne prouverait
-        // rien.
-        let seed = SecretBox::new(Box::new([0x11; 64]));
+        /// SHA3-256 de la signature du nœud sur [`MESSAGE_SIGNE_VECTEUR`].
+        ///
+        /// `sign` passe par `raw_sign_deterministic` : sans aléa, la signature est
+        /// comparable, et elle engage clé privée, algorithme et encodage à la fois.
+        const HASH_SIGNATURE_NOEUD_VECTEUR: &str =
+            "db6102830a7e451d8849e9cb1e0a3aa04369631a5473f9c6a899f9731ddb18c6";
+
+        /// Seeds ML-DSA-87 des foyers — labels `feu/foyer/signature/1..3`.
+        const CLES_SIGNATURE_FOYERS_VECTEUR: [&str; IndexFoyer::NOMBRE] = [
+            "1e9a62c1c7185690f285c420dfccd10250ed743c451ae619a5b12baaf1446e59",
+            "d45ac63421aed2bd1136c265e5eb439f6adb19c03df8507c56f8e38ab7a6a256",
+            "c0643a11f8f6d382fe62e85dbd078a556aa0b883c49572d2b74281c857483bb9",
+        ];
+
+        /// SHA3-256 des clés publiques de signature des foyers.
+        const HASHS_CLES_PUBLIQUES_SIGNATURE_FOYERS_VECTEUR: [&str; IndexFoyer::NOMBRE] = [
+            "7089469031dd753055cf68aac32f66e0e8addb79860ce5fc02596a8b9a175d04",
+            "8bc7a8c4b6d00ce0d58e5a016121a38c722b44ff756328794fcdd8e781e46753",
+            "1a51d8fbdae3cf83d347e3e1d7a5828dd7bdf4bdb7b45d7bfa1ebab4ff631ccf",
+        ];
+
+        /// Clés AES-256 des foyers — labels `feu/foyer/symetrique/1..3`.
+        const CLES_SYMETRIQUES_FOYERS_VECTEUR: [&str; IndexFoyer::NOMBRE] = [
+            "4f2bb9cfc5faa67b2e564d51531cce437bf6835d2a07b8ba8893f26c13c05173",
+            "8e96aaf3edee3df32d8ea4bbf16ec1c7e00695109e535ec481ab3b313719e493",
+            "c3e64e502198fc3004541f72f866349d2846e1983fa9969a8f8ec65e2446f597",
+        ];
+
+        /// Seeds ML-KEM-1024 des foyers — labels `feu/foyer/chiffrement/1..3`,
+        /// 64 octets chacune.
+        const SEEDS_CHIFFREMENT_FOYERS_VECTEUR: [&str; IndexFoyer::NOMBRE] = [
+            concat!(
+                "9fe64e6f6a85fa9a0b5e3bbc8066342f213316175016e042e9bc1b0dbdd7846b",
+                "c39fa38b966b2d58c52d650ddbec460ab919e26ff6ceba352d154d926b3b7039"
+            ),
+            concat!(
+                "35264ce79ec66dfca6efc5ef15df256f3843cfeb01714762b825d14d09a65483",
+                "f94ed98bffad4c652aff76fe0387d3ddbc1b54205d5fc8176e622b2649b9e3a6"
+            ),
+            concat!(
+                "48cb066803dc114a472c6e4ab29dd6b7b28aa55ce9e6e10b729d1572a62ce5df",
+                "2da0ad74f640da9e30d907a403303c1587453724f45d659d96ef0b533c6b8e02"
+            ),
+        ];
+
+        /// SHA3-256 des clés publiques de chiffrement des foyers, encodées sur
+        /// 1568 octets.
+        const HASHS_CLES_PUBLIQUES_CHIFFREMENT_FOYERS_VECTEUR: [&str; IndexFoyer::NOMBRE] = [
+            "40e0eab7f46f15f3e2da1d3cacfd02591d8badffe9217a1829fb0a7898a05601",
+            "613a421b98be177ad291864b749dcaa55ea10ad8532af8b0efa06f7350b54378",
+            "15cd3617654a5b37ca958b9b0d58c6f85b5232fc2a7bc12825199ac7e1e7eb65",
+        ];
+
+        /// Braises des foyers — labels `feu/foyer/braise/1..3`, checksum et encodage
+        /// base32 compris.
+        const BRAISES_VECTEUR: [&str; IndexFoyer::NOMBRE] = [
+            "5eggx5ircwbgrhxi5yecmi7n56m7dejewhiwhsbb6rcbygz6i5xa7ty.braise",
+            "txlajgxgjn3pfiatjexui4xobipfv5apba33xkgzkucbvm4vwbgoy2i.braise",
+            "dfb5mtd64bs37t4ero4mjv4yggyvo2ywxhh7koz3s7daov6jybbatea.braise",
+        ];
+
+        /// Clés AES-256 des classeurs — labels `feu/classeur/symetrique/f/c`,
+        /// rangées par foyer puis par classeur.
+        const CLES_CLASSEURS_VECTEUR: [[&str; IndexClasseur::NOMBRE]; IndexFoyer::NOMBRE] = [
+            [
+                "3dd07ff225358c48b34c5da0e7a17c8ed0e95a47624c3d91948624b1ad53a9b7",
+                "6f5bf8cdf23cc39be82cd59fe7483905434ebe82d3f729594d40801594fa3e40",
+                "0aaba555ed6f1c53622e99d17410b7012eaf82d54d386bfe31ab4384363579e8",
+                "841f19efcecde7e40d4ccf76d8fd72d99e60202195ed8fccbca7209ddfcb6ba0",
+                "6fc288baec3f5feea425e0d1d522ff15797be16f176f4217e4e7d575467747c0",
+            ],
+            [
+                "5d59bd4532bc5671c5a03e001207b4d08ed42845fbd527f3753f8f0b3b2fddba",
+                "0c37cc462a4f6850cbbf1a632023c924d29fe659760db35a693958702002dc23",
+                "ae58011d052f27a5cdb69d1e7ebf5aceac375ac7ea60345c8414194bc458d597",
+                "1d86b316bf0aa0247fb907a8afbffd51c9b7700f239cd51deca54238181deddc",
+                "db4285516df54bcc3f4fc74682d7e50d2cf2f06cc5c9e1cbcc8fc9de8ce80a32",
+            ],
+            [
+                "19cef49a1cbcc13811ee9315d314da5c665d3f2429c0c8d71a5c4dc7e877bf49",
+                "c6737f1bf1a929e9d688b8b861d936bfdeaa4d28b0d36bdf7d5965b8e122ab3f",
+                "754c63ecbe3f96b33da3fd537f28d0d4c1c38a756e50004224f8d38f1f08c92f",
+                "1639c3c4785efa5a8177e9b4357920fc389a86d98830746aa288dd706609ed78",
+                "5ace1c0eb345686421759d358ab833dfc701890185d8204e1107ecee3fcf3ec3",
+            ],
+        ];
+
+        let seed = Cryptographe::genere_seed_brute(SecretString::from(PHRASE_SEED_VECTEUR))?;
+
+        assert_eq!(HEXLOWER.encode(seed.expose_secret()), SEED_BRUTE_VECTEUR);
 
         // Génération trousseau
         let mut trousseau = Trousseau::new();
+        trousseau.genere_sel(&seed)?;
         trousseau.ajouter_paire_noeud(&seed)?;
         for index_foyer in IndexFoyer::tous() {
             trousseau.ajouter_trousseau_foyer(&seed, index_foyer)?;
         }
 
-        let mut cles_publiques_signature_vues = HashSet::new();
-        assert!(
-            cles_publiques_signature_vues.insert(
-                trousseau
-                    .paire_signature_noeud
-                    .as_ref()
-                    .unwrap()
-                    .publique
-                    .encode()
-            )
+        assert_eq!(HEXLOWER.encode(&trousseau.sel.unwrap()), SEL_VECTEUR);
+
+        // La clé éphémère prolonge la chaîne du vecteur : elle naît du sel qu'on
+        // vient de vérifier, et d'un mot de passe figé.
+        trousseau.definit_mdp(SecretString::from(MOT_DE_PASSE_VECTEUR));
+        trousseau.derive_cle_ephemere()?;
+
+        assert_eq!(
+            HEXLOWER.encode(trousseau.cle_ephemere.as_ref().unwrap().expose_secret()),
+            CLE_EPHEMERE_VECTEUR
         );
 
-        let mut cles_chiffrement_vues = HashSet::new();
-        let mut cles_publiques_chiffrement_vues = HashSet::new();
+        let paire_noeud = trousseau.paire_signature_noeud.as_ref().unwrap();
+
+        assert_eq!(
+            HEXLOWER.encode(&<[u8; 32]>::from(paire_noeud.privee.to_seed())),
+            CLE_SIGNATURE_NOEUD_VECTEUR
+        );
+
+        assert_eq!(
+            HEXLOWER.encode(&Sha3_256::digest(paire_noeud.publique.encode())),
+            HASH_CLE_PUBLIQUE_NOEUD_VECTEUR
+        );
+
+        assert_eq!(
+            HEXLOWER.encode(&Sha3_256::digest(
+                trousseau.signe_avec_cle_noeud(MESSAGE_SIGNE_VECTEUR)?
+            )),
+            HASH_SIGNATURE_NOEUD_VECTEUR
+        );
 
         for index_foyer in IndexFoyer::tous() {
-            let trousseau_foyer = trousseau.trousseaux_foyers[index_foyer.valeur()]
-                .as_ref()
-                .unwrap();
+            let foyer = index_foyer.valeur();
+            let trousseau_foyer = trousseau.trousseaux_foyers[foyer].as_ref().unwrap();
 
-            assert!(
-                cles_publiques_signature_vues
-                    .insert(trousseau_foyer.paire_signature.publique.encode())
+            assert_eq!(
+                trousseau_foyer.braise.to_string(),
+                BRAISES_VECTEUR[foyer],
+                "braise du foyer {foyer}"
             );
 
-            assert!(
-                cles_publiques_chiffrement_vues
-                    .insert(trousseau_foyer.paire_chiffrement.publique.to_bytes())
+            assert_eq!(
+                HEXLOWER.encode(&<[u8; 32]>::from(
+                    trousseau_foyer.paire_signature.privee.to_seed()
+                )),
+                CLES_SIGNATURE_FOYERS_VECTEUR[foyer],
+                "seed de signature du foyer {foyer}"
             );
 
-            assert!(
-                cles_chiffrement_vues
-                    .insert(*trousseau_foyer.donne_cle_chiffrement().expose_secret())
+            assert_eq!(
+                HEXLOWER.encode(&Sha3_256::digest(
+                    trousseau_foyer.paire_signature.publique.encode()
+                )),
+                HASHS_CLES_PUBLIQUES_SIGNATURE_FOYERS_VECTEUR[foyer],
+                "clé publique de signature du foyer {foyer}"
+            );
+
+            assert_eq!(
+                HEXLOWER.encode(trousseau_foyer.donne_cle_chiffrement().expose_secret()),
+                CLES_SYMETRIQUES_FOYERS_VECTEUR[foyer],
+                "clé symétrique du foyer {foyer}"
+            );
+
+            assert_eq!(
+                HEXLOWER.encode(
+                    trousseau_foyer
+                        .paire_chiffrement
+                        .privee
+                        .to_seed()
+                        .unwrap()
+                        .as_ref()
+                ),
+                SEEDS_CHIFFREMENT_FOYERS_VECTEUR[foyer],
+                "seed de chiffrement du foyer {foyer}"
+            );
+
+            assert_eq!(
+                HEXLOWER.encode(&Sha3_256::digest(
+                    trousseau_foyer.paire_chiffrement.publique.to_bytes()
+                )),
+                HASHS_CLES_PUBLIQUES_CHIFFREMENT_FOYERS_VECTEUR[foyer],
+                "clé publique de chiffrement du foyer {foyer}"
             );
 
             for index_classeur in IndexClasseur::tous() {
-                let cle = trousseau_foyer.cles_chiffrement_classeurs[index_classeur.valeur()]
-                    .as_ref()
-                    .unwrap();
+                let classeur = index_classeur.valeur();
 
-                assert!(cles_chiffrement_vues.insert(*cle.expose_secret()));
+                assert_eq!(
+                    HEXLOWER.encode(
+                        trousseau_foyer.cles_chiffrement_classeurs[classeur]
+                            .as_ref()
+                            .unwrap()
+                            .expose_secret()
+                    ),
+                    CLES_CLASSEURS_VECTEUR[foyer][classeur],
+                    "clé du classeur {classeur} du foyer {foyer}"
+                );
             }
         }
 
-        assert_eq!(cles_publiques_signature_vues.len(), IndexFoyer::NOMBRE + 1);
+        Ok(())
+    }
 
-        assert_eq!(cles_publiques_chiffrement_vues.len(), IndexFoyer::NOMBRE);
+    /// Vérifie que le format du chiffrement symétrique n'a pas bougé.
+    ///
+    /// Le vecteur ne va que dans un sens : `chiffrement_generique_avec_cle` tire son
+    /// nonce d'`OsRng`, seul un tampon gravé peut donc figer quelque chose. Avec le
+    /// cycle qui l'accompagne, les deux sens sont tenus — un découpage modifié
+    /// laisserait le cycle vert, mais rendrait ce tampon illisible.
+    ///
+    /// Il gèle la place et la taille du nonce, l'ordre `nonce || ciphertext || tag`
+    /// et AES-256-GCM. Les flux de foyer, eux, demanderaient des kilo-octets en dur.
+    #[test]
+    fn dechiffrement_vecteur_fige() -> ResultFeuNoyau<()> {
+        /// Clé AES-256 du vecteur, tirée au hasard une fois pour toutes.
+        const CLE_VECTEUR: &str =
+            "e76dbae9fcc0012ee611523f792cd0d9fb343a0dba01673324d629cea2c19766";
+
+        /// Tampon tel que le rend `chiffrement_generique_avec_cle` : nonce de
+        /// 12 octets, ciphertext de la longueur du clair, auth tag de 16 octets.
+        const TAMPON_VECTEUR: &str = concat!(
+            "d976de7ce456feeed03c1463e829a19af800f514a4aad42cd2d8f7de53deda",
+            "cda736fa97f1516ec10e07eb"
+        );
+
+        /// Clair attendu au bout du déchiffrement.
+        const CLAIR_VECTEUR: &[u8] = b"contenu de test";
+
+        let cle: [u8; 32] = HEXLOWER
+            .decode(CLE_VECTEUR.as_bytes())
+            .unwrap()
+            .try_into()
+            .unwrap();
+
+        let tampon = HEXLOWER.decode(TAMPON_VECTEUR.as_bytes()).unwrap();
 
         assert_eq!(
-            cles_chiffrement_vues.len(),
-            IndexFoyer::NOMBRE * IndexClasseur::NOMBRE + IndexFoyer::NOMBRE
+            Trousseau::dechiffrement_generique_avec_cle(&cle, &tampon)?,
+            CLAIR_VECTEUR
         );
 
         Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(8))]
+
+        /// Vérifie le cycle chiffrement/déchiffrement AES-256-GCM.
+        ///
+        /// `chiffrement_generique_avec_cle` est le point de passage unique de tout
+        /// le chiffrement symétrique du trousseau : `chiffre_cle`, `chiffre_seed` et
+        /// `chiffre_blob` y délèguent, en ne changeant que la clé fournie et le type
+        /// de sortie. Le tester une fois les couvre tous les trois.
+        ///
+        /// Clé et contenu sont tirés sur tout leur domaine, contenu vide compris —
+        /// AES-GCM n'y produit que l'auth tag, sans un octet de texte chiffré.
+        #[test]
+        fn cycle_chiffrement_dechiffrement_generique(
+                cle in any::<[u8; 32]>(),
+                contenu in any::<Vec<u8>>(),
+
+            ) {
+
+            let chiffre1 = Trousseau::chiffrement_generique_avec_cle(&cle, &contenu)?;
+            let chiffre2 = Trousseau::chiffrement_generique_avec_cle(&cle, &contenu)?;
+
+            let dechiffre1 = Trousseau::dechiffrement_generique_avec_cle(&cle, &chiffre1)?;
+            let dechiffre2 = Trousseau::dechiffrement_generique_avec_cle(&cle, &chiffre2)?;
+
+            // Le nonce est tiré d'`OsRng` à chaque appel : deux chiffrements du même
+            // contenu ne peuvent pas coïncider. Un nonce figé briserait AES-GCM.
+            prop_assert_ne!(chiffre1, chiffre2);
+            prop_assert_eq!(&dechiffre1, &dechiffre2);
+            prop_assert_eq!(dechiffre1, contenu);
+
+        }
+
+        /// Vérifie le cycle chiffrement/déchiffrement du flux AES-256-GCM.
+        ///
+        /// C'est la couche qui chiffre l'archive `.feu` d'un foyer, la seule à
+        /// travailler par tranches : un foyer n'a pas de taille bornée. Le domaine
+        /// dépasse [`CHUNK_SIZE`] à dessein — en deçà, tout tient dans le premier
+        /// tampon et le look-ahead qui reconnaît le dernier chunk n'est jamais
+        /// parcouru. Le contenu est une suite d'octets quelconques, ce qui passe ici
+        /// étant une archive `tar`.
+        #[test]
+        fn cycle_chiffrement_dechiffrement_flux(
+                cle in any::<[u8; 32]>(),
+                contenu in proptest::collection::vec(any::<u8>(), 0..9000),
+            ) {
+
+            let mut source = &contenu[..];
+            let mut contenu_chiffre = Vec::new();
+            Trousseau::chiffre_avec_cle(&cle, &mut source, &mut contenu_chiffre)?;
+
+            let mut source = &contenu_chiffre[..];
+            let mut sortie = Vec::new();
+            Trousseau::dechiffre_avec_cle(&cle, &mut source, &mut sortie)?;
+
+            prop_assert_eq!(sortie, contenu);
+        }
+
+        /// Vérifie qu'un mot de passe incorrect fait échouer le déchiffrement.
+        ///
+        /// C'est le mécanisme réel de vérification du mot de passe Feu : aucun mot
+        /// de passe n'est stocké, ni en clair ni en hash. La clé éphémère est
+        /// dérivée par Argon2id du mot de passe et du sel — un mot de passe erroné
+        /// donne une clé différente, et AES-GCM rejette l'auth tag.
+        ///
+        /// Sel, mots de passe et clé sont tirés sur leur domaine ; `prop_assume`
+        /// écarte le seul cas sans rejet légitime, deux mots de passe identiques.
+        /// Chaque cas coûtant deux passes Argon2id de 19 Mio, leur nombre reste bas.
+        #[test]
+        fn mauvais_mot_de_passe(
+            sel in any::<[u8; 16]>(),
+            mdp in "[a-z0-9/]{0,30}",
+            mauvais_mdp in "[a-z0-9/]{0,30}",
+            cle in any::<[u8; 32]>(),
+        ) {
+
+            prop_assume!(mdp != mauvais_mdp);
+
+            let mut trousseau = Trousseau::new();
+            trousseau.definit_sel(sel);
+            trousseau.definit_mdp(SecretString::from(mdp));
+            trousseau.derive_cle_ephemere()?;
+
+            let cle_chiffree = trousseau.chiffre_cle(&cle)?;
+
+            // Témoin : établit que le déchiffrement fonctionne avec le bon mot de
+            // passe. Sans lui, l'échec attendu plus bas pourrait venir d'un
+            // chiffrement raté plutôt que du changement de mot de passe.
+            let cle_dechiffree = trousseau.dechiffre_cle(&cle_chiffree)?;
+
+            prop_assert_eq!(&cle, cle_dechiffree.expose_secret());
+
+            // Le sel reste inchangé : seul le mot de passe varie, donc seule la clé
+            // éphémère change.
+            trousseau.definit_mdp(SecretString::from(mauvais_mdp));
+            trousseau.derive_cle_ephemere()?;
+
+            prop_assert!(trousseau.dechiffre_cle(&cle_chiffree).is_err());
+
+        }
     }
 }

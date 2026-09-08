@@ -169,8 +169,10 @@ impl Cryptographe {
 
     /// Dérive et enregistre dans le trousseau toutes les clés du nœud et des foyers.
     ///
-    /// Tout est dérivé de `phrase_seed` par HKDF-SHA3-256, chaque élément sous son
-    /// propre label : clés du nœud, clés de chaque foyer, et le sel Argon2id.
+    /// `phrase_seed` donne d'abord la seed brute
+    /// ([`genere_seed_brute`](Self::genere_seed_brute)), d'où tout descend par
+    /// HKDF-SHA3-256 sous un label propre : clés du nœud, clés de chaque foyer, sel
+    /// Argon2id.
     ///
     /// Le mot de passe n'est collecté que si le trousseau n'en porte pas déjà un —
     /// l'appelant peut donc l'avoir posé d'avance.
@@ -195,8 +197,7 @@ impl Cryptographe {
             self.demande_mdp(interface)?;
         }
 
-        let mnemonic = Mnemonic::parse_in(Language::French, phrase_seed.expose_secret())?;
-        let seed_bytes = SecretBox::new(Box::new(mnemonic.to_seed(""))); // passphrase vide
+        let seed_bytes = Self::genere_seed_brute(phrase_seed)?;
 
         // Ajoute la paire de clés du nœud au trousseau à partir de la seed
 
@@ -212,6 +213,26 @@ impl Cryptographe {
         self.trousseau.genere_sel(&seed_bytes)?;
 
         Ok(())
+    }
+
+    /// Dérive les 64 octets de seed brute d'une phrase mnémonique BIP39.
+    ///
+    /// La phrase est validée sur la liste française, puis étirée par
+    /// PBKDF2-HMAC-SHA512 avec une passphrase vide — laquelle appartient au format
+    /// persistant comme les labels HKDF : lui donner une valeur re-dérive tout le
+    /// trousseau. `phrase_seed` est consommée, donc zéroïsée dès la seed obtenue.
+    ///
+    /// # Errors
+    ///
+    /// Retourne une erreur si `phrase_seed` n'est pas une phrase BIP39 française
+    /// valide.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "consommée pour être zéroïsée au plus tôt"
+    )]
+    fn genere_seed_brute(phrase_seed: SecretString) -> ResultFeuNoyau<SecretBox<[u8; 64]>> {
+        let mnemonic = Mnemonic::parse_in(Language::French, phrase_seed.expose_secret())?;
+        Ok(SecretBox::new(Box::new(mnemonic.to_seed("")))) // passphrase vide
     }
 
     /// Déverrouille le trousseau à partir d'un [`TrousseauPublicNoeud`] existant.
@@ -747,13 +768,19 @@ impl Cryptographe {
 /// sur un cryptographe monté à la main.
 #[cfg(test)]
 mod tests {
+    use proptest::{
+        prelude::{ProptestConfig, any},
+        prop_assert, prop_assert_eq, prop_assume, proptest,
+    };
+
     use super::*;
 
     /// Monte un cryptographe utilisable et rend son [`TrousseauPublicComplet`].
     ///
-    /// Mot de passe et sel sont posés directement, sans interface factice : ils ne
-    /// servent qu'à ouvrir `donne_trousseau_public_complet`, unique accès aux clés
-    /// publiques depuis ce module.
+    /// Seed, mot de passe et sel viennent de l'appelant, qui les tire sur leur
+    /// domaine. Les deux derniers sont posés sans interface factice : ils ne servent
+    /// qu'à ouvrir `donne_trousseau_public_complet`, unique accès aux clés publiques
+    /// depuis ce module.
     ///
     /// Deux foyers sont dérivés, pas un : chaque test a besoin d'une seconde
     /// identité pour son cas négatif.
@@ -762,134 +789,149 @@ mod tests {
     /// retour. Les clés privées, elles, restent utilisables.
     fn monte_cryptographe_de_test(
         cryptographe: &mut Cryptographe,
+        seed: &SecretBox<[u8; 64]>,
+        mot_de_passe: &str,
+        sel: [u8; 16],
     ) -> ResultFeuNoyau<TrousseauPublicComplet> {
-        let seed = SecretBox::new(Box::new([0x22; 64]));
         cryptographe
             .trousseau
-            .definit_mdp(SecretString::from("mot de passe"));
-        cryptographe.trousseau.definit_sel([0x33; 16]);
-        cryptographe.trousseau.ajouter_paire_noeud(&seed)?;
+            .definit_mdp(SecretString::from(mot_de_passe));
+        cryptographe.trousseau.definit_sel(sel);
+        cryptographe.trousseau.ajouter_paire_noeud(seed)?;
         cryptographe
             .trousseau
-            .ajouter_trousseau_foyer(&seed, IndexFoyer::ZERO)?;
+            .ajouter_trousseau_foyer(seed, IndexFoyer::ZERO)?;
         cryptographe
             .trousseau
-            .ajouter_trousseau_foyer(&seed, IndexFoyer::try_from(1)?)?;
+            .ajouter_trousseau_foyer(seed, IndexFoyer::try_from(1)?)?;
 
         cryptographe.donne_trousseau_public_complet()
     }
 
-    /// Vérifie le cycle signature/vérification ML-DSA-87, pour le nœud et pour
-    /// un foyer.
-    ///
-    /// Deux cas négatifs, deux propriétés distinctes : clé publique étrangère — la
-    /// signature est liée à la clé —, et message altéré — elle est liée au
-    /// contenu.
-    ///
-    /// [`ErreurFeuNoyau::CryptographeSignatureMlDsaMalFormee`] reste non
-    /// couverte : altérer une signature donne tantôt `Ok(false)`, tantôt `Err`,
-    /// selon l'octet touché.
-    #[test]
-    fn cycle_signature_verification() -> ResultFeuNoyau<()> {
-        let mut cryptographe = Cryptographe::new();
-        let trousseau_public = monte_cryptographe_de_test(&mut cryptographe)?;
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(8))]
+        /// Vérifie le cycle signature/vérification ML-DSA-87, pour le nœud et pour
+        /// un foyer.
+        ///
+        /// Deux cas négatifs, deux propriétés distinctes : clé publique étrangère — la
+        /// signature est liée à la clé —, et second message quelconque, dont
+        /// `prop_assume` n'écarte que l'égalité — elle est liée au contenu.
+        ///
+        /// Seed, sel et mot de passe sont tirés eux aussi, le mot de passe depuis la
+        /// chaîne vide qu'aucune couche de Feu n'interdit.
+        ///
+        /// [`ErreurFeuNoyau::CryptographeSignatureMlDsaMalFormee`] reste non
+        /// couverte : altérer une signature donne tantôt `Ok(false)`, tantôt `Err`,
+        /// selon l'octet touché.
+        #[test]
+        fn cycle_signature_verification(
+            seed in any::<[u8; 64]>(),
+            mdp in "[a-z0-9/]{0,30}",
+            sel in any::<[u8; 16]>(),
+            message in any::<Vec<u8>>(),
+            message_altere in any::<Vec<u8>>(),
+        ) {
 
-        let message = b"message a signer et verifier";
+            prop_assume!(message != message_altere);
 
-        // Cas nominal du nœud. Sa clé de signature suit un chemin de dérivation
-        // distinct de celui des foyers : la couvrir séparément n'est pas un
-        // doublon.
-        let signature = cryptographe.signature_noeud(message)?;
+            let mut cryptographe = Cryptographe::new();
+            let trousseau_public = monte_cryptographe_de_test(&mut cryptographe, &SecretBox::new(Box::new(seed)), &mdp, sel)?;
 
-        assert!(Cryptographe::verification_signature(
-            &trousseau_public
-                .donne_trousseau_public_noeud()
-                .donne_cle_sig_pub(),
-            &signature,
-            message
-        )?);
 
-        // Cas nominal d'un foyer. Cette signature sert aussi de témoin aux deux
-        // cas négatifs qui suivent : seule la clé de vérification, puis le
-        // message, y changent — l'échec ne peut donc venir que de là.
-        let index_foyer_0 = IndexFoyer::ZERO;
-        let index_foyer_1 = IndexFoyer::try_from(1)?;
-        let signature = cryptographe.signature_foyer(index_foyer_0, message)?;
+            // Cas nominal du nœud. Sa clé de signature suit un chemin de dérivation
+            // distinct de celui des foyers : la couvrir séparément n'est pas un
+            // doublon.
+            let signature = cryptographe.signature_noeud(&message)?;
 
-        assert!(Cryptographe::verification_signature(
-            &trousseau_public
-                .donne_trousseau_public_foyer(index_foyer_0)?
-                .donne_cle_sig_pub(),
-            &signature,
-            message
-        )?);
+            prop_assert!(Cryptographe::verification_signature(
+                    &trousseau_public
+                    .donne_trousseau_public_noeud()
+                    .donne_cle_sig_pub(),
+                    &signature,
+                    &message
+            )?);
 
-        // Clé publique d'un autre foyer, signature et message inchangés.
-        assert!(!Cryptographe::verification_signature(
-            &trousseau_public
-                .donne_trousseau_public_foyer(index_foyer_1)?
-                .donne_cle_sig_pub(),
-            &signature,
-            message
-        )?);
+            // Cas nominal d'un foyer. Cette signature sert aussi de témoin aux deux
+            // cas négatifs qui suivent : seule la clé de vérification, puis le
+            // message, y changent — l'échec ne peut donc venir que de là.
+            let index_foyer_0 = IndexFoyer::ZERO;
+            let index_foyer_1 = IndexFoyer::try_from(1)?;
+            let signature = cryptographe.signature_foyer(index_foyer_0, &message)?;
 
-        // Bonne clé, bonne signature, message amputé de son dernier octet.
-        let message_altere = b"message a signer et verifie";
+            prop_assert!(Cryptographe::verification_signature(
+                    &trousseau_public
+                    .donne_trousseau_public_foyer(index_foyer_0)?
+                    .donne_cle_sig_pub(),
+                    &signature,
+                    &message
+            )?);
 
-        assert!(!Cryptographe::verification_signature(
-            &trousseau_public
-                .donne_trousseau_public_foyer(index_foyer_0)?
-                .donne_cle_sig_pub(),
-            &signature,
-            message_altere
-        )?);
+            // Clé publique d'un autre foyer, signature et message inchangés.
+            prop_assert!(!Cryptographe::verification_signature(
+                    &trousseau_public
+                    .donne_trousseau_public_foyer(index_foyer_1)?
+                    .donne_cle_sig_pub(),
+                    &signature,
+                    &message
+            )?);
 
-        Ok(())
-    }
+            prop_assert!(!Cryptographe::verification_signature(
+                    &trousseau_public
+                    .donne_trousseau_public_foyer(index_foyer_0)?
+                    .donne_cle_sig_pub(),
+                    &signature,
+                    &message_altere
+            )?);
 
-    /// Vérifie le cycle chiffrement/déchiffrement asymétrique ML-KEM-1024.
-    ///
-    /// Le round-trip établit que les deux moitiés assemblées à la main —
-    /// encapsulation ML-KEM, HKDF-SHA3-256, AES-256-GCM — s'accordent bien.
-    ///
-    /// Le cas négatif rend une **erreur**, non un `false`, et pas d'où on
-    /// l'attendrait : ML-KEM ne rejette jamais un ciphertext, c'est l'auth tag
-    /// AES-GCM qui refuse un cran plus loin.
-    #[test]
-    fn cycle_chiffrement_dechiffrement_asymetrique() -> ResultFeuNoyau<()> {
-        let mut cryptographe = Cryptographe::new();
+        }
 
-        let trousseau_public = monte_cryptographe_de_test(&mut cryptographe)?;
+        /// Vérifie le cycle chiffrement/déchiffrement asymétrique ML-KEM-1024.
+        ///
+        /// Le round-trip établit que les deux moitiés assemblées à la main —
+        /// encapsulation ML-KEM, HKDF-SHA3-256, AES-256-GCM — s'accordent bien.
+        ///
+        /// Le cas négatif rend une **erreur**, non un `false`, et pas d'où on
+        /// l'attendrait : ML-KEM ne rejette jamais un ciphertext, c'est l'auth tag
+        /// AES-GCM qui refuse un cran plus loin.
+        ///
+        /// Le message est tiré sur tout le domaine, vide compris.
+        #[test]
+        fn cycle_chiffrement_dechiffrement_asymetrique(
+            seed in any::<[u8; 64]>(),
+            mdp in "[a-z0-9/]{0,30}",
+            sel in any::<[u8; 16]>(),
+            message in any::<Vec<u8>>(),
+        )  {
+            let mut cryptographe = Cryptographe::new();
 
-        let message = b"message a chiffrer et dechiffrer";
+            let trousseau_public = monte_cryptographe_de_test(&mut cryptographe, &SecretBox::new(Box::new(seed)), &mdp, sel)?;
 
-        // En usage réel, l'expéditeur est un nœud tiers. Ici le même
-        // cryptographe chiffre et déchiffre : `chiffrement_asymetrique` ne
-        // consomme que la clé publique du destinataire, aucun secret de
-        // l'expéditeur n'entre dans le schéma — un second cryptographe
-        // n'apporterait rien au test.
-        let index_foyer_0 = IndexFoyer::ZERO;
-        let index_foyer_1 = IndexFoyer::try_from(1)?;
-        let message_chiffre = Cryptographe::chiffrement_asymetrique(
-            &trousseau_public
+            // En usage réel, l'expéditeur est un nœud tiers. Ici le même
+            // cryptographe chiffre et déchiffre : `chiffrement_asymetrique` ne
+            // consomme que la clé publique du destinataire, aucun secret de
+            // l'expéditeur n'entre dans le schéma — un second cryptographe
+            // n'apporterait rien au test.
+            let index_foyer_0 = IndexFoyer::ZERO;
+            let index_foyer_1 = IndexFoyer::try_from(1)?;
+            let message_chiffre = Cryptographe::chiffrement_asymetrique(
+                &trousseau_public
                 .donne_trousseau_public_foyer(index_foyer_0)?
                 .donne_cle_chiff_pub(),
-            message,
-        )?;
+                &message,
+            )?;
 
-        assert_eq!(
-            cryptographe.dechiffrement_asymetrique(index_foyer_0, &message_chiffre)?,
-            message
-        );
+            prop_assert_eq!(
+                cryptographe.dechiffrement_asymetrique(index_foyer_0, &message_chiffre)?,
+                message
+            );
 
-        // Même ciphertext, index du foyer 1 : seul le foyer 0 détient la clé
-        // privée capable d'en retrouver le bon secret partagé.
-        assert!(
-            cryptographe
+            // Même ciphertext, index du foyer 1 : seul le foyer 0 détient la clé
+            // privée capable d'en retrouver le bon secret partagé.
+            prop_assert!(
+                cryptographe
                 .dechiffrement_asymetrique(index_foyer_1, &message_chiffre)
                 .is_err()
-        );
-
-        Ok(())
+            );
+        }
     }
 }

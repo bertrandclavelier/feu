@@ -61,16 +61,15 @@ pub(crate) enum MessageCoeurTui {
     /// chargement.
     ///
     /// Émis par le bras `ChargementArborescenceEnu` de
-    /// [`ConnecteurVersTui::lancer_thread_coeur`], en réponse à une demande
-    /// explicite de l'utilisateur.
+    /// [`ConnecteurVersTui::lancer_thread_coeur`], sur demande de l'utilisateur.
     ///
-    /// Le `Vec` est le parcours en profondeur de l'arbre, racine comprise,
-    /// chaque fiche précédée de sa profondeur. C'est l'ordre de l'affichage et
-    /// son décalage : la TUI n'a rien à reconstruire, elle indente et dessine.
+    /// Le `Vec` est le parcours en profondeur, racine comprise, chaque fiche
+    /// précédée de sa profondeur : c'est l'ordre de l'affichage et son décalage, la
+    /// TUI indente et dessine sans rien reconstruire.
     ///
-    /// Le troisième membre est le classeur qui détient le blob de l'entrée,
-    /// résolu ici parce qu'il demande le noyau : `None` dit qu'on ne sait pas —
-    /// foyer fermé, carte sans blob, ou braise étrangère au nœud.
+    /// Le troisième membre est le classeur qui détient le blob, résolu ici parce
+    /// qu'il demande le noyau : `None` dit qu'on ne sait pas — foyer fermé, carte
+    /// sans blob, ou braise étrangère au nœud.
     EnvoiArborescenceEnu(Vec<(usize, Fiche, Option<IndexClasseur>)>),
 
     /// La seed vient d'être générée — la TUI doit basculer sur l'écran d'affichage.

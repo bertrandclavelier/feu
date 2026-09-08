@@ -354,8 +354,7 @@ pub(super) enum Commande {
     /// [`crate::connecteurs::MessageTuiCoeur::OuvertureComptoirTravail`].
     ///
     /// Active hors comptoir de travail déjà ouvert, une ENU **répertoire** et une
-    /// marque de chemin posées : le cœur exige un répertoire pour racine du
-    /// sous-arbre.
+    /// marque de chemin posées : le cœur exige un répertoire pour racine.
     ///
     /// **Un comptoir de dépôt ouvert ne la retire pas**, alors que le cœur exige
     /// l'exclusivité entre les deux sortes de comptoir : l'erreur qui nomme ce
@@ -363,8 +362,7 @@ pub(super) enum Commande {
     ///
     /// Le chemin est formé au dispatch, sous-dossier `travail_feu` de la marque :
     /// **c'est lui le comptoir, jamais le dossier marqué**, que le cœur crée puis
-    /// supprime à la fermeture. Son nom n'a rien à porter de plus, le comptoir de
-    /// travail étant unique.
+    /// supprime à la fermeture. Le comptoir de travail étant unique, son nom est fixe.
     PilotageOuvrirComptoirTravail,
 
     /// Prépare l'ouverture d'un foyer — bascule l'invite en mode saisie pour collecter le numéro.

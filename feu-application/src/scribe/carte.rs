@@ -130,15 +130,12 @@ impl Carte {
     ///
     /// Horodatée à la construction (voir [`Self::horodatee`]).
     ///
-    /// Le contenu est borné à [`MAX_TAILLE_TEXTE`] (mesuré en octets UTF-8) : la
-    /// vérification a lieu ici, avant toute mise sous enveloppe, pour échouer
-    /// proprement plutôt que de buter sur le plafond de signature du noyau.
+    /// Le contenu est borné à [`MAX_TAILLE_TEXTE`] (en octets UTF-8), vérifié ici
+    /// plutôt qu'au plafond de signature du noyau, pour échouer proprement.
     ///
-    /// Le `nom` est posé en méta `"nom"` — comme pour les entrées d'un comptoir
-    /// de dépôt, c'est lui qui nommera le fichier au retrait. Contrairement à
-    /// elles, il ne vient pas du système de fichiers mais de l'appelant : il est
-    /// donc validé dès la construction ([`Self::nom_fichier_valide`]), pour
-    /// refuser d'emblée une carte qu'aucun retrait ne saurait matérialiser.
+    /// Le `nom` est posé en méta `"nom"` : c'est lui qui nommera le fichier au
+    /// retrait. Venant de l'appelant et non du système de fichiers, il est validé
+    /// dès la construction ([`Self::nom_fichier_valide`]).
     ///
     /// # Errors
     ///

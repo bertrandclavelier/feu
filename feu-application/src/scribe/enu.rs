@@ -343,18 +343,16 @@ impl Enu {
 
     /// Écrit l'ENU sur disque sous `~/.feu/enu/<hash_carte_hex>.enu`.
     ///
-    /// Le nom du fichier est l'empreinte hexadécimale de la carte
-    /// (content-addressing) : une carte donnée vise toujours le même fichier,
-    /// indépendamment de l'enveloppe qui la transporte. L'écriture passe par
-    /// [`Scribe::ecrire_fichier_600`] — `0o600` et pose atomique, sans quoi un
-    /// arrêt brutal laisserait une ENU tronquée sous un nom de hash valide, que
-    /// l'idempotence ci-dessous ne réécrirait jamais.
+    /// Le nom est l'empreinte de la carte : une carte donnée vise toujours le même
+    /// fichier, quelle que soit l'enveloppe qui la transporte. La pose passe par
+    /// [`Scribe::ecrire_fichier_600`], en `0o600` et atomique — sinon un arrêt
+    /// brutal laisserait une ENU tronquée sous un nom valide, que l'idempotence ne
+    /// réécrirait jamais.
     ///
-    /// **Idempotent.** Si le fichier existe déjà, l'écriture est shuntée : le nom
-    /// étant le hash de la carte, un même nom encode la même carte, que la
-    /// `signature` ne touche pas — d'où une déduplication à l'échelle du nœud.
-    /// La méta `"date"` étant dans la carte, deux cartes de même contenu
-    /// construites à deux instants différents portent deux noms.
+    /// **Idempotent.** Un fichier déjà là n'est pas réécrit : même nom, même carte,
+    /// que la `signature` ne touche pas — d'où une déduplication à l'échelle du
+    /// nœud. La méta `"date"` étant dans la carte, deux contenus identiques
+    /// construits à deux instants portent deux noms.
     ///
     /// # Retour
     ///
@@ -729,16 +727,13 @@ impl Enu {
 
     /// Applique `f` à chaque ENU d'un sous-arbre et rend sa nouvelle racine.
     ///
-    /// Descente d'abord, reconstruction ensuite : un répertoire dont un enfant
-    /// a changé est rebâti sur les hashs à jour, métas et tags reportés — sauf
-    /// `"date"`, la carte reconstruite étant une création, qui porte l'heure de
-    /// celle-ci.
+    /// Descente d'abord, reconstruction ensuite : un répertoire dont un enfant a
+    /// changé est rebâti sur les hashs à jour, métas et tags reportés — sauf
+    /// `"date"`, la carte reconstruite étant une création.
     ///
-    /// `f` porte la transformation et rien d'autre : elle reçoit cette carte et
-    /// la braise courante, rend celles à retenir. La signature reste ici, par
-    /// [`Enu::new`] — le foyer rendu par `f` doit donc être ouvert. Seule une
-    /// ENU dont le hash diffère de l'ancienne est sauvegardée, avant que son
-    /// parent la référence.
+    /// `f` reçoit cette carte et la braise courante, rend celles à retenir ; la
+    /// signature reste ici, par [`Enu::new`], donc le foyer qu'elle rend doit être
+    /// ouvert. Seule une ENU dont le hash a changé est sauvegardée.
     ///
     /// Les enfants sont chargés **sans vérification de signature** : leur hash
     /// vient de la carte du parent, et le chaînage de Merkle porte l'intégrité de
