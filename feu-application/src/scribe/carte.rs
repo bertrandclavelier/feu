@@ -60,7 +60,7 @@ pub enum Carte {
         metas: BTreeMap<String, String>,
         /// Tags libres.
         tags: BTreeSet<String>,
-        /// Hash SHA3-256 du blob (également le nom du fichier `.dat`).
+        /// Hash SHA3-256 du blob (également le nom du fichier `.blob`).
         hash_blob: [u8; 32],
     },
 

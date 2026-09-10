@@ -116,3 +116,50 @@ impl Tiroir {
         *self.0.expose_secret_mut() = nouveau_blob;
     }
 }
+
+/// Tests en ligne : l'aller-retour d'un blob par le [`Tiroir`], aux tailles
+/// où la boucle de chunks change de comportement.
+#[cfg(test)]
+mod tests {
+    use proptest::{
+        prelude::{Just, Strategy, any},
+        prop_assert_eq, prop_oneof, proptest,
+    };
+
+    use super::*;
+
+    /// Tailles de blob à éprouver, en octets.
+    ///
+    /// Les bords de la boucle de [`Tiroir::remplir`] sont nommés un à un : un
+    /// tirage uniforme ne toucherait `TAILLE_CHUNK` pile qu'une fois sur des
+    /// milliers, alors que c'est là que se joue le découpage. Les deux
+    /// intervalles couvrent le reste, en deçà d'un chunk et au-delà.
+    fn tailles() -> impl Strategy<Value = usize> {
+        prop_oneof![
+            Just(0),
+            1..TAILLE_CHUNK,
+            Just(TAILLE_CHUNK - 1),
+            Just(TAILLE_CHUNK),
+            Just(TAILLE_CHUNK + 1),
+            TAILLE_CHUNK..TAILLE_CHUNK * 3,
+        ]
+    }
+
+    proptest! {
+        /// Un blob rempli depuis une source se réécrit à l'identique dans sa
+        /// destination, quelle que soit sa taille face à `TAILLE_CHUNK`.
+        #[test]
+        fn cycle_tiroir(
+            source in tailles().prop_flat_map(|n| proptest::collection::vec(any::<u8>(), n)),
+        ) {
+            let mut tiroir = Tiroir::new();
+
+            tiroir.remplir(source.as_slice())?;
+
+            let mut destination = Vec::new();
+            tiroir.envoyer_et_vider(&mut destination)?;
+
+            prop_assert_eq!(source, destination);
+        }
+    }
+}

@@ -161,17 +161,17 @@ pub trait InterfaceFeuNoyau {
 
 /// Métadonnées système d'un blob chiffré.
 ///
-/// Restitue les informations fournies par l'OS sur le fichier `.dat` correspondant
+/// Restitue les informations fournies par l'OS sur le fichier `.blob` correspondant
 /// au blob. Les données sont brutes — aucune conversion n'est effectuée par le noyau.
 pub struct DonneesBlob {
-    /// Taille du `.dat` en octets — celle du chiffré, donc supérieure au clair.
+    /// Taille du `.blob` en octets — celle du chiffré, donc supérieure au clair.
     taille: u64,
     /// `None` sur les systèmes qui ne la tiennent pas : Linux n'a pas de date de
     /// création portable.
     date_creation: Option<SystemTime>,
-    /// Dernière écriture du `.dat`.
+    /// Dernière écriture du `.blob`.
     date_derniere_modification: SystemTime,
-    /// Dernière lecture du `.dat`.
+    /// Dernière lecture du `.blob`.
     date_dernier_acces: SystemTime,
 }
 
@@ -445,9 +445,8 @@ impl FeuNoyau {
         } else {
             let mut cryptographe = Cryptographe::new();
 
-            // 1- LE CRYPTOGRAPHE TRAVAILLE EN MÉMOIRE
-
-            // Le cryptographe génère les clés nécessaires au fonctionnement d'un nouveau nœud
+            // Première étape : le cryptographe travaille en mémoire, et génère les
+            // clés du nouveau nœud.
             match phrase_seed {
                 None => {
                     cryptographe.initialise_noeud_a_partir_nouvelle_seed(interface_feu_noyau)?;
@@ -457,7 +456,6 @@ impl FeuNoyau {
                         .initialise_noeud_a_partir_seed_existante(interface_feu_noyau, valeur)?;
                 }
             }
-            // Le cryptographe génère le trousseau public pour le gardien
             let trousseau_public_complet = cryptographe.donne_trousseau_public_complet()?;
 
             // Propagation de la clé publique de signature du nœud, comme à
@@ -472,14 +470,13 @@ impl FeuNoyau {
                     .donne_cle_sig_pub(),
             );
 
-            // 2- LE GARDIEN TRAVAILLE SUR LE DISQUE
+            // Seconde étape : le gardien travaille sur le disque.
 
             gardien.cree_premiere_arborescence(&trousseau_public_complet)?;
             gardien.verrouille_noeud()?;
 
             let mut session = SessionFoyers::new();
 
-            // Ajout de chaque foyer dans la configuration
             for index_foyer in IndexFoyer::tous() {
                 let braise = trousseau_public_complet
                     .donne_trousseau_public_foyer(index_foyer)?
@@ -489,7 +486,6 @@ impl FeuNoyau {
                 interface_feu_noyau.recevoir_braise_foyer(index_foyer, braise);
             }
 
-            // Enregistrement de noyau.feu
             gardien.enregistrement_configuration()?;
 
             let mut noyau = Self {
@@ -499,7 +495,6 @@ impl FeuNoyau {
                 archivistes: std::array::from_fn(|_| None),
             };
 
-            // Fermeture des foyers
             for index_foyer in IndexFoyer::tous() {
                 noyau.fermeture_foyer(interface_feu_noyau, index_foyer)?;
             }
@@ -551,7 +546,6 @@ impl FeuNoyau {
 
         let mut session = SessionFoyers::new();
 
-        // Ajout de chaque foyer dans la configuration
         for index_foyer in IndexFoyer::tous() {
             let braise = trousseau_public_complet
                 .donne_trousseau_public_foyer(index_foyer)?
@@ -560,7 +554,6 @@ impl FeuNoyau {
             session.foyers[index_foyer.valeur()] = Foyer::new(braise, false);
         }
 
-        // Enregistrement de noyau.feu
         gardien.enregistrement_configuration()?;
 
         let mut noyau = Self {
@@ -585,7 +578,6 @@ impl FeuNoyau {
             .gardien
             .ecriture_trousseau_public_complet(&trousseau_public_complet)?;
 
-        // Fermeture des foyers
         for index_foyer in IndexFoyer::tous() {
             noyau.fermeture_foyer(interface_feu_noyau, index_foyer)?;
         }
@@ -1053,7 +1045,7 @@ impl FeuNoyau {
 
     /// Supprime un blob d'un foyer ouvert, sans en connaître le classeur.
     ///
-    /// Supprime le fichier `classeurN/<hash>.dat` via l'Archiviste du foyer.
+    /// Supprime le fichier `classeurN/<hash>.blob` via l'Archiviste du foyer.
     /// L'opération est irréversible.
     ///
     /// Le classeur est **découvert** par balayage, comme dans
@@ -1084,7 +1076,7 @@ impl FeuNoyau {
     /// Retourne la liste des hashes des blobs présents dans un classeur d'un foyer ouvert.
     ///
     /// Délègue à l'Archiviste du foyer, qui parcourt le dossier `classeurN/` et
-    /// décode le nom de chaque fichier `.dat`, en écartant ce qui n'est pas un
+    /// décode le nom de chaque fichier `.blob`, en écartant ce qui n'est pas un
     /// hash de 32 octets.
     ///
     /// L'ordre des hashes retournés n'est pas garanti.

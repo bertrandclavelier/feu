@@ -57,8 +57,8 @@ const CLE_NOEUD_SIG_PRIV: &str = "feu_sig.priv";
 /// racine nœud éteint.
 const CLE_NOEUD_SIG_PUB: &str = "feu_sig.pub";
 
-// Pour chaque foyer
-// La clé symétrique de chiffrement est sous la forme : adresse_braise.cle
+// Les constantes qui suivent nomment les fichiers d'un foyer. La clé symétrique
+// de chiffrement fait exception : sans constante, son nom est `<braise>.cle`.
 
 /// Clé de signature privée du foyer, chiffrée — dans son dossier `.cles/`.
 const CLE_FOYER_SIG_PRIV: &str = "sig.priv";
@@ -243,7 +243,6 @@ impl Carnet {
             ));
         }
 
-        // Pour chaque classeur
         for index_classeur in IndexClasseur::tous() {
             let chemin_cle_classeur =
                 chemin_cles.join(format!("classeur{}.cle", index_classeur.valeur()));
@@ -313,7 +312,6 @@ impl Carnet {
         Self::creer_dossier_700(&self.chemin_feu.join(FEU_DOSSIER_CONFIG))?;
         Self::creer_dossier_700(&self.chemin_feu.join(".cles"))?;
 
-        // Écriture du sel
         Self::ecrire_fichier_600(
             &self.chemin_feu.join(".cles").join(FEU_SEL),
             &trousseau_public_complet
@@ -321,7 +319,6 @@ impl Carnet {
                 .donne_sel(),
         )?;
 
-        // Écriture de la clé privée du nœud
         Self::ecrire_fichier_600(
             &self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PRIV),
             &trousseau_public_complet
@@ -329,7 +326,6 @@ impl Carnet {
                 .donne_cle_sig_privee(),
         )?;
 
-        // Écriture de la clé publique du nœud
         Self::ecrire_fichier_600(
             &self.chemin_feu.join(".cles").join(CLE_NOEUD_SIG_PUB),
             &trousseau_public_complet
@@ -337,7 +333,6 @@ impl Carnet {
                 .donne_cle_sig_pub(),
         )?;
 
-        // Pour chaque foyer
         for index_foyer in IndexFoyer::tous() {
             let foyer = trousseau_public_complet.donne_trousseau_public_foyer(index_foyer)?;
 
@@ -348,7 +343,8 @@ impl Carnet {
 
             Self::creer_dossier_700(chemin_foyer)?;
 
-            // Écriture de la clé symétrique du foyer
+            // La clé symétrique du foyer vit sous le `.cles/` du nœud, et non dans
+            // le dossier du foyer.
             Self::ecrire_fichier_600(
                 &self
                     .chemin_feu
@@ -357,7 +353,6 @@ impl Carnet {
                 &foyer.donne_cle_chiffrement(),
             )?;
 
-            // Écriture de la paire de clés sig du foyer
             Self::ecrire_fichier_600(
                 &chemin_foyer.join(CLE_FOYER_SIG_PRIV),
                 &foyer.donne_cle_sig_privee(),
@@ -367,7 +362,6 @@ impl Carnet {
                 &foyer.donne_cle_sig_pub(),
             )?;
 
-            // Écriture de la paire de clés chif du foyer
             Self::ecrire_fichier_600(
                 &chemin_foyer.join(CLE_FOYER_CHIF_PRIV),
                 &foyer.donne_cle_chiff_privee(),
@@ -377,7 +371,6 @@ impl Carnet {
                 &foyer.donne_cle_chiff_pub(),
             )?;
 
-            // Pour chaque classeur
             for index_classeur in IndexClasseur::tous() {
                 let Ok(cle_chiffree) = foyer.donne_cle_chiffrement_classeur(index_classeur) else {
                     return Err(ErreurFeuNoyau::GardienPasDeClePourClasseur(
@@ -470,7 +463,6 @@ impl Carnet {
             cle_chiff_pub,
         );
 
-        // Pour chaque classeur
         for index_classeur in IndexClasseur::tous() {
             let cle_classeur = std::fs::read(
                 chemin_foyer.join(format!("classeur{}.cle", index_classeur.valeur())),

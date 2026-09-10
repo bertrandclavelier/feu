@@ -108,11 +108,11 @@ impl Cryptographe {
         &mut self,
         interface: &mut impl InterfaceFeuNoyau,
     ) -> ResultFeuNoyau<()> {
-        // Bloc encadrant la portée de phrase_seed
+        // Bloc encadrant la portée de `phrase_seed`.
         {
             let phrase_seed: SecretString;
 
-            // Bloc encadrant la portée de mnemonic
+            // Bloc encadrant la portée de `mnemonic`.
             {
                 // `Mnemonic` est déjà `ZeroizeOnDrop` (bip39, feature `zeroize`) :
                 // le `SecretBox` n'est pas requis pour la zéroïsation, il sert à
@@ -199,17 +199,13 @@ impl Cryptographe {
 
         let seed_bytes = Self::genere_seed_brute(phrase_seed)?;
 
-        // Ajoute la paire de clés du nœud au trousseau à partir de la seed
-
         self.trousseau.ajouter_paire_noeud(&seed_bytes)?;
 
-        // Ajoute le trousseau de chaque foyer
         for index_foyer in IndexFoyer::tous() {
             self.trousseau
                 .ajouter_trousseau_foyer(&seed_bytes, index_foyer)?;
         }
 
-        // Génère le sel et le met dans le trousseau
         self.trousseau.genere_sel(&seed_bytes)?;
 
         Ok(())
@@ -446,7 +442,7 @@ impl Cryptographe {
     /// # Errors
     ///
     /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est pas
-    /// ouvert, [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente`] si sa
+    /// ouvert, [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbsente`] si sa
     /// clé de classeur manque, ou une erreur si le chiffrement AES-256-GCM échoue.
     pub(super) fn chiffrement_blob(
         &self,
@@ -479,7 +475,7 @@ impl Cryptographe {
     /// # Errors
     ///
     /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est pas
-    /// ouvert, [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente`] si sa
+    /// ouvert, [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbsente`] si sa
     /// clé de classeur manque, ou une erreur si le déchiffrement AES-256-GCM échoue
     /// ou si le hash du clair ne correspond pas à `hash` (donnée corrompue).
     pub(super) fn dechiffrement_blob(
@@ -529,15 +525,14 @@ impl Cryptographe {
         cle_publique_destinataire: &[u8; 1568],
         octets_a_chiffrer: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
-        // Reconstruit la clé publique ML-KEM-1024 depuis les octets
         let ek = EncapsulationKey1024::new(cle_publique_destinataire.into())
             .map_err(|_| ErreurFeuNoyau::CryptographeClePubliqueChiffrementInvalide)?;
 
-        // Encapsulation → (ciphertext 1568 o, secret partagé 32 o)
+        // L'encapsulation rend un ciphertext de 1568 octets et un secret partagé
+        // de 32.
         let (ciphertext, secret_partage) = ek.encapsulate();
         let secret_partage = SecretBox::new(Box::new(<[u8; 32]>::from(secret_partage)));
 
-        // HKDF -> clé AES
         let hkdf = Hkdf::<Sha3_256>::new(None, secret_partage.expose_secret());
         let mut cle_brute = SecretBox::new(Box::new([0u8; 32]));
         hkdf.expand(
@@ -545,7 +540,8 @@ impl Cryptographe {
             cle_brute.expose_secret_mut(),
         )?;
 
-        // Résultat : ciphertext_kem (1568 o) || nonce || ciphertext AES
+        // Le résultat concatène le ciphertext KEM (1568 o), le nonce et le
+        // ciphertext AES.
         let mut resultat: Vec<u8> = Vec::new();
         resultat.extend_from_slice(ciphertext.as_ref());
         resultat.extend(Trousseau::chiffrement_generique_avec_cle(
@@ -583,19 +579,16 @@ impl Cryptographe {
         index_foyer: IndexFoyer,
         octets_a_dechiffrer: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
-        // Extrait le ciphertext KEM (1568 o)
         let ciphertext: &Ciphertext1024 = octets_a_dechiffrer
             .get(0..1568)
             .ok_or(ErreurFeuNoyau::CryptographeCiphertextMlKemInvalide)?
             .try_into()
             .map_err(|_| ErreurFeuNoyau::CryptographeCiphertextMlKemInvalide)?;
 
-        // Décapsulation → secret partagé
         let secret_partage = self
             .trousseau
             .recuperation_secret_partage(index_foyer, ciphertext)?;
 
-        // Dérive la clé AES-256-GCM depuis le secret partagé
         let hkdf = Hkdf::<Sha3_256>::new(None, secret_partage.expose_secret());
         let mut cle_brute = SecretBox::new(Box::new([0u8; 32]));
         hkdf.expand(

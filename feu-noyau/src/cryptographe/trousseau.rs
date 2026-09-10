@@ -226,7 +226,7 @@ impl TrousseauFoyer {
     ///
     /// Retourne une erreur si le chiffrement d'une clé échoue — clé éphémère
     /// absente du trousseau ou échec AES-256-GCM, et
-    /// [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente`] si l'un des
+    /// [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbsente`] si l'un des
     /// classeurs n'a pas de clé.
     fn genere_trousseau_public_foyer(
         &self,
@@ -254,7 +254,7 @@ impl TrousseauFoyer {
                     index_classeur,
                 );
             } else {
-                return Err(ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente(
+                return Err(ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbsente(
                     index_classeur.valeur(),
                 ));
             }
@@ -347,7 +347,6 @@ impl Trousseau {
 
         let cle_publique = cle_privee.verifying_key();
 
-        // Enregistrement de la paire dans le trousseau
         self.paire_signature_noeud = Some(PaireClesSignature {
             privee: cle_privee,
             publique: cle_publique,
@@ -369,7 +368,7 @@ impl Trousseau {
     /// # Errors
     ///
     /// Propage l'échec de [`Self::derive_depuis_seed`], et
-    /// [`ErreurFeuNoyau::BraiseErronnee`] si la braise dérivée est refusée par
+    /// [`ErreurFeuNoyau::BraiseErronee`] si la braise dérivée est refusée par
     /// `Braise::try_from`.
     pub(super) fn ajouter_trousseau_foyer(
         &mut self,
@@ -380,7 +379,6 @@ impl Trousseau {
         // IndexFoyer part de 0.
         let index_derivation_foyer = index_foyer.valeur() + 1;
 
-        // Paire de clés signature du foyer
         let cle_sig_priv = SigningKey::<MlDsa87>::from_seed(
             Self::derive_depuis_seed::<32>(
                 seed_bytes,
@@ -397,13 +395,11 @@ impl Trousseau {
             publique: cle_sig_pub,
         };
 
-        // Clé symétrique de chiffrement du foyer
         let cle_chiffrement = Self::derive_depuis_seed::<32>(
             seed_bytes,
             &format!("{LABEL_DERIVATION_CHIFFREMENT_SYMETRIQUE_FOYER}/{index_derivation_foyer}"),
         )?;
 
-        // Paire de clés chiffrement foyer
         let cle_chiff_priv = {
             let seed_brute = Self::derive_depuis_seed::<64>(
                 seed_bytes,
@@ -459,7 +455,6 @@ impl Trousseau {
         let braise = format!("{}{}", BASE32_NOPAD.encode(&data).to_lowercase(), ".braise");
         let braise = Braise::try_from(braise.as_str())?;
 
-        // enregistrement de toutes les clés dans un TrousseauFoyer
         let trousseau_foyer = TrousseauFoyer {
             braise,
             cle_chiffrement,
@@ -857,20 +852,15 @@ impl Trousseau {
         cle_chiffrement: &[u8; 32],
         contenu: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
-        // Conversion de la clé de chiffrement brute en Key<Aes256Gcm>
         let key = <&Key<Aes256Gcm>>::from(cle_chiffrement);
 
-        // Création du cipher à partir de key
         let cipher = Aes256Gcm::new(key);
 
-        // Génération aléatoire du nonce de 12 octets
         let mut nonce = [0u8; 12];
         OsRng.fill_bytes(&mut nonce);
 
-        // Chiffrement du contenu
         let contenu_chiffre = cipher.encrypt(&Nonce::from(nonce), contenu.as_ref())?;
 
-        // Création du résultat
         let mut resultat = Vec::new();
         resultat.extend_from_slice(&nonce);
         resultat.extend_from_slice(&contenu_chiffre);
@@ -891,13 +881,10 @@ impl Trousseau {
         cle_chiffrement: &[u8; 32],
         contenu: &[u8],
     ) -> ResultFeuNoyau<Vec<u8>> {
-        // Conversion de la clé éphémère brute en Key<Aes256Gcm>
         let key = <&Key<Aes256Gcm>>::from(cle_chiffrement);
 
-        // Création du cipher à partir de key
         let cipher = Aes256Gcm::new(key);
 
-        // Déchiffrement de la clé
         let mut nonce = [0u8; 12];
         nonce.copy_from_slice(&contenu[0..12]);
         let contenu_dechiffre = cipher.decrypt(&Nonce::from(nonce), &contenu[12..])?;
@@ -1076,7 +1063,7 @@ impl Trousseau {
     /// # Errors
     ///
     /// [`ErreurFeuNoyau::CryptographeTrousseauFoyerAbsent`] si le foyer n'est
-    /// pas ouvert, [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente`]
+    /// pas ouvert, [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbsente`]
     /// si sa clé de classeur manque.
     fn donne_cle_chiffrement_classeur(
         &self,
@@ -1092,7 +1079,7 @@ impl Trousseau {
         let Some(cle_classeur) =
             &trousseau_foyer.cles_chiffrement_classeurs[index_classeur.valeur()]
         else {
-            return Err(ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente(
+            return Err(ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbsente(
                 index_classeur.valeur(),
             ));
         };
@@ -1219,16 +1206,14 @@ impl Trousseau {
         source: &mut impl Read,
         destination: &mut impl Write,
     ) -> ResultFeuNoyau<()> {
-        // Génération du nonce aléatoire
         let mut nonce = [0u8; 7];
         OsRng.fill_bytes(&mut nonce);
 
-        // Création du StreamEncryptor
         let key = <&Key<Aes256Gcm>>::from(cle_chiffrement);
         let cipher = Aes256Gcm::new(key);
         let mut encryptor = EncryptorBE32::from_aead(cipher, (&nonce).into());
 
-        // Écriture du nonce en tête du fichier
+        // Le nonce est écrit en clair, en tête du flux.
         destination.write_all(&nonce)?;
 
         let mut buffer1 = [0u8; CHUNK_SIZE];
@@ -1238,7 +1223,8 @@ impl Trousseau {
         loop {
             let n2 = source.read(&mut buffer2)?;
             if n2 == 0 {
-                // buffer1 dernier chunk de taille n1
+                // `buffer1` porte le dernier chunk, de taille `n1` : la lecture
+                // garde un tour d'avance pour le reconnaître.
                 let last_chunk = encryptor.encrypt_last(&buffer1[..n1])?;
                 destination.write_all(&last_chunk)?;
                 break;
@@ -1276,11 +1262,9 @@ impl Trousseau {
         source: &mut impl Read,
         destination: &mut impl Write,
     ) -> ResultFeuNoyau<()> {
-        // Récupération du nonce
         let mut nonce = [0u8; 7];
         source.read_exact(&mut nonce)?;
 
-        // Création du StreamDecryptor
         let key = <&Key<Aes256Gcm>>::from(cle_chiffrement);
         let cipher = Aes256Gcm::new(key);
         let mut decryptor = DecryptorBE32::from_aead(cipher, (&nonce).into());
@@ -1292,7 +1276,8 @@ impl Trousseau {
         loop {
             let n2 = source.read(&mut buffer2)?;
             if n2 == 0 {
-                // buffer1 dernier chunk de taille n1
+                // `buffer1` porte le dernier chunk, de taille `n1` : la lecture
+                // garde un tour d'avance pour le reconnaître.
                 let last_chunk = decryptor.decrypt_last(&buffer1[..n1])?;
                 destination.write_all(&last_chunk)?;
                 break;
@@ -1386,7 +1371,6 @@ mod tests {
             // `Cryptographe::genere_trousseau_a_partir_seed` — sel et matériau des
             // foyers sortent tous de la seed, par des labels HKDF distincts.
 
-            // Génération trousseau 1
             let mut trousseau1 = Trousseau::new();
             trousseau1.genere_sel(&seed)?;
             trousseau1.ajouter_paire_noeud(&seed)?;
@@ -1394,7 +1378,6 @@ mod tests {
                 trousseau1.ajouter_trousseau_foyer(&seed, index_foyer)?;
             }
 
-            // Génération trousseau 2
             let mut trousseau2 = Trousseau::new();
             trousseau2.genere_sel(&seed)?;
             trousseau2.ajouter_paire_noeud(&seed)?;
@@ -1465,7 +1448,6 @@ mod tests {
             // pour tous les nœuds. Seules deux seeds distinctes attrapent ce cas.
             prop_assume!(octets1 != octets2);
 
-            // Génération trousseau 1
             let mut trousseau1 = Trousseau::new();
             trousseau1.genere_sel(&seed1)?;
             trousseau1.ajouter_paire_noeud(&seed1)?;
@@ -1473,7 +1455,6 @@ mod tests {
                 trousseau1.ajouter_trousseau_foyer(&seed1, index_foyer)?;
             }
 
-            // Génération trousseau 2
             let mut trousseau2 = Trousseau::new();
             trousseau2.genere_sel(&seed2)?;
             trousseau2.ajouter_paire_noeud(&seed2)?;
@@ -1674,7 +1655,6 @@ mod tests {
 
         assert_eq!(HEXLOWER.encode(seed.expose_secret()), SEED_BRUTE_VECTEUR);
 
-        // Génération trousseau
         let mut trousseau = Trousseau::new();
         trousseau.genere_sel(&seed)?;
         trousseau.ajouter_paire_noeud(&seed)?;

@@ -46,7 +46,7 @@
 //!         ...
 //!         classeur.4  → ../
 //!     classeur0/
-//!         <hash>.dat         ← blob chiffré
+//!         <hash>.blob        ← blob chiffré
 //!     classeur1/
 //!     ...
 //!     classeur4/
@@ -126,7 +126,7 @@ impl Archiviste {
     /// Charge le blob chiffré identifié par `hash` depuis le classeur et retourne
     /// un [`Tiroir`] prêt pour le déchiffrement.
     ///
-    /// Ouvre `classeurN/<hash>.dat` et lit son contenu dans le tiroir. Le blob
+    /// Ouvre `classeurN/<hash>.blob` et lit son contenu dans le tiroir. Le blob
     /// contenu est chiffré — c'est le Cryptographe qui le déchiffre.
     ///
     /// # Errors
@@ -152,7 +152,7 @@ impl Archiviste {
     /// Écrit le blob chiffré du tiroir dans le classeur `index_classeur`.
     ///
     /// Construit le chemin de destination à partir de l'index du classeur et du
-    /// `hash` (encodé en hexadécimal minuscule) : `classeurN/<hash>.dat`. Le
+    /// `hash` (encodé en hexadécimal minuscule) : `classeurN/<hash>.blob`. Le
     /// tiroir ne portant que le contenu, les deux lui sont fournis ici.
     ///
     /// Le fichier est créé avec `create_new` — l'opération échoue si un blob
@@ -189,7 +189,7 @@ impl Archiviste {
 
     /// Supprime le blob identifié par `hash` dans le classeur à `index_classeur`.
     ///
-    /// Vérifie l'existence de `classeurN/<hash>.dat` avant suppression.
+    /// Vérifie l'existence de `classeurN/<hash>.blob` avant suppression.
     ///
     /// # Errors
     ///
@@ -209,7 +209,7 @@ impl Archiviste {
 
     /// Indique si un blob identifié par `hash` est présent dans le classeur à `index_classeur`.
     ///
-    /// Retourne `true` si `classeurN/<hash>.dat` existe sur le disque, `false` sinon.
+    /// Retourne `true` si `classeurN/<hash>.blob` existe sur le disque, `false` sinon.
     pub(super) fn existe_blob(&self, index_classeur: IndexClasseur, hash: &[u8; 32]) -> bool {
         self.donne_chemin_blob(index_classeur, hash).exists()
     }
@@ -284,7 +284,6 @@ impl Archiviste {
             resultat.push(Anomalie::ElementAbsent(self.donne_chemin_registre()));
         }
 
-        // Pour chaque classeur
         for index_classeur in IndexClasseur::tous() {
             if !self.donne_chemin_lien_classeur(index_classeur).is_symlink() {
                 resultat.push(Anomalie::ElementAbsent(
@@ -320,13 +319,13 @@ impl Archiviste {
             .join(format!("{}{}", CLASSEUR, index_classeur.valeur()))
     }
 
-    /// Retourne le chemin complet du blob `<hash>.dat` dans le classeur à `index_classeur`.
+    /// Retourne le chemin complet du blob `<hash>.blob` dans le classeur à `index_classeur`.
     ///
     /// Seul endroit où un hash prend sa forme hexadécimale : elle ne sert qu'à
     /// nommer le fichier, et ne remonte pas dans les signatures.
     fn donne_chemin_blob(&self, index_classeur: IndexClasseur, hash: &[u8; 32]) -> PathBuf {
         self.donne_chemin_classeur(index_classeur)
-            .join(format!("{}.dat", HEXLOWER.encode(hash)))
+            .join(format!("{}.blob", HEXLOWER.encode(hash)))
     }
 
     /// Crée un dossier avec les permissions `rwx------` (0o700).
@@ -339,5 +338,98 @@ impl Archiviste {
     fn creer_dossier_700(path: &Path) -> ResultFeuNoyau<()> {
         DirBuilder::new().mode(0o700).recursive(true).create(path)?;
         Ok(())
+    }
+}
+
+/// Tests en ligne : le cycle complet d'un blob dans un classeur, de l'écriture
+/// à la suppression, sur une arborescence réelle.
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+
+    use proptest::{prelude::any, prop_assert, prop_assert_eq, prop_assume, proptest};
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::TAILLE_CHUNK;
+
+    proptest! {
+        /// Deux blobs écrits dans le même classeur s'y retrouvent, s'y relisent
+        /// à l'identique et s'en effacent sans laisser de trace.
+        ///
+        /// Deux plutôt qu'un : l'unicité d'un nom, la liste qui les rend tous les
+        /// deux et l'effacement de l'un sans l'autre ne se disent pas sur un blob
+        /// seul. Les tailles vont jusqu'à trois fois `TAILLE_CHUNK`, pour que le
+        /// découpage du [`Tiroir`] serve réellement.
+        #[test]
+        fn cycle_blobs(
+            source1 in proptest::collection::vec(any::<u8>(), 0..=TAILLE_CHUNK * 3),
+            source2 in proptest::collection::vec(any::<u8>(), 0..=TAILLE_CHUNK * 3),
+            hash1 in any::<[u8; 32]>(),
+            hash2 in any::<[u8; 32]>(),
+        ) {
+            // Deux hashs égaux feraient échouer le second `ecrit_blob`, qui crée
+            // le fichier en exclusif. Le tirage ne les produit jamais, le
+            // rétrécissement d'un échec, si.
+            prop_assume!(hash1 != hash2);
+
+            let tmp = TempDir::new()?;
+
+            let archiviste = Archiviste::new(tmp.path().to_path_buf())?;
+
+            prop_assert!(archiviste.verifier_arborescence_classeurs()?.is_empty());
+
+            // Le chemin est écrit en dur, indirection du registre comprise :
+            // c'est un format sur disque, et le recomposer depuis les constantes
+            // du module ferait un test qui compare le code à lui-même.
+            prop_assert_eq!(
+                archiviste.donne_chemin_blob(IndexClasseur::ZERO, &hash1),
+                tmp.path()
+                    .join("registre")
+                    .join("classeur.0")
+                    .join("classeur0")
+                    .join(format!("{}.blob", HEXLOWER.encode(&hash1)))
+            );
+
+            let mut tiroir = Tiroir::new();
+            tiroir.remplir(source1.as_slice())?;
+            archiviste.ecrit_blob(IndexClasseur::ZERO, &hash1, tiroir)?;
+
+            prop_assert!(archiviste.existe_blob(IndexClasseur::ZERO, &hash1));
+
+            let mut tiroir = Tiroir::new();
+            tiroir.remplir(source2.as_slice())?;
+            archiviste.ecrit_blob(IndexClasseur::ZERO, &hash2, tiroir)?;
+
+            prop_assert!(archiviste.existe_blob(IndexClasseur::ZERO, &hash2));
+
+            let liste_blobs = archiviste.donne_liste_blobs(IndexClasseur::ZERO)?;
+            prop_assert_eq!(liste_blobs.len(), 2);
+            prop_assert!(liste_blobs.contains(&hash1));
+            prop_assert!(liste_blobs.contains(&hash2));
+
+            let fichier1 = File::open(archiviste.donne_chemin_blob(IndexClasseur::ZERO, &hash1))?;
+            let mut tiroir = Tiroir::new();
+            tiroir.remplir(fichier1)?;
+            let mut destination1 = Vec::new();
+            tiroir.envoyer_et_vider(&mut destination1)?;
+
+            prop_assert_eq!(source1, destination1);
+
+            let fichier2 = File::open(archiviste.donne_chemin_blob(IndexClasseur::ZERO, &hash2))?;
+            let mut tiroir = Tiroir::new();
+            tiroir.remplir(fichier2)?;
+            let mut destination2 = Vec::new();
+            tiroir.envoyer_et_vider(&mut destination2)?;
+
+            prop_assert_eq!(source2, destination2);
+
+            archiviste.supprime_blob(IndexClasseur::ZERO, &hash1)?;
+            archiviste.supprime_blob(IndexClasseur::ZERO, &hash2)?;
+
+            prop_assert!(archiviste.donne_liste_blobs(IndexClasseur::ZERO)?.is_empty());
+            prop_assert!(!archiviste.existe_blob(IndexClasseur::ZERO, &hash1));
+            prop_assert!(!archiviste.existe_blob(IndexClasseur::ZERO, &hash2));
+        }
     }
 }

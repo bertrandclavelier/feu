@@ -73,7 +73,7 @@ pub enum ErreurFeuNoyau {
     /// Chaîne mal formée soumise à `Braise::try_from` — suffixe absent, longueur
     /// ou alphabet invalides. Portée pour inspection, jamais affichée.
     #[error("NOY > Adresse braise mal formée")]
-    BraiseErronnee(String),
+    BraiseErronee(String),
 
     /// Chemin attendu sur le disque et absent, fichier comme dossier. Porté pour
     /// inspection, jamais affiché : un chemin absolu nomme le compte utilisateur.
@@ -88,7 +88,7 @@ pub enum ErreurFeuNoyau {
     /// Ce classeur n'a pas de clé de chiffrement, des deux côtés du miroir :
     /// trousseau privé en mémoire comme trousseau public sur le disque.
     #[error("NOY > Clé de chiffrement du classeur {0} absente du trousseau")]
-    CryptographeCleChiffrementClasseurAbstente(usize),
+    CryptographeCleChiffrementClasseurAbsente(usize),
 
     /// Opération sur le trousseau demandée avant la soumission du mot de passe :
     /// la clé éphémère qui chiffre et déchiffre toutes les autres est absente.

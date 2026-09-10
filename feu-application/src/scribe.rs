@@ -20,7 +20,7 @@
 //! Un nœud ne contient que deux sortes de fichiers : les ENU, tenues ici, et
 //! les **blobs** — les contenus chiffrés rangés dans les classeurs des foyers.
 //!
-//! Le Scribe ne descend pas jusqu'au blob : trouver le `.dat` correspondant à un
+//! Le Scribe ne descend pas jusqu'au blob : trouver le `.blob` correspondant à un
 //! `hash_blob`, le déchiffrer, le supprimer sont l'affaire du noyau. Il fait
 //! la charnière — traduire une ENU en index de foyer et en empreinte de blob
 //! (voir [`Scribe::index_et_hash_blob`]) — pour que ses appelants ne désignent
@@ -440,7 +440,7 @@ impl Scribe {
     /// Rend le classeur qui détient le blob référencé par `fiche`.
     ///
     /// Même résolution de cible que [`charge_blob`](Self::charge_blob), sans
-    /// rien ouvrir : la question porte sur l'emplacement du `.dat`, pas sur son
+    /// rien ouvrir : la question porte sur l'emplacement du `.blob`, pas sur son
     /// contenu. Une ENU peut survivre à son blob (voir
     /// [`supprime_blob`](Self::supprime_blob)) — c'est ce que cette méthode
     /// permet de détecter.

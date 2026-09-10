@@ -108,7 +108,7 @@ impl TrousseauPublicFoyer {
     ///
     /// # Errors
     ///
-    /// [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente`] si
+    /// [`ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbsente`] si
     /// l'emplacement est vide, aucune clé n'y ayant été insérée.
     pub(crate) fn donne_cle_chiffrement_classeur(
         &self,
@@ -117,7 +117,7 @@ impl TrousseauPublicFoyer {
         if let Some(cle) = &self.cles_chiffrement_classeurs[index_classeur.valeur()] {
             Ok(cle)
         } else {
-            Err(ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbstente(
+            Err(ErreurFeuNoyau::CryptographeCleChiffrementClasseurAbsente(
                 index_classeur.valeur(),
             ))
         }

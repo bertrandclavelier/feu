@@ -224,7 +224,6 @@ impl Gardien {
         if self.carnet.existe_arborescence_noeud() {
             return Err(ErreurFeuNoyau::GardienArborescenceNoeudDejaExistante);
         }
-        // Écriture du trousseau public sur le disque
         self.carnet
             .ecrire_trousseau_public_complet(trousseau_public_complet)?;
 
@@ -242,7 +241,7 @@ impl Gardien {
     /// `<braise>.feu` est absente, ou propage l'échec de la suppression
     /// récursive du dossier.
     pub(super) fn suppression_dossier_braise(&self, braise: Braise) -> ResultFeuNoyau<()> {
-        // Vérification que l'archive existe avant de supprimer le dossier. Sinon impossible
+        // Sans archive chiffrée, effacer le dossier clair perdrait le foyer.
         if self.carnet.donne_chemin_archive_chiffree(braise).exists() {
             self.carnet.supprime_dossier_braise(braise)?;
             Ok(())
@@ -459,13 +458,12 @@ impl Gardien {
 
         match self.carnet.ouvre_configuration() {
             Err(_) => {
-                // Déjà traité par verifier_arborescence_noeud()
+                // Le cas est déjà remonté par `verifier_arborescence_noeud`.
             }
             Ok(valeur) => match Configuration::importe_depuis_texte(&valeur) {
                 Err(_) => resultat.push(Anomalie::ConfigurationIllisible),
 
                 Ok(configuration) => {
-                    // Pour chaque foyer
                     for element in configuration.donne_adresses_braise() {
                         let chemin = self
                             .carnet
@@ -511,39 +509,34 @@ impl Gardien {
 /// texte, ordre des adresses `.braise` compris.
 #[cfg(test)]
 mod tests {
+    use proptest::{prop_assert_eq, proptest};
+
     use super::*;
-    use crate::{Braise, ResultFeuNoyau};
+    use crate::Braise;
 
-    /// Une configuration sérialisée puis reparsée redonne les mêmes valeurs,
-    /// adresses `.braise` comprises et dans le même ordre.
-    #[test]
-    fn cycle_configuration() -> ResultFeuNoyau<()> {
-        // Des braises toutes égales laisseraient passer une lecture qui mélange
-        // l'ordre des lignes. Chaque corps dérive donc de l'indice, écrit en
-        // binaire sur `Braise::LONGUEUR` caractères puis traduit `0`/`1` en
-        // `b`/`c` — l'alphabet BASE32 n'a ni `0` ni `1`.
-        let adresses_braise = std::array::from_fn(|i| {
-            let longueur_braise = Braise::LONGUEUR;
-            let corps: String = format!("{i:0>longueur_braise$b}")
-                .chars()
-                .map(|c| if c == '0' { 'b' } else { 'c' })
-                .collect();
+    proptest! {
+        /// Une configuration sérialisée puis reparsée redonne les mêmes valeurs,
+        /// adresses `.braise` comprises et dans le même ordre.
+        #[test]
+        fn cycle_configuration(
+            version: u32,
+            prochain_index: u32,
+            corps in proptest::array::uniform::<_, { IndexFoyer::NOMBRE }>("[a-z2-7]{55}"),
+        ) {
+            let adresses_braise =
+                corps.map(|c| Braise::try_from(format!("{c}.braise").as_str()).unwrap());
 
-            Braise::try_from(format!("{corps}.braise").as_str()).expect("braise valide")
-        });
+            let configuration = Configuration {
+                version,
+                prochain_index,
+                adresses_braise,
+            };
 
-        let configuration = Configuration {
-            version: 1111,
-            prochain_index: 2222,
-            adresses_braise,
-        };
+            let export = configuration.exporte_en_texte();
 
-        let export = configuration.exporte_en_texte();
+            let configuration_relue = Configuration::importe_depuis_texte(&export)?;
 
-        let configuration_relue = Configuration::importe_depuis_texte(&export)?;
-
-        assert_eq!(configuration, configuration_relue);
-
-        Ok(())
+            prop_assert_eq!(configuration, configuration_relue);
+        }
     }
 }

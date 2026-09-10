@@ -738,7 +738,7 @@ impl FeuApplication {
         )
     }
 
-    /// Supprime le blob désigné par `fiche` — le fichier `<hash>.dat` sur disque.
+    /// Supprime le blob désigné par `fiche` — le fichier `<hash>.blob` sur disque.
     /// L'opération est irréversible.
     ///
     /// Symétrique de
@@ -774,7 +774,7 @@ impl FeuApplication {
     ///
     /// Une ENU peut survivre à son blob :
     /// [`commande_suppression_blob`](Self::commande_suppression_blob) retire le
-    /// `.dat` sans toucher à l'arborescence. C'est ce décalage que cette
+    /// `.blob` sans toucher à l'arborescence. C'est ce décalage que cette
     /// commande permet de constater, sans rien déchiffrer.
     ///
     /// L'absence est un `Ok(false)` — la question admet « non » pour réponse.

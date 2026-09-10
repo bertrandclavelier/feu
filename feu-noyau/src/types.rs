@@ -64,28 +64,27 @@ impl TryFrom<&str> for Braise {
     ///
     /// # Errors
     ///
-    /// [`ErreurFeuNoyau::BraiseErronnee`] si le suffixe manque, si la longueur
+    /// [`ErreurFeuNoyau::BraiseErronee`] si le suffixe manque, si la longueur
     /// n'est pas `Braise::LONGUEUR`, ou si un caractère sort de l'alphabet BASE32.
     fn try_from(valeur: &str) -> ResultFeuNoyau<Self> {
-        // coupe et exige le suffixe .braise
         let reste = valeur
             .strip_suffix(".braise")
-            .ok_or(ErreurFeuNoyau::BraiseErronnee(valeur.to_string()))?;
+            .ok_or(ErreurFeuNoyau::BraiseErronee(valeur.to_string()))?;
 
-        // 55 caractères, ni plus ni moins
         if reste.len() != Self::LONGUEUR {
-            return Err(ErreurFeuNoyau::BraiseErronnee(valeur.to_string()));
+            return Err(ErreurFeuNoyau::BraiseErronee(valeur.to_string()));
         }
 
-        // alphabet BASE32 minuscule : a-z et 2-7 (ni 0, 1, 8, 9)
+        // L'alphabet BASE32 minuscule n'a ni `0`, ni `1`, ni `8`, ni `9`.
         if !reste
             .bytes()
             .all(|c| matches!(c, b'a'..=b'z' | b'2'..=b'7'))
         {
-            return Err(ErreurFeuNoyau::BraiseErronnee(valeur.to_string()));
+            return Err(ErreurFeuNoyau::BraiseErronee(valeur.to_string()));
         }
 
-        // validé : ASCII et bonne taille → la conversion en tableau ne peut pas échouer
+        // ASCII et longueur sont validés : la conversion en tableau ne peut pas
+        // échouer.
         Ok(Braise(reste.as_bytes().try_into().unwrap()))
     }
 }
@@ -94,7 +93,8 @@ impl Display for Braise {
     /// Rend la forme canonique : les caractères stockés, puis le suffixe
     /// `.braise` que le type ne conserve pas.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // octets garantis ASCII par TryFrom → from_utf8 ne peut pas échouer
+        // Les octets sont garantis ASCII par `TryFrom` : `from_utf8` ne peut pas
+        // échouer.
         let chars = str::from_utf8(&self.0).unwrap();
         write!(f, "{chars}.braise")
     }
@@ -104,7 +104,6 @@ impl Debug for Braise {
     /// Rend la forme canonique enveloppée du nom du type, le tableau d'octets
     /// nu étant illisible.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // délègue au Display
         write!(f, "Braise({self})")
     }
 }
@@ -242,7 +241,7 @@ mod tests {
 
             /// Rejet d'un caractère hors alphabet BASE32, à n'importe quelle position.
             #[test]
-            fn hors_alphabet(corps in "[a-z2-7]{55}", pos in 0..55usize, intrus in "[^a-z2-7]") {
+            fn hors_alphabet(corps in "[a-z2-7]{55}", pos in 0..Braise::LONGUEUR, intrus in "[^a-z2-7]") {
                 let mut corps = corps;
                 corps.replace_range(pos..=pos, &intrus);
                 let adresse = format!("{corps}.braise");
@@ -275,7 +274,7 @@ mod tests {
 
         assert!(matches!(
             Braise::try_from(braise.as_str()).unwrap_err(),
-            ErreurFeuNoyau::BraiseErronnee(_)
+            ErreurFeuNoyau::BraiseErronee(_)
         ));
     }
 

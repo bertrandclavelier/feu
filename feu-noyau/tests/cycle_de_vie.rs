@@ -19,7 +19,7 @@
 //! intacte après extinction, et qu'elle reste hors de portée de qui n'a pas le
 //! mot de passe.
 //!
-//! Sept tests, chacun repartant d'un nœud neuf.
+//! Neuf tests, chacun repartant d'un nœud neuf.
 //!
 //! Les assertions portent sur ce que le noyau **rend observable**, jamais sur
 //! son état interne : les rappels à l'interface, que [`InterfaceTest`]
@@ -153,6 +153,86 @@ fn verifie_permissions(racine: &Path) {
             assert_eq!(mode(&chemin), 0o600, "{}", chemin.display());
         }
     }
+}
+
+/// Les noms de fichiers du protocole sont ceux attendus, aux deux états stables
+/// d'un foyer.
+///
+/// Une liste écrite en dur, là où [`verifie_permissions`] parcourt : ces noms
+/// sont un format sur disque, et les recomposer depuis les constantes du noyau
+/// ferait un test qui compare le code à lui-même — un renommage resterait vert
+/// alors que tout nœud existant deviendrait illisible.
+///
+/// Les absences comptent autant que les présences : foyer fermé, seule
+/// l'archive `<braise>.feu` existe ; foyer ouvert, elle a cédé la place au
+/// dossier `<braise>/`. Chaque foyer est refermé pour établir que l'état
+/// initial est retrouvé.
+#[test]
+fn noms_arborescence_figes() -> ResultFeuNoyau<()> {
+    let tmp = TempDir::new().unwrap();
+
+    let chemin_feu = tmp.path().join(".feu");
+    let mut interface = InterfaceTest::new("mot de passe");
+    let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
+
+    assert!(chemin_feu.join("verrou").exists());
+    assert!(chemin_feu.join(".config").join("noyau.feu").exists());
+    assert!(chemin_feu.join(".cles").join("sel.feu").exists());
+    assert!(chemin_feu.join(".cles").join("feu_sig.priv").exists());
+    assert!(chemin_feu.join(".cles").join("feu_sig.pub").exists());
+
+    for index_foyer in IndexFoyer::tous() {
+        let braise = interface.braises[index_foyer.valeur()];
+
+        assert!(
+            chemin_feu
+                .join(".cles")
+                .join(format!("{braise}.cle"))
+                .exists()
+        );
+        assert!(chemin_feu.join(format!("{braise}.feu")).exists());
+
+        let chemin_foyer = chemin_feu.join(format!("{braise}"));
+        assert!(!chemin_foyer.exists());
+
+        noyau.ouverture_foyer(&mut interface, index_foyer)?;
+
+        assert!(!chemin_feu.join(format!("{braise}.feu")).exists());
+        assert!(chemin_foyer.exists());
+
+        assert!(chemin_foyer.join(".cles").join("sig.priv").exists());
+        assert!(chemin_foyer.join(".cles").join("sig.pub").exists());
+        assert!(chemin_foyer.join(".cles").join("chif.priv").exists());
+        assert!(chemin_foyer.join(".cles").join("chif.pub").exists());
+
+        for index_classeur in IndexClasseur::tous() {
+            assert!(
+                chemin_foyer
+                    .join(".cles")
+                    .join(format!("classeur{}.cle", index_classeur.valeur()))
+                    .exists()
+            );
+            assert!(
+                chemin_foyer
+                    .join(format!("classeur{}", index_classeur.valeur()))
+                    .exists()
+            );
+
+            assert!(
+                chemin_foyer
+                    .join("registre")
+                    .join(format!("classeur.{}", index_classeur.valeur()))
+                    .exists()
+            );
+        }
+
+        noyau.fermeture_foyer(&mut interface, index_foyer)?;
+
+        assert!(chemin_feu.join(format!("{braise}.feu")).exists());
+        assert!(!chemin_foyer.exists());
+    }
+
+    Ok(())
 }
 
 proptest! {
