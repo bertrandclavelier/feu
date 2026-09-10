@@ -25,11 +25,11 @@
 //!
 //! # Plateformes supportées
 //!
-//! Linux et macOS uniquement. Le protocole repose sur des primitives
+//! Linux, macOS et OpenBSD. Le protocole repose sur des primitives
 //! Unix — système de fichiers, variables d'environnement, permissions —
 //! qui n'ont pas d'équivalent direct sous Windows.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-compile_error!("feu-noyau only supports Linux and macOS.");
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "openbsd")))]
+compile_error!("feu-noyau only supports Linux, macOS and OpenBSD.");
 
 mod archiviste;
 mod cryptographe;
