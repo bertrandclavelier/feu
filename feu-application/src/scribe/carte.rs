@@ -231,6 +231,28 @@ impl Carte {
         }
     }
 
+    /// Retourne les `hash_carte` des ENU enfants en écriture — `None` sur une
+    /// carte qui n'est pas un répertoire.
+    pub(crate) fn mut_hashs_enu(&mut self) -> Option<&mut BTreeSet<[u8; 32]>> {
+        match self {
+            Self::Repertoire {
+                metas: _,
+                tags: _,
+                hashs_enu,
+            } => Some(hashs_enu),
+            Self::Donnee {
+                metas: _,
+                tags: _,
+                hash_blob: _,
+            }
+            | Self::Texte {
+                metas: _,
+                tags: _,
+                contenu: _,
+            } => None,
+        }
+    }
+
     /// Retourne les tags libres, communs aux trois variantes.
     ///
     /// Même raison que [`Carte::metas`] : un champ présent partout n'a pas à

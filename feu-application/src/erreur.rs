@@ -97,6 +97,11 @@ pub enum ErreurFeuApplication {
     #[error("APP > Version de scribe.feu incompatible : {0}")]
     ScribeConfigVersionIncompatible(u32),
 
+    /// Destination située dans le sous-arbre de la cible : l'y rattacher
+    /// créerait un cycle dans l'arbre.
+    #[error("APP > La destination est un descendant de la cible")]
+    ScribeDestinationDescendante,
+
     /// Le chemin visé est déjà un dossier — ouverture de comptoir comme retrait
     /// créent le leur, jamais dans un dossier existant. Porté, jamais affiché.
     #[error("APP > Le dossier existe déjà")]
@@ -172,16 +177,14 @@ pub enum ErreurFeuApplication {
     #[error("APP > Aucun comptoir de travail ouvert")]
     ScribePasComptoirTravailOuvert,
 
-    /// Racine du nœud passée en racine de comptoir de travail : signée par le
-    /// nœud, elle ne peut pas être re-signée par la fermeture, qui ne sait
-    /// s'adresser qu'à un foyer.
-    #[error("APP > La racine du nœud ne peut pas être ouverte en comptoir de travail")]
+    /// Racine du nœud désignée comme cible d'une opération qui ne s'applique
+    /// qu'à une ENU de son arbre.
+    #[error("APP > Opération interdite sur la racine du nœud")]
     ScribeRacineNoeudInterdite,
 
-    /// Racine d'accueil qui n'est plus la dernière : un dépôt s'y greffe sur une
-    /// carte périmée, et la version qu'il produit ampute l'arbre de tout ce qui
-    /// a été déposé depuis.
-    #[error("APP > Dépôt refusé : la racine d'accueil n'est plus la dernière")]
+    /// Racine qui n'est plus la dernière : une version bâtie sur sa carte
+    /// amputerait l'arbre de tout ce qui a été fait depuis.
+    #[error("APP > La racine n'est plus la dernière")]
     ScribeRacinePerimee,
 
     /// Substitution sans effet : la cible est absente de l'arbre courant, ou le

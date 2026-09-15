@@ -937,7 +937,7 @@ impl Scribe {
     /// **Toutes les cartes comptent**, pas seulement les [`Carte::Donnee`] : un
     /// répertoire de foyer fermé arrête le retrait aussi sûrement qu'une donnée.
     ///
-    /// L'inventaire se fait **tous foyers fermés**, [`Descendants`] ne vérifiant
+    /// L'inventaire se fait **tous foyers fermés**, [`Descendants`](super::iterateurs::Descendants) ne vérifiant
     /// aucune signature. Une braise qui ne résout vers aucun foyer est écartée
     /// sans erreur : c'est la racine du nœud.
     ///

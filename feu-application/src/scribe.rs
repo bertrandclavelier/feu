@@ -262,6 +262,7 @@ impl Scribe {
         if matches!(self.comptoirs, Comptoirs::Travail(_)) {
             return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
         }
+
         let (index_foyer, hash_blobs) = Self::index_et_hash_blob(
             session,
             &Enu::charger(&self.chemin_enu, session, &fiche.hash_carte())?,
@@ -298,6 +299,10 @@ impl Scribe {
         index_foyer_destination: IndexFoyer,
         index_classeur_destination: IndexClasseur,
     ) -> ResultFeuApplication<()> {
+        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
+            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
+        }
+
         let enu_depart = Enu::charger(&self.chemin_enu, session, &fiche_depart.hash_carte())?;
         let braise_destination = session.braise_foyer(index_foyer_destination);
 
@@ -358,6 +363,10 @@ impl Scribe {
         fiche_depart: &Fiche,
         tags: &[&str],
     ) -> ResultFeuApplication<()> {
+        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
+            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
+        }
+
         let enu_depart = Enu::charger(&self.chemin_enu, session, &fiche_depart.hash_carte())?;
 
         let mut transformation =
@@ -407,6 +416,10 @@ impl Scribe {
         fiche_depart: &Fiche,
         tags: &[&str],
     ) -> ResultFeuApplication<()> {
+        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
+            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
+        }
+
         let enu_depart = Enu::charger(&self.chemin_enu, session, &fiche_depart.hash_carte())?;
 
         let mut transformation =
@@ -435,6 +448,182 @@ impl Scribe {
             noyau,
             session,
         )
+    }
+
+    /// Retire `fiche_cible` des enfants de `fiche_parent` et pose une nouvelle
+    /// racine.
+    ///
+    /// Le parent est re-signé sous sa braise puis greffé par [`Enu::remplacer`] ;
+    /// s'il est la racine du nœud, [`Enu::new_racine`] reçoit directement sa
+    /// carte. Les fichiers `.enu` et les blobs restent sur le disque.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si un
+    /// comptoir de travail est ouvert.
+    /// Retourne [`ErreurFeuApplication::ScribeRacineNoeudInterdite`] si
+    /// `fiche_cible` est une racine du nœud.
+    /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si `fiche_parent`
+    /// n'est pas un répertoire.
+    /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si
+    /// `fiche_cible` n'est pas un enfant de `fiche_parent`, ou si le parent n'est
+    /// plus dans le dernier arbre.
+    /// Retourne [`ErreurFeuApplication::ScribeRacinePerimee`] si `fiche_parent`
+    /// est une racine qui n'est plus la dernière.
+    /// Propage les erreurs de chargement, de signature — notamment un foyer
+    /// fermé — et d'écriture.
+    pub(crate) fn supprime_enu(
+        &self,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+        fiche_parent: &Fiche,
+        fiche_cible: &Fiche,
+    ) -> ResultFeuApplication<()> {
+        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
+            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
+        }
+        if fiche_cible.carte().metas().contains_key("_racine") {
+            return Err(ErreurFeuApplication::ScribeRacineNoeudInterdite);
+        }
+        let mut nouvelle_carte = fiche_parent.carte().clone();
+        let Some(hashs_enu) = nouvelle_carte.mut_hashs_enu() else {
+            return Err(ErreurFeuApplication::ScribeEnuRAttendue);
+        };
+        if !hashs_enu.remove(&fiche_cible.hash_carte()) {
+            return Err(ErreurFeuApplication::ScribeRemplacementSansEffet);
+        }
+
+        self.ecrit_carte(noyau, session, fiche_parent, nouvelle_carte)
+    }
+
+    /// Retire `fiche_cible` des enfants de `fiche_parent` et l'ajoute à ceux de
+    /// `fiche_destination`.
+    ///
+    /// Deux greffes, donc deux racines. L'ajout précède le retrait si le parent
+    /// est sous la destination, le suit sinon : la seconde greffe vise ainsi un
+    /// répertoire dont le hash n'a pas changé.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si un
+    /// comptoir de travail est ouvert.
+    /// Retourne [`ErreurFeuApplication::ScribeRacineNoeudInterdite`] si
+    /// `fiche_cible` est une racine du nœud.
+    /// Retourne [`ErreurFeuApplication::ScribeDestinationDescendante`] si
+    /// `fiche_destination` est `fiche_cible` ou l'un de ses descendants.
+    /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si le parent ou la
+    /// destination n'est pas un répertoire.
+    /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si la
+    /// cible est déjà dans la destination, absente du parent, ou si l'un des deux
+    /// n'est plus dans le dernier arbre.
+    /// Retourne [`ErreurFeuApplication::ScribeRacinePerimee`] si le parent ou la
+    /// destination est une racine qui n'est plus la dernière.
+    /// Propage les erreurs du parcours, de chargement, de signature et
+    /// d'écriture.
+    pub(crate) fn deplace_enu(
+        &self,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+        fiche_parent: &Fiche,
+        fiche_cible: &Fiche,
+        fiche_destination: &Fiche,
+    ) -> ResultFeuApplication<()> {
+        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
+            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
+        }
+        if fiche_cible.carte().metas().contains_key("_racine") {
+            return Err(ErreurFeuApplication::ScribeRacineNoeudInterdite);
+        }
+        for item in self.donne_descendants(&fiche_cible.hash_carte()) {
+            let (_, fiche) = item?;
+            if fiche.hash_carte() == fiche_destination.hash_carte() {
+                return Err(ErreurFeuApplication::ScribeDestinationDescendante);
+            }
+        }
+
+        // Le parent sous la destination : l'ajout d'abord, sans quoi le retrait
+        // changerait le hash de la destination. Sinon, le retrait d'abord.
+        let mut ajout_d_abord = false;
+        for item in self.donne_descendants(&fiche_destination.hash_carte()) {
+            let (_, fiche) = item?;
+            if fiche.hash_carte() == fiche_parent.hash_carte() {
+                ajout_d_abord = true;
+                break;
+            }
+        }
+
+        // Les deux cartes sont prêtes et vérifiées avant toute écriture.
+        let mut carte_destination = fiche_destination.carte().clone();
+        let Some(hashs_enu) = carte_destination.mut_hashs_enu() else {
+            return Err(ErreurFeuApplication::ScribeEnuRAttendue);
+        };
+        if !hashs_enu.insert(fiche_cible.hash_carte()) {
+            return Err(ErreurFeuApplication::ScribeRemplacementSansEffet);
+        }
+
+        let mut carte_parent = fiche_parent.carte().clone();
+        let Some(hashs_enu) = carte_parent.mut_hashs_enu() else {
+            return Err(ErreurFeuApplication::ScribeEnuRAttendue);
+        };
+        if !hashs_enu.remove(&fiche_cible.hash_carte()) {
+            return Err(ErreurFeuApplication::ScribeRemplacementSansEffet);
+        }
+
+        if ajout_d_abord {
+            self.ecrit_carte(noyau, session, fiche_destination, carte_destination)?;
+            self.ecrit_carte(noyau, session, fiche_parent, carte_parent)
+        } else {
+            self.ecrit_carte(noyau, session, fiche_parent, carte_parent)?;
+            self.ecrit_carte(noyau, session, fiche_destination, carte_destination)
+        }
+    }
+
+    /// Remplace l'ENU de `fiche` par une ENU portant `carte` et pose une nouvelle
+    /// racine.
+    ///
+    /// Une racine du nœud, signée par le nœud, passe directement à
+    /// [`Enu::new_racine`] ; toute autre ENU est re-signée sous sa braise puis
+    /// greffée par [`Enu::remplacer`].
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeRacinePerimee`] si `fiche` est une
+    /// racine qui n'est plus la dernière.
+    /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si `fiche`
+    /// n'est plus dans le dernier arbre.
+    /// Propage les erreurs de chargement, de signature et d'écriture.
+    fn ecrit_carte(
+        &self,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+        fiche: &Fiche,
+        carte: Carte,
+    ) -> ResultFeuApplication<()> {
+        if fiche.carte().metas().contains_key("_racine") {
+            if fiche.hash_carte()
+                != Enu::charger_derniere_racine(&self.chemin_derniere_racine, session)?.hash_carte()
+            {
+                return Err(ErreurFeuApplication::ScribeRacinePerimee);
+            }
+            Enu::new_racine(
+                noyau,
+                session,
+                &self.chemin_enu,
+                &self.chemin_derniere_racine,
+                Some(carte),
+            )
+        } else {
+            let nouvelle_enu = Enu::new(carte, noyau, session, fiche.braise())?;
+
+            Enu::remplacer(
+                &self.chemin_enu,
+                &self.chemin_derniere_racine,
+                &fiche.hash_carte(),
+                &nouvelle_enu,
+                noyau,
+                session,
+            )
+        }
     }
 
     /// Rend le classeur qui détient le blob référencé par `fiche`.

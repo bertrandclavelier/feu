@@ -43,7 +43,7 @@
 //!
 //! Aucun accesseur de [`SessionApplication`] ne rend de `Result` ni d'[`Option`]
 //! indexée : [`IndexFoyer`] borne la position par construction, tout foyer
-//! désigné existe. Seule [`Self::braise_vers_index`] rend une [`Option`], parce
+//! désigné existe. Seule [`SessionApplication::braise_vers_index`] rend une [`Option`], parce
 //! qu'une braise peut n'appartenir à aucun foyer.
 //!
 //! La session ne peut donc pas faire remonter d'erreur applicative dans une

@@ -40,8 +40,9 @@
 //! 4. **Blobs** — chargement, suppression, existence, informations : le contenu
 //!    chiffré, un fichier à la fois.
 //! 5. **ENU** — dernière racine, chargement par hash, dépôt d'un texte court,
-//!    et les deux parcours (descendance, versions antérieures). La structure,
-//!    sans quoi la partie 4 n'aurait rien à désigner.
+//!    suppression, déplacement, tags, et les deux parcours (descendance,
+//!    versions antérieures). La structure, sans quoi la partie 4 n'aurait rien
+//!    à désigner.
 //!
 //! # Désigner une donnée
 //!
@@ -824,8 +825,9 @@ impl FeuApplication {
     //
     // 5. ENU
     //
-    // La structure : le sommet, la descente d'un cran, et le dépôt d'un texte
-    // court porté par l'ENU elle-même. C'est ce qui rend la partie 4 adressable.
+    // La structure : le sommet, la descente d'un cran, le dépôt d'un texte
+    // court porté par l'ENU elle-même, et la modification de l'arbre. C'est ce
+    // qui rend la partie 4 adressable.
     //
 
     /// Retourne le sommet courant de l'arborescence, authentifié.
@@ -874,6 +876,76 @@ impl FeuApplication {
         }
 
         self.scribe.charge_enu(&self.session, hash)
+    }
+
+    /// Retire `fiche_cible` des enfants de `fiche_parent` et pose une nouvelle
+    /// racine.
+    ///
+    /// Le parent se lit dans l'arborescence affichée : une ENU partagée n'est
+    /// retirée que de lui. Les fichiers `.enu` et les blobs restent sur le disque.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : comptoir de travail ouvert
+    /// ([`ErreurFeuApplication::ScribeComptoirTravailOuvert`]), cible racine du
+    /// nœud ([`ErreurFeuApplication::ScribeRacineNoeudInterdite`]), parent qui
+    /// n'est pas un répertoire ([`ErreurFeuApplication::ScribeEnuRAttendue`]),
+    /// cible absente du parent ou parent hors du dernier arbre
+    /// ([`ErreurFeuApplication::ScribeRemplacementSansEffet`]), racine périmée
+    /// ([`ErreurFeuApplication::ScribeRacinePerimee`]), foyer fermé, signature,
+    /// écriture disque.
+    pub fn commande_suppression_enu(
+        &self,
+        fiche_parent: &Fiche,
+        fiche_cible: &Fiche,
+    ) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        self.scribe
+            .supprime_enu(noyau, &self.session, fiche_parent, fiche_cible)
+    }
+
+    /// Déplace `fiche_cible` de `fiche_parent` vers `fiche_destination`.
+    ///
+    /// Le parent se lit dans l'arborescence affichée. Produit deux nouvelles
+    /// racines ; les fichiers `.enu` et les blobs restent sur le disque.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : comptoir de travail ouvert
+    /// ([`ErreurFeuApplication::ScribeComptoirTravailOuvert`]), cible racine du
+    /// nœud ([`ErreurFeuApplication::ScribeRacineNoeudInterdite`]), destination
+    /// dans le sous-arbre de la cible
+    /// ([`ErreurFeuApplication::ScribeDestinationDescendante`]), parent ou
+    /// destination qui n'est pas un répertoire
+    /// ([`ErreurFeuApplication::ScribeEnuRAttendue`]), cible déjà dans la
+    /// destination, absente du parent ou arbre périmé
+    /// ([`ErreurFeuApplication::ScribeRemplacementSansEffet`],
+    /// [`ErreurFeuApplication::ScribeRacinePerimee`]), foyer fermé, signature,
+    /// écriture disque.
+    pub fn commande_deplacement_enu(
+        &self,
+        fiche_parent: &Fiche,
+        fiche_cible: &Fiche,
+        fiche_destination: &Fiche,
+    ) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        self.scribe.deplace_enu(
+            noyau,
+            &self.session,
+            fiche_parent,
+            fiche_cible,
+            fiche_destination,
+        )
     }
 
     /// Dépose un texte dans un foyer : crée une `EnuT` (une ENU portant une
