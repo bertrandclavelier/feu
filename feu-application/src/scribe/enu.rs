@@ -143,9 +143,9 @@ impl Enu {
         })
     }
 
-    /// Rend une copie de l'ENU portant `nom` en méta `"nom"`, re-signée.
+    /// Consomme l'ENU et rend celle qui porte `nom` en méta `"nom"`, re-signée.
     ///
-    /// La carte est clonée et sa méta écrasée : le sous-arbre d'un répertoire
+    /// La carte est reprise et sa méta écrasée : le sous-arbre d'un répertoire
     /// renommé reste intact, seuls le `hash_carte` et la signature changent. La
     /// braise est conservée, donc le foyer d'origine doit être ouvert.
     ///
@@ -154,16 +154,21 @@ impl Enu {
     ///
     /// # Errors
     ///
+    /// Retourne [`ErreurFeuApplication::ScribeNomFichierInvalide`] si `nom` est
+    /// refusé comme composant de chemin.
     /// Retourne [`ErreurFeuApplication::ScribeBraiseInconnue`] si la braise
     /// n'identifie aucun foyer de la session — cas d'une racine du nœud, qui
     /// porte [`Braise::VIDE`]. Propage toute erreur de signature du noyau.
     pub(super) fn renommer(
-        &self,
+        self,
         nom: &str,
         noyau: &FeuNoyau,
         session: &SessionApplication,
     ) -> ResultFeuApplication<Enu> {
-        let mut carte = self.carte().clone();
+        if !Carte::nom_fichier_valide(nom) {
+            return Err(ErreurFeuApplication::ScribeNomFichierInvalide);
+        }
+        let mut carte = self.carte;
         carte.ajout_meta("nom", nom);
 
         Enu::new(carte, noyau, session, self.braise)

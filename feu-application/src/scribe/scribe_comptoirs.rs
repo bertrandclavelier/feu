@@ -271,8 +271,8 @@ impl Scribe {
     /// est ouvert, [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si un
     /// comptoir de travail l'est déjà — rien n'est écrit dans les deux cas. Puis
     /// propage les erreurs du retrait : foyers requis fermés, dossier de sortie
-    /// déjà existant, `fiche_racine` qui n'est pas un répertoire, nom absent ou
-    /// invalide, authentification, E/S et lecture de blob. Puis l'échec de
+    /// déjà existant, `fiche_racine` qui n'est pas un répertoire, nom absent,
+    /// authentification, E/S et lecture de blob. Puis l'échec de
     /// [`Self::sauvegarder_configuration`], le comptoir déjà inscrit.
     ///
     /// Retourne [`ErreurFeuApplication::ScribeRacineNoeudInterdite`] si
@@ -661,9 +661,8 @@ impl Scribe {
     /// n'est plus la dernière, ou
     /// [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si c'est un
     /// répertoire absent de l'arbre courant. Retourne
-    /// [`ErreurFeuApplication::ScribeMetaNomAbsente`] ou
-    /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] si un enfant, en place
-    /// ou greffé, n'a pas de nom exploitable. Propage toute erreur d'E/S,
+    /// [`ErreurFeuApplication::ScribeMetaNomAbsente`] si un enfant, en place ou
+    /// greffé, n'a pas de nom. Propage toute erreur d'E/S,
     /// d'authentification ou de signature — notamment un foyer fermé sur le
     /// chemin remonté.
     pub(super) fn greffe_enfants(
@@ -797,8 +796,8 @@ impl Scribe {
     /// [`ErreurFeuApplication::ScribeDossierDejaExistant`] si `chemin_retrait`
     /// est un dossier existant, ou [`ErreurFeuApplication::ScribeEnuRAttendue`]
     /// si ce n'est pas un répertoire. Propage les erreurs de la descente :
-    /// authentification d'un enfant, nom absent ou invalide, E/S et lecture de
-    /// blob (blob introuvable).
+    /// authentification d'un enfant, nom absent, E/S et lecture de blob (blob
+    /// introuvable).
     pub(crate) fn retrait_lecture_seule(
         &self,
         noyau: &mut FeuNoyau,
@@ -849,8 +848,8 @@ impl Scribe {
     /// entrée nommée dans un dossier parent existant.
     ///
     /// Invariant d'entrée : `enu_courante` est un enfant, jamais la racine, et
-    /// porte donc une méta `"nom"` — validée comme composant de chemin avant tout
-    /// `join`. Aucun test de collision : l'unicité des noms au sein d'un
+    /// porte donc une méta `"nom"`, validée à son écriture et jointe telle
+    /// quelle. Aucun test de collision : l'unicité des noms au sein d'un
     /// répertoire est tenue à la greffe ([`Self::greffe_enfants`]), le retrait
     /// joint le nom sans sonder le dossier de sortie.
     ///
@@ -859,9 +858,8 @@ impl Scribe {
     ///
     /// # Errors
     ///
-    /// Retourne [`ErreurFeuApplication::ScribeMetaNomAbsente`] ou
-    /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] selon que le nom est
-    /// absent ou refusé. Propage les erreurs d'E/S, d'authentification
+    /// Retourne [`ErreurFeuApplication::ScribeMetaNomAbsente`] si le nom est
+    /// absent. Propage les erreurs d'E/S, d'authentification
     /// d'un enfant ([`Enu::charger`]) et de lecture de blob — notamment foyer
     /// fermé ou blob introuvable.
     fn retrait_lecture_seule_recursif(
@@ -871,8 +869,7 @@ impl Scribe {
         chemin_courant: &Path,
         enu_courante: &Enu,
     ) -> ResultFeuApplication<()> {
-        // nom validé avant tout join — il vient du disque et pourrait sinon
-        // faire écrire hors du dossier de retrait, quelle que soit la variante
+        // le nom a été validé à son écriture : le join ne sort pas du dossier
         let nom_fichier = enu_courante.carte().nom()?;
 
         let chemin = chemin_courant.join(&nom_fichier);

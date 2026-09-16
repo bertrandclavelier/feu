@@ -277,29 +277,18 @@ impl Carte {
         }
     }
 
-    /// Retourne le nom de l'entrée (méta `"nom"`), validé comme composant de
-    /// chemin.
+    /// Retourne le nom de l'entrée (méta `"nom"`).
     ///
-    /// Point de passage obligé avant de matérialiser une carte sur le système
-    /// de fichiers (retrait) : le nom vient d'une ENU lue sur disque, et même
-    /// signé il reste une entrée non fiable pour un `Path::join` — un nom
-    /// absolu **remplacerait** le chemin cible, un `..` en sortirait. La
-    /// validation garantit un composant unique et inoffensif.
+    /// Aucune validation à la lecture : tout nom est validé à son écriture.
     ///
     /// # Errors
     ///
     /// Retourne [`ErreurFeuApplication::ScribeMetaNomAbsente`] si la méta
-    /// `"nom"` est absente, ou
-    /// [`ErreurFeuApplication::ScribeNomFichierInvalide`] si le nom est refusé
-    /// comme composant de chemin.
-    pub fn nom(&self) -> ResultFeuApplication<String> {
+    /// `"nom"` est absente.
+    pub(super) fn nom(&self) -> ResultFeuApplication<String> {
         let Some(nom) = self.metas().get("nom") else {
             return Err(ErreurFeuApplication::ScribeMetaNomAbsente);
         };
-
-        if !Self::nom_fichier_valide(nom) {
-            return Err(ErreurFeuApplication::ScribeNomFichierInvalide);
-        }
 
         Ok(nom.clone())
     }
@@ -329,7 +318,7 @@ impl Carte {
     /// le protocole étant Unix-only) et les deux composants spéciaux `.` / `..`.
     /// Les noms cachés (`.bashrc`) restent acceptés — seule l'égalité stricte
     /// avec `.` ou `..` est refusée.
-    fn nom_fichier_valide(nom: &str) -> bool {
+    pub(super) fn nom_fichier_valide(nom: &str) -> bool {
         !nom.is_empty() && !nom.contains('/') && nom != "." && nom != ".."
     }
 
@@ -1071,11 +1060,10 @@ mod tests {
     /// Nom contenant un séparateur de chemin → refus
     /// (`ScribeNomFichierInvalide`).
     ///
-    /// Éprouve la validation à la **construction**, distincte de celle de
-    /// `nom_fichier` (couverte par le test du même nom) : `new_texte` reçoit son
-    /// nom de l'appelant, pas du disque, et refuse d'emblée une carte qu'aucun
-    /// retrait ne saurait matérialiser. Un seul cas suffit ici — les deux
-    /// chemins partagent `nom_fichier_valide`, éprouvé exhaustivement ailleurs.
+    /// Éprouve la validation à la **construction** : `new_texte` refuse
+    /// d'emblée une carte qu'aucun retrait ne saurait matérialiser. Un seul cas
+    /// suffit ici — la règle `nom_fichier_valide` est éprouvée exhaustivement
+    /// par le test `nom_fichier`.
     #[test]
     fn carte_texte_mauvais_nom() {
         assert!(matches!(
@@ -1133,16 +1121,15 @@ mod tests {
         Ok(())
     }
 
-    /// Validation du nom par `nom_fichier`, sur ses deux refus et son corpus
-    /// accepté.
+    /// Lecture du nom par `nom`, puis règle de `nom_fichier_valide` sur ses
+    /// refus et son corpus accepté.
     ///
-    /// Les refus : méta absente, nom vide, toute forme de `/`, et `.` comme `..`
-    /// **exacts**.
+    /// `nom` ne connaît qu'un refus, la méta absente, et rend le nom tel quel.
     ///
-    /// Les cas acceptés portent tous des points sans être ces composants —
-    /// `.test`, `..test`, `test..` — et distinguent l'égalité stricte d'un
-    /// `starts_with` qui rejetterait un fichier caché. Le nom rendu est vérifié,
-    /// pas seulement l'absence d'erreur : la garde ne doit rien réécrire.
+    /// Les refus de la règle : nom vide, toute forme de `/`, et `.` comme `..`
+    /// **exacts**. Les cas acceptés portent tous des points sans être ces
+    /// composants — `.test`, `..test`, `test..` — et distinguent l'égalité
+    /// stricte d'un `starts_with` qui rejetterait un fichier caché.
     #[test]
     fn nom_fichier() -> ResultFeuApplication<()> {
         let hash_blob = [0u8; 32];
@@ -1155,89 +1142,51 @@ mod tests {
             Err(ErreurFeuApplication::ScribeMetaNomAbsente)
         ));
 
-        // Nom vide
-        carte.ajout_meta("nom", "");
+        // Nom rendu tel quel
+        carte.ajout_meta("nom", "test");
+        assert_eq!(carte.nom()?, "test");
 
-        assert!(matches!(
-            carte.nom(),
-            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
-        ));
+        // Nom vide
+        assert!(!Carte::nom_fichier_valide(""));
 
         // Nom commence par '/'
-        carte.ajout_meta("nom", "/azerty");
-
-        assert!(matches!(
-            carte.nom(),
-            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
-        ));
+        assert!(!Carte::nom_fichier_valide("/azerty"));
 
         // Nom contient '/'
-        carte.ajout_meta("nom", "aa/bbb");
-
-        assert!(matches!(
-            carte.nom(),
-            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
-        ));
+        assert!(!Carte::nom_fichier_valide("aa/bbb"));
 
         // Nom contient plusieurs '/'
-        carte.ajout_meta("nom", "/aa/bbb/");
-
-        assert!(matches!(
-            carte.nom(),
-            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
-        ));
+        assert!(!Carte::nom_fichier_valide("/aa/bbb/"));
 
         // Nom termine par '/'
-        carte.ajout_meta("nom", "azerty/");
-
-        assert!(matches!(
-            carte.nom(),
-            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
-        ));
+        assert!(!Carte::nom_fichier_valide("azerty/"));
 
         // Nom est '.'
-        carte.ajout_meta("nom", ".");
-
-        assert!(matches!(
-            carte.nom(),
-            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
-        ));
+        assert!(!Carte::nom_fichier_valide("."));
 
         // Nom est '..'
-        carte.ajout_meta("nom", "..");
-
-        assert!(matches!(
-            carte.nom(),
-            Err(ErreurFeuApplication::ScribeNomFichierInvalide)
-        ));
+        assert!(!Carte::nom_fichier_valide(".."));
 
         // Nom débute par '.'
-        carte.ajout_meta("nom", ".test");
-        assert_eq!(carte.nom()?, ".test");
+        assert!(Carte::nom_fichier_valide(".test"));
 
         // Nom termine par '.'
-        carte.ajout_meta("nom", "test.");
-        assert_eq!(carte.nom()?, "test.");
+        assert!(Carte::nom_fichier_valide("test."));
 
         // Nom contient '.'
-        carte.ajout_meta("nom", "test.2");
-        assert_eq!(carte.nom()?, "test.2");
+        assert!(Carte::nom_fichier_valide("test.2"));
 
         // Nom débute par '..'
-        carte.ajout_meta("nom", "..test");
-        assert_eq!(carte.nom()?, "..test");
+        assert!(Carte::nom_fichier_valide("..test"));
 
         // Nom termine par '..'
-        carte.ajout_meta("nom", "test..");
-        assert_eq!(carte.nom()?, "test..");
+        assert!(Carte::nom_fichier_valide("test.."));
 
         // Nom contient '..'
-        carte.ajout_meta("nom", "test..2");
-        assert_eq!(carte.nom()?, "test..2");
+        assert!(Carte::nom_fichier_valide("test..2"));
 
         // Nom contient '.' et '..'
-        carte.ajout_meta("nom", ".te.st..test.te.st..");
-        assert_eq!(carte.nom()?, ".te.st..test.te.st..");
+        assert!(Carte::nom_fichier_valide(".te.st..test.te.st.."));
 
         Ok(())
     }

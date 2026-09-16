@@ -167,10 +167,18 @@ pub enum ErreurFeuApplication {
     #[error("APP > La carte n'a pas de méta nom")]
     ScribeMetaNomAbsente,
 
+    /// Nom déjà porté par une autre entrée du même répertoire.
+    #[error("APP > Nom déjà existant dans le répertoire")]
+    ScribeNomDejaExistant,
+
     /// Nom refusé comme composant de chemin — vide, contenant un séparateur, ou
     /// valant `.` / `..` : un `Path::join` en sortirait ou l'écraserait.
     #[error("APP > Nom de fichier invalide")]
     ScribeNomFichierInvalide,
+
+    /// Cible absente des enfants du répertoire désigné comme son parent.
+    #[error("APP > La cible n'est pas un enfant du parent désigné")]
+    ScribeParentIncorrect,
 
     /// Aucun comptoir de travail ouvert, là où l'opération en exige un : sa
     /// fermeture a été demandée alors que rien n'est sorti sur le disque.

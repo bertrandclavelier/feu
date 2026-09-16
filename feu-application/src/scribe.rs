@@ -465,9 +465,10 @@ impl Scribe {
     /// `fiche_cible` est une racine du nœud.
     /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si `fiche_parent`
     /// n'est pas un répertoire.
-    /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si
-    /// `fiche_cible` n'est pas un enfant de `fiche_parent`, ou si le parent n'est
-    /// plus dans le dernier arbre.
+    /// Retourne [`ErreurFeuApplication::ScribeParentIncorrect`] si `fiche_cible`
+    /// n'est pas un enfant de `fiche_parent`.
+    /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si le
+    /// parent n'est plus dans le dernier arbre.
     /// Retourne [`ErreurFeuApplication::ScribeRacinePerimee`] si `fiche_parent`
     /// est une racine qui n'est plus la dernière.
     /// Propage les erreurs de chargement, de signature — notamment un foyer
@@ -490,7 +491,7 @@ impl Scribe {
             return Err(ErreurFeuApplication::ScribeEnuRAttendue);
         };
         if !hashs_enu.remove(&fiche_cible.hash_carte()) {
-            return Err(ErreurFeuApplication::ScribeRemplacementSansEffet);
+            return Err(ErreurFeuApplication::ScribeParentIncorrect);
         }
 
         self.ecrit_carte(noyau, session, fiche_parent, nouvelle_carte)
@@ -513,8 +514,10 @@ impl Scribe {
     /// `fiche_destination` est `fiche_cible` ou l'un de ses descendants.
     /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si le parent ou la
     /// destination n'est pas un répertoire.
+    /// Retourne [`ErreurFeuApplication::ScribeParentIncorrect`] si la cible est
+    /// absente du parent.
     /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si la
-    /// cible est déjà dans la destination, absente du parent, ou si l'un des deux
+    /// cible est déjà dans la destination, ou si le parent ou la destination
     /// n'est plus dans le dernier arbre.
     /// Retourne [`ErreurFeuApplication::ScribeRacinePerimee`] si le parent ou la
     /// destination est une racine qui n'est plus la dernière.
@@ -566,7 +569,7 @@ impl Scribe {
             return Err(ErreurFeuApplication::ScribeEnuRAttendue);
         };
         if !hashs_enu.remove(&fiche_cible.hash_carte()) {
-            return Err(ErreurFeuApplication::ScribeRemplacementSansEffet);
+            return Err(ErreurFeuApplication::ScribeParentIncorrect);
         }
 
         if ajout_d_abord {
@@ -624,6 +627,72 @@ impl Scribe {
                 session,
             )
         }
+    }
+
+    /// Renomme `fiche_cible`, enfant de `fiche_parent`, en `nouveau_nom`.
+    ///
+    /// L'ENU est re-signée sous sa braise puis greffée par [`Enu::remplacer`],
+    /// qui pose une nouvelle racine. Un `nouveau_nom` identique à l'actuel ne
+    /// fait rien.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::ScribeComptoirTravailOuvert`] si un
+    /// comptoir de travail est ouvert.
+    /// Retourne [`ErreurFeuApplication::ScribeEnuRAttendue`] si le parent n'est
+    /// pas un répertoire.
+    /// Retourne [`ErreurFeuApplication::ScribeParentIncorrect`] si la cible
+    /// n'est pas un enfant du parent.
+    /// Retourne [`ErreurFeuApplication::ScribeNomDejaExistant`] si un enfant du
+    /// parent porte déjà `nouveau_nom`.
+    /// Retourne [`ErreurFeuApplication::ScribeNomFichierInvalide`] si
+    /// `nouveau_nom` est refusé comme composant de chemin.
+    /// Retourne [`ErreurFeuApplication::ScribeMetaNomAbsente`] si la cible ou un
+    /// enfant du parent n'a pas de nom.
+    /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si le
+    /// parent n'est plus dans le dernier arbre.
+    /// Propage les erreurs de chargement, de signature et d'écriture.
+    pub(crate) fn renomme_enu(
+        &self,
+        noyau: &FeuNoyau,
+        session: &SessionApplication,
+        fiche_parent: &Fiche,
+        fiche_cible: &Fiche,
+        nouveau_nom: &str,
+    ) -> ResultFeuApplication<()> {
+        if matches!(self.comptoirs, Comptoirs::Travail(_)) {
+            return Err(ErreurFeuApplication::ScribeComptoirTravailOuvert);
+        }
+        let Some(hashs_enu) = fiche_parent.carte().hashs_enu() else {
+            return Err(ErreurFeuApplication::ScribeEnuRAttendue);
+        };
+        if !hashs_enu.contains(&fiche_cible.hash_carte()) {
+            return Err(ErreurFeuApplication::ScribeParentIncorrect);
+        }
+        if nouveau_nom == fiche_cible.carte().nom()? {
+            return Ok(());
+        }
+
+        for hash in hashs_enu {
+            let enu = Enu::charger_sans_verification_signature(&self.chemin_enu, hash)?;
+            if enu.carte().nom()? == nouveau_nom {
+                return Err(ErreurFeuApplication::ScribeNomDejaExistant);
+            }
+        }
+
+        let nouvelle_enu = Enu::charger(&self.chemin_enu, session, &fiche_cible.hash_carte())?
+            .renommer(nouveau_nom, noyau, session)?;
+
+        nouvelle_enu.sauvegarder(&self.chemin_enu)?;
+
+        Enu::remplacer(
+            &self.chemin_enu,
+            &self.chemin_derniere_racine,
+            &fiche_cible.hash_carte(),
+            &nouvelle_enu,
+            noyau,
+            session,
+        )
     }
 
     /// Rend le classeur qui détient le blob référencé par `fiche`.

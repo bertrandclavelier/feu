@@ -40,7 +40,7 @@
 //! 4. **Blobs** — chargement, suppression, existence, informations : le contenu
 //!    chiffré, un fichier à la fois.
 //! 5. **ENU** — dernière racine, chargement par hash, dépôt d'un texte court,
-//!    suppression, déplacement, tags, et les deux parcours (descendance,
+//!    suppression, déplacement, renommage, tags, et les deux parcours (descendance,
 //!    versions antérieures). La structure, sans quoi la partie 4 n'aurait rien
 //!    à désigner.
 //!
@@ -566,8 +566,8 @@ impl FeuApplication {
     /// Scribe : foyers requis fermés
     /// ([`ErreurFeuApplication::ScribeFoyersFermes`], avant toute écriture),
     /// dossier déjà existant, `fiche_racine` qui ne désigne pas un
-    /// répertoire, nom absent ou invalide, authentification, E/S ou lecture de
-    /// blob. Aucun comptoir n'est retenu si la sortie échoue.
+    /// répertoire, nom absent, authentification, E/S ou lecture de blob. Aucun
+    /// comptoir n'est retenu si la sortie échoue.
     pub fn commande_ouverture_comptoir_travail(
         &mut self,
         interface_feu_application: &impl InterfaceFeuApplication,
@@ -644,7 +644,7 @@ impl FeuApplication {
     /// propage les erreurs du Scribe : foyers requis fermés
     /// ([`ErreurFeuApplication::ScribeFoyersFermes`], qui les nomme tous, avant
     /// toute écriture), dossier de sortie déjà existant, `fiche_r` qui ne désigne
-    /// pas un répertoire, nom absent ou invalide, braise inconnue,
+    /// pas un répertoire, nom absent, braise inconnue,
     /// authentification, E/S ou lecture de blob (blob introuvable).
     pub fn commande_retrait_lecture_seule(
         &mut self,
@@ -891,7 +891,8 @@ impl FeuApplication {
     /// ([`ErreurFeuApplication::ScribeComptoirTravailOuvert`]), cible racine du
     /// nœud ([`ErreurFeuApplication::ScribeRacineNoeudInterdite`]), parent qui
     /// n'est pas un répertoire ([`ErreurFeuApplication::ScribeEnuRAttendue`]),
-    /// cible absente du parent ou parent hors du dernier arbre
+    /// cible absente du parent ([`ErreurFeuApplication::ScribeParentIncorrect`]),
+    /// parent hors du dernier arbre
     /// ([`ErreurFeuApplication::ScribeRemplacementSansEffet`]), racine périmée
     /// ([`ErreurFeuApplication::ScribeRacinePerimee`]), foyer fermé, signature,
     /// écriture disque.
@@ -923,8 +924,9 @@ impl FeuApplication {
     /// dans le sous-arbre de la cible
     /// ([`ErreurFeuApplication::ScribeDestinationDescendante`]), parent ou
     /// destination qui n'est pas un répertoire
-    /// ([`ErreurFeuApplication::ScribeEnuRAttendue`]), cible déjà dans la
-    /// destination, absente du parent ou arbre périmé
+    /// ([`ErreurFeuApplication::ScribeEnuRAttendue`]), cible absente du parent
+    /// ([`ErreurFeuApplication::ScribeParentIncorrect`]), cible déjà dans la
+    /// destination ou arbre périmé
     /// ([`ErreurFeuApplication::ScribeRemplacementSansEffet`],
     /// [`ErreurFeuApplication::ScribeRacinePerimee`]), foyer fermé, signature,
     /// écriture disque.
@@ -946,6 +948,40 @@ impl FeuApplication {
             fiche_cible,
             fiche_destination,
         )
+    }
+
+    /// Renomme `fiche_cible`, enfant de `fiche_parent`, en `nouveau_nom`.
+    ///
+    /// Le foyer de la cible doit être ouvert. Une nouvelle racine est posée,
+    /// les versions antérieures gardent l'ancien nom. Un nom inchangé ne fait
+    /// rien.
+    ///
+    /// # Errors
+    ///
+    /// Retourne [`ErreurFeuApplication::NoeudEteint`] si le nœud est éteint, et
+    /// propage les erreurs du Scribe : comptoir de travail ouvert
+    /// ([`ErreurFeuApplication::ScribeComptoirTravailOuvert`]), parent qui
+    /// n'est pas un répertoire ([`ErreurFeuApplication::ScribeEnuRAttendue`]),
+    /// cible hors du parent ([`ErreurFeuApplication::ScribeParentIncorrect`]),
+    /// nom déjà porté dans le parent
+    /// ([`ErreurFeuApplication::ScribeNomDejaExistant`]), nom invalide
+    /// ([`ErreurFeuApplication::ScribeNomFichierInvalide`]), nom absent
+    /// ([`ErreurFeuApplication::ScribeMetaNomAbsente`]), parent hors du dernier
+    /// arbre ([`ErreurFeuApplication::ScribeRemplacementSansEffet`]), foyer
+    /// fermé, signature, écriture disque.
+    pub fn commande_renommage_enu(
+        &self,
+        fiche_parent: &Fiche,
+        fiche_cible: &Fiche,
+        nouveau_nom: &str,
+    ) -> ResultFeuApplication<()> {
+        let noyau = self
+            .feu_noyau
+            .as_ref()
+            .ok_or(ErreurFeuApplication::NoeudEteint)?;
+
+        self.scribe
+            .renomme_enu(noyau, &self.session, fiche_parent, fiche_cible, nouveau_nom)
     }
 
     /// Dépose un texte dans un foyer : crée une `EnuT` (une ENU portant une
