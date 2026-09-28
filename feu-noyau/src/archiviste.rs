@@ -347,89 +347,91 @@ impl Archiviste {
 mod tests {
     use std::fs::File;
 
-    use proptest::{prelude::any, prop_assert, prop_assert_eq, prop_assume, proptest};
+    use proptest::{prelude::any, prop_assert, prop_assert_eq, prop_assume, property_test};
     use tempfile::TempDir;
 
     use super::*;
     use crate::TAILLE_CHUNK;
 
-    proptest! {
-        /// Deux blobs écrits dans le même classeur s'y retrouvent, s'y relisent
-        /// à l'identique et s'en effacent sans laisser de trace.
-        ///
-        /// Deux plutôt qu'un : l'unicité d'un nom, la liste qui les rend tous les
-        /// deux et l'effacement de l'un sans l'autre ne se disent pas sur un blob
-        /// seul. Les tailles vont jusqu'à trois fois `TAILLE_CHUNK`, pour que le
-        /// découpage du [`Tiroir`] serve réellement.
-        #[test]
-        fn cycle_blobs(
-            source1 in proptest::collection::vec(any::<u8>(), 0..=TAILLE_CHUNK * 3),
-            source2 in proptest::collection::vec(any::<u8>(), 0..=TAILLE_CHUNK * 3),
-            hash1 in any::<[u8; 32]>(),
-            hash2 in any::<[u8; 32]>(),
-        ) {
-            // Deux hashs égaux feraient échouer le second `ecrit_blob`, qui crée
-            // le fichier en exclusif. Le tirage ne les produit jamais, le
-            // rétrécissement d'un échec, si.
-            prop_assume!(hash1 != hash2);
+    /// Deux blobs écrits dans le même classeur s'y retrouvent, s'y relisent
+    /// à l'identique et s'en effacent sans laisser de trace.
+    ///
+    /// Deux plutôt qu'un : l'unicité d'un nom, la liste qui les rend tous les
+    /// deux et l'effacement de l'un sans l'autre ne se disent pas sur un blob
+    /// seul. Les tailles vont jusqu'à trois fois `TAILLE_CHUNK`, pour que le
+    /// découpage du [`Tiroir`] serve réellement.
+    #[property_test]
+    fn cycle_blobs(
+        #[strategy = proptest::collection::vec(any::<u8>(), 0..=TAILLE_CHUNK * 3)] source1: Vec<u8>,
+        #[strategy = proptest::collection::vec(any::<u8>(), 0..=TAILLE_CHUNK * 3)] source2: Vec<u8>,
+        hash1: [u8; 32],
+        hash2: [u8; 32],
+    ) {
+        // Deux hashs égaux feraient échouer le second `ecrit_blob`, qui crée
+        // le fichier en exclusif. Le tirage ne les produit jamais, le
+        // rétrécissement d'un échec, si.
+        prop_assume!(hash1 != hash2);
 
-            let tmp = TempDir::new()?;
+        let tmp = TempDir::new()?;
 
-            let archiviste = Archiviste::new(tmp.path().to_path_buf())?;
+        let archiviste = Archiviste::new(tmp.path().to_path_buf())?;
 
-            prop_assert!(archiviste.verifier_arborescence_classeurs()?.is_empty());
+        prop_assert!(archiviste.verifier_arborescence_classeurs()?.is_empty());
 
-            // Le chemin est écrit en dur, indirection du registre comprise :
-            // c'est un format sur disque, et le recomposer depuis les constantes
-            // du module ferait un test qui compare le code à lui-même.
-            prop_assert_eq!(
-                archiviste.donne_chemin_blob(IndexClasseur::ZERO, &hash1),
-                tmp.path()
-                    .join("registre")
-                    .join("classeur.0")
-                    .join("classeur0")
-                    .join(format!("{}.blob", HEXLOWER.encode(&hash1)))
-            );
+        // Le chemin est écrit en dur, indirection du registre comprise :
+        // c'est un format sur disque, et le recomposer depuis les constantes
+        // du module ferait un test qui compare le code à lui-même.
+        prop_assert_eq!(
+            archiviste.donne_chemin_blob(IndexClasseur::ZERO, &hash1),
+            tmp.path()
+                .join("registre")
+                .join("classeur.0")
+                .join("classeur0")
+                .join(format!("{}.blob", HEXLOWER.encode(&hash1)))
+        );
 
-            let mut tiroir = Tiroir::new();
-            tiroir.remplir(source1.as_slice())?;
-            archiviste.ecrit_blob(IndexClasseur::ZERO, &hash1, tiroir)?;
+        let mut tiroir = Tiroir::new();
+        tiroir.remplir(source1.as_slice())?;
+        archiviste.ecrit_blob(IndexClasseur::ZERO, &hash1, tiroir)?;
 
-            prop_assert!(archiviste.existe_blob(IndexClasseur::ZERO, &hash1));
+        prop_assert!(archiviste.existe_blob(IndexClasseur::ZERO, &hash1));
 
-            let mut tiroir = Tiroir::new();
-            tiroir.remplir(source2.as_slice())?;
-            archiviste.ecrit_blob(IndexClasseur::ZERO, &hash2, tiroir)?;
+        let mut tiroir = Tiroir::new();
+        tiroir.remplir(source2.as_slice())?;
+        archiviste.ecrit_blob(IndexClasseur::ZERO, &hash2, tiroir)?;
 
-            prop_assert!(archiviste.existe_blob(IndexClasseur::ZERO, &hash2));
+        prop_assert!(archiviste.existe_blob(IndexClasseur::ZERO, &hash2));
 
-            let liste_blobs = archiviste.donne_liste_blobs(IndexClasseur::ZERO)?;
-            prop_assert_eq!(liste_blobs.len(), 2);
-            prop_assert!(liste_blobs.contains(&hash1));
-            prop_assert!(liste_blobs.contains(&hash2));
+        let liste_blobs = archiviste.donne_liste_blobs(IndexClasseur::ZERO)?;
+        prop_assert_eq!(liste_blobs.len(), 2);
+        prop_assert!(liste_blobs.contains(&hash1));
+        prop_assert!(liste_blobs.contains(&hash2));
 
-            let fichier1 = File::open(archiviste.donne_chemin_blob(IndexClasseur::ZERO, &hash1))?;
-            let mut tiroir = Tiroir::new();
-            tiroir.remplir(fichier1)?;
-            let mut destination1 = Vec::new();
-            tiroir.envoyer_et_vider(&mut destination1)?;
+        let fichier1 = File::open(archiviste.donne_chemin_blob(IndexClasseur::ZERO, &hash1))?;
+        let mut tiroir = Tiroir::new();
+        tiroir.remplir(fichier1)?;
+        let mut destination1 = Vec::new();
+        tiroir.envoyer_et_vider(&mut destination1)?;
 
-            prop_assert_eq!(source1, destination1);
+        prop_assert_eq!(source1, destination1);
 
-            let fichier2 = File::open(archiviste.donne_chemin_blob(IndexClasseur::ZERO, &hash2))?;
-            let mut tiroir = Tiroir::new();
-            tiroir.remplir(fichier2)?;
-            let mut destination2 = Vec::new();
-            tiroir.envoyer_et_vider(&mut destination2)?;
+        let fichier2 = File::open(archiviste.donne_chemin_blob(IndexClasseur::ZERO, &hash2))?;
+        let mut tiroir = Tiroir::new();
+        tiroir.remplir(fichier2)?;
+        let mut destination2 = Vec::new();
+        tiroir.envoyer_et_vider(&mut destination2)?;
 
-            prop_assert_eq!(source2, destination2);
+        prop_assert_eq!(source2, destination2);
 
-            archiviste.supprime_blob(IndexClasseur::ZERO, &hash1)?;
-            archiviste.supprime_blob(IndexClasseur::ZERO, &hash2)?;
+        archiviste.supprime_blob(IndexClasseur::ZERO, &hash1)?;
+        archiviste.supprime_blob(IndexClasseur::ZERO, &hash2)?;
 
-            prop_assert!(archiviste.donne_liste_blobs(IndexClasseur::ZERO)?.is_empty());
-            prop_assert!(!archiviste.existe_blob(IndexClasseur::ZERO, &hash1));
-            prop_assert!(!archiviste.existe_blob(IndexClasseur::ZERO, &hash2));
-        }
+        prop_assert!(
+            archiviste
+                .donne_liste_blobs(IndexClasseur::ZERO)?
+                .is_empty()
+        );
+        prop_assert!(!archiviste.existe_blob(IndexClasseur::ZERO, &hash1));
+        prop_assert!(!archiviste.existe_blob(IndexClasseur::ZERO, &hash2));
     }
 }

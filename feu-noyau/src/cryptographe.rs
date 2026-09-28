@@ -762,8 +762,7 @@ impl Cryptographe {
 #[cfg(test)]
 mod tests {
     use proptest::{
-        prelude::{ProptestConfig, any},
-        prop_assert, prop_assert_eq, prop_assume, proptest,
+        prelude::ProptestConfig, prop_assert, prop_assert_eq, prop_assume, property_test,
     };
 
     use super::*;
@@ -801,130 +800,134 @@ mod tests {
         cryptographe.donne_trousseau_public_complet()
     }
 
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(8))]
-        /// Vérifie le cycle signature/vérification ML-DSA-87, pour le nœud et pour
-        /// un foyer.
-        ///
-        /// Deux cas négatifs, deux propriétés distinctes : clé publique étrangère — la
-        /// signature est liée à la clé —, et second message quelconque, dont
-        /// `prop_assume` n'écarte que l'égalité — elle est liée au contenu.
-        ///
-        /// Seed, sel et mot de passe sont tirés eux aussi, le mot de passe depuis la
-        /// chaîne vide qu'aucune couche de Feu n'interdit.
-        ///
-        /// [`ErreurFeuNoyau::CryptographeSignatureMlDsaMalFormee`] reste non
-        /// couverte : altérer une signature donne tantôt `Ok(false)`, tantôt `Err`,
-        /// selon l'octet touché.
-        #[test]
-        fn cycle_signature_verification(
-            seed in any::<[u8; 64]>(),
-            mdp in "[a-z0-9/]{0,30}",
-            sel in any::<[u8; 16]>(),
-            message in any::<Vec<u8>>(),
-            message_altere in any::<Vec<u8>>(),
-        ) {
+    /// Vérifie le cycle signature/vérification ML-DSA-87, pour le nœud et pour
+    /// un foyer.
+    ///
+    /// Deux cas négatifs, deux propriétés distinctes : clé publique étrangère — la
+    /// signature est liée à la clé —, et second message quelconque, dont
+    /// `prop_assume` n'écarte que l'égalité — elle est liée au contenu.
+    ///
+    /// Seed, sel et mot de passe sont tirés eux aussi, le mot de passe depuis la
+    /// chaîne vide qu'aucune couche de Feu n'interdit.
+    ///
+    /// [`ErreurFeuNoyau::CryptographeSignatureMlDsaMalFormee`] reste non
+    /// couverte : altérer une signature donne tantôt `Ok(false)`, tantôt `Err`,
+    /// selon l'octet touché.
+    #[property_test(config = ProptestConfig::with_cases(8))]
+    fn cycle_signature_verification(
+        seed: [u8; 64],
+        #[strategy = "[a-z0-9/]{0,30}"] mdp: String,
+        sel: [u8; 16],
+        message: Vec<u8>,
+        message_altere: Vec<u8>,
+    ) {
+        prop_assume!(message != message_altere);
 
-            prop_assume!(message != message_altere);
+        let mut cryptographe = Cryptographe::new();
+        let trousseau_public = monte_cryptographe_de_test(
+            &mut cryptographe,
+            &SecretBox::new(Box::new(seed)),
+            &mdp,
+            sel,
+        )?;
 
-            let mut cryptographe = Cryptographe::new();
-            let trousseau_public = monte_cryptographe_de_test(&mut cryptographe, &SecretBox::new(Box::new(seed)), &mdp, sel)?;
+        // Cas nominal du nœud. Sa clé de signature suit un chemin de dérivation
+        // distinct de celui des foyers : la couvrir séparément n'est pas un
+        // doublon.
+        let signature = cryptographe.signature_noeud(&message)?;
 
+        prop_assert!(Cryptographe::verification_signature(
+            &trousseau_public
+                .donne_trousseau_public_noeud()
+                .donne_cle_sig_pub(),
+            &signature,
+            &message
+        )?);
 
-            // Cas nominal du nœud. Sa clé de signature suit un chemin de dérivation
-            // distinct de celui des foyers : la couvrir séparément n'est pas un
-            // doublon.
-            let signature = cryptographe.signature_noeud(&message)?;
+        // Cas nominal d'un foyer. Cette signature sert aussi de témoin aux deux
+        // cas négatifs qui suivent : seule la clé de vérification, puis le
+        // message, y changent — l'échec ne peut donc venir que de là.
+        let index_foyer_0 = IndexFoyer::ZERO;
+        let index_foyer_1 = IndexFoyer::try_from(1)?;
+        let signature = cryptographe.signature_foyer(index_foyer_0, &message)?;
 
-            prop_assert!(Cryptographe::verification_signature(
-                    &trousseau_public
-                    .donne_trousseau_public_noeud()
-                    .donne_cle_sig_pub(),
-                    &signature,
-                    &message
-            )?);
+        prop_assert!(Cryptographe::verification_signature(
+            &trousseau_public
+                .donne_trousseau_public_foyer(index_foyer_0)?
+                .donne_cle_sig_pub(),
+            &signature,
+            &message
+        )?);
 
-            // Cas nominal d'un foyer. Cette signature sert aussi de témoin aux deux
-            // cas négatifs qui suivent : seule la clé de vérification, puis le
-            // message, y changent — l'échec ne peut donc venir que de là.
-            let index_foyer_0 = IndexFoyer::ZERO;
-            let index_foyer_1 = IndexFoyer::try_from(1)?;
-            let signature = cryptographe.signature_foyer(index_foyer_0, &message)?;
+        // Clé publique d'un autre foyer, signature et message inchangés.
+        prop_assert!(!Cryptographe::verification_signature(
+            &trousseau_public
+                .donne_trousseau_public_foyer(index_foyer_1)?
+                .donne_cle_sig_pub(),
+            &signature,
+            &message
+        )?);
 
-            prop_assert!(Cryptographe::verification_signature(
-                    &trousseau_public
-                    .donne_trousseau_public_foyer(index_foyer_0)?
-                    .donne_cle_sig_pub(),
-                    &signature,
-                    &message
-            )?);
+        prop_assert!(!Cryptographe::verification_signature(
+            &trousseau_public
+                .donne_trousseau_public_foyer(index_foyer_0)?
+                .donne_cle_sig_pub(),
+            &signature,
+            &message_altere
+        )?);
+    }
 
-            // Clé publique d'un autre foyer, signature et message inchangés.
-            prop_assert!(!Cryptographe::verification_signature(
-                    &trousseau_public
-                    .donne_trousseau_public_foyer(index_foyer_1)?
-                    .donne_cle_sig_pub(),
-                    &signature,
-                    &message
-            )?);
+    /// Vérifie le cycle chiffrement/déchiffrement asymétrique ML-KEM-1024.
+    ///
+    /// Le round-trip établit que les deux moitiés assemblées à la main —
+    /// encapsulation ML-KEM, HKDF-SHA3-256, AES-256-GCM — s'accordent bien.
+    ///
+    /// Le cas négatif rend une **erreur**, non un `false`, et pas d'où on
+    /// l'attendrait : ML-KEM ne rejette jamais un ciphertext, c'est l'auth tag
+    /// AES-GCM qui refuse un cran plus loin.
+    ///
+    /// Le message est tiré sur tout le domaine, vide compris.
+    #[property_test(config = ProptestConfig::with_cases(8))]
+    fn cycle_chiffrement_dechiffrement_asymetrique(
+        seed: [u8; 64],
+        #[strategy = "[a-z0-9/]{0,30}"] mdp: String,
+        sel: [u8; 16],
+        message: Vec<u8>,
+    ) {
+        let mut cryptographe = Cryptographe::new();
 
-            prop_assert!(!Cryptographe::verification_signature(
-                    &trousseau_public
-                    .donne_trousseau_public_foyer(index_foyer_0)?
-                    .donne_cle_sig_pub(),
-                    &signature,
-                    &message_altere
-            )?);
+        let trousseau_public = monte_cryptographe_de_test(
+            &mut cryptographe,
+            &SecretBox::new(Box::new(seed)),
+            &mdp,
+            sel,
+        )?;
 
-        }
-
-        /// Vérifie le cycle chiffrement/déchiffrement asymétrique ML-KEM-1024.
-        ///
-        /// Le round-trip établit que les deux moitiés assemblées à la main —
-        /// encapsulation ML-KEM, HKDF-SHA3-256, AES-256-GCM — s'accordent bien.
-        ///
-        /// Le cas négatif rend une **erreur**, non un `false`, et pas d'où on
-        /// l'attendrait : ML-KEM ne rejette jamais un ciphertext, c'est l'auth tag
-        /// AES-GCM qui refuse un cran plus loin.
-        ///
-        /// Le message est tiré sur tout le domaine, vide compris.
-        #[test]
-        fn cycle_chiffrement_dechiffrement_asymetrique(
-            seed in any::<[u8; 64]>(),
-            mdp in "[a-z0-9/]{0,30}",
-            sel in any::<[u8; 16]>(),
-            message in any::<Vec<u8>>(),
-        )  {
-            let mut cryptographe = Cryptographe::new();
-
-            let trousseau_public = monte_cryptographe_de_test(&mut cryptographe, &SecretBox::new(Box::new(seed)), &mdp, sel)?;
-
-            // En usage réel, l'expéditeur est un nœud tiers. Ici le même
-            // cryptographe chiffre et déchiffre : `chiffrement_asymetrique` ne
-            // consomme que la clé publique du destinataire, aucun secret de
-            // l'expéditeur n'entre dans le schéma — un second cryptographe
-            // n'apporterait rien au test.
-            let index_foyer_0 = IndexFoyer::ZERO;
-            let index_foyer_1 = IndexFoyer::try_from(1)?;
-            let message_chiffre = Cryptographe::chiffrement_asymetrique(
-                &trousseau_public
+        // En usage réel, l'expéditeur est un nœud tiers. Ici le même
+        // cryptographe chiffre et déchiffre : `chiffrement_asymetrique` ne
+        // consomme que la clé publique du destinataire, aucun secret de
+        // l'expéditeur n'entre dans le schéma — un second cryptographe
+        // n'apporterait rien au test.
+        let index_foyer_0 = IndexFoyer::ZERO;
+        let index_foyer_1 = IndexFoyer::try_from(1)?;
+        let message_chiffre = Cryptographe::chiffrement_asymetrique(
+            &trousseau_public
                 .donne_trousseau_public_foyer(index_foyer_0)?
                 .donne_cle_chiff_pub(),
-                &message,
-            )?;
+            &message,
+        )?;
 
-            prop_assert_eq!(
-                cryptographe.dechiffrement_asymetrique(index_foyer_0, &message_chiffre)?,
-                message
-            );
+        prop_assert_eq!(
+            cryptographe.dechiffrement_asymetrique(index_foyer_0, &message_chiffre)?,
+            message
+        );
 
-            // Même ciphertext, index du foyer 1 : seul le foyer 0 détient la clé
-            // privée capable d'en retrouver le bon secret partagé.
-            prop_assert!(
-                cryptographe
+        // Même ciphertext, index du foyer 1 : seul le foyer 0 détient la clé
+        // privée capable d'en retrouver le bon secret partagé.
+        prop_assert!(
+            cryptographe
                 .dechiffrement_asymetrique(index_foyer_1, &message_chiffre)
                 .is_err()
-            );
-        }
+        );
     }
 }

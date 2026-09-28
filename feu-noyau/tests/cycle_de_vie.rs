@@ -37,7 +37,7 @@ use std::{
 };
 
 use feu_noyau::*;
-use proptest::{prelude::ProptestConfig, prop_assert, prop_assert_eq, proptest};
+use proptest::{prelude::ProptestConfig, prop_assert, prop_assert_eq, property_test};
 use secrecy::SecretString;
 use tempfile::TempDir;
 
@@ -235,138 +235,134 @@ fn noms_arborescence_figes() -> ResultFeuNoyau<()> {
     Ok(())
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig { cases: 8, ..ProptestConfig::default() })]
-    /// Un blob déposé dans chacun des trois foyers se relit à l'identique après que
-    /// le noyau a été détruit puis reconstruit, braises et clé publique de nœud
-    /// retrouvées à partir du seul mot de passe, et s'efface ensuite sans trace.
-    ///
-    /// Établit au passage l'unicité d'un blob dans un foyer, la relecture d'un
-    /// contenu dépassant `TAILLE_CHUNK`, le refus d'un second nœud sur le même
-    /// dossier, et les permissions aux trois états stables du nœud.
-    #[test]
-    fn cycle_vie_noyau(contenu in "(?s).{0,20000}") {
-        let tmp = TempDir::new().unwrap();
+/// Un blob déposé dans chacun des trois foyers se relit à l'identique après que
+/// le noyau a été détruit puis reconstruit, braises et clé publique de nœud
+/// retrouvées à partir du seul mot de passe, et s'efface ensuite sans trace.
+///
+/// Établit au passage l'unicité d'un blob dans un foyer, la relecture d'un
+/// contenu dépassant `TAILLE_CHUNK`, le refus d'un second nœud sur le même
+/// dossier, et les permissions aux trois états stables du nœud.
+#[property_test(config = ProptestConfig { cases: 8, ..ProptestConfig::default() })]
+fn cycle_vie_noyau(#[strategy = "(?s).{0,20000}"] contenu: String) {
+    let tmp = TempDir::new().unwrap();
 
-        let chemin_feu = tmp.path().join(".feu");
+    let chemin_feu = tmp.path().join(".feu");
 
-        let chemin_donnees = tmp.path().join("fichier.txt");
+    let chemin_donnees = tmp.path().join("fichier.txt");
 
-        write(&chemin_donnees, &contenu).unwrap();
-        let mut hash_blob = [0u8; 32];
+    write(&chemin_donnees, &contenu).unwrap();
+    let mut hash_blob = [0u8; 32];
 
-        let mut interface = InterfaceTest::new("mot de passe");
+    let mut interface = InterfaceTest::new("mot de passe");
 
-        let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
+    let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
 
-        // Le nœud est verrouillé tant que cette instance vit : un second allumage se
-        // heurte au verrou avant même de lire une clé.
-        assert!(matches!(
-            FeuNoyau::new(&chemin_feu, None, &mut interface),
-            Err(ErreurFeuNoyau::GardienNoeudDejaAllume)
-        ));
+    // Le nœud est verrouillé tant que cette instance vit : un second allumage se
+    // heurte au verrou avant même de lire une clé.
+    assert!(matches!(
+        FeuNoyau::new(&chemin_feu, None, &mut interface),
+        Err(ErreurFeuNoyau::GardienNoeudDejaAllume)
+    ));
 
-        assert!(interface.cle_publique_noeud.is_some());
+    assert!(interface.cle_publique_noeud.is_some());
 
-        let index_classeur_0 = IndexClasseur::ZERO;
-        let index_classeur_1 = IndexClasseur::try_from(1)?;
-        for index_foyer in IndexFoyer::tous() {
-            assert!(!interface.etats[index_foyer.valeur()]);
-            assert!(interface.braises[index_foyer.valeur()] != Braise::VIDE);
+    let index_classeur_0 = IndexClasseur::ZERO;
+    let index_classeur_1 = IndexClasseur::try_from(1)?;
+    for index_foyer in IndexFoyer::tous() {
+        assert!(!interface.etats[index_foyer.valeur()]);
+        assert!(interface.braises[index_foyer.valeur()] != Braise::VIDE);
 
-            noyau.ouverture_foyer(&mut interface, index_foyer)?;
+        noyau.ouverture_foyer(&mut interface, index_foyer)?;
 
-            // Les clés publiques du foyer ne remontent qu'ici : elles n'existent
-            // qu'une fois le foyer désarchivé, un foyer fermé n'étant qu'une archive
-            // chiffrée. Les asserter avant l'ouverture échouerait.
-            assert!(interface.etats[index_foyer.valeur()]);
-            assert!(interface.cles_pub_sig[index_foyer.valeur()].is_some());
-            assert!(interface.cles_pub_chif[index_foyer.valeur()].is_some());
+        // Les clés publiques du foyer ne remontent qu'ici : elles n'existent
+        // qu'une fois le foyer désarchivé, un foyer fermé n'étant qu'une archive
+        // chiffrée. Les asserter avant l'ouverture échouerait.
+        assert!(interface.etats[index_foyer.valeur()]);
+        assert!(interface.cles_pub_sig[index_foyer.valeur()].is_some());
+        assert!(interface.cles_pub_chif[index_foyer.valeur()].is_some());
 
-            // Chaque dépôt exige une source neuve : `remplir` lit jusqu'à EOF, un
-            // handle réutilisé ne rendrait plus qu'un blob vide.
-            let source_donnees = File::open(&chemin_donnees).unwrap();
-            (hash_blob, _) = noyau.depot_blob(index_foyer, index_classeur_0, &source_donnees)?;
+        // Chaque dépôt exige une source neuve : `remplir` lit jusqu'à EOF, un
+        // handle réutilisé ne rendrait plus qu'un blob vide.
+        let source_donnees = File::open(&chemin_donnees).unwrap();
+        (hash_blob, _) = noyau.depot_blob(index_foyer, index_classeur_0, &source_donnees)?;
 
-            // Même contenu, autre classeur demandé : le blob ne doit pas être
-            // dupliqué, et le dépôt rendre le classeur 0 où il réside déjà. Le hash
-            // identique le confirme — il ne dépend que du clair, jamais de la clé du
-            // classeur sous laquelle il vient d'être chiffré.
-            let source_donnees = File::open(&chemin_donnees).unwrap();
-            let (hash_blob2, index_classeur_recu) =
-                noyau.depot_blob(index_foyer, index_classeur_1, &source_donnees)?;
+        // Même contenu, autre classeur demandé : le blob ne doit pas être
+        // dupliqué, et le dépôt rendre le classeur 0 où il réside déjà. Le hash
+        // identique le confirme — il ne dépend que du clair, jamais de la clé du
+        // classeur sous laquelle il vient d'être chiffré.
+        let source_donnees = File::open(&chemin_donnees).unwrap();
+        let (hash_blob2, index_classeur_recu) =
+            noyau.depot_blob(index_foyer, index_classeur_1, &source_donnees)?;
 
-            assert_eq!(noyau.liste_blobs(index_foyer, index_classeur_0)?.len(), 1);
-            assert_eq!(
-                noyau
+        assert_eq!(noyau.liste_blobs(index_foyer, index_classeur_0)?.len(), 1);
+        assert_eq!(
+            noyau
                 .liste_blobs(index_foyer, index_classeur_0)?
                 .first()
                 .unwrap(),
-                &hash_blob
-            );
-            assert_eq!(noyau.liste_blobs(index_foyer, index_classeur_1)?.len(), 0);
+            &hash_blob
+        );
+        assert_eq!(noyau.liste_blobs(index_foyer, index_classeur_1)?.len(), 0);
 
-            assert_eq!(index_classeur_recu, index_classeur_0);
-            assert_eq!(hash_blob, hash_blob2);
+        assert_eq!(index_classeur_recu, index_classeur_0);
+        assert_eq!(hash_blob, hash_blob2);
 
-            noyau.fermeture_foyer(&mut interface, index_foyer)?;
+        noyau.fermeture_foyer(&mut interface, index_foyer)?;
 
-            assert!(!interface.etats[index_foyer.valeur()]);
-        }
-
-        // Extinction explicite : le second noyau doit tout retrouver du disque et du
-        // mot de passe, sans rien hériter du premier resté vivant.
-        drop(noyau);
-
-        let mut interface2 = InterfaceTest::new("mot de passe");
-        let mut noyau2 = FeuNoyau::new(&chemin_feu, None, &mut interface2)?;
-
-        verifie_permissions(&chemin_feu);
-
-        // Comparaison champ à champ, et non des deux interfaces entières : elles
-        // n'ont pas vécu la même histoire. `interface2` n'a reçu ni la seed — émise
-        // à la seule création du nœud — ni les clés publiques de foyer, qui
-        // attendent une ouverture. Braises et clé de nœud sont les deux rappels
-        // communs aux deux allumages, et portent l'invariant qui compte : la
-        // dérivation depuis la seed est reproductible.
-        assert_eq!(interface.cle_publique_noeud, interface2.cle_publique_noeud);
-        assert_eq!(interface.braises, interface2.braises);
-
-        for index_foyer in IndexFoyer::tous() {
-            // Recréé à chaque tour pour tronquer : `vider` écrit à la position
-            // courante, un handle partagé concaténerait les lectures successives.
-            let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
-
-            noyau2.ouverture_foyer(&mut interface2, index_foyer)?;
-
-            noyau2.lecture_blob(index_foyer, &hash_blob, &fichier_recuperation)?;
-
-            let contenu_recupere = read_to_string(tmp.path().join("temp")).unwrap();
-
-            assert_eq!(contenu, contenu_recupere);
-
-            // Classeur 0 : celui que le premier dépôt a rendu, et où le second a
-            // laissé le blob.
-            noyau2.suppression_blob(index_foyer, &hash_blob)?;
-
-            assert!(noyau2.existence_blob(index_foyer, &hash_blob)?.is_none());
-            assert!(matches!(
-                noyau2.lecture_blob(index_foyer, &hash_blob, &fichier_recuperation),
-                Err(ErreurFeuNoyau::BlobIntrouvable(_))
-            ));
-        }
-
-        verifie_permissions(&chemin_feu);
-
-        for index_foyer in IndexFoyer::tous() {
-            noyau2.fermeture_foyer(&mut interface2, index_foyer)?;
-
-            assert!(!interface2.etats[index_foyer.valeur()]);
-        }
-
-        verifie_permissions(&chemin_feu);
-
+        assert!(!interface.etats[index_foyer.valeur()]);
     }
+
+    // Extinction explicite : le second noyau doit tout retrouver du disque et du
+    // mot de passe, sans rien hériter du premier resté vivant.
+    drop(noyau);
+
+    let mut interface2 = InterfaceTest::new("mot de passe");
+    let mut noyau2 = FeuNoyau::new(&chemin_feu, None, &mut interface2)?;
+
+    verifie_permissions(&chemin_feu);
+
+    // Comparaison champ à champ, et non des deux interfaces entières : elles
+    // n'ont pas vécu la même histoire. `interface2` n'a reçu ni la seed — émise
+    // à la seule création du nœud — ni les clés publiques de foyer, qui
+    // attendent une ouverture. Braises et clé de nœud sont les deux rappels
+    // communs aux deux allumages, et portent l'invariant qui compte : la
+    // dérivation depuis la seed est reproductible.
+    assert_eq!(interface.cle_publique_noeud, interface2.cle_publique_noeud);
+    assert_eq!(interface.braises, interface2.braises);
+
+    for index_foyer in IndexFoyer::tous() {
+        // Recréé à chaque tour pour tronquer : `vider` écrit à la position
+        // courante, un handle partagé concaténerait les lectures successives.
+        let fichier_recuperation = File::create(tmp.path().join("temp")).unwrap();
+
+        noyau2.ouverture_foyer(&mut interface2, index_foyer)?;
+
+        noyau2.lecture_blob(index_foyer, &hash_blob, &fichier_recuperation)?;
+
+        let contenu_recupere = read_to_string(tmp.path().join("temp")).unwrap();
+
+        assert_eq!(contenu, contenu_recupere);
+
+        // Classeur 0 : celui que le premier dépôt a rendu, et où le second a
+        // laissé le blob.
+        noyau2.suppression_blob(index_foyer, &hash_blob)?;
+
+        assert!(noyau2.existence_blob(index_foyer, &hash_blob)?.is_none());
+        assert!(matches!(
+            noyau2.lecture_blob(index_foyer, &hash_blob, &fichier_recuperation),
+            Err(ErreurFeuNoyau::BlobIntrouvable(_))
+        ));
+    }
+
+    verifie_permissions(&chemin_feu);
+
+    for index_foyer in IndexFoyer::tous() {
+        noyau2.fermeture_foyer(&mut interface2, index_foyer)?;
+
+        assert!(!interface2.etats[index_foyer.valeur()]);
+    }
+
+    verifie_permissions(&chemin_feu);
 }
 
 /// Après un changement de mot de passe, l'ancien n'ouvre plus rien et le nouveau
@@ -887,81 +883,83 @@ fn diagnostic_noeud() -> ResultFeuNoyau<()> {
     Ok(())
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig { cases: 8, ..ProptestConfig::default() })]
+/// Un contenu textuel quelconque se dépose, se relit à l'identique, se copie
+/// vers un autre foyer et s'efface des deux.
+///
+/// Établit au passage les trois réponses de
+/// [`copie_blob`](FeuNoyau::copie_blob) qui ne copient rien : le blob absent
+/// du foyer d'origine, le foyer de destination qui est celui d'origine, et
+/// le foyer de destination qui détient déjà le hash.
+///
+/// Le nombre de cas est bas parce que chacun rallume un nœud, donc dérive
+/// les clés par Argon2 ; ce que la génération éprouve ici est le contenu du
+/// blob, pas l'enchaînement des appels, qui est fixe.
+#[property_test(config = ProptestConfig { cases: 8, ..ProptestConfig::default() })]
+fn cycle_blob(#[strategy = "(?s).{0,4096}"] contenu: String) {
+    let tmp = TempDir::new()?;
 
-    /// Un contenu textuel quelconque se dépose, se relit à l'identique, se copie
-    /// vers un autre foyer et s'efface des deux.
-    ///
-    /// Établit au passage les trois réponses de
-    /// [`copie_blob`](FeuNoyau::copie_blob) qui ne copient rien : le blob absent
-    /// du foyer d'origine, le foyer de destination qui est celui d'origine, et
-    /// le foyer de destination qui détient déjà le hash.
-    ///
-    /// Le nombre de cas est bas parce que chacun rallume un nœud, donc dérive
-    /// les clés par Argon2 ; ce que la génération éprouve ici est le contenu du
-    /// blob, pas l'enchaînement des appels, qui est fixe.
-    #[test]
-    fn cycle_blob(contenu in "(?s).{0,4096}") {
+    let chemin_feu = tmp.path().join(".feu");
 
-        let tmp = TempDir::new()?;
+    let chemin_donnees = tmp.path().join("fichier.txt");
 
-        let chemin_feu = tmp.path().join(".feu");
+    write(&chemin_donnees, &contenu)?;
 
-        let chemin_donnees = tmp.path().join("fichier.txt");
+    let mut interface = InterfaceTest::new("mot de passe");
 
-        write(&chemin_donnees, &contenu)?;
+    let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
 
-        let mut interface = InterfaceTest::new("mot de passe");
+    let index_classeur_0 = IndexClasseur::ZERO;
+    let index_classeur_1 = IndexClasseur::try_from(1)?;
+    let index_foyer_0 = IndexFoyer::ZERO;
+    let index_foyer_1 = IndexFoyer::try_from(1)?;
 
-        let mut noyau = FeuNoyau::new(&chemin_feu, None, &mut interface)?;
+    noyau.ouverture_foyer(&mut interface, index_foyer_0)?;
+    noyau.ouverture_foyer(&mut interface, index_foyer_1)?;
 
-        let index_classeur_0 = IndexClasseur::ZERO;
-        let index_classeur_1 = IndexClasseur::try_from(1)?;
-        let index_foyer_0 = IndexFoyer::ZERO;
-        let index_foyer_1 = IndexFoyer::try_from(1)?;
+    let source_donnees = File::open(&chemin_donnees)?;
+    let (hash_blob, _) = noyau.depot_blob(index_foyer_0, index_classeur_0, &source_donnees)?;
 
-        noyau.ouverture_foyer(&mut interface, index_foyer_0)?;
-        noyau.ouverture_foyer(&mut interface, index_foyer_1)?;
+    let chemin_donnees_relues = tmp.path().join("fichier_relu.txt");
+    let reception_donnees = File::create(&chemin_donnees_relues)?;
 
-        let source_donnees = File::open(&chemin_donnees)?;
-        let (hash_blob, _) = noyau.depot_blob(index_foyer_0, index_classeur_0, &source_donnees)?;
+    noyau.lecture_blob(index_foyer_0, &hash_blob, reception_donnees)?;
 
-        let chemin_donnees_relues = tmp.path().join("fichier_relu.txt");
-        let reception_donnees = File::create(&chemin_donnees_relues)?;
+    let contenu_relu = read_to_string(chemin_donnees_relues)?;
 
+    prop_assert_eq!(contenu, contenu_relu);
 
-        noyau.lecture_blob(index_foyer_0, &hash_blob, reception_donnees)?;
+    prop_assert!(matches!(
+        noyau.copie_blob(&hash_blob, index_foyer_1, index_foyer_0, index_classeur_0),
+        Err(ErreurFeuNoyau::BlobIntrouvable(_))
+    ));
 
-        let contenu_relu = read_to_string(chemin_donnees_relues)?;
+    // Pas de copie dans le même foyer : le blob y est déjà.
+    let index = noyau.copie_blob(&hash_blob, index_foyer_0, index_foyer_0, index_classeur_1)?;
+    prop_assert_eq!(index, index_classeur_0);
 
-        prop_assert_eq!(contenu, contenu_relu);
+    // La copie a lieu, dans le classeur demandé.
+    let index = noyau.copie_blob(&hash_blob, index_foyer_0, index_foyer_1, index_classeur_1)?;
+    prop_assert_eq!(index, index_classeur_1);
 
-        prop_assert!(matches!(noyau.copie_blob(&hash_blob, index_foyer_1, index_foyer_0, index_classeur_0), Err(ErreurFeuNoyau::BlobIntrouvable(_))));
+    // Pas de copie non plus si la destination détient déjà le hash.
+    let index = noyau.copie_blob(&hash_blob, index_foyer_0, index_foyer_1, index_classeur_0)?;
+    prop_assert_eq!(index, index_classeur_1);
 
-        // Pas de copie dans le même foyer : le blob y est déjà.
-        let index = noyau.copie_blob(&hash_blob, index_foyer_0, index_foyer_0, index_classeur_1)?;
-        prop_assert_eq!(index, index_classeur_0);
+    prop_assert_eq!(
+        noyau.existence_blob(index_foyer_0, &hash_blob)?,
+        Some(index_classeur_0)
+    );
+    prop_assert_eq!(
+        noyau.existence_blob(index_foyer_1, &hash_blob)?,
+        Some(index_classeur_1)
+    );
 
-        // La copie a lieu, dans le classeur demandé.
-        let index = noyau.copie_blob(&hash_blob, index_foyer_0, index_foyer_1, index_classeur_1)?;
-        prop_assert_eq!(index, index_classeur_1);
+    noyau.suppression_blob(index_foyer_0, &hash_blob)?;
+    noyau.suppression_blob(index_foyer_1, &hash_blob)?;
 
-        // Pas de copie non plus si la destination détient déjà le hash.
-        let index = noyau.copie_blob(&hash_blob, index_foyer_0, index_foyer_1, index_classeur_0)?;
-        prop_assert_eq!(index, index_classeur_1);
+    prop_assert_eq!(noyau.existence_blob(index_foyer_0, &hash_blob)?, None);
+    prop_assert_eq!(noyau.existence_blob(index_foyer_1, &hash_blob)?, None);
 
-        prop_assert_eq!(noyau.existence_blob(index_foyer_0, &hash_blob)?, Some(index_classeur_0));
-        prop_assert_eq!(noyau.existence_blob(index_foyer_1, &hash_blob)?, Some(index_classeur_1));
-
-        noyau.suppression_blob(index_foyer_0, &hash_blob)?;
-        noyau.suppression_blob(index_foyer_1, &hash_blob)?;
-
-        prop_assert_eq!(noyau.existence_blob(index_foyer_0, &hash_blob)?, None);
-        prop_assert_eq!(noyau.existence_blob(index_foyer_1, &hash_blob)?, None);
-
-        noyau.fermeture_foyer(&mut interface, index_foyer_0)?;
-        noyau.fermeture_foyer(&mut interface, index_foyer_1)?;
-
-    }
+    noyau.fermeture_foyer(&mut interface, index_foyer_0)?;
+    noyau.fermeture_foyer(&mut interface, index_foyer_1)?;
 }

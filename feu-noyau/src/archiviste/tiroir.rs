@@ -123,7 +123,7 @@ impl Tiroir {
 mod tests {
     use proptest::{
         prelude::{Just, Strategy, any},
-        prop_assert_eq, prop_oneof, proptest,
+        prop_assert_eq, prop_oneof, property_test,
     };
 
     use super::*;
@@ -145,21 +145,19 @@ mod tests {
         ]
     }
 
-    proptest! {
-        /// Un blob rempli depuis une source se réécrit à l'identique dans sa
-        /// destination, quelle que soit sa taille face à `TAILLE_CHUNK`.
-        #[test]
-        fn cycle_tiroir(
-            source in tailles().prop_flat_map(|n| proptest::collection::vec(any::<u8>(), n)),
-        ) {
-            let mut tiroir = Tiroir::new();
+    /// Un blob rempli depuis une source se réécrit à l'identique dans sa
+    /// destination, quelle que soit sa taille face à `TAILLE_CHUNK`.
+    #[property_test]
+    fn cycle_tiroir(
+        #[strategy = tailles().prop_flat_map(|n| proptest::collection::vec(any::<u8>(), n))] source: Vec<u8>,
+    ) {
+        let mut tiroir = Tiroir::new();
 
-            tiroir.remplir(source.as_slice())?;
+        tiroir.remplir(source.as_slice())?;
 
-            let mut destination = Vec::new();
-            tiroir.envoyer_et_vider(&mut destination)?;
+        let mut destination = Vec::new();
+        tiroir.envoyer_et_vider(&mut destination)?;
 
-            prop_assert_eq!(source, destination);
-        }
+        prop_assert_eq!(source, destination);
     }
 }

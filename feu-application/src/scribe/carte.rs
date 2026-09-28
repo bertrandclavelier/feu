@@ -10,12 +10,11 @@
 //!
 //! Une [`Carte`] porte une donnée (CaD), un texte (CaT) ou un répertoire
 //! (CaR), avec les métadonnées et les tags communs aux trois. Sa forme
-//! sérialisée ([`Carte::vers_octets`]) est ce que l'enveloppe hash et signe :
-//! d'où les collections ordonnées, seules à rendre le résultat reproductible.
+//! sérialisée ([`Carte::vers_octets`]) est ce que l'enveloppe hash et signe.
 //!
 //! L'`enum` est public et ses variantes ouvertes, pour que les couches
 //! supérieures discriminent par `match` plutôt que par des accesseurs à
-//! [`Option`]. Forger une carte au dehors reste sans effet : seule une
+//! [`Option<T>`]. Forger une carte au dehors reste sans effet : seule une
 //! enveloppe l'écrit dans `enu/`, et constructeurs comme mutateurs restent
 //! `pub(super)`. La confiance vient de la vérification du hash et de la
 //! signature au chargement, pas de l'encapsulation.
@@ -34,24 +33,17 @@ use crate::{ErreurFeuApplication, ResultFeuApplication};
 
 /// Plafond du contenu d'une [`Carte::Texte`], en octets UTF-8.
 ///
-/// Bornée volontairement bien en deçà du plafond de signature du noyau
-/// ([`MAX_TAILLE_SIGNATURE`](feu_noyau::MAX_TAILLE_SIGNATURE), 64 kio) : la
-/// marge restante absorbe l'en-tête de la carte sérialisée (discriminant,
-/// métadonnées, tags, préfixe de longueur) sans avoir à le calculer finement.
-/// 60 kio reste très large pour du texte brut.
-///
-/// **Borne incluse** : 61440 octets passent, la garde est un `>` strict. Une
-/// taille est une quantité, pas un cardinal d'index — le `>=` de
-/// `IndexFoyer::NOMBRE` et `IndexClasseur::NOMBRE`, où l'index valide s'arrête à
-/// `NOMBRE - 1`, ne s'applique pas ici.
+/// Bien en deçà du plafond de signature du noyau
+/// ([`feu_noyau::MAX_TAILLE_SIGNATURE`], 64 kio) : la marge absorbe l'en-tête
+/// de la carte sérialisée sans avoir à le calculer. **Borne incluse** : la garde
+/// est un `>` strict, une taille étant une quantité et non un index.
 pub(crate) const MAX_TAILLE_TEXTE: usize = 1024 * 60;
 
 /// Contenu métier enveloppé par une `Enu`.
 ///
-/// Trois variantes — Donnée (CaD), Texte (CaT), Répertoire (CaR) —, toutes
-/// porteuses de métadonnées structurées et de tags libres. Les deux
-/// collections sont ordonnées ([`BTreeMap`], [`BTreeSet`]) : le hash se calcule
-/// sur leur sérialisation, qui doit être reproductible.
+/// Métadonnées et tags sont des collections ordonnées ([`BTreeMap<K, V>`],
+/// [`BTreeSet<T>`]) : le hash se calcule sur leur sérialisation, qui doit être
+/// reproductible.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Carte {
     /// CaD — référence un blob stocké dans un classeur.
@@ -64,8 +56,7 @@ pub enum Carte {
         hash_blob: [u8; 32],
     },
 
-    /// CaT — texte brut embarqué directement dans la carte. Sa taille est
-    /// bornée à la construction (voir `new_texte`).
+    /// CaT — texte brut embarqué dans la carte, borné à la construction.
     Texte {
         /// Métadonnées structurées clé → valeur.
         metas: BTreeMap<String, String>,
@@ -90,15 +81,13 @@ pub enum Carte {
 impl Carte {
     /// Pose la méta `"date"` — timestamp Unix en secondes, en décimal.
     ///
-    /// Appelée par les trois constructeurs, et par eux seuls : la date est celle
-    /// de la première création de l'entrée, non d'une modification, qui
-    /// demanderait une autre méta. Une carte reconstruite à partir d'une autre
-    /// hérite donc de sa date. Étant une méta, elle entre dans le `hash_carte`
-    /// et sous la signature, ce qu'un champ d'enveloppe ne ferait pas.
+    /// Appelée par les seuls constructeurs : c'est la date de création de
+    /// l'entrée, non de sa dernière modification, et une carte reconstruite
+    /// depuis une autre en hérite.
     ///
-    /// Une horloge antérieure au 1ᵉʳ janvier 1970 donne une date nulle, jamais
-    /// une panique ni une méta absente : la carte reste construite, et une date
-    /// impossible désigne l'horloge de la machine plutôt qu'un défaut de Feu.
+    /// Une horloge antérieure au 1ᵉʳ janvier 1970 donne une date nulle plutôt
+    /// qu'une panique : une date impossible désigne l'horloge de la machine, pas
+    /// un défaut de Feu.
     pub(super) fn horodatee(mut self) -> Self {
         self.ajout_meta(
             "date",
@@ -205,7 +194,7 @@ impl Carte {
     /// n'est pas un répertoire.
     ///
     /// L'absence n'est pas un incident — une feuille est le cas normal d'un
-    /// parcours —, d'où l'[`Option`] plutôt qu'un refus. Elle distingue en outre
+    /// parcours —, d'où l'[`Option<T>`] plutôt qu'un refus. Elle distingue en outre
     /// la feuille du répertoire réellement vide, qu'un ensemble vide
     /// confondrait.
     ///
@@ -311,7 +300,7 @@ impl Carte {
         Ok(date.parse::<u64>()?)
     }
 
-    /// `true` si `nom` est un composant de chemin unique et inoffensif.
+    /// Dit si `nom` est un composant de chemin unique et inoffensif.
     ///
     /// Empêche un nom d'entraîner l'écriture hors du dossier de retrait, pas un
     /// filtre d'affichage : elle écarte le vide, tout séparateur `/` (le seul,
@@ -324,8 +313,7 @@ impl Carte {
 
     /// Ajoute une métadonnée structurée à la carte.
     ///
-    /// Insère la paire `(cle, valeur)` dans le [`BTreeMap`] de métadonnées.
-    /// Si la clé existe déjà, sa valeur est écrasée.
+    /// Une clé déjà présente voit sa valeur écrasée.
     pub(super) fn ajout_meta(&mut self, cle: &str, valeur: &str) {
         let cle = String::from(cle);
         let valeur = String::from(valeur);
@@ -353,8 +341,7 @@ impl Carte {
 
     /// Ajoute un tag libre à la carte.
     ///
-    /// Insère le tag dans le [`BTreeSet`] de tags. Les doublons sont
-    /// silencieusement ignorés.
+    /// Un tag déjà présent est ignoré, sans erreur.
     pub(super) fn ajout_tag(&mut self, tag: &str) {
         let tag = String::from(tag);
         match self {
@@ -380,8 +367,8 @@ impl Carte {
 
     /// Retire un tag de la carte.
     ///
-    /// Symétrique de [`Self::ajout_tag`], jusqu'au silence : un tag absent du
-    /// [`BTreeSet`] laisse la carte intacte, sans le dire.
+    /// Symétrique de [`Self::ajout_tag`], jusqu'au silence : un tag absent
+    /// laisse la carte intacte, sans le dire.
     pub(super) fn retrait_tag(&mut self, tag: &str) {
         match self {
             Self::Donnee {
@@ -406,9 +393,7 @@ impl Carte {
 
     /// Ajoute le `hash_carte` d'une ENU enfant à un répertoire.
     ///
-    /// Insère `hash` dans le [`BTreeSet`] `hashs_enu` de la
-    /// [`Carte::Repertoire`]. Un doublon est silencieusement ignoré ;
-    /// l'ordre déterministe du set préserve la reproductibilité du hash.
+    /// Un doublon est ignoré, sans erreur.
     ///
     /// # Errors
     ///
@@ -575,8 +560,9 @@ impl Carte {
     }
 }
 
-/// Écrit les tags dans le buffer au format canonique :
-/// `u32 nb_tags` puis pour chaque tag `u32 len_utf8` suivi des octets UTF-8.
+/// Écrit les tags dans le buffer au format canonique.
+///
+/// `u32 nb_tags`, puis pour chaque tag `u32 len_utf8` suivi des octets UTF-8.
 ///
 /// # Errors
 ///
@@ -633,10 +619,10 @@ fn octets_vers_tags(octets: &[u8]) -> ResultFeuApplication<(BTreeSet<String>, &[
     Ok((tags, reste))
 }
 
-/// Écrit les métadonnées dans le buffer au format canonique :
-/// `u32 nb_metas` puis pour chaque paire `u32 len_cle`, clé UTF-8, `u32
-/// len_valeur`, valeur UTF-8. Ordre de parcours : celui du BTreeMap
-/// (alphabétique par clé).
+/// Écrit les métadonnées dans le buffer au format canonique.
+///
+/// `u32 nb_metas`, puis pour chaque paire `u32 len_cle`, clé UTF-8,
+/// `u32 len_valeur`, valeur UTF-8, dans l'ordre alphabétique des clés.
 ///
 /// # Errors
 ///
@@ -741,166 +727,70 @@ pub(super) fn prendre_octets(buf: &[u8], n: usize) -> ResultFeuApplication<(&[u8
 /// allumé et un foyer ouvert : ces tests-là sont dans `src/scribe/tests.rs`.
 #[cfg(test)]
 mod tests {
+    use proptest::{
+        collection::{btree_map, btree_set, vec},
+        prelude::any,
+        prop_assert, prop_assert_eq, prop_assume, property_test,
+    };
+
     use super::*;
 
-    // --- prendre_octets ---
+    /// Tout buffer se coupe en `n` octets pris et un reste qui, recollés, le
+    /// redonnent ; au-delà de sa longueur, rejet en
+    /// [`ErreurFeuApplication::ScribeCarteMalFormee`].
+    #[property_test]
+    fn prendre_octets_aleatoires(
+        #[strategy = vec(any::<u8>(), 0..16)] octets: Vec<u8>,
+        #[strategy = 0..20usize] n: usize,
+    ) {
+        if n <= octets.len() {
+            let (octets_pris, octets_reste) = prendre_octets(octets.as_slice(), n)?;
 
-    /// Buffer exactement de la bonne taille → extraction complète, reste vide.
-    #[test]
-    fn prendre_octets_reste_vide() -> ResultFeuApplication<()> {
-        let octets: &[u8] = &[1, 2, 3];
-        let (octets_pris, reste) = prendre_octets(octets, 3)?;
-
-        assert_eq!(octets, octets_pris);
-        assert_eq!(reste, &[]);
-
-        Ok(())
+            prop_assert_eq!(octets_pris.len(), n);
+            prop_assert_eq!([octets_pris, octets_reste].concat(), octets);
+        } else {
+            prop_assert!(matches!(
+                prendre_octets(octets.as_slice(), n),
+                Err(ErreurFeuApplication::ScribeCarteMalFormee)
+            ));
+        }
     }
 
-    /// Buffer plus grand que la demande → extraction des n premiers, reste non
-    /// vide.
-    #[test]
-    fn prendre_octets_reste_non_vide() -> ResultFeuApplication<()> {
-        let octets: &[u8] = &[1, 2, 3, 4, 5, 6];
-        let (octets_pris, reste) = prendre_octets(octets, 2)?;
-
-        assert_eq!(octets_pris, &octets[0..2]);
-        assert_eq!(reste, &octets[2..]);
-
-        Ok(())
-    }
-
-    /// Buffer trop court → [`ErreurFeuApplication::ScribeCarteMalFormee`].
-    #[test]
-    fn prendre_octets_trop_court() {
-        let octets: &[u8] = &[1, 2, 3];
-
-        assert!(matches!(
-            prendre_octets(octets, 5),
-            Err(ErreurFeuApplication::ScribeCarteMalFormee)
-        ));
-    }
-
-    /// Demande de 0 octets → extrait vide, reste = buffer entier.
-    #[test]
-    fn prendre_octets_vide() -> ResultFeuApplication<()> {
-        let octets: &[u8] = &[1, 2, 3];
-        let (octets_pris, reste) = prendre_octets(octets, 0)?;
-
-        assert_eq!(reste, octets);
-        assert_eq!(octets_pris, &[]);
-
-        Ok(())
-    }
-
-    // --- Tags et métadonnées ---
-
-    /// Round-trip balise vide : 0 tag → octets → 0 tag, reste vide.
-    #[test]
-    fn tags_vide_vers_octets() -> ResultFeuApplication<()> {
-        let tags = BTreeSet::new();
+    /// Tout ensemble de tags survit à l'aller-retour par le format canonique,
+    /// sans octet restant.
+    #[property_test]
+    fn tags_aleatoires_vers_octets(
+        #[strategy = btree_set(".{0,20}", 0..=10)] tags: BTreeSet<String>,
+    ) {
         let mut octets = Vec::new();
-
         tags_vers_octets(&mut octets, &tags)?;
         let (tags_retour, reste) = octets_vers_tags(&octets)?;
 
-        assert!(tags_retour.is_empty());
-        assert!(reste.is_empty());
-
-        Ok(())
+        prop_assert_eq!(tags_retour, tags);
+        prop_assert!(reste.is_empty());
     }
 
-    /// Round-trip balise unique.
-    #[test]
-    fn tags_unique_vers_octets() -> ResultFeuApplication<()> {
-        let tags = BTreeSet::from([String::from("tag1")]);
+    /// Toute table de métadonnées survit à l'aller-retour par le format
+    /// canonique, sans octet restant.
+    #[property_test]
+    fn metas_aleatoires_vers_octets(
+        #[strategy = btree_map(".{0,20}", ".{0,20}", 0..=10)] metas: BTreeMap<String, String>,
+    ) {
         let mut octets = Vec::new();
-
-        tags_vers_octets(&mut octets, &tags)?;
-        let (tags_retour, reste) = octets_vers_tags(&octets)?;
-
-        assert_eq!(tags_retour, tags);
-        assert!(reste.is_empty());
-
-        Ok(())
-    }
-
-    /// Round-trip balises multiples, ordre BTreeSet (déterminé).
-    #[test]
-    fn tags_multi_vers_octets() -> ResultFeuApplication<()> {
-        let tags = BTreeSet::from([String::from("z"), String::from("b"), String::from("a")]);
-        let mut octets = Vec::new();
-
-        tags_vers_octets(&mut octets, &tags)?;
-        let (tags_retour, reste) = octets_vers_tags(&octets)?;
-
-        assert_eq!(tags_retour, tags);
-        assert!(reste.is_empty());
-
-        Ok(())
-    }
-
-    /// Round-trip métadonnées vides : 0 paire → octets → 0 paire, reste vide.
-    #[test]
-    fn metas_vide_vers_octets() -> ResultFeuApplication<()> {
-        let metas = BTreeMap::new();
-        let mut octets = Vec::new();
-
         metas_vers_octets(&mut octets, &metas)?;
         let (metas_retour, reste) = octets_vers_metas(&octets)?;
 
-        assert!(metas_retour.is_empty());
-        assert!(reste.is_empty());
-
-        Ok(())
+        prop_assert_eq!(metas_retour, metas);
+        prop_assert!(reste.is_empty());
     }
 
-    /// Round-trip métadonnée unique : une paire clé/valeur préservée.
-    #[test]
-    fn metas_unique_vers_octets() -> ResultFeuApplication<()> {
-        let metas = BTreeMap::from([(String::from("clé1"), String::from("valeur1"))]);
-        let mut octets = Vec::new();
-
-        metas_vers_octets(&mut octets, &metas)?;
-        let (metas_retour, reste) = octets_vers_metas(&octets)?;
-
-        assert_eq!(metas, metas_retour);
-        assert!(reste.is_empty());
-
-        Ok(())
-    }
-
-    /// Round-trip métadonnées multiples : tri par clé (ordre BTreeMap) préservé.
-    #[test]
-    fn metas_multi_vers_octets() -> ResultFeuApplication<()> {
-        let metas = BTreeMap::from([
-            (String::from("clé5"), String::from("valeur5")),
-            (String::from("clé1"), String::from("valeur1")),
-            (String::from("clé2"), String::from("valeur2")),
-        ]);
-        let mut octets = Vec::new();
-
-        metas_vers_octets(&mut octets, &metas)?;
-        let (metas_retour, reste) = octets_vers_metas(&octets)?;
-
-        assert_eq!(metas, metas_retour);
-        assert!(reste.is_empty());
-
-        Ok(())
-    }
-
-    // --- Cartes ---
-
-    /// Round-trip CaD : metas + tags + hash → octets → même carte.
-    #[test]
-    fn carte_donnee_vers_octets() -> ResultFeuApplication<()> {
-        let metas = BTreeMap::from([
-            (String::from("clé1"), String::from("valeur1")),
-            (String::from("clé2"), String::from("valeur2")),
-        ]);
-        let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
-        let hash_blob: [u8; 32] = std::array::from_fn(|i| u8::try_from(i).unwrap());
-
+    /// Toute [`Carte::Donnee`] ressort identique de l'aller-retour par ses octets.
+    #[property_test]
+    fn carte_donnee_aleatoire_vers_octets(
+        #[strategy = btree_set(".{0,20}", 0..=10)] tags: BTreeSet<String>,
+        #[strategy = btree_map(".{0,20}", ".{0,20}", 0..=10)] metas: BTreeMap<String, String>,
+        hash_blob: [u8; 32],
+    ) {
         let carte = Carte::Donnee {
             metas,
             tags,
@@ -910,21 +800,16 @@ mod tests {
         let octets = carte.vers_octets()?;
         let carte_retour = Carte::octets_vers_carte(&octets)?;
 
-        assert_eq!(carte, carte_retour);
-
-        Ok(())
+        prop_assert_eq!(carte, carte_retour);
     }
 
-    /// Round-trip CaT : metas + tags + texte → octets → même carte.
-    #[test]
-    fn carte_texte_vers_octets() -> ResultFeuApplication<()> {
-        let metas = BTreeMap::from([
-            (String::from("clé1"), String::from("valeur1")),
-            (String::from("clé2"), String::from("valeur2")),
-        ]);
-        let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
-        let contenu = String::from("Contenu de la carte");
-
+    /// Toute [`Carte::Texte`] ressort identique de l'aller-retour par ses octets.
+    #[property_test]
+    fn carte_texte_aleatoire_vers_octets(
+        #[strategy = btree_set(".{0,20}", 0..=10)] tags: BTreeSet<String>,
+        #[strategy = btree_map(".{0,20}", ".{0,20}", 0..=10)] metas: BTreeMap<String, String>,
+        #[strategy = ".{0,500}"] contenu: String,
+    ) {
         let carte = Carte::Texte {
             metas,
             tags,
@@ -934,24 +819,17 @@ mod tests {
         let octets = carte.vers_octets()?;
         let carte_retour = Carte::octets_vers_carte(&octets)?;
 
-        assert_eq!(carte, carte_retour);
-
-        Ok(())
+        prop_assert_eq!(carte, carte_retour);
     }
 
-    /// Round-trip CaR : metas + tags + 2 hashs enfants → octets → même carte.
-    #[test]
-    fn carte_repertoire_vers_octets() -> ResultFeuApplication<()> {
-        let metas = BTreeMap::from([
-            (String::from("clé1"), String::from("valeur1")),
-            (String::from("clé2"), String::from("valeur2")),
-        ]);
-        let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
-        let hash1: [u8; 32] = std::array::from_fn(|i| u8::try_from(i).unwrap());
-        let hash2: [u8; 32] = std::array::from_fn(|i| u8::try_from(i * 2).unwrap());
-
-        let hashs_enu = BTreeSet::from([hash1, hash2]);
-
+    /// Toute [`Carte::Repertoire`] ressort identique de l'aller-retour par ses
+    /// octets.
+    #[property_test]
+    fn carte_repertoire_aleatoire_vers_octets(
+        #[strategy = btree_set(".{0,20}", 0..=10)] tags: BTreeSet<String>,
+        #[strategy = btree_map(".{0,20}", ".{0,20}", 0..=10)] metas: BTreeMap<String, String>,
+        #[strategy = btree_set(any::<[u8; 32]>(), 0..=10)] hashs_enu: BTreeSet<[u8; 32]>,
+    ) {
         let carte = Carte::Repertoire {
             metas,
             tags,
@@ -961,14 +839,167 @@ mod tests {
         let octets = carte.vers_octets()?;
         let carte_retour = Carte::octets_vers_carte(&octets)?;
 
-        assert_eq!(carte, carte_retour);
-
-        Ok(())
+        prop_assert_eq!(carte, carte_retour);
     }
 
-    /// Cycle complet sur `Carte::Donnee` : hash conservé à la construction,
-    /// refus de `ajout_hash_enu` (`ScribeEnuRAttendue`), tags et metas insérés
-    /// puis relus via les accesseurs communs.
+    /// Aucun buffer, bien ou mal formé, ne fait paniquer le décodage : les
+    /// longueurs lues dans les octets ne débordent jamais du buffer.
+    #[property_test]
+    fn carte_malformee_octets_aleatoires(#[strategy = vec(any::<u8>(), 0..1000)] octets: Vec<u8>) {
+        let _ = Carte::octets_vers_carte(octets.as_slice());
+    }
+
+    /// Toute carte coupée avant son dernier octet est refusée : le décodage
+    /// consomme exactement tout le buffer, aucun préfixe strict n'est valide.
+    #[property_test]
+    fn carte_malformee_octets_tronques(
+        #[strategy = btree_set(".{0,20}", 0..=10)] tags: BTreeSet<String>,
+        #[strategy = btree_map(".{0,20}", ".{0,20}", 0..=10)] metas: BTreeMap<String, String>,
+        hash_blob: [u8; 32],
+        #[strategy = ".{0,500}"] contenu: String,
+        #[strategy = btree_set(any::<[u8; 32]>(), 0..=10)] hashs_enu: BTreeSet<[u8; 32]>,
+        #[strategy = 0..3u8] variante: u8,
+        position: proptest::sample::Index,
+    ) {
+        let carte = match variante {
+            0 => Carte::Donnee {
+                metas,
+                tags,
+                hash_blob,
+            },
+            1 => Carte::Texte {
+                metas,
+                tags,
+                contenu,
+            },
+            _ => Carte::Repertoire {
+                metas,
+                tags,
+                hashs_enu,
+            },
+        };
+        let octets = carte.vers_octets()?;
+        let n = position.index(octets.len());
+        let tronques = &octets[..n];
+
+        prop_assert!(Carte::octets_vers_carte(tronques).is_err());
+    }
+
+    /// Une carte dont un octet est remplacé par une valeur quelconque ne fait
+    /// jamais paniquer le décodage, qu'il en sorte une erreur ou une carte.
+    #[property_test]
+    fn carte_malformee_octet_altere(
+        #[strategy = btree_set(".{0,20}", 0..=10)] tags: BTreeSet<String>,
+        #[strategy = btree_map(".{0,20}", ".{0,20}", 0..=10)] metas: BTreeMap<String, String>,
+        hash_blob: [u8; 32],
+        #[strategy = ".{0,500}"] contenu: String,
+        #[strategy = btree_set(any::<[u8; 32]>(), 0..=10)] hashs_enu: BTreeSet<[u8; 32]>,
+        #[strategy = 0..3u8] variante: u8,
+        position: proptest::sample::Index,
+        #[strategy = 0..=255u8] masque: u8,
+    ) {
+        let carte = match variante {
+            0 => Carte::Donnee {
+                metas,
+                tags,
+                hash_blob,
+            },
+            1 => Carte::Texte {
+                metas,
+                tags,
+                contenu,
+            },
+            _ => Carte::Repertoire {
+                metas,
+                tags,
+                hashs_enu,
+            },
+        };
+        let mut octets = carte.vers_octets()?;
+        let n = position.index(octets.len());
+        octets[n] = masque;
+
+        let _ = Carte::octets_vers_carte(octets.as_slice());
+    }
+
+    /// Toute carte suivie d'octets en trop est refusée : une carte n'a
+    /// qu'une suite d'octets, donc qu'un hash.
+    #[property_test]
+    fn carte_malformee_octets_ajoutes(
+        #[strategy = btree_set(".{0,20}", 0..=10)] tags: BTreeSet<String>,
+        #[strategy = btree_map(".{0,20}", ".{0,20}", 0..=10)] metas: BTreeMap<String, String>,
+        hash_blob: [u8; 32],
+        #[strategy = ".{0,500}"] contenu: String,
+        #[strategy = btree_set(any::<[u8; 32]>(), 0..=10)] hashs_enu: BTreeSet<[u8; 32]>,
+        #[strategy = 0..3u8] variante: u8,
+        #[strategy = vec(any::<u8>(), 1..=100)] octets_ajoutes: Vec<u8>,
+    ) {
+        let carte = match variante {
+            0 => Carte::Donnee {
+                metas,
+                tags,
+                hash_blob,
+            },
+            1 => Carte::Texte {
+                metas,
+                tags,
+                contenu,
+            },
+            _ => Carte::Repertoire {
+                metas,
+                tags,
+                hashs_enu,
+            },
+        };
+        let octets = carte.vers_octets()?;
+
+        prop_assert!(matches!(
+            Carte::octets_vers_carte([octets, octets_ajoutes].concat().as_slice()),
+            Err(ErreurFeuApplication::ScribeCarteMalFormee)
+        ));
+    }
+
+    /// Tout nom non vide sans `/`, hors `.` et `..` exacts, est accepté.
+    #[property_test]
+    fn nom_fichier_aleatoire_valide(#[strategy = "[^/]{1,50}"] nom: String) {
+        prop_assume!(nom != "." && nom != "..");
+        prop_assert!(Carte::nom_fichier_valide(&nom));
+    }
+
+    /// Un `/` substitué à n'importe quel caractère d'un nom le fait refuser.
+    #[property_test]
+    fn nom_fichier_altere(
+        #[strategy = "[^/]{1,50}"] nom: String,
+        position: proptest::sample::Index,
+    ) {
+        let mut caracteres: Vec<char> = nom.chars().collect();
+        let i = position.index(caracteres.len());
+        caracteres[i] = '/';
+
+        prop_assert!(!Carte::nom_fichier_valide(
+            &caracteres.into_iter().collect::<String>()
+        ));
+    }
+
+    /// Refus des trois noms entiers interdits : vide, `.` et `..`.
+    #[test]
+    fn noms_fichiers_invalides() {
+        assert!(!Carte::nom_fichier_valide(""));
+        assert!(!Carte::nom_fichier_valide("."));
+        assert!(!Carte::nom_fichier_valide(".."));
+    }
+
+    /// Acceptation des noms qui commencent par des points sans être `.` ni
+    /// `..` : le refus porte sur l'égalité stricte, pas sur le préfixe.
+    #[test]
+    fn noms_fichiers_valides() {
+        assert!(Carte::nom_fichier_valide(".test"));
+        assert!(Carte::nom_fichier_valide("..test"));
+    }
+
+    /// Une [`Carte::Donnee`] garde son hash de blob, refuse
+    /// [`Carte::ajout_hash_enu`] et rend par les accesseurs communs les tags et
+    /// métas qu'on lui ajoute.
     #[test]
     fn carte_donnee() {
         let hash_blob = [0u8; 32];
@@ -1005,10 +1036,9 @@ mod tests {
         assert!(carte.metas().contains_key("meta1") && carte.metas().contains_key("meta2"));
     }
 
-    /// Cycle complet sur `Carte::Texte` : contenu conservé et méta `"nom"`
-    /// posée dès la construction, refus de `ajout_hash_enu`
-    /// (`ScribeEnuRAttendue`),
-    /// tags et metas insérés puis relus via les accesseurs communs.
+    /// Une [`Carte::Texte`] garde son contenu et sa méta `"nom"`, refuse
+    /// [`Carte::ajout_hash_enu`] et rend par les accesseurs communs les tags et
+    /// métas qu'on lui ajoute.
     #[test]
     fn carte_texte() -> ResultFeuApplication<()> {
         let hash_blob = [0u8; 32];
@@ -1045,8 +1075,8 @@ mod tests {
         Ok(())
     }
 
-    /// Contenu dépassant `MAX_TAILLE_TEXTE` d'un octet → refus
-    /// (`ScribeTailleMaxDepasseeTexte`).
+    /// Un contenu qui dépasse [`MAX_TAILLE_TEXTE`] d'un octet est refusé par
+    /// [`Carte::new_texte`].
     #[test]
     fn carte_texte_trop_grande() {
         let contenu = "a".repeat(MAX_TAILLE_TEXTE + 1);
@@ -1057,13 +1087,9 @@ mod tests {
         ));
     }
 
-    /// Nom contenant un séparateur de chemin → refus
-    /// (`ScribeNomFichierInvalide`).
-    ///
-    /// Éprouve la validation à la **construction** : `new_texte` refuse
-    /// d'emblée une carte qu'aucun retrait ne saurait matérialiser. Un seul cas
-    /// suffit ici — la règle `nom_fichier_valide` est éprouvée exhaustivement
-    /// par le test `nom_fichier`.
+    /// Un nom contenant un `/` est refusé dès [`Carte::new_texte`], avant
+    /// qu'aucun retrait ne puisse le matérialiser. Un seul cas suffit : la règle
+    /// a ses propres tests.
     #[test]
     fn carte_texte_mauvais_nom() {
         assert!(matches!(
@@ -1072,9 +1098,9 @@ mod tests {
         ));
     }
 
-    /// Cycle complet sur `Carte::Repertoire` : hashs enfants insérés via
-    /// `ajout_hash_enu`, tags et metas insérés puis relus via les
-    /// accesseurs communs.
+    /// Une [`Carte::Repertoire`] reçoit ses hashs enfants par
+    /// [`Carte::ajout_hash_enu`] et rend par les accesseurs communs les tags et
+    /// métas qu'on lui ajoute.
     #[test]
     fn carte_repertoire() -> ResultFeuApplication<()> {
         let hash_blob1 = [0u8; 32];
@@ -1117,76 +1143,6 @@ mod tests {
 
         assert_eq!(carte.metas().len(), 3);
         assert!(carte.metas().contains_key("meta1") && carte.metas().contains_key("meta2"));
-
-        Ok(())
-    }
-
-    /// Lecture du nom par `nom`, puis règle de `nom_fichier_valide` sur ses
-    /// refus et son corpus accepté.
-    ///
-    /// `nom` ne connaît qu'un refus, la méta absente, et rend le nom tel quel.
-    ///
-    /// Les refus de la règle : nom vide, toute forme de `/`, et `.` comme `..`
-    /// **exacts**. Les cas acceptés portent tous des points sans être ces
-    /// composants — `.test`, `..test`, `test..` — et distinguent l'égalité
-    /// stricte d'un `starts_with` qui rejetterait un fichier caché.
-    #[test]
-    fn nom_fichier() -> ResultFeuApplication<()> {
-        let hash_blob = [0u8; 32];
-
-        let mut carte = Carte::new_donnee(hash_blob);
-
-        // Pas de meta nom
-        assert!(matches!(
-            carte.nom(),
-            Err(ErreurFeuApplication::ScribeMetaNomAbsente)
-        ));
-
-        // Nom rendu tel quel
-        carte.ajout_meta("nom", "test");
-        assert_eq!(carte.nom()?, "test");
-
-        // Nom vide
-        assert!(!Carte::nom_fichier_valide(""));
-
-        // Nom commence par '/'
-        assert!(!Carte::nom_fichier_valide("/azerty"));
-
-        // Nom contient '/'
-        assert!(!Carte::nom_fichier_valide("aa/bbb"));
-
-        // Nom contient plusieurs '/'
-        assert!(!Carte::nom_fichier_valide("/aa/bbb/"));
-
-        // Nom termine par '/'
-        assert!(!Carte::nom_fichier_valide("azerty/"));
-
-        // Nom est '.'
-        assert!(!Carte::nom_fichier_valide("."));
-
-        // Nom est '..'
-        assert!(!Carte::nom_fichier_valide(".."));
-
-        // Nom débute par '.'
-        assert!(Carte::nom_fichier_valide(".test"));
-
-        // Nom termine par '.'
-        assert!(Carte::nom_fichier_valide("test."));
-
-        // Nom contient '.'
-        assert!(Carte::nom_fichier_valide("test.2"));
-
-        // Nom débute par '..'
-        assert!(Carte::nom_fichier_valide("..test"));
-
-        // Nom termine par '..'
-        assert!(Carte::nom_fichier_valide("test.."));
-
-        // Nom contient '..'
-        assert!(Carte::nom_fichier_valide("test..2"));
-
-        // Nom contient '.' et '..'
-        assert!(Carte::nom_fichier_valide(".te.st..test.te.st.."));
 
         Ok(())
     }

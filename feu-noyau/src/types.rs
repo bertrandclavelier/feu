@@ -215,56 +215,60 @@ impl TryFrom<usize> for IndexClasseur {
 /// index.
 #[cfg(test)]
 mod tests {
-    use proptest::{prop_assert, prop_assert_eq, prop_assume, proptest};
+    use proptest::{prop_assert, prop_assert_eq, prop_assume, property_test};
 
     use super::*;
 
-    proptest! {
-            /// Toute adresse bien formée ressort identique : sur l'alphabet entier,
-            /// `try_from` et `Display` restent réciproques.
-            #[test]
-            fn reciprocité_chaine(corps in "[a-z2-7]{55}") {
-                let adresse = format!("{corps}.braise");
+    /// Toute adresse bien formée ressort identique : sur l'alphabet entier,
+    /// `try_from` et `Display` restent réciproques.
+    #[property_test]
+    fn reciprocité_chaine(#[strategy = "[a-z2-7]{55}"] corps: String) {
+        let adresse = format!("{corps}.braise");
 
-                let braise = Braise::try_from(adresse.as_str()).unwrap();
+        let braise = Braise::try_from(adresse.as_str()).unwrap();
 
-                prop_assert_eq!(braise.to_string(), adresse);
-            }
+        prop_assert_eq!(braise.to_string(), adresse);
+    }
 
-            /// Aucune chaîne, valide ou non, ne fait paniquer la conversion : les
-            /// `unwrap` du chemin de validation restent hors d'atteinte.
-            #[test]
-            fn jamais_de_panique(chaine in ".{0,80}") {
+    /// Aucune chaîne, valide ou non, ne fait paniquer la conversion : les
+    /// `unwrap` du chemin de validation restent hors d'atteinte.
+    #[property_test]
+    fn jamais_de_panique(#[strategy = ".{0,80}"] chaine: String) {
+        let _ = Braise::try_from(chaine.as_str());
+    }
 
-                let _ = Braise::try_from(chaine.as_str());
-            }
+    /// Rejet d'un caractère hors alphabet BASE32, à n'importe quelle position.
+    #[property_test]
+    fn hors_alphabet(
+        #[strategy = "[a-z2-7]{55}"] corps: String,
+        #[strategy = 0..Braise::LONGUEUR] pos: usize,
+        #[strategy = "[^a-z2-7]"] intrus: String,
+    ) {
+        let mut corps = corps;
+        corps.replace_range(pos..=pos, &intrus);
+        let adresse = format!("{corps}.braise");
 
-            /// Rejet d'un caractère hors alphabet BASE32, à n'importe quelle position.
-            #[test]
-            fn hors_alphabet(corps in "[a-z2-7]{55}", pos in 0..Braise::LONGUEUR, intrus in "[^a-z2-7]") {
-                let mut corps = corps;
-                corps.replace_range(pos..=pos, &intrus);
-                let adresse = format!("{corps}.braise");
+        prop_assert!(Braise::try_from(adresse.as_str()).is_err());
+    }
 
-                prop_assert!(Braise::try_from(adresse.as_str()).is_err());
-            }
+    /// Rejet de tout corps dont la longueur n'est pas `Braise::LONGUEUR`.
+    #[property_test]
+    fn longueur_erronee(#[strategy = "[a-z2-7]{0,120}"] corps: String) {
+        prop_assume!(corps.len() != Braise::LONGUEUR);
+        let adresse = format!("{corps}.braise");
 
-            /// Rejet de tout corps dont la longueur n'est pas `Braise::LONGUEUR`.
-            #[test]
-            fn longueur_erronee(corps in "[a-z2-7]{0,120}") {
-                prop_assume!(corps.len() != Braise::LONGUEUR);
-                let adresse = format!("{corps}.braise");
+        prop_assert!(Braise::try_from(adresse.as_str()).is_err());
+    }
 
-                prop_assert!(Braise::try_from(adresse.as_str()).is_err());
-            }
-
-            /// Rejet de tout suffixe autre que `.braise`, absence comprise.
-            #[test]
-            fn suffixe_erroné(corps in "[a-z2-7]{55}", suffixe in "[a-z.]{0,8}") {
-                prop_assume!(suffixe != ".braise");
-                let adresse = format!("{corps}{suffixe}");
-                prop_assert!(Braise::try_from(adresse.as_str()).is_err());
-            }
+    /// Rejet de tout suffixe autre que `.braise`, absence comprise.
+    #[property_test]
+    fn suffixe_erroné(
+        #[strategy = "[a-z2-7]{55}"] corps: String,
+        #[strategy = "[a-z.]{0,8}"] suffixe: String,
+    ) {
+        prop_assume!(suffixe != ".braise");
+        let adresse = format!("{corps}{suffixe}");
+        prop_assert!(Braise::try_from(adresse.as_str()).is_err());
     }
 
     /// Rejet de la chaîne vide (ni suffixe, ni corps).
@@ -284,19 +288,16 @@ mod tests {
         assert!(Braise::try_from(Braise::VIDE.to_string().as_str()).is_ok());
     }
 
-    proptest! {
+    /// Rejet de tout entier atteignant ou dépassant `IndexFoyer::NOMBRE`.
+    #[property_test]
+    fn index_foyer_hors_bornes(#[strategy = IndexFoyer::NOMBRE..] n: usize) {
+        prop_assert!(IndexFoyer::try_from(n).is_err());
+    }
 
-        /// Rejet de tout entier atteignant ou dépassant `IndexFoyer::NOMBRE`.
-        #[test]
-        fn index_foyer_hors_bornes(n in IndexFoyer::NOMBRE..) {
-            prop_assert!(IndexFoyer::try_from(n).is_err());
-        }
-
-        /// Rejet de tout entier atteignant ou dépassant `IndexClasseur::NOMBRE`.
-        #[test]
-        fn index_classeur_hors_bornes(n in IndexClasseur::NOMBRE..) {
-            prop_assert!(IndexClasseur::try_from(n).is_err());
-        }
+    /// Rejet de tout entier atteignant ou dépassant `IndexClasseur::NOMBRE`.
+    #[property_test]
+    fn index_classeur_hors_bornes(#[strategy = IndexClasseur::NOMBRE..] n: usize) {
+        prop_assert!(IndexClasseur::try_from(n).is_err());
     }
 
     /// `tous()` rend les positions valides dans l'ordre croissant, à partir de zéro.

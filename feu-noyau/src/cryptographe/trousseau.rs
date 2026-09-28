@@ -1317,195 +1317,184 @@ mod tests {
     use data_encoding::HEXLOWER;
     use proptest::{
         prelude::{ProptestConfig, any},
-        prop_assert, prop_assert_eq, prop_assert_ne, prop_assume, proptest,
+        prop_assert, prop_assert_eq, prop_assert_ne, prop_assume, property_test,
     };
 
     use super::*;
     use crate::{Cryptographe, ResultFeuNoyau};
 
-    proptest! {
-        /// Vérifie que deux labels distincts ne dérivent jamais le même matériau.
-        ///
-        /// C'est la séparation de domaine HKDF elle-même : le label est passé en
-        /// `info`, et lui seul sépare les clés d'une même seed. Le test tombe si
-        /// `expand` cesse de le consommer, une collision réelle sur 32 octets étant
-        /// hors de portée.
-        #[test]
-        fn derivation_labels_distincts(
-            octets in any::<[u8; 64]>(),
-            label1 in "[a-z0-9/]{1,32}",
-            label2 in "[a-z0-9/]{1,32}",
-        ) {
-            prop_assume!(label1 != label2);
+    /// Vérifie que deux labels distincts ne dérivent jamais le même matériau.
+    ///
+    /// C'est la séparation de domaine HKDF elle-même : le label est passé en
+    /// `info`, et lui seul sépare les clés d'une même seed. Le test tombe si
+    /// `expand` cesse de le consommer, une collision réelle sur 32 octets étant
+    /// hors de portée.
+    #[property_test]
+    fn derivation_labels_distincts(
+        octets: [u8; 64],
+        #[strategy = "[a-z0-9/]{1,32}"] label1: String,
+        #[strategy = "[a-z0-9/]{1,32}"] label2: String,
+    ) {
+        prop_assume!(label1 != label2);
 
-            let seed = SecretBox::new(Box::new(octets));
+        let seed = SecretBox::new(Box::new(octets));
 
-            // Les deux tailles employées par le protocole : 32 octets pour les clés
-            // symétriques, les seeds ML-DSA et les braises, 64 pour la seed ML-KEM.
-            let cle32_1 = Trousseau::derive_depuis_seed::<32>(&seed, &label1)?;
-            let cle32_2 = Trousseau::derive_depuis_seed::<32>(&seed, &label2)?;
+        // Les deux tailles employées par le protocole : 32 octets pour les clés
+        // symétriques, les seeds ML-DSA et les braises, 64 pour la seed ML-KEM.
+        let cle32_1 = Trousseau::derive_depuis_seed::<32>(&seed, &label1)?;
+        let cle32_2 = Trousseau::derive_depuis_seed::<32>(&seed, &label2)?;
 
-            prop_assert_ne!(cle32_1.expose_secret(), cle32_2.expose_secret());
+        prop_assert_ne!(cle32_1.expose_secret(), cle32_2.expose_secret());
 
-            let cle64_1 = Trousseau::derive_depuis_seed::<64>(&seed, &label1)?;
-            let cle64_2 = Trousseau::derive_depuis_seed::<64>(&seed, &label2)?;
+        let cle64_1 = Trousseau::derive_depuis_seed::<64>(&seed, &label1)?;
+        let cle64_2 = Trousseau::derive_depuis_seed::<64>(&seed, &label2)?;
 
-            prop_assert_ne!(cle64_1.expose_secret(), cle64_2.expose_secret());
+        prop_assert_ne!(cle64_1.expose_secret(), cle64_2.expose_secret());
+    }
+
+    /// Vérifie qu'une même seed redonne toujours exactement le même matériau.
+    ///
+    /// C'est l'invariant sur lequel repose `demarrage_secours` : reconstruire un
+    /// nœud à partir de la seed doit rendre les mêmes clés et les mêmes braises.
+    /// S'il cède, les données déjà déposées deviennent illisibles et les foyers
+    /// changent d'adresse.
+    #[property_test(config = ProptestConfig::with_cases(16))]
+    fn derivation_deterministe_meme_seed(octets: [u8; 64]) {
+        let seed = SecretBox::new(Box::new(octets));
+
+        // Les trois appels reproduisent la séquence de
+        // `Cryptographe::genere_trousseau_a_partir_seed` — sel et matériau des
+        // foyers sortent tous de la seed, par des labels HKDF distincts.
+
+        let mut trousseau1 = Trousseau::new();
+        trousseau1.genere_sel(&seed)?;
+        trousseau1.ajouter_paire_noeud(&seed)?;
+        for index_foyer in IndexFoyer::tous() {
+            trousseau1.ajouter_trousseau_foyer(&seed, index_foyer)?;
+        }
+
+        let mut trousseau2 = Trousseau::new();
+        trousseau2.genere_sel(&seed)?;
+        trousseau2.ajouter_paire_noeud(&seed)?;
+        for index_foyer in IndexFoyer::tous() {
+            trousseau2.ajouter_trousseau_foyer(&seed, index_foyer)?;
+        }
+
+        prop_assert_eq!(
+            trousseau1.sel.as_ref().unwrap(),
+            trousseau2.sel.as_ref().unwrap()
+        );
+
+        prop_assert_eq!(
+            trousseau1.donne_cle_privee_signature_noeud()?,
+            trousseau2.donne_cle_privee_signature_noeud()?
+        );
+
+        for index_foyer in IndexFoyer::tous() {
+            let trousseau_foyer1 = trousseau1.trousseaux_foyers[index_foyer.valeur()]
+                .as_ref()
+                .unwrap();
+            let trousseau_foyer2 = trousseau2.trousseaux_foyers[index_foyer.valeur()]
+                .as_ref()
+                .unwrap();
+
+            prop_assert_eq!(trousseau_foyer1.braise, trousseau_foyer2.braise);
+            prop_assert_eq!(
+                trousseau_foyer1.donne_cle_privee_signature(),
+                trousseau_foyer2.donne_cle_privee_signature()
+            );
+            prop_assert_eq!(
+                trousseau_foyer1.donne_cle_privee_chiffrement(),
+                trousseau_foyer2.donne_cle_privee_chiffrement()
+            );
+            prop_assert_eq!(
+                trousseau_foyer1.donne_cle_chiffrement().expose_secret(),
+                trousseau_foyer2.donne_cle_chiffrement().expose_secret(),
+            );
+
+            for index_classeur in IndexClasseur::tous() {
+                let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[index_classeur.valeur()]
+                    .as_ref()
+                    .unwrap();
+                let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[index_classeur.valeur()]
+                    .as_ref()
+                    .unwrap();
+
+                prop_assert_eq!(cle1.expose_secret(), cle2.expose_secret());
+            }
         }
     }
 
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(16))]
+    /// Vérifie que deux seeds distinctes ne partagent aucun élément dérivé.
+    ///
+    /// Sel, clés du nœud, clés et braises de chaque foyer : rien ne doit
+    /// coïncider entre deux nœuds nés de seeds différentes.
+    #[property_test(config = ProptestConfig::with_cases(16))]
+    fn derivation_deterministe_seeds_differentes(octets1: [u8; 64], octets2: [u8; 64]) {
+        let seed1 = SecretBox::new(Box::new(octets1));
+        let seed2 = SecretBox::new(Box::new(octets2));
 
-        /// Vérifie qu'une même seed redonne toujours exactement le même matériau.
-        ///
-        /// C'est l'invariant sur lequel repose `demarrage_secours` : reconstruire un
-        /// nœud à partir de la seed doit rendre les mêmes clés et les mêmes braises.
-        /// S'il cède, les données déjà déposées deviennent illisibles et les foyers
-        /// changent d'adresse.
-        #[test]
-        fn derivation_deterministe_meme_seed(octets in any::<[u8; 64]>()) {
-            let seed = SecretBox::new(Box::new(octets));
+        // Contrepartie du test précédent : une dérivation qui ignorerait la seed
+        // serait parfaitement « déterministe », mais rendrait le même matériau
+        // pour tous les nœuds. Seules deux seeds distinctes attrapent ce cas.
+        prop_assume!(octets1 != octets2);
 
-            // Les trois appels reproduisent la séquence de
-            // `Cryptographe::genere_trousseau_a_partir_seed` — sel et matériau des
-            // foyers sortent tous de la seed, par des labels HKDF distincts.
-
-            let mut trousseau1 = Trousseau::new();
-            trousseau1.genere_sel(&seed)?;
-            trousseau1.ajouter_paire_noeud(&seed)?;
-            for index_foyer in IndexFoyer::tous() {
-                trousseau1.ajouter_trousseau_foyer(&seed, index_foyer)?;
-            }
-
-            let mut trousseau2 = Trousseau::new();
-            trousseau2.genere_sel(&seed)?;
-            trousseau2.ajouter_paire_noeud(&seed)?;
-            for index_foyer in IndexFoyer::tous() {
-                trousseau2.ajouter_trousseau_foyer(&seed, index_foyer)?;
-            }
-
-            prop_assert_eq!(
-                trousseau1.sel.as_ref().unwrap(),
-                trousseau2.sel.as_ref().unwrap()
-            );
-
-            prop_assert_eq!(
-                trousseau1.donne_cle_privee_signature_noeud()?,
-                trousseau2.donne_cle_privee_signature_noeud()?
-            );
-
-            for index_foyer in IndexFoyer::tous() {
-                let trousseau_foyer1 = trousseau1.trousseaux_foyers[index_foyer.valeur()]
-                    .as_ref()
-                    .unwrap();
-                let trousseau_foyer2 = trousseau2.trousseaux_foyers[index_foyer.valeur()]
-                    .as_ref()
-                    .unwrap();
-
-                prop_assert_eq!(trousseau_foyer1.braise, trousseau_foyer2.braise);
-                prop_assert_eq!(
-                    trousseau_foyer1.donne_cle_privee_signature(),
-                    trousseau_foyer2.donne_cle_privee_signature()
-                );
-                prop_assert_eq!(
-                    trousseau_foyer1.donne_cle_privee_chiffrement(),
-                    trousseau_foyer2.donne_cle_privee_chiffrement()
-                );
-                prop_assert_eq!(
-                    trousseau_foyer1.donne_cle_chiffrement().expose_secret(),
-                    trousseau_foyer2.donne_cle_chiffrement().expose_secret(),
-                );
-
-                for index_classeur in IndexClasseur::tous() {
-                    let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[index_classeur.valeur()]
-                        .as_ref()
-                        .unwrap();
-                    let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[index_classeur.valeur()]
-                        .as_ref()
-                        .unwrap();
-
-                    prop_assert_eq!(cle1.expose_secret(), cle2.expose_secret());
-                }
-            }
-
+        let mut trousseau1 = Trousseau::new();
+        trousseau1.genere_sel(&seed1)?;
+        trousseau1.ajouter_paire_noeud(&seed1)?;
+        for index_foyer in IndexFoyer::tous() {
+            trousseau1.ajouter_trousseau_foyer(&seed1, index_foyer)?;
         }
 
-        /// Vérifie que deux seeds distinctes ne partagent aucun élément dérivé.
-        ///
-        /// Sel, clés du nœud, clés et braises de chaque foyer : rien ne doit
-        /// coïncider entre deux nœuds nés de seeds différentes.
-        #[test]
-        fn derivation_deterministe_seeds_differentes(
-            octets1 in any::<[u8; 64]>(),
-            octets2 in any::<[u8; 64]>(),
-            )  {
-            let seed1 = SecretBox::new(Box::new(octets1));
-            let seed2 = SecretBox::new(Box::new(octets2));
+        let mut trousseau2 = Trousseau::new();
+        trousseau2.genere_sel(&seed2)?;
+        trousseau2.ajouter_paire_noeud(&seed2)?;
+        for index_foyer in IndexFoyer::tous() {
+            trousseau2.ajouter_trousseau_foyer(&seed2, index_foyer)?;
+        }
 
-            // Contrepartie du test précédent : une dérivation qui ignorerait la seed
-            // serait parfaitement « déterministe », mais rendrait le même matériau
-            // pour tous les nœuds. Seules deux seeds distinctes attrapent ce cas.
-            prop_assume!(octets1 != octets2);
+        prop_assert_ne!(
+            trousseau1.sel.as_ref().unwrap(),
+            trousseau2.sel.as_ref().unwrap()
+        );
 
-            let mut trousseau1 = Trousseau::new();
-            trousseau1.genere_sel(&seed1)?;
-            trousseau1.ajouter_paire_noeud(&seed1)?;
-            for index_foyer in IndexFoyer::tous() {
-                trousseau1.ajouter_trousseau_foyer(&seed1, index_foyer)?;
-            }
+        prop_assert_ne!(
+            trousseau1.donne_cle_privee_signature_noeud()?,
+            trousseau2.donne_cle_privee_signature_noeud()?
+        );
 
-            let mut trousseau2 = Trousseau::new();
-            trousseau2.genere_sel(&seed2)?;
-            trousseau2.ajouter_paire_noeud(&seed2)?;
-            for index_foyer in IndexFoyer::tous() {
-                trousseau2.ajouter_trousseau_foyer(&seed2, index_foyer)?;
-            }
+        for index_foyer in IndexFoyer::tous() {
+            let trousseau_foyer1 = trousseau1.trousseaux_foyers[index_foyer.valeur()]
+                .as_ref()
+                .unwrap();
+            let trousseau_foyer2 = trousseau2.trousseaux_foyers[index_foyer.valeur()]
+                .as_ref()
+                .unwrap();
 
+            prop_assert_ne!(trousseau_foyer1.braise, trousseau_foyer2.braise);
             prop_assert_ne!(
-                trousseau1.sel.as_ref().unwrap(),
-                trousseau2.sel.as_ref().unwrap()
+                trousseau_foyer1.donne_cle_privee_signature(),
+                trousseau_foyer2.donne_cle_privee_signature()
+            );
+            prop_assert_ne!(
+                trousseau_foyer1.donne_cle_privee_chiffrement(),
+                trousseau_foyer2.donne_cle_privee_chiffrement()
+            );
+            prop_assert_ne!(
+                trousseau_foyer1.donne_cle_chiffrement().expose_secret(),
+                trousseau_foyer2.donne_cle_chiffrement().expose_secret(),
             );
 
-            prop_assert_ne!(
-                trousseau1.donne_cle_privee_signature_noeud()?,
-                trousseau2.donne_cle_privee_signature_noeud()?
-            );
-
-            for index_foyer in IndexFoyer::tous() {
-                let trousseau_foyer1 = trousseau1.trousseaux_foyers[index_foyer.valeur()]
+            for index_classeur in IndexClasseur::tous() {
+                let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[index_classeur.valeur()]
                     .as_ref()
                     .unwrap();
-                let trousseau_foyer2 = trousseau2.trousseaux_foyers[index_foyer.valeur()]
+                let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[index_classeur.valeur()]
                     .as_ref()
                     .unwrap();
 
-                prop_assert_ne!(trousseau_foyer1.braise, trousseau_foyer2.braise);
-                prop_assert_ne!(
-                    trousseau_foyer1.donne_cle_privee_signature(),
-                    trousseau_foyer2.donne_cle_privee_signature()
-                );
-                prop_assert_ne!(
-                    trousseau_foyer1.donne_cle_privee_chiffrement(),
-                    trousseau_foyer2.donne_cle_privee_chiffrement()
-                );
-                prop_assert_ne!(
-                    trousseau_foyer1.donne_cle_chiffrement().expose_secret(),
-                    trousseau_foyer2.donne_cle_chiffrement().expose_secret(),
-                );
-
-                for index_classeur in IndexClasseur::tous() {
-                    let cle1 = trousseau_foyer1.cles_chiffrement_classeurs[index_classeur.valeur()]
-                        .as_ref()
-                        .unwrap();
-                    let cle2 = trousseau_foyer2.cles_chiffrement_classeurs[index_classeur.valeur()]
-                        .as_ref()
-                        .unwrap();
-
-                    prop_assert_ne!(cle1.expose_secret(), cle2.expose_secret());
-                }
+                prop_assert_ne!(cle1.expose_secret(), cle2.expose_secret());
             }
-
         }
     }
 
@@ -1806,105 +1795,92 @@ mod tests {
         Ok(())
     }
 
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(8))]
+    /// Vérifie le cycle chiffrement/déchiffrement AES-256-GCM.
+    ///
+    /// `chiffrement_generique_avec_cle` est le point de passage unique de tout
+    /// le chiffrement symétrique du trousseau : `chiffre_cle`, `chiffre_seed` et
+    /// `chiffre_blob` y délèguent, en ne changeant que la clé fournie et le type
+    /// de sortie. Le tester une fois les couvre tous les trois.
+    ///
+    /// Clé et contenu sont tirés sur tout leur domaine, contenu vide compris —
+    /// AES-GCM n'y produit que l'auth tag, sans un octet de texte chiffré.
+    #[property_test(config = ProptestConfig::with_cases(8))]
+    fn cycle_chiffrement_dechiffrement_generique(cle: [u8; 32], contenu: Vec<u8>) {
+        let chiffre1 = Trousseau::chiffrement_generique_avec_cle(&cle, &contenu)?;
+        let chiffre2 = Trousseau::chiffrement_generique_avec_cle(&cle, &contenu)?;
 
-        /// Vérifie le cycle chiffrement/déchiffrement AES-256-GCM.
-        ///
-        /// `chiffrement_generique_avec_cle` est le point de passage unique de tout
-        /// le chiffrement symétrique du trousseau : `chiffre_cle`, `chiffre_seed` et
-        /// `chiffre_blob` y délèguent, en ne changeant que la clé fournie et le type
-        /// de sortie. Le tester une fois les couvre tous les trois.
-        ///
-        /// Clé et contenu sont tirés sur tout leur domaine, contenu vide compris —
-        /// AES-GCM n'y produit que l'auth tag, sans un octet de texte chiffré.
-        #[test]
-        fn cycle_chiffrement_dechiffrement_generique(
-                cle in any::<[u8; 32]>(),
-                contenu in any::<Vec<u8>>(),
+        let dechiffre1 = Trousseau::dechiffrement_generique_avec_cle(&cle, &chiffre1)?;
+        let dechiffre2 = Trousseau::dechiffrement_generique_avec_cle(&cle, &chiffre2)?;
 
-            ) {
+        // Le nonce est tiré d'`OsRng` à chaque appel : deux chiffrements du même
+        // contenu ne peuvent pas coïncider. Un nonce figé briserait AES-GCM.
+        prop_assert_ne!(chiffre1, chiffre2);
+        prop_assert_eq!(&dechiffre1, &dechiffre2);
+        prop_assert_eq!(dechiffre1, contenu);
+    }
 
-            let chiffre1 = Trousseau::chiffrement_generique_avec_cle(&cle, &contenu)?;
-            let chiffre2 = Trousseau::chiffrement_generique_avec_cle(&cle, &contenu)?;
+    /// Vérifie le cycle chiffrement/déchiffrement du flux AES-256-GCM.
+    ///
+    /// C'est la couche qui chiffre l'archive `.feu` d'un foyer, la seule à
+    /// travailler par tranches : un foyer n'a pas de taille bornée. Le domaine
+    /// dépasse [`CHUNK_SIZE`] à dessein — en deçà, tout tient dans le premier
+    /// tampon et le look-ahead qui reconnaît le dernier chunk n'est jamais
+    /// parcouru. Le contenu est une suite d'octets quelconques, ce qui passe ici
+    /// étant une archive `tar`.
+    #[property_test(config = ProptestConfig::with_cases(8))]
+    fn cycle_chiffrement_dechiffrement_flux(
+        cle: [u8; 32],
+        #[strategy = proptest::collection::vec(any::<u8>(), 0..9000)] contenu: Vec<u8>,
+    ) {
+        let mut source = &contenu[..];
+        let mut contenu_chiffre = Vec::new();
+        Trousseau::chiffre_avec_cle(&cle, &mut source, &mut contenu_chiffre)?;
 
-            let dechiffre1 = Trousseau::dechiffrement_generique_avec_cle(&cle, &chiffre1)?;
-            let dechiffre2 = Trousseau::dechiffrement_generique_avec_cle(&cle, &chiffre2)?;
+        let mut source = &contenu_chiffre[..];
+        let mut sortie = Vec::new();
+        Trousseau::dechiffre_avec_cle(&cle, &mut source, &mut sortie)?;
 
-            // Le nonce est tiré d'`OsRng` à chaque appel : deux chiffrements du même
-            // contenu ne peuvent pas coïncider. Un nonce figé briserait AES-GCM.
-            prop_assert_ne!(chiffre1, chiffre2);
-            prop_assert_eq!(&dechiffre1, &dechiffre2);
-            prop_assert_eq!(dechiffre1, contenu);
+        prop_assert_eq!(sortie, contenu);
+    }
 
-        }
+    /// Vérifie qu'un mot de passe incorrect fait échouer le déchiffrement.
+    ///
+    /// C'est le mécanisme réel de vérification du mot de passe Feu : aucun mot
+    /// de passe n'est stocké, ni en clair ni en hash. La clé éphémère est
+    /// dérivée par Argon2id du mot de passe et du sel — un mot de passe erroné
+    /// donne une clé différente, et AES-GCM rejette l'auth tag.
+    ///
+    /// Sel, mots de passe et clé sont tirés sur leur domaine ; `prop_assume`
+    /// écarte le seul cas sans rejet légitime, deux mots de passe identiques.
+    /// Chaque cas coûtant deux passes Argon2id de 19 Mio, leur nombre reste bas.
+    #[property_test(config = ProptestConfig::with_cases(8))]
+    fn mauvais_mot_de_passe(
+        sel: [u8; 16],
+        #[strategy = "[a-z0-9/]{0,30}"] mdp: String,
+        #[strategy = "[a-z0-9/]{0,30}"] mauvais_mdp: String,
+        cle: [u8; 32],
+    ) {
+        prop_assume!(mdp != mauvais_mdp);
 
-        /// Vérifie le cycle chiffrement/déchiffrement du flux AES-256-GCM.
-        ///
-        /// C'est la couche qui chiffre l'archive `.feu` d'un foyer, la seule à
-        /// travailler par tranches : un foyer n'a pas de taille bornée. Le domaine
-        /// dépasse [`CHUNK_SIZE`] à dessein — en deçà, tout tient dans le premier
-        /// tampon et le look-ahead qui reconnaît le dernier chunk n'est jamais
-        /// parcouru. Le contenu est une suite d'octets quelconques, ce qui passe ici
-        /// étant une archive `tar`.
-        #[test]
-        fn cycle_chiffrement_dechiffrement_flux(
-                cle in any::<[u8; 32]>(),
-                contenu in proptest::collection::vec(any::<u8>(), 0..9000),
-            ) {
+        let mut trousseau = Trousseau::new();
+        trousseau.definit_sel(sel);
+        trousseau.definit_mdp(SecretString::from(mdp));
+        trousseau.derive_cle_ephemere()?;
 
-            let mut source = &contenu[..];
-            let mut contenu_chiffre = Vec::new();
-            Trousseau::chiffre_avec_cle(&cle, &mut source, &mut contenu_chiffre)?;
+        let cle_chiffree = trousseau.chiffre_cle(&cle)?;
 
-            let mut source = &contenu_chiffre[..];
-            let mut sortie = Vec::new();
-            Trousseau::dechiffre_avec_cle(&cle, &mut source, &mut sortie)?;
+        // Témoin : établit que le déchiffrement fonctionne avec le bon mot de
+        // passe. Sans lui, l'échec attendu plus bas pourrait venir d'un
+        // chiffrement raté plutôt que du changement de mot de passe.
+        let cle_dechiffree = trousseau.dechiffre_cle(&cle_chiffree)?;
 
-            prop_assert_eq!(sortie, contenu);
-        }
+        prop_assert_eq!(&cle, cle_dechiffree.expose_secret());
 
-        /// Vérifie qu'un mot de passe incorrect fait échouer le déchiffrement.
-        ///
-        /// C'est le mécanisme réel de vérification du mot de passe Feu : aucun mot
-        /// de passe n'est stocké, ni en clair ni en hash. La clé éphémère est
-        /// dérivée par Argon2id du mot de passe et du sel — un mot de passe erroné
-        /// donne une clé différente, et AES-GCM rejette l'auth tag.
-        ///
-        /// Sel, mots de passe et clé sont tirés sur leur domaine ; `prop_assume`
-        /// écarte le seul cas sans rejet légitime, deux mots de passe identiques.
-        /// Chaque cas coûtant deux passes Argon2id de 19 Mio, leur nombre reste bas.
-        #[test]
-        fn mauvais_mot_de_passe(
-            sel in any::<[u8; 16]>(),
-            mdp in "[a-z0-9/]{0,30}",
-            mauvais_mdp in "[a-z0-9/]{0,30}",
-            cle in any::<[u8; 32]>(),
-        ) {
+        // Le sel reste inchangé : seul le mot de passe varie, donc seule la clé
+        // éphémère change.
+        trousseau.definit_mdp(SecretString::from(mauvais_mdp));
+        trousseau.derive_cle_ephemere()?;
 
-            prop_assume!(mdp != mauvais_mdp);
-
-            let mut trousseau = Trousseau::new();
-            trousseau.definit_sel(sel);
-            trousseau.definit_mdp(SecretString::from(mdp));
-            trousseau.derive_cle_ephemere()?;
-
-            let cle_chiffree = trousseau.chiffre_cle(&cle)?;
-
-            // Témoin : établit que le déchiffrement fonctionne avec le bon mot de
-            // passe. Sans lui, l'échec attendu plus bas pourrait venir d'un
-            // chiffrement raté plutôt que du changement de mot de passe.
-            let cle_dechiffree = trousseau.dechiffre_cle(&cle_chiffree)?;
-
-            prop_assert_eq!(&cle, cle_dechiffree.expose_secret());
-
-            // Le sel reste inchangé : seul le mot de passe varie, donc seule la clé
-            // éphémère change.
-            trousseau.definit_mdp(SecretString::from(mauvais_mdp));
-            trousseau.derive_cle_ephemere()?;
-
-            prop_assert!(trousseau.dechiffre_cle(&cle_chiffree).is_err());
-
-        }
+        prop_assert!(trousseau.dechiffre_cle(&cle_chiffree).is_err());
     }
 }

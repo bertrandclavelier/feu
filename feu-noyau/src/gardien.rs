@@ -509,34 +509,33 @@ impl Gardien {
 /// texte, ordre des adresses `.braise` compris.
 #[cfg(test)]
 mod tests {
-    use proptest::{prop_assert_eq, proptest};
+    use proptest::{prop_assert_eq, property_test};
 
     use super::*;
     use crate::Braise;
 
-    proptest! {
-        /// Une configuration sérialisée puis reparsée redonne les mêmes valeurs,
-        /// adresses `.braise` comprises et dans le même ordre.
-        #[test]
-        fn cycle_configuration(
-            version: u32,
-            prochain_index: u32,
-            corps in proptest::array::uniform::<_, { IndexFoyer::NOMBRE }>("[a-z2-7]{55}"),
-        ) {
-            let adresses_braise =
-                corps.map(|c| Braise::try_from(format!("{c}.braise").as_str()).unwrap());
+    /// Une configuration sérialisée puis reparsée redonne les mêmes valeurs,
+    /// adresses `.braise` comprises et dans le même ordre.
+    #[property_test]
+    fn cycle_configuration(
+        version: u32,
+        prochain_index: u32,
+        #[strategy = proptest::array::uniform::<_, { IndexFoyer::NOMBRE }>("[a-z2-7]{55}")]
+        corps: [String; IndexFoyer::NOMBRE],
+    ) {
+        let adresses_braise =
+            corps.map(|c| Braise::try_from(format!("{c}.braise").as_str()).unwrap());
 
-            let configuration = Configuration {
-                version,
-                prochain_index,
-                adresses_braise,
-            };
+        let configuration = Configuration {
+            version,
+            prochain_index,
+            adresses_braise,
+        };
 
-            let export = configuration.exporte_en_texte();
+        let export = configuration.exporte_en_texte();
 
-            let configuration_relue = Configuration::importe_depuis_texte(&export)?;
+        let configuration_relue = Configuration::importe_depuis_texte(&export)?;
 
-            prop_assert_eq!(configuration, configuration_relue);
-        }
+        prop_assert_eq!(configuration, configuration_relue);
     }
 }
