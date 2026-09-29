@@ -812,25 +812,25 @@ impl Enu {
 mod tests {
     use std::collections::BTreeMap;
 
+    use proptest::{
+        collection::{btree_map, btree_set},
+        prop_assert_eq, property_test,
+    };
+
     use super::*;
-    use crate::ResultFeuApplication;
 
-    /// Round-trip complet : Enu → octets → Enu, tous champs identiques.
-    #[test]
-    fn enu_vers_octets_et_retour() -> ResultFeuApplication<()> {
-        let braise =
-            Braise::try_from("aaaaabbbbbcccccdddddeeeeefffffggggghhhhhiiiiijjjjjkkkkk.braise")
-                .unwrap();
-
-        let hash_carte: [u8; 32] = std::array::from_fn(|i| u8::try_from(i).unwrap());
-        let signature_carte = [0u8; 4627];
-
-        let metas = BTreeMap::from([
-            (String::from("clé1"), String::from("valeur1")),
-            (String::from("clé2"), String::from("valeur2")),
-        ]);
-        let tags = BTreeSet::from([String::from("tag1"), String::from("tag2")]);
-        let hash_blob: [u8; 32] = std::array::from_fn(|i| u8::try_from(i).unwrap());
+    /// Toute [`Enu`] ressort identique de l'aller-retour par ses octets.
+    #[property_test]
+    fn cycle_enu_octets_enu(
+        #[strategy = "[a-z2-7]{55}"] corps: String,
+        hash_carte: [u8; 32],
+        signature_carte: [u8; 4627],
+        #[strategy = btree_set(".{0,20}", 0..=10)] tags: BTreeSet<String>,
+        #[strategy = btree_map(".{0,20}", ".{0,20}", 0..=10)] metas: BTreeMap<String, String>,
+        hash_blob: [u8; 32],
+    ) {
+        let adresse = format!("{corps}.braise");
+        let braise = Braise::try_from(adresse.as_str())?;
 
         let carte = Carte::Donnee {
             metas,
@@ -849,8 +849,6 @@ mod tests {
         let octets = enu.vers_octets()?;
         let enu_retour = Enu::octets_vers_enu(&octets)?;
 
-        assert_eq!(enu, enu_retour);
-
-        Ok(())
+        prop_assert_eq!(enu, enu_retour);
     }
 }

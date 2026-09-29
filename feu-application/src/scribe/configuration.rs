@@ -310,166 +310,55 @@ impl Configuration {
 /// Tests en ligne : l'aller-retour entre le miroir et son texte.
 ///
 /// Le format est du texte ligne à ligne, sans dépendance au reste de Feu —
-/// exporter puis réimporter suffit à l'éprouver, et un `TempDir` couvre le
-/// passage par le disque.
+/// exporter puis réimporter des miroirs tirés au hasard suffit à l'éprouver, et
+/// un `TempDir` couvre le passage par le disque.
 #[cfg(test)]
 mod tests {
     use std::{fs::metadata, os::unix::fs::PermissionsExt};
 
+    use proptest::{collection::vec, prelude::any, prop_assert_eq, property_test};
     use tempfile::TempDir;
 
     use super::*;
 
-    /// Une configuration vide, sans dépôt ni comptoir de travail, se relit
-    /// identique après export.
-    #[test]
-    fn cycle_config_texte_config_1() -> ResultFeuApplication<()> {
+    /// Tout miroir se relit identique après export. Dépôts et comptoir de
+    /// travail y sont tirés ensemble : le miroir les porte, leur refus appartient
+    /// à [`Configuration::vers_comptoirs`].
+    #[property_test]
+    fn cycle_config_texte_config(
+        #[strategy = vec(
+            (
+                any::<usize>(),
+                vec(any::<u8>(), 0..64),
+                0..IndexFoyer::NOMBRE,
+                0..IndexClasseur::NOMBRE,
+            ),
+            0..8,
+        )]
+        depots: Vec<(usize, Vec<u8>, usize, usize)>,
+        travail: Option<(Vec<u8>, [u8; 32])>,
+    ) {
+        let mut comptoirs_depot = Vec::new();
+        for (index, chemin, foyer, classeur) in depots {
+            comptoirs_depot.push((
+                index,
+                PathBuf::from(OsString::from_vec(chemin)),
+                IndexFoyer::try_from(foyer)?,
+                IndexClasseur::try_from(classeur)?,
+            ));
+        }
+
         let configuration = Configuration {
-            version: 1,
-            comptoirs_depot: Vec::new(),
-            comptoir_travail: None,
+            version: VERSION_CONFIGURATION,
+            comptoirs_depot,
+            comptoir_travail: travail
+                .map(|(chemin, hash)| (PathBuf::from(OsString::from_vec(chemin)), hash)),
         };
 
         let texte = configuration.exporte_en_texte();
-
         let configuration_importee = Configuration::importe_depuis_texte(&texte)?;
 
-        assert_eq!(configuration, configuration_importee);
-
-        Ok(())
-    }
-
-    /// Trois comptoirs de dépôt survivent à l'aller-retour, identifiants et
-    /// chemins compris.
-    #[test]
-    fn cycle_config_texte_config_2() -> ResultFeuApplication<()> {
-        let configuration = Configuration {
-            version: 1,
-            comptoirs_depot: Vec::from([
-                (
-                    1,
-                    PathBuf::from("test1"),
-                    IndexFoyer::ZERO,
-                    IndexClasseur::ZERO,
-                ),
-                (
-                    2,
-                    PathBuf::from("test2"),
-                    IndexFoyer::ZERO,
-                    IndexClasseur::ZERO,
-                ),
-                (
-                    3,
-                    PathBuf::from("test3"),
-                    IndexFoyer::ZERO,
-                    IndexClasseur::ZERO,
-                ),
-            ]),
-            comptoir_travail: None,
-        };
-
-        let texte = configuration.exporte_en_texte();
-
-        let configuration_importee = Configuration::importe_depuis_texte(&texte)?;
-
-        assert_eq!(configuration, configuration_importee);
-
-        Ok(())
-    }
-
-    /// Le comptoir de travail seul se relit identique, `hash_carte` compris —
-    /// la ligne hexadécimale redonne bien les 32 octets.
-    #[test]
-    fn cycle_config_texte_config_3() -> ResultFeuApplication<()> {
-        let configuration = Configuration {
-            version: 1,
-            comptoirs_depot: Vec::new(),
-            comptoir_travail: Some((PathBuf::from("test"), [1u8; 32])),
-        };
-
-        let texte = configuration.exporte_en_texte();
-
-        let configuration_importee = Configuration::importe_depuis_texte(&texte)?;
-
-        assert_eq!(configuration, configuration_importee);
-
-        Ok(())
-    }
-
-    /// Dépôts et comptoir de travail réunis se relisent identiques : la fin des
-    /// dépôts ne déborde pas sur les lignes du comptoir de travail. Le miroir
-    /// les porte ensemble ; leur refus appartient à
-    /// [`Configuration::vers_comptoirs`].
-    #[test]
-    fn cycle_config_texte_config_4() -> ResultFeuApplication<()> {
-        let configuration = Configuration {
-            version: 1,
-            comptoirs_depot: Vec::from([
-                (
-                    1,
-                    PathBuf::from("test1"),
-                    IndexFoyer::ZERO,
-                    IndexClasseur::ZERO,
-                ),
-                (
-                    2,
-                    PathBuf::from("test2"),
-                    IndexFoyer::ZERO,
-                    IndexClasseur::ZERO,
-                ),
-                (
-                    3,
-                    PathBuf::from("test3"),
-                    IndexFoyer::ZERO,
-                    IndexClasseur::ZERO,
-                ),
-            ]),
-            comptoir_travail: Some((PathBuf::from("test"), [1u8; 32])),
-        };
-
-        let texte = configuration.exporte_en_texte();
-
-        let configuration_importee = Configuration::importe_depuis_texte(&texte)?;
-
-        assert_eq!(configuration, configuration_importee);
-
-        Ok(())
-    }
-
-    /// Un chemin non-UTF8, légal sous Unix, se relit octet pour octet : c'est ce
-    /// que l'encodage hexadécimal apporte sur `to_string_lossy`, qui l'aurait
-    /// remplacé par des U+FFFD.
-    #[test]
-    fn cycle_config_texte_config_5() -> ResultFeuApplication<()> {
-        let configuration = Configuration {
-            version: 1,
-            comptoirs_depot: Vec::from([
-                (
-                    1,
-                    PathBuf::from(OsString::from_vec(vec![0xff, 0xfe])),
-                    IndexFoyer::ZERO,
-                    IndexClasseur::ZERO,
-                ),
-                (
-                    2,
-                    PathBuf::from(OsString::from_vec(vec![0xff, 0xfe])),
-                    IndexFoyer::ZERO,
-                    IndexClasseur::ZERO,
-                ),
-            ]),
-            comptoir_travail: Some((
-                PathBuf::from(OsString::from_vec(vec![0xff, 0xfe])),
-                [1u8; 32],
-            )),
-        };
-
-        let texte = configuration.exporte_en_texte();
-
-        let configuration_importee = Configuration::importe_depuis_texte(&texte)?;
-
-        assert_eq!(configuration, configuration_importee);
-
-        Ok(())
+        prop_assert_eq!(configuration, configuration_importee);
     }
 
     /// Le passage par le disque conserve la configuration et pose `scribe.feu`
