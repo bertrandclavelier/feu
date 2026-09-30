@@ -39,6 +39,7 @@ use super::*;
 use crate::{RecepteurNoyau, tests::InterfaceTest};
 
 mod tests_comptoirs;
+mod tests_modifications_arborescence;
 
 /// Monte le décor commun à tous les tests et le rend à l'appelant.
 ///
@@ -476,8 +477,8 @@ fn cycle_remplacements() {
 /// est vide ; la seconde d'une racine peuplée, et prouve l'*union*.
 ///
 /// Chacune vérifie le chaînage — sans quoi une genèse fraîche passerait pour une
-/// greffe réussie —, le cardinal **et** la présence de chaque enfant, et le
-/// changement de `hash_carte` du sommet.
+/// greffe réussie —, l'ensemble exact des enfants, et le changement de
+/// `hash_carte` du sommet.
 #[test]
 fn greffe_enfants_racine() -> ResultFeuApplication<()> {
     let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
@@ -504,27 +505,9 @@ fn greffe_enfants_racine() -> ResultFeuApplication<()> {
         Some(&HEXLOWER.encode(&enu_racine.hash_carte()))
     );
 
-    assert_eq!(deuxieme_enu_racine.carte().hashs_enu().unwrap().len(), 3);
-    assert!(
-        deuxieme_enu_racine
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu1.hash_carte())
-    );
-    assert!(
-        deuxieme_enu_racine
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu2.hash_carte())
-    );
-    assert!(
-        deuxieme_enu_racine
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu3.hash_carte())
+    assert_eq!(
+        deuxieme_enu_racine.carte().hashs_enu().unwrap(),
+        &BTreeSet::from([enu1.hash_carte(), enu2.hash_carte(), enu3.hash_carte()])
     );
 
     // La deuxieme racine est différente de la première
@@ -542,34 +525,14 @@ fn greffe_enfants_racine() -> ResultFeuApplication<()> {
         Some(&HEXLOWER.encode(&deuxieme_enu_racine.hash_carte()))
     );
 
-    assert_eq!(troisieme_enu_racine.carte().hashs_enu().unwrap().len(), 4);
-    assert!(
-        troisieme_enu_racine
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu1.hash_carte())
-    );
-    assert!(
-        troisieme_enu_racine
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu2.hash_carte())
-    );
-    assert!(
-        troisieme_enu_racine
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu3.hash_carte())
-    );
-    assert!(
-        troisieme_enu_racine
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu4.hash_carte())
+    assert_eq!(
+        troisieme_enu_racine.carte().hashs_enu().unwrap(),
+        &BTreeSet::from([
+            enu1.hash_carte(),
+            enu2.hash_carte(),
+            enu3.hash_carte(),
+            enu4.hash_carte()
+        ])
     );
 
     // La troisieme racine est différente de la deuxieme
@@ -650,42 +613,15 @@ fn greffe_enfants() -> ResultFeuApplication<()> {
     assert_eq!(nouvelle_enur.braise(), enur.braise());
 
     // les trois enfants d'origine survivent aux deux greffés
-    assert_eq!(nouvelle_enur.carte().hashs_enu().unwrap().len(), 5);
-
-    assert!(
-        nouvelle_enur
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu1.hash_carte())
-    );
-    assert!(
-        nouvelle_enur
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu2.hash_carte())
-    );
-    assert!(
-        nouvelle_enur
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu3.hash_carte())
-    );
-    assert!(
-        nouvelle_enur
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu4.hash_carte())
-    );
-    assert!(
-        nouvelle_enur
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu5.hash_carte())
+    assert_eq!(
+        nouvelle_enur.carte().hashs_enu().unwrap(),
+        &BTreeSet::from([
+            enu1.hash_carte(),
+            enu2.hash_carte(),
+            enu3.hash_carte(),
+            enu4.hash_carte(),
+            enu5.hash_carte()
+        ])
     );
 
     fermer_foyer(noyau, session);
@@ -727,13 +663,9 @@ fn greffe_enfants_doublon() -> ResultFeuApplication<()> {
     let troisieme_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
 
     assert_eq!(deuxieme_enu_racine, troisieme_enu_racine);
-    assert_eq!(troisieme_enu_racine.carte().hashs_enu().unwrap().len(), 1);
-    assert!(
-        troisieme_enu_racine
-            .carte()
-            .hashs_enu()
-            .unwrap()
-            .contains(&enu1.hash_carte())
+    assert_eq!(
+        troisieme_enu_racine.carte().hashs_enu().unwrap(),
+        &BTreeSet::from([enu1.hash_carte()])
     );
 
     fermer_foyer(noyau, session);

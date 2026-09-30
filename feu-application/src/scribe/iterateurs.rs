@@ -214,3 +214,35 @@ impl<'a> RacinesAnterieures<'a> {
         Ok(Fiche::new(&enu))
     }
 }
+
+/// Tests de [`Descendants`] seul, sur un dossier `enu/` vide : aucune ENU réelle
+/// n'est requise pour éprouver la pile.
+///
+/// Les parcours réussis, qui demandent un nœud monté, sont dans
+/// `tests/application.rs`.
+#[cfg(test)]
+mod tests {
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    /// Un échec de chargement laisse la pile intacte : chaque hash restant est
+    /// tenté, puis le parcours s'achève.
+    #[test]
+    fn descendants_erreurs_sans_arret() -> ResultFeuApplication<()> {
+        let tmp = TempDir::new()?;
+
+        let mut descendants = Descendants::new(tmp.path(), &[0u8; 32]);
+
+        descendants.a_visiter.push((1, [1u8; 32]));
+        descendants.a_visiter.push((2, [2u8; 32]));
+
+        let resultats = descendants.collect::<Vec<_>>();
+
+        assert_eq!(resultats.len(), 3);
+        assert!(resultats.iter().all(Result::is_err));
+
+        Ok(())
+    }
+}

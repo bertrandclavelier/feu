@@ -502,7 +502,8 @@ impl Scribe {
     ///
     /// Deux greffes, donc deux racines. L'ajout précède le retrait si le parent
     /// est sous la destination, le suit sinon : la seconde greffe vise ainsi un
-    /// répertoire dont le hash n'a pas changé.
+    /// répertoire dont le hash n'a pas changé. Rien n'est écrit tant que parent
+    /// et destination ne sont pas trouvés dans le dernier arbre.
     ///
     /// # Errors
     ///
@@ -572,6 +573,30 @@ impl Scribe {
             return Err(ErreurFeuApplication::ScribeParentIncorrect);
         }
 
+        // Parent et destination doivent être dans le dernier arbre avant la
+        // première greffe : sinon la seconde échouerait, la première écrite, et la
+        // cible sortirait du dernier arbre.
+        let derniere_racine = Enu::charger_derniere_racine(&self.chemin_derniere_racine, session)?;
+        let mut parent_present = false;
+        let mut destination_presente = false;
+        for item in self.donne_descendants(&derniere_racine.hash_carte()) {
+            let (_, fiche) = item?;
+            parent_present |= fiche.hash_carte() == fiche_parent.hash_carte();
+            destination_presente |= fiche.hash_carte() == fiche_destination.hash_carte();
+        }
+        for (fiche, presente) in [
+            (fiche_parent, parent_present),
+            (fiche_destination, destination_presente),
+        ] {
+            if !presente {
+                return Err(if fiche.carte().metas().contains_key("_racine") {
+                    ErreurFeuApplication::ScribeRacinePerimee
+                } else {
+                    ErreurFeuApplication::ScribeRemplacementSansEffet
+                });
+            }
+        }
+
         if ajout_d_abord {
             self.ecrit_carte(noyau, session, fiche_destination, carte_destination)?;
             self.ecrit_carte(noyau, session, fiche_parent, carte_parent)
@@ -585,8 +610,8 @@ impl Scribe {
     /// racine.
     ///
     /// Une racine du nœud, signée par le nœud, passe directement à
-    /// [`Enu::new_racine`] ; toute autre ENU est re-signée sous sa braise puis
-    /// greffée par [`Enu::remplacer`].
+    /// [`Enu::new_racine`] ; toute autre ENU est re-signée sous sa braise,
+    /// sauvegardée, puis greffée par [`Enu::remplacer`].
     ///
     /// # Errors
     ///
@@ -617,6 +642,7 @@ impl Scribe {
             )
         } else {
             let nouvelle_enu = Enu::new(carte, noyau, session, fiche.braise())?;
+            nouvelle_enu.sauvegarder(&self.chemin_enu)?;
 
             Enu::remplacer(
                 &self.chemin_enu,
