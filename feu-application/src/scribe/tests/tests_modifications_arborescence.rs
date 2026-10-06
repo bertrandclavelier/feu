@@ -437,3 +437,363 @@ fn suppression_enu_dans_racine_perimee() -> ResultFeuApplication<()> {
 
     Ok(())
 }
+
+/// Renommer un fichier d'un dossier le montre sous son nouveau nom dans l'arbre
+/// relu en entier, toujours sous le dossier re-signé.
+#[test]
+fn renommage_enu_dans_dossier() -> ResultFeuApplication<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+    let enur1 = creer_enu_repertoire(&chemin_enu, &noyau, &session, "dossier1", &[&enu1]);
+    let fiche_enud1 = Fiche::new(&enu1);
+    let fiche_enur1 = Fiche::new(&enur1);
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    scribe.greffe_enfants(&noyau, &session, &enu_racine, &[enur1.hash_carte()])?;
+
+    scribe.renomme_enu(&noyau, &session, &fiche_enur1, &fiche_enud1, "nouveau_nom")?;
+
+    let nouvelle_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    let arborescence = scribe
+        .donne_descendants(&nouvelle_enu_racine.hash_carte())
+        .collect::<ResultFeuApplication<Vec<_>>>()?;
+
+    assert_eq!(arborescence.len(), 3);
+
+    let fiche_enud1 = &arborescence
+        .iter()
+        .find(|(profondeur, _)| *profondeur == 2)
+        .unwrap()
+        .1;
+
+    assert_eq!(fiche_enud1.carte().nom()?, "nouveau_nom");
+
+    let fiche_enur1 = &arborescence
+        .iter()
+        .find(|(profondeur, _)| *profondeur == 1)
+        .unwrap()
+        .1;
+
+    assert!(
+        fiche_enur1
+            .carte()
+            .hashs_enu()
+            .unwrap()
+            .contains(&fiche_enud1.hash_carte())
+    );
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}
+
+/// Renommer une ENU sous son nom actuel ne fait rien : la dernière racine reste
+/// celle d'avant.
+#[test]
+fn renommage_enu_meme_nom() -> ResultFeuApplication<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+    let enur1 = creer_enu_repertoire(&chemin_enu, &noyau, &session, "dossier1", &[&enu1]);
+    let fiche_enud1 = Fiche::new(&enu1);
+    let fiche_enur1 = Fiche::new(&enur1);
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    scribe.greffe_enfants(&noyau, &session, &enu_racine, &[enur1.hash_carte()])?;
+
+    let nom_enud1 = enu1.carte().nom()?;
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    scribe.renomme_enu(&noyau, &session, &fiche_enur1, &fiche_enud1, &nom_enud1)?;
+
+    let nouvelle_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    assert_eq!(&enu_racine, &nouvelle_enu_racine);
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}
+
+/// Un nom déjà porté par une sœur fait échouer le renommage avant toute
+/// écriture : la dernière racine reste celle d'avant.
+#[test]
+fn renommage_enu_collision_frere() -> ResultFeuApplication<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+    let enu2 = creer_enu_donnee(&chemin_enu, &noyau, &session, 2u8);
+    let enur1 = creer_enu_repertoire(&chemin_enu, &noyau, &session, "dossier1", &[&enu1, &enu2]);
+    let fiche_enud2 = Fiche::new(&enu2);
+    let fiche_enur1 = Fiche::new(&enur1);
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    scribe.greffe_enfants(&noyau, &session, &enu_racine, &[enur1.hash_carte()])?;
+
+    let nom_enud1 = enu1.carte().nom()?;
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    assert!(matches!(
+        scribe.renomme_enu(&noyau, &session, &fiche_enur1, &fiche_enud2, &nom_enud1),
+        Err(ErreurFeuApplication::ScribeNomDejaExistant)
+    ));
+
+    let nouvelle_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    assert_eq!(&enu_racine, &nouvelle_enu_racine);
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}
+
+/// Renommer de nouveau une ENU avec les fiches d'avant son premier renommage
+/// échoue avant toute écriture : la dernière racine reste celle d'avant.
+#[test]
+fn renommage_enu_parent_perime() -> ResultFeuApplication<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+    let enur1 = creer_enu_repertoire(&chemin_enu, &noyau, &session, "dossier1", &[&enu1]);
+    let fiche_enud1 = Fiche::new(&enu1);
+    let fiche_enur1 = Fiche::new(&enur1);
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    scribe.greffe_enfants(&noyau, &session, &enu_racine, &[enur1.hash_carte()])?;
+
+    scribe.renomme_enu(&noyau, &session, &fiche_enur1, &fiche_enud1, "nouveau_nom")?;
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    assert!(matches!(
+        scribe.renomme_enu(
+            &noyau,
+            &session,
+            &fiche_enur1,
+            &fiche_enud1,
+            "nouveau_nom_2"
+        ),
+        Err(ErreurFeuApplication::ScribeRemplacementSansEffet)
+    ));
+
+    let nouvelle_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    assert_eq!(&enu_racine, &nouvelle_enu_racine);
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}
+
+/// Un dossier parent qui n'est plus dans le dernier arbre fait échouer le
+/// renommage avant toute écriture : la dernière racine reste celle d'avant.
+///
+/// La cible est à jour ; seul le parent est une version antérieure du dossier,
+/// d'avant le renommage de sa sœur.
+#[test]
+fn renommage_enu_soeur_parent_perime() -> ResultFeuApplication<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+    let enu2 = creer_enu_donnee(&chemin_enu, &noyau, &session, 2u8);
+    let enur1 = creer_enu_repertoire(&chemin_enu, &noyau, &session, "dossier1", &[&enu1, &enu2]);
+    let fiche_enud1 = Fiche::new(&enu1);
+    let fiche_enud2 = Fiche::new(&enu2);
+    let fiche_enur1 = Fiche::new(&enur1);
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    scribe.greffe_enfants(&noyau, &session, &enu_racine, &[enur1.hash_carte()])?;
+
+    scribe.renomme_enu(&noyau, &session, &fiche_enur1, &fiche_enud1, "nouveau_nom")?;
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    assert!(matches!(
+        scribe.renomme_enu(&noyau, &session, &fiche_enur1, &fiche_enud2, "nouveau_nom"),
+        Err(ErreurFeuApplication::ScribeRemplacementSansEffet)
+    ));
+
+    let nouvelle_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    assert_eq!(&enu_racine, &nouvelle_enu_racine);
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}
+
+/// Un tag ajouté à un dossier se propage à son contenu, sans remonter à la
+/// racine.
+#[test]
+fn ajout_tag_enu_dans_dossier() -> ResultFeuApplication<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+    let enur1 = creer_enu_repertoire(&chemin_enu, &noyau, &session, "dossier1", &[&enu1]);
+    let fiche_enur1 = Fiche::new(&enur1);
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    scribe.greffe_enfants(&noyau, &session, &enu_racine, &[enur1.hash_carte()])?;
+
+    scribe.ajoute_tags(&noyau, &session, &fiche_enur1, &["nouveau_tag"])?;
+
+    let nouvelle_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    let arborescence = scribe
+        .donne_descendants(&nouvelle_enu_racine.hash_carte())
+        .collect::<ResultFeuApplication<Vec<_>>>()?;
+
+    assert_eq!(arborescence.len(), 3);
+
+    assert!(!nouvelle_enu_racine.carte().tags().contains("nouveau_tag"));
+
+    let fiche_enur1 = &arborescence
+        .iter()
+        .find(|(profondeur, _)| *profondeur == 1)
+        .unwrap()
+        .1;
+
+    assert!(fiche_enur1.carte().tags().contains("nouveau_tag"));
+
+    let fiche_enud1 = &arborescence
+        .iter()
+        .find(|(profondeur, _)| *profondeur == 2)
+        .unwrap()
+        .1;
+
+    assert!(fiche_enud1.carte().tags().contains("nouveau_tag"));
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}
+
+/// Ajouter un tag déjà posé échoue avant toute écriture : la dernière racine
+/// reste celle d'avant.
+///
+/// La fiche du dossier est relue après le premier ajout, pour que seul le tag
+/// fasse échouer, et non une fiche périmée.
+#[test]
+fn ajout_tag_enu_deja_present() -> ResultFeuApplication<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+    let enur1 = creer_enu_repertoire(&chemin_enu, &noyau, &session, "dossier1", &[&enu1]);
+    let fiche_enur1 = Fiche::new(&enur1);
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    scribe.greffe_enfants(&noyau, &session, &enu_racine, &[enur1.hash_carte()])?;
+
+    scribe.ajoute_tags(&noyau, &session, &fiche_enur1, &["nouveau_tag"])?;
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    let arborescence = scribe
+        .donne_descendants(&enu_racine.hash_carte())
+        .collect::<ResultFeuApplication<Vec<_>>>()?;
+    let fiche_enur1 = &arborescence
+        .iter()
+        .find(|(profondeur, _)| *profondeur == 1)
+        .unwrap()
+        .1;
+
+    assert!(matches!(
+        scribe.ajoute_tags(&noyau, &session, fiche_enur1, &["nouveau_tag"]),
+        Err(ErreurFeuApplication::ScribeRemplacementSansEffet)
+    ));
+
+    let nouvelle_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    assert_eq!(&enu_racine, &nouvelle_enu_racine);
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}
+
+/// Un tag retiré d'un dossier disparaît aussi de son contenu.
+#[test]
+fn retrait_tag_enu() -> ResultFeuApplication<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+    let enur1 = creer_enu_repertoire(&chemin_enu, &noyau, &session, "dossier1", &[&enu1]);
+    let fiche_enur1 = Fiche::new(&enur1);
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    scribe.greffe_enfants(&noyau, &session, &enu_racine, &[enur1.hash_carte()])?;
+
+    scribe.ajoute_tags(&noyau, &session, &fiche_enur1, &["nouveau_tag"])?;
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    let arborescence = scribe
+        .donne_descendants(&enu_racine.hash_carte())
+        .collect::<ResultFeuApplication<Vec<_>>>()?;
+    let fiche_enur1 = &arborescence
+        .iter()
+        .find(|(profondeur, _)| *profondeur == 1)
+        .unwrap()
+        .1;
+
+    scribe.retire_tags(&noyau, &session, fiche_enur1, &["nouveau_tag"])?;
+
+    let nouvelle_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    let arborescence = scribe
+        .donne_descendants(&nouvelle_enu_racine.hash_carte())
+        .collect::<ResultFeuApplication<Vec<_>>>()?;
+    let fiche_enur1 = &arborescence
+        .iter()
+        .find(|(profondeur, _)| *profondeur == 1)
+        .unwrap()
+        .1;
+    let fiche_enud1 = &arborescence
+        .iter()
+        .find(|(profondeur, _)| *profondeur == 2)
+        .unwrap()
+        .1;
+
+    assert!(!fiche_enur1.carte().tags().contains("nouveau_tag"));
+    assert!(!fiche_enud1.carte().tags().contains("nouveau_tag"));
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}
+
+/// Retirer un tag jamais posé échoue avant toute écriture : la dernière racine
+/// reste celle d'avant.
+#[test]
+fn retrait_tag_enu_absent() -> ResultFeuApplication<()> {
+    let (_tmp, chemin_enu, chemin_derniere_racine, noyau, scribe, session) =
+        cree_noyau_et_foyer_ouvert();
+
+    let enu1 = creer_enu_donnee(&chemin_enu, &noyau, &session, 1u8);
+    let enur1 = creer_enu_repertoire(&chemin_enu, &noyau, &session, "dossier1", &[&enu1]);
+    let fiche_enur1 = Fiche::new(&enur1);
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+    scribe.greffe_enfants(&noyau, &session, &enu_racine, &[enur1.hash_carte()])?;
+
+    let enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    assert!(matches!(
+        scribe.retire_tags(&noyau, &session, &fiche_enur1, &["nouveau_tag"]),
+        Err(ErreurFeuApplication::ScribeRemplacementSansEffet)
+    ));
+
+    let nouvelle_enu_racine = Enu::charger_derniere_racine(&chemin_derniere_racine, &session)?;
+
+    assert_eq!(&enu_racine, &nouvelle_enu_racine);
+
+    fermer_foyer(noyau, session);
+
+    Ok(())
+}

@@ -657,8 +657,9 @@ impl Scribe {
 
     /// Renomme `fiche_cible`, enfant de `fiche_parent`, en `nouveau_nom`.
     ///
-    /// L'ENU est re-signée sous sa braise puis greffée par [`Enu::remplacer`],
-    /// qui pose une nouvelle racine. Un `nouveau_nom` identique à l'actuel ne
+    /// L'ENU est re-signée sous sa braise, puis le parent est réécrit par
+    /// [`ecrit_carte`](Self::ecrit_carte), qui pose une nouvelle racine : un
+    /// parent périmé est ainsi refusé. Un `nouveau_nom` identique à l'actuel ne
     /// fait rien.
     ///
     /// # Errors
@@ -677,6 +678,8 @@ impl Scribe {
     /// enfant du parent n'a pas de nom.
     /// Retourne [`ErreurFeuApplication::ScribeRemplacementSansEffet`] si le
     /// parent n'est plus dans le dernier arbre.
+    /// Retourne [`ErreurFeuApplication::ScribeRacinePerimee`] si le parent est
+    /// une racine qui n'est plus la dernière.
     /// Propage les erreurs de chargement, de signature et d'écriture.
     pub(crate) fn renomme_enu(
         &self,
@@ -711,14 +714,14 @@ impl Scribe {
 
         nouvelle_enu.sauvegarder(&self.chemin_enu)?;
 
-        Enu::remplacer(
-            &self.chemin_enu,
-            &self.chemin_derniere_racine,
-            &fiche_cible.hash_carte(),
-            &nouvelle_enu,
-            noyau,
-            session,
-        )
+        let mut nouvelle_carte = fiche_parent.carte().clone();
+        let Some(hashs_enu) = nouvelle_carte.mut_hashs_enu() else {
+            return Err(ErreurFeuApplication::ScribeEnuRAttendue);
+        };
+        hashs_enu.remove(&fiche_cible.hash_carte());
+        hashs_enu.insert(nouvelle_enu.hash_carte());
+
+        self.ecrit_carte(noyau, session, fiche_parent, nouvelle_carte)
     }
 
     /// Rend le classeur qui détient le blob référencé par `fiche`.

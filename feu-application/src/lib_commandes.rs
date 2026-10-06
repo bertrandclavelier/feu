@@ -967,8 +967,10 @@ impl FeuApplication {
     /// ([`ErreurFeuApplication::ScribeNomDejaExistant`]), nom invalide
     /// ([`ErreurFeuApplication::ScribeNomFichierInvalide`]), nom absent
     /// ([`ErreurFeuApplication::ScribeMetaNomAbsente`]), parent hors du dernier
-    /// arbre ([`ErreurFeuApplication::ScribeRemplacementSansEffet`]), foyer
-    /// fermé, signature, écriture disque.
+    /// arbre ([`ErreurFeuApplication::ScribeRemplacementSansEffet`]), racine
+    /// parent qui n'est plus la dernière
+    /// ([`ErreurFeuApplication::ScribeRacinePerimee`]), foyer fermé, signature,
+    /// écriture disque.
     pub fn commande_renommage_enu(
         &self,
         fiche_parent: &Fiche,
